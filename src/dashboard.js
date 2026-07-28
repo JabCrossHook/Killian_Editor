@@ -1,0 +1,197 @@
+// dashboard.js — แดชบอร์ดโปรเจกต์ (สถิติ/analytics/ฉากปักหมุด/ไปต่อจากที่ค้าง)
+// แยกจาก app.js — feature นี้เป็นจุดที่ feature ใหม่ (แก้แดชบอร์ด, กราฟ, theme) จะมาต่อยอด
+import { $, state, el, SCENE_STATUSES } from './core.js';
+import { parseMdFile, countWords } from './md.js';
+import { getWordHistory, calcStreak } from './word-history.js';
+// ฟังก์ชันที่ยังอยู่ใน app.js (เรียกตอน runtime เท่านั้น — circular import ปลอดภัยกับ esbuild bundle)
+import { activate, closeTab, loadAllEntities, catIcon, catLabel, openScene } from './app.js';
+import { guid } from './app.js';
+
+export async function openDashboard() {
+  const key = '::dash::';
+  if (state.tabs.has(key)) { activate(key); return renderDashboard(state.tabs.get(key).pane); }
+  const pane = el('div', 'pane');
+  $('#panes').append(pane);
+  const tabBtn = el('div', 'tab');
+  tabBtn.append(el('span', 'tab-title', 'แดชบอร์ด'));
+  const x = el('span', 'tab-x', '×'); tabBtn.append(x);
+  $('#tabs').append(tabBtn);
+  const tab = { file: key, title: 'แดชบอร์ด', pane, tabBtn, dirty: false,
+                editor: null, plain: null, wiki: null, gal: null, dash: true };
+  tabBtn.onclick = (e) => { if (e.target !== x) activate(key); };
+  x.onclick = () => closeTab(key);
+  state.tabs.set(key, tab);
+  activate(key);
+  renderDashboard(pane);
+}
+
+export async function renderDashboard(pane) {
+  pane.innerHTML = '';
+  const wrap = el('div', 'dash-wrap');
+  pane.append(wrap);
+  wrap.append(el('div', 'dash-title', state.title));
+  const cards = el('div', 'dash-cards'); wrap.append(cards);
+  const card = (label) => {
+    const c = el('div', 'dash-card');
+    const v = el('div', 'dash-num', '…');
+    c.append(v, el('div', 'dash-label', label));
+    cards.append(c); return v;
+  };
+  const vCh = card('บท'), vSc = card('ฉาก'), vW = card('คำทั้งหมด'), vE = card('Wiki entities');
+  let nCh = 0, nSc = 0, words = 0;
+  const sceneRows = [];
+  const byStatus = {};            // สถานะฉาก → จำนวน
+  const chapterWords = [];        // { title, words, scenes }
+  for (const secName of await kapi.listDirs(state.root)) {
+    const secPath = await kapi.join(state.root, secName);
+    if (!(await kapi.exists(await kapi.join(secPath, 'section.json')))) continue;
+    const draftRoot = await kapi.join(secPath, 'Draft');
+    if (!(await kapi.exists(draftRoot))) continue;
+    for (const dname of await kapi.listDirs(draftRoot)) {
+      const dPath = await kapi.join(draftRoot, dname);
+      const df = await kapi.join(dPath, 'draft.json');
+      if (!(await kapi.exists(df))) continue;
+      const chapters = (await kapi.readJson(df)).chapters || [];
+      const scAll = (await kapi.readJson(await kapi.join(dPath, 'scenes.json'))).chapters || {};
+      nCh += chapters.length;
+      for (const ch of chapters) {
+        let cw = 0, cs = 0;
+        for (const sc of scAll[ch.guid] || []) {
+          nSc++; cs++;
+          const st = SCENE_STATUSES.includes(sc.status) ? sc.status : 'ยังไม่ตั้งสถานะ';
+          byStatus[st] = (byStatus[st] || 0) + 1;
+          const file = await kapi.join(dPath, 'Chapters', ch.folderName, sc.fileName);
+          try {
+            const { body } = parseMdFile(await kapi.readFile(file));
+            const w = countWords(body); words += w; cw += w;
+            sceneRows.push({ title: sc.title, ch: ch.title, file, flag: sc.flag });
+          } catch {}
+        }
+        chapterWords.push({ title: ch.title, words: cw, scenes: cs });
+      }
+    }
+  }
+  vCh.textContent = nCh.toLocaleString();
+  vSc.textContent = nSc.toLocaleString();
+  vW.textContent = words.toLocaleString();
+  const allEnts = await loadAllEntities();
+  vE.textContent = allEnts.length.toLocaleString();
+  // ความคืบหน้าเทียบเป้าหมายทั้งโปรเจกต์ (ตั้งได้ในตั้งค่าโปรเจกต์)
+  const goal = parseInt(state.goals.projectWords, 10) || 0;
+  if (goal > 0) {
+    const pct = Math.min(100, Math.round((words / goal) * 100));
+    const gwrap = el('div', 'dash-goal');
+    gwrap.append(el('div', 'dash-goal-label',
+      `เป้าหมาย: ${words.toLocaleString()} / ${goal.toLocaleString()} คำ (${pct}%)`));
+    const bar = el('div', 'dash-goal-bar');
+    const fill = el('div', 'dash-goal-fill'); fill.style.width = pct + '%';
+    bar.append(fill); gwrap.append(bar);
+    wrap.append(gwrap);
+  }
+
+  // ---- สถิติการเขียนรายวัน + วันเขียนติดต่อกัน (word-history.js) ----
+  {
+    const hist = getWordHistory();
+    const streak = calcStreak(hist);
+    const box = el('div', 'dash-streak');
+    const head = el('div', 'dash-goal-label',
+      streak > 0 ? `🔥 เขียนติดต่อกัน ${streak} วัน` : '🔥 ยังไม่เริ่มนับวันเขียนติดต่อกัน');
+    box.append(head);
+    if (hist.length >= 2) {
+      // แท่งคำที่เขียนต่อวัน 14 วันหลังสุด (ผลต่างของยอดรวมสะสม)
+      const last = hist.slice(-15);
+      const days = [];
+      for (let i = 1; i < last.length; i++) {
+        days.push({ date: last[i].date, delta: Math.max(0, (last[i].words || 0) - (last[i - 1].words || 0)) });
+      }
+      const max = Math.max(1, ...days.map((d) => d.delta));
+      const chart = el('div', 'dash-days');
+      chart.style.cssText = 'display:flex;align-items:flex-end;gap:3px;height:60px;margin:8px 0';
+      for (const d of days) {
+        const bar = el('div', 'dash-day-bar');
+        bar.style.cssText = `flex:1;min-width:6px;border-radius:2px 2px 0 0;background:${d.delta ? '#6fae6f' : 'var(--border)'};height:${Math.max(3, Math.round((d.delta / max) * 100))}%`;
+        bar.title = `${d.date}: +${d.delta.toLocaleString()} คำ`;
+        chart.append(bar);
+      }
+      box.append(chart);
+      box.append(el('div', 'dim', `คำที่เพิ่มต่อวัน · ${days.length} วันหลังสุด`));
+    } else {
+      box.append(el('div', 'dim', 'บันทึกงานสัก 2 วันแล้วกราฟคำรายวันจะขึ้นที่นี่'));
+    }
+    wrap.append(box);
+  }
+
+  // ---- สถิติเชิงลึก (analytics) ----
+  // แถบสัดส่วน (คืน element) — ใช้ซ้ำได้ทั้งสถานะ/หมวด
+  const statBars = (rows, total, palette) => {
+    const box2 = el('div', 'dash-stat');
+    const max = Math.max(1, ...rows.map((r) => r.n));
+    rows.forEach((r, i) => {
+      const line = el('div', 'dash-stat-row');
+      line.append(el('div', 'dash-stat-name', r.label));
+      const track = el('div', 'dash-stat-track');
+      const fill = el('div', 'dash-stat-fill');
+      fill.style.width = Math.round((r.n / max) * 100) + '%';
+      fill.style.background = palette[i % palette.length];
+      track.append(fill); line.append(track);
+      const pct = total ? Math.round((r.n / total) * 100) : 0;
+      line.append(el('div', 'dash-stat-val', `${r.n.toLocaleString()} (${pct}%)`));
+      box2.append(line);
+    });
+    return box2;
+  };
+  const PAL = ['#5f9fd9', '#6fae6f', '#d9b757', '#d97757', '#a97fd0', '#d9575e', '#7fb8b0'];
+
+  if (nSc > 0) {
+    const grid = el('div', 'dash-analytics'); wrap.append(grid);
+
+    // ความคืบหน้าตามสถานะฉาก
+    const left2 = el('div', 'dash-apanel');
+    left2.append(el('div', 'dash-apanel-title', '📊 ความคืบหน้าตามสถานะฉาก'));
+    const order = [...SCENE_STATUSES, 'ยังไม่ตั้งสถานะ'];
+    left2.append(statBars(
+      order.filter((s) => byStatus[s]).map((s) => ({ label: s, n: byStatus[s] })), nSc, PAL));
+    grid.append(left2);
+
+    // Wiki ตามหมวด
+    if (allEnts.length) {
+      const byCat = {};
+      for (const e of allEnts) byCat[e.cat] = (byCat[e.cat] || 0) + 1;
+      const right2 = el('div', 'dash-apanel');
+      right2.append(el('div', 'dash-apanel-title', '🗂 Wiki ตามหมวด'));
+      right2.append(statBars(
+        Object.entries(byCat).sort((a, b) => b[1] - a[1])
+          .map(([c, n]) => ({ label: catIcon(c) + ' ' + catLabel(c), n })), allEnts.length, PAL));
+      grid.append(right2);
+    }
+
+    // ความยาวแต่ละบท (คำ)
+    if (chapterWords.length) {
+      const cpanel = el('div', 'dash-apanel dash-apanel-wide');
+      cpanel.append(el('div', 'dash-apanel-title', '📖 ความยาวแต่ละบท (คำ)'));
+      const avg = Math.round(words / chapterWords.length);
+      cpanel.append(statBars(
+        chapterWords.map((c) => ({ label: c.title || '(ไม่มีชื่อ)', n: c.words })), words, PAL));
+      cpanel.append(el('div', 'dash-stat-note',
+        `เฉลี่ย ${avg.toLocaleString()} คำ/บท · เวลาอ่านรวม ~${Math.max(1, Math.round(words / 250))} นาที`));
+      grid.append(cpanel);
+    }
+  }
+  const favs = sceneRows.filter((r) => r.flag);
+  if (favs.length) {
+    wrap.append(el('div', 'wiki-sub', `⭐ ฉากปักหมุด (${favs.length})`));
+    for (const r of favs) {
+      const d = el('div', 'scene', `⭐ ${r.title} — ${r.ch}`);
+      d.onclick = () => openScene(r.file, r.title);
+      wrap.append(d);
+    }
+  }
+  wrap.append(el('div', 'wiki-sub', 'ไปต่อจากที่ค้าง'));
+  for (const r of sceneRows.slice(0, 8)) {
+    const d = el('div', 'scene', `📄 ${r.title} — ${r.ch}`);
+    d.onclick = () => openScene(r.file, r.title);
+    wrap.append(d);
+  }
+}
+
+// ---------------- ตัวจัดการเล่ม (Book Manager) ----------------

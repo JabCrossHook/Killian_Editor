@@ -1,0 +1,36 @@
+const { contextBridge, ipcRenderer } = require('electron');
+const call = (ch) => (...a) => ipcRenderer.invoke(ch, ...a);
+let _appVersion = '2.0.0';
+try { _appVersion = require('./package.json').version || _appVersion; } catch {}
+contextBridge.exposeInMainWorld('kapi', {
+  appVersion: _appVersion,
+  appDir: call('app:dir'),                 // โฟลเดอร์แอป — ใช้หาไฟล์ภาษา/ทรัพยากรที่มากับโปรแกรม (preload sandbox ไม่มี __dirname)
+  readFile: call('fs:readFile'), writeFile: call('fs:writeFile'),
+  readJson: call('fs:readJson'), exists: call('fs:exists'), listDirs: call('fs:listDirs'),
+  listFiles: call('fs:listFiles'), mkdir: call('fs:mkdir'), move: call('fs:move'), remove: call('fs:remove'), isDir: call('fs:isDir'), mtime: call('fs:mtime'),
+  copyInto: call('fs:copyInto'), writeImageData: call('fs:writeImageData'),
+  writeBytes: call('fs:writeBytes'), readBytes: call('fs:readBytes'), copyFile: call('fs:copyFile'),
+  spellBase: call('spell:base'), spellExtra: call('spell:extra'),
+  spellAddWord: call('spell:addWord'), spellDownload: call('spell:download'), spellHasBase: call('spell:hasBase'),
+  join: call('path:join'), resolve: call('path:resolve'),
+  relative: call('path:relative'), toFileURL: call('path:toFileURL'),
+  openProjectDialog: call('dialog:openProject'), openImageDialog: call('dialog:openImage'),
+  saveAsDialog: call('dialog:saveAs'), savePdfDialog: call('dialog:savePdf'),
+  print: call('win:print'), printToPdf: call('win:printToPdf'),
+  pushRecent: call('recent:push'), listRecent: call('recent:list'),
+  testShot: call('test:shot'), revealInOS: call('shell:reveal'),
+  winMin: call('win:minimize'), winMax: call('win:maximize'), winClose: call('win:close'),
+  quitNow: call('win:quitNow'), menuPopup: call('menu:popup'),
+  httpFetch: call('http:fetch'),
+  // สตรีมทีละบรรทัด — main ส่งกลับทาง channel เฉพาะคำขอ แล้วถอด listener เมื่อจบ
+  httpStream: (url, options, onLine) => {
+    const id = 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const ch = 'http:stream:' + id;
+    const h = (e, line) => { try { onLine(line); } catch {} };
+    ipcRenderer.on(ch, h);
+    return ipcRenderer.invoke('http:stream', url, options, id)
+      .finally(() => ipcRenderer.removeListener(ch, h));
+  },
+  logWrite: call('log:write'), logRead: call('log:read'), logPath: call('log:path'), logReveal: call('log:reveal'),
+  onMenu: (cb) => ipcRenderer.on('menu', (e, ch, ...a) => cb(ch, ...a)),
+});

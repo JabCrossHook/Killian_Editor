@@ -1,0 +1,67 @@
+{
+  "name": "killian2",
+  "version": "2.0.0-alpha.40",
+  "description": "โปรแกรมเขียนนิยาย/บทหนัง — Electron + ProseMirror",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "node build.js",
+    "test": "node test/md.test.js",
+    "test:unit": "node test/search-engine.test.cjs && node test/panel.test.cjs && node test/split.test.cjs && node test/kanban.test.cjs && node test/world-story.test.cjs && node test/auto-task.test.cjs && node test/ai-core.test.cjs && node test/ai-features.test.cjs && node test/tools.test.cjs",
+    "dist": "node build.js && electron-builder --win portable",
+    "dist:dir": "node build.js && electron-builder --win dir"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "fabric": "^5.3.0",
+    "fuse.js": "^7.5.0",
+    "jszip": "^3.10.1",
+    "prosemirror-commands": "^1.7.1",
+    "prosemirror-dropcursor": "^1.8.3",
+    "prosemirror-gapcursor": "^1.4.1",
+    "prosemirror-history": "^1.5.0",
+    "prosemirror-inputrules": "^1.5.1",
+    "prosemirror-keymap": "^1.2.3",
+    "prosemirror-model": "^1.25.11",
+    "prosemirror-schema-list": "^1.5.1",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-transform": "^1.12.0",
+    "prosemirror-view": "^1.42.1"
+  },
+  "devDependencies": {
+    "electron": "^43.1.1",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.28.1"
+  },
+  "productName": "Killian 2",
+  "build": {
+    "appId": "com.killian2.app",
+    "productName": "Killian 2",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**",
+      "languages/**",
+      "node_modules/**",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "Killian2-${version}-portable.exe"
+    }
+  }
+}

@@ -1,0 +1,83 @@
+// recycle.js — ถังขยะ: ลบไปถังขยะ / กู้คืน / ล้างถังขยะเก่า (retention)
+import { buildTree, closeTab, guid } from './app.js';
+import { setStatus, smart, state } from './core.js';
+import { confirmBox } from './ui.js';
+
+export async function restoreFromTrash(p, fname) {
+  const sidecar = p + '.k2restore.json';
+  if (await kapi.exists(sidecar)) {
+    const info = await kapi.readJson(sidecar);
+    if (info.kind === 'section') {
+      await kapi.move(p, await kapi.join(info.root, info.folderName));
+      await kapi.remove(sidecar);
+      await buildTree(); smart.loadNames(state.root);
+      setStatus('กู้คืนเล่มแล้ว'); return;
+    }
+    if (info.kind === 'scene') {
+      const dst = await kapi.join(info.dPath, 'Chapters', info.folderName, info.sc.fileName);
+      await kapi.move(p, dst);
+      const sf = await kapi.join(info.dPath, 'scenes.json');
+      const d = await kapi.readJson(sf);
+      d.chapters = d.chapters || {};
+      d.chapters[info.chGuid] = [...(d.chapters[info.chGuid] || []), info.sc];
+      await kapi.writeFile(sf, JSON.stringify(d, null, 2));
+    } else if (info.kind === 'chapter') {
+      await kapi.move(p, await kapi.join(info.dPath, 'Chapters', info.ch.folderName));
+      const df = await kapi.join(info.dPath, 'draft.json');
+      const d = await kapi.readJson(df);
+      d.chapters = [...(d.chapters || []), info.ch];
+      await kapi.writeFile(df, JSON.stringify(d, null, 2));
+      const sf = await kapi.join(info.dPath, 'scenes.json');
+      const s2 = await kapi.readJson(sf);
+      s2.chapters = s2.chapters || {};
+      s2.chapters[info.ch.guid] = info.scenes || [];
+      await kapi.writeFile(sf, JSON.stringify(s2, null, 2));
+    }
+    await kapi.remove(sidecar);
+  } else if (fname.endsWith('.json')) {
+    // Wiki entity → กลับหมวดเดิมตาม entityTypeKey
+    let cat = 'characters';
+    try { cat = (await kapi.readJson(p)).entityTypeKey || cat; } catch {}
+    const w = await kapi.join(state.root, 'Wiki');
+    const base = (await kapi.exists(w)) ? w
+      : (await kapi.exists(await kapi.join(state.root, 'Bible')))
+        ? await kapi.join(state.root, 'Bible') : w;
+    await kapi.mkdir(await kapi.join(base, cat));
+    await kapi.move(p, await kapi.join(base, cat, fname.replace(/^[a-z0-9]+-/, '')));
+  } else {
+    // .md → Memos (ฉากมี sidecar อยู่แล้ว ที่เหลือคือ memo)
+    await kapi.mkdir(await kapi.join(state.root, 'Memos'));
+    await kapi.move(p, await kapi.join(state.root, 'Memos', fname.replace(/^[a-z0-9]+-/, '')));
+  }
+  await buildTree(); smart.loadNames(state.root);
+  setStatus('กู้คืนแล้ว');
+}
+
+export async function deleteToTrash(file, label) {
+  if (!(await confirmBox(`ลบ “${label}” ? (ย้ายไปถังขยะของโปรเจกต์ กู้คืนได้)`))) return null;
+  const base = file.split(/[\\/]/).pop();
+  const dst = await kapi.join(state.root, 'Recycle', Date.now().toString(36) + '-' + base);
+  await kapi.move(file, dst);
+  if (state.tabs.has(file)) { state.tabs.get(file).dirty = false; closeTab(file); }
+  await buildTree(); smart.loadNames(state.root);
+  setStatus('ย้ายไปถังขยะ: ' + label);
+  return dst;
+}
+
+export async function purgeRecycle(root) {
+  const days = parseInt(state.settings.recycleDays, 10) || 0;
+  if (days <= 0) return;
+  const recDir = await kapi.join(root, 'Recycle');
+  if (!(await kapi.exists(recDir))) return;
+  const cutoff = Date.now() - days * 86400000;
+  let purged = 0;
+  for (const name of await kapi.listDirs(recDir).catch(() => [])) {
+    const p = await kapi.join(recDir, name);
+    if ((await kapi.mtime(p)) < cutoff) { await kapi.remove(p); purged++; }
+  }
+  for (const name of await kapi.listFiles(recDir, '').catch(() => [])) {
+    const p = await kapi.join(recDir, name);
+    if ((await kapi.mtime(p)) < cutoff) { await kapi.remove(p); purged++; }
+  }
+  if (purged) setStatus(`ล้างถังขยะอัตโนมัติ ${purged} รายการ (เก่ากว่า ${days} วัน)`);
+}
