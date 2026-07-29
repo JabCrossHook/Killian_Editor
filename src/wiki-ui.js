@@ -2,11 +2,14 @@
 import { INV_C, activate, allCatKeys, applyTemplate, buildTree, catEditDialog, catIcon, catKeyFrom, catLabel, closeTab, entityCreateDialog, fieldLabels, guid, invertRole, markDirty, pickFromList, relationDialog, safeName, saveProjectMeta, spellChecker, wikiRoot } from './app.js';
 import { $, BUILTIN_CATS, el, setStatus, smart, state } from './core.js';
 import { pickImage } from './gallery.js';
-import { confirmBox } from './ui.js';
+import { confirmBox, ask } from './ui.js';
+import { iconHtml } from './icons.js';
 import { CAT_TH, WikiEditor } from './wiki.js';
 import { ensureAutoLink, renderBacklinksTab } from './world-story/auto-link-ui.js';
 import { notifyEntityRenamed } from './auto-task/event-ui.js';
 import { findScenePath } from './project-scan.js';
+import { choicesByCharacter, renderChoicePanel } from './player-choices.js';
+import { ensureSensory, renderSensoryProfile } from './sensory-profile.js';
 
 export function wikiCats() {
   if (!state.meta) return [];
@@ -63,6 +66,7 @@ export async function addEntity(catDir, cat) {
               relationships: [], chapterOverrides: [], templateId: '',
               created: new Date().toISOString() };
   if (tp) applyTemplate(e, tp);
+  ensureSensory(e);                     // สถานที่เกิดใหม่มีช่องบรรยากาศรับรู้ตั้งแต่ต้น
   if (!(e.sections || []).length) e.sections = [{ title: 'คำอธิบาย', content: '' }];
   const file = await kapi.join(catDir, safeName(res.name) + '-' + Date.now().toString(36) + '.json');
   await kapi.writeFile(file, JSON.stringify(e, null, 2));
@@ -72,7 +76,10 @@ export async function addEntity(catDir, cat) {
 
 export async function openEntity(file) {
   if (state.tabs.has(file)) return activate(file);
+  // โหลดชื่อ entity ทั้งหมดก่อนวาด wiki (ถ้ายังไม่เคยโหลด)
+  if (!smart.titles || !smart.titles.length) await smart.loadNames(state.root);
   const entity = await kapi.readJson(file);
+  ensureSensory(entity);                       // สถานที่ → เตรียมช่อง "บรรยากาศรับรู้"
   const pane = el('div', 'pane wiki-pane');    // wiki-pane = กัน paper-mode ทับ field เนื้อหา
   $('#panes').append(pane);
   const tabBtn = el('div', 'tab');
@@ -92,7 +99,69 @@ export async function openEntity(file) {
     onOpenEntity: (f) => openEntity(f),
     pickFromGallery: () => pickImage(state.root),
     getChecker: spellChecker,          // เนื้อหา wiki ตรวจคำผิดได้เหมือน editor นิยาย
+    // ---- ประวัติเวอร์ชันของหน้า Wiki (ข้อ 10) — ใช้ระบบ Snapshots เดียวกับฉาก ----
+    onVersions: async () => {
+      const { fileVersionDialog } = await import('./dialogs.js');
+      await fileVersionDialog(file, tab.title, {
+        onRestored: async () => {
+          // Wiki เป็น JSON → ต้องอ่านใหม่แล้ววาดใหม่ ไม่ใช่ openScene แบบฉาก
+          const fresh = await kapi.readJson(file);
+          tab.wiki.e = fresh; tab.wiki.dirty = false;
+          tab.title = fresh.name || tab.title;
+          tab.tabBtn.querySelector('.tab-title').textContent = tab.title;
+          tab.wiki.render();
+          await buildTree();
+        },
+      });
+    },
+    onSnapshot: async () => {
+      const { snapshotFile } = await import('./app.js');
+      if (tab.wiki.dirty) await tab.wiki.save();
+      const label = await ask('ตั้งชื่อเวอร์ชัน (เว้นว่างได้)', { placeholder: 'เช่น ก่อนแก้ประวัติ', okLabel: 'บันทึกเวอร์ชัน' });
+      if (label === null) return;
+      await snapshotFile(file, label || 'เวอร์ชัน');
+      setStatus('บันทึกเวอร์ชันหน้า Wiki แล้ว');
+    },
+    // ---- เปลี่ยนเทมเพลต (ข้อ 18b) — merge fields ไม่ล้างของเดิม ----
+    onSwapTemplate: async () => {
+      const cat = entity.entityTypeKey || '';
+      const tps = state.templates.filter((t) => t.entityTypeKey === cat);
+      if (tps.length <= 1) {
+        setStatus('ไม่มีเทมเพลตอื่นสำหรับหมวดนี้');
+        return false;
+      }
+      const curId = entity.templateId || '';
+      // ใช้ dropdown แทนการกรอกหมายเลข
+      const pick = await new Promise((resolve) => {
+        const ov = el('div', 'k-overlay');
+        const box = el('div', 'k-dialog');
+        const opts = tps.map((t) =>
+          `<option value="${t.id}"${t.id === curId ? ' selected' : ''}>${t.name || t.id}${t.id === curId ? ' (ปัจจุบัน)' : ''}</option>`
+        ).join('');
+        box.innerHTML = `<div class="k-dlg-title">เปลี่ยนเทมเพลต</div>
+          <div class="k-hint" style="margin:8px 0">ข้อมูลเดิมจะถูกรักษาไว้ เพิ่มเฉพาะช่องที่ขาดจากเทมเพลตใหม่</div>
+          <select id="tp-select" class="k-dlg-select" style="width:100%">${opts}</select>
+          <div class="k-dlg-btns"><button class="k-cancel">ยกเลิก</button><button class="k-ok">เปลี่ยนเทมเพลต</button></div>`;
+        ov.appendChild(box); document.body.appendChild(ov);
+        box.querySelector('.k-cancel').onclick = () => { ov.remove(); resolve(null); };
+        ov.onclick = (e) => { if (e.target === ov) { ov.remove(); resolve(null); } };
+        box.querySelector('.k-ok').onclick = () => { const v = box.querySelector('#tp-select').value; ov.remove(); resolve(v); };
+        box.addEventListener('keydown', (e) => { if (e.key === 'Escape') { ov.remove(); resolve(null); } });
+      });
+      if (!pick) return false;
+      const newTp = tps.find((t) => t.id === pick);
+      if (!newTp) return false;
+      applyTemplate(entity, newTp);
+      tab.wiki.labels = fieldLabels(entity.templateId);
+      tab.wiki.markDirty();
+      setStatus('เปลี่ยนเทมเพลตเป็น "' + (newTp.name || newTp.id) + '" แล้ว (ข้อมูลเดิมยังอยู่)');
+      return true;
+    },
     onSaved: (e2) => {
+      // สำรองอัตโนมัติเหมือนฉาก (ข้าม/ตัดของเก่าตามตั้งค่า autoBackup/maxBackups)
+      if (state.settings?.autoBackup !== false) {
+        import('./app.js').then(({ snapshotFile }) => snapshotFile(file).catch(() => {}));
+      }
       // ชื่อเปลี่ยน → แจ้ง auto-task ให้ไล่แก้ทุกไฟล์ (ทำงานเมื่อเปิด auto-sync)
       if (tab.title && e2.name && tab.title !== e2.name) notifyEntityRenamed(file, tab.title, e2.name);
       tab.title = e2.name;
@@ -103,8 +172,14 @@ export async function openEntity(file) {
       for (const t of state.tabs.values())
         if (t.wiki && t.wiki !== tab.wiki) t.wiki.reloadIfExists?.();
     },
-    // WikiEditor.render() ล้าง pane ทุกครั้ง → ต้องเติมแผง backlinks กลับหลัง render
-    onRendered: () => attachBacklinks(),
+    // WikiEditor.render() ล้าง pane ทุกครั้ง → ต้องเติมแผง backlinks + บรรยากาศรับรู้ กลับหลัง render
+    // (attachBacklinks หา .wiki-wrap เองอยู่แล้ว — ส่วน sensory ใช้ wrap ที่ render ส่งมา)
+    onRendered: (wrap) => {
+      attachBacklinks();
+      const w = wrap || pane.querySelector('.wiki-wrap');
+      const ent = (tab.wiki && tab.wiki.e) || entity;
+      renderSensoryProfile(w, ent, () => tab.wiki && tab.wiki.markDirty());
+    },
   });
   tab.wiki.onDirty(() => markDirty(tab));
   // ---- Backlinks (ข้อ 86): ฉากที่กล่าวถึงเอนทิตี้นี้ ----
@@ -115,20 +190,39 @@ export async function openEntity(file) {
     if (!blSec) {
       blSec = el('div', 'wiki-backlinks');
       blSec.style.cssText = 'margin-top:24px;padding-top:16px;border-top:1px solid var(--border)';
-      const blHead = el('div'); blHead.style.cssText = 'font-weight:600;color:var(--dim);margin-bottom:8px'; blHead.textContent = '🔗 ฉากที่กล่าวถึง';
+      const blHead = el('div'); blHead.style.cssText = 'font-weight:600;color:var(--dim);margin-bottom:8px';
+      blHead.innerHTML = iconHtml('link', 14) + ' ฉากที่กล่าวถึง';
       blSec.append(blHead);
       const blBody = el('div', 'wiki-bl-body');
       blSec.append(blBody);
       wrap.append(blSec);
     }
     const blBody = blSec.querySelector('.wiki-bl-body');
-    renderBacklinksTab(blBody, file, async (sceneId) => {
-      const { openScene } = await import('./app.js');
-      const hit = await findScenePath(state.root, sceneId);
-      if (hit && await kapi.exists(hit.path)) openScene(hit.path, hit.title);
-      else setStatus('ไม่พบไฟล์ฉาก');
-    });
+    renderBacklinksTab(blBody, file, openSceneById);
+    attachChoiceHistory(wrap);
   }); }
+
+  // ไปยังฉากจาก sceneId (ใช้ทั้ง backlinks และประวัติการตัดสินใจ)
+  async function openSceneById(sceneId) {
+    const { openScene } = await import('./app.js');
+    const hit = await findScenePath(state.root, sceneId);
+    if (hit && await kapi.exists(hit.path)) openScene(hit.path, hit.title);
+    else setStatus('ไม่พบไฟล์ฉาก');
+  }
+
+  // ---- ประวัติการตัดสินใจที่เกี่ยวกับตัวละครนี้ (ข้อ 83) ----
+  function attachChoiceHistory(wrap) {
+    const name = (tab.wiki && tab.wiki.e && tab.wiki.e.name) || tab.title || '';
+    if (!name) return;
+    if (!choicesByCharacter(name).length) return;      // ไม่มีข้อมูล = ไม่ต้องเพิ่มหัวข้อว่าง
+    let sec = wrap.querySelector('.wiki-choices');
+    if (!sec) { sec = el('div', 'wiki-choices'); wrap.append(sec); }
+    renderChoicePanel(sec, {
+      limit: 8, character: name,
+      title: '🎮 การตัดสินใจที่เกี่ยวกับ ' + name,
+      onOpenScene: openSceneById,
+    });
+  }
   attachBacklinks();
   tabBtn.onclick = (e) => { if (e.target !== x) activate(file); };
   x.onclick = () => closeTab(file);

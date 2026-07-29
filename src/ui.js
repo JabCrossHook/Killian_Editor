@@ -52,9 +52,10 @@ export function popupMenu(x, y, items) {
   for (const it of items) {
     if (it === '-') { m.appendChild(Object.assign(document.createElement('div'), { className: 'k-menu-sep' })); continue; }
     const d = document.createElement('div');
-    d.className = 'k-menu-item' + (it.danger ? ' k-danger' : '');
-    d.textContent = it.label;
-    d.onclick = () => { closeMenu(); it.click(); };
+    // disabled = แถวหัวข้อ/คำอธิบาย (ไม่มี click) — ถ้าไม่กัน onclick จะเรียก it.click() ที่ไม่มีจริงแล้ว throw
+    d.className = 'k-menu-item' + (it.danger ? ' k-danger' : '') + (it.disabled ? ' k-menu-label' : '');
+    d.innerHTML = it.label;
+    if (!it.disabled) d.onclick = () => { closeMenu(); it.click(); };
     m.appendChild(d);
   }
   document.body.appendChild(m);

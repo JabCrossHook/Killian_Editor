@@ -188,8 +188,13 @@ function docToMd(doc) {
 }
 
 // ---------- frontmatter (โครงเดียวกับ v1: --- k: v --- ) ----------
+// บล็อกคอมเมนต์ท้ายไฟล์ (comment-core.js) — ต้องตัดออกทุกทางเข้า ไม่งั้นโผล่ในตัวแก้ไข/ส่งออก/นับคำ
+// (regex ตัวเดียวกับ BLOCK_RE ใน comments/comment-core.js — md.js เป็น CommonJS จึงไม่ import ข้ามมา)
+const K2_COMMENTS_RE = /\n*<!--\s*k2-comments\s*([\s\S]*?)-->\s*$/;
+
 function parseMdFile(text) {
-  let meta = {}, body = text;
+  let meta = {}, body = String(text || '').replace(K2_COMMENTS_RE, '');
+  text = body;
   if (text.startsWith('---')) {
     const end = text.indexOf('\n---', 3);
     if (end !== -1) {

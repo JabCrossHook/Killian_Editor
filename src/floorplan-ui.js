@@ -1,13 +1,24 @@
-// floorplan-ui.js — ผังพื้นที่: ดูแผนที่+หมุดจาก maps.json แล้วผูกกับ "สิ่งที่เห็น/ได้ยิน/พบ" ของฉากที่เปิดอยู่
-// (เดิมอ่าน state.active.meta.location / state.active._scene ซึ่งไม่มีจริง → แสดง "ไม่ทราบ" ตลอด)
+// floorplan-ui.js — ผังพื้นที่ (ข้อ 82): แผนที่ + เส้นเวลา + ตำแหน่งปัจจุบัน
+// ผูก "ฉาก ↔ หมุดบนแผนที่" (sc.mapId / sc.pinId ใน scenes.json) → รู้ว่าฉากนี้เกิดที่ไหน
+// แล้วโชว์ 3 อย่างพร้อมกัน:
+//   1) แผนที่ + หมุดตำแหน่งปัจจุบัน (เต้นให้เห็นชัด) + breadcrumb ลำดับชั้น world→city→room
+//   2) เส้นเวลาของฉากที่เกิดในสถานที่นี้ (เรียงตาม storyDate ผ่าน timeline.js)
+//   3) สิ่งที่เห็น/ได้ยิน/พบ ของฉากที่เปิดอยู่ (เพิ่ม/ลบได้)
 import { $, el, state, setStatus, log } from './core.js';
-import { sortMaps, findMap, PIN_KIND } from './maps.js';
+import { sortMaps, findMap, breadcrumb, clamp, PIN_KIND } from './maps.js';
+import { extractNum } from './timeline.js';
 
 const FIELDS = [
-  ['clues', '👁 สิ่งที่เห็น'],
-  ['sounds', '🔊 สิ่งที่ได้ยิน'],
-  ['discoveries', '📦 สิ่งที่พบ'],
+  ['clues', '👁 สิ่งที่เห็น', 'เช่น รอยเลือดบนพื้น'],
+  ['sounds', '🔊 สิ่งที่ได้ยิน', 'เช่น เสียงฝีเท้าชั้นบน'],
+  ['discoveries', '📦 สิ่งที่พบ', 'เช่น กุญแจสนิม'],
 ];
+
+// สถานะของหน้านี้ (จำระหว่าง re-render)
+function fstate() {
+  if (!state._floor) state._floor = { mapId: null, picking: false };
+  return state._floor;
+}
 
 export async function openFloorPlan() {
   const key = '::floorplan::';
@@ -28,9 +39,54 @@ export async function openFloorPlan() {
   await renderFloorPlan(pane);
 }
 
+/** วาดใหม่ถ้าแท็บผังพื้นที่เปิดอยู่ (เรียกหลังเปลี่ยนฉากที่กำลังแก้) */
+export function refreshOpenFloorPlan() {
+  const t = state.tabs.get('::floorplan::');
+  if (t) renderFloorPlan(t.pane, fstate().mapId);
+}
+
+// รวบรวมฉากทุกร่างพร้อมข้อมูลที่ผังพื้นที่ต้องใช้ (สถานที่ + เวลาในเรื่อง)
+async function collectPlacedScenes() {
+  const out = [];
+  if (!state.root) return out;
+  for (const sec of await kapi.listDirs(state.root).catch(() => [])) {
+    if (['Wiki','Bible','Images','Memos','Recycle','Snapshots','Backups','Plugins','Research'].includes(sec)) continue;
+    const sp = await kapi.join(state.root, sec);
+    if (!(await kapi.exists(await kapi.join(sp, 'section.json')))) continue;
+    const dr = await kapi.join(sp, 'Draft');
+    if (!(await kapi.exists(dr))) continue;
+    for (const dn of await kapi.listDirs(dr).catch(() => [])) {
+      const dp = await kapi.join(dr, dn);
+      const dj = await kapi.join(dp, 'draft.json');
+      if (!(await kapi.exists(dj))) continue;
+      const draft = await kapi.readJson(dj);
+      const scData = await kapi.readJson(await kapi.join(dp, 'scenes.json')).catch(() => ({}));
+      const chMap = scData.chapters || {};
+      for (const ch of (draft.chapters || [])) {
+        for (const sc of (chMap[ch.guid] || [])) {
+          if (sc.type === 'memo') continue;
+          out.push({ ...sc, dPath: dp, chapterName: ch.title,
+                     filePath: await kapi.join(dp, 'Chapters', ch.folderName, sc.fileName) });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// เรียงตามเวลาในเรื่อง: ตัวเลขที่ถอดได้ก่อน แล้วค่อยเรียงตามข้อความ (ฉากไม่มีเวลา = ไปท้ายสุด)
+function byStoryDate(a, b) {
+  const na = extractNum(a.storyDate), nb = extractNum(b.storyDate);
+  if (na != null && nb != null && na !== nb) return na - nb;
+  if (na != null && nb == null) return -1;
+  if (na == null && nb != null) return 1;
+  return String(a.storyDate || '').localeCompare(String(b.storyDate || ''), 'th');
+}
+
 export async function renderFloorPlan(pane, mapId) {
+  const fs = fstate();
   pane.innerHTML = '';
-  const { mapImgURL, loadMaps } = await import('./app.js');
+  const { mapImgURL, loadMaps, sceneCtx, updateSceneRow, openScene } = await import('./app.js');
   const wrap = el('div', 'floor-wrap');
 
   let data = { maps: [] };
@@ -38,73 +94,216 @@ export async function renderFloorPlan(pane, mapId) {
   catch (e) { log('warn', 'floorplan: โหลด maps.json ไม่ได้', e); }
   const maps = sortMaps(data.maps || []);
 
-  // ---- หัว + ตัวเลือกแผนที่ ----
+  // ฉากที่กำลังเขียน: ปกติคือแท็บที่ active — แต่พอผู้ใช้สลับมาดูผังพื้นที่ แท็บที่ active
+  // กลายเป็นผังเอง จึงถอยไปใช้ฉากที่เปิดล่าสุดแทน (ไม่งั้นตำแหน่งปัจจุบันหายทุกครั้งที่เปิดหน้านี้)
+  const ctx = (await sceneCtx()) || (await sceneCtx(state.lastSceneFile));
+  let scenes = [];
+  try { scenes = await collectPlacedScenes(); } catch (e) { log('warn', 'floorplan: อ่านฉากไม่ได้', e); }
+
+  // แผนที่ที่แสดง: ที่ผู้ใช้เลือก → แผนที่ของฉากที่เปิดอยู่ → แผนที่แรก
+  const wanted = mapId || fs.mapId || (ctx && ctx.row.mapId) || null;
+  const cur = (wanted && findMap(maps, wanted)) || maps[0] || null;
+  fs.mapId = cur ? cur.id : null;
+  const redraw = () => renderFloorPlan(pane, fs.mapId);
+
+  // ───────── หัว: ชื่อ + ตัวเลือกแผนที่ + breadcrumb ─────────
   const head = el('div', 'floor-head');
-  head.append(el('div', 'floor-title', '📍 ผังพื้นที่'));
+  const titleRow = el('div', 'floor-title-row');
+  titleRow.append(el('div', 'floor-title', '📍 ผังพื้นที่'));
   const sel = el('select', 'k-dlg-select');
   for (const m of maps) { const o = el('option', null, m.name || '(ไม่มีชื่อ)'); o.value = m.id; sel.append(o); }
-  const cur = (mapId && findMap(maps, mapId)) || maps[0] || null;
   if (cur) sel.value = cur.id;
-  sel.onchange = () => renderFloorPlan(pane, sel.value);
-  if (maps.length) head.append(sel);
+  sel.onchange = () => { fs.mapId = sel.value; fs.picking = false; redraw(); };
+  if (maps.length) titleRow.append(sel);
+
+  // ปุ่มปักตำแหน่งให้ฉากที่เปิดอยู่
+  if (ctx && cur) {
+    const pinB = el('button', 'floor-pinbtn' + (fs.picking ? ' on' : ''),
+                    fs.picking ? '✖ ยกเลิกการปัก' : '📌 ปักตำแหน่งฉากนี้');
+    pinB.title = 'คลิกปุ่มนี้แล้วคลิกบนแผนที่ เพื่อบอกว่าฉาก "' + (ctx.row.title || '') + '" เกิดตรงไหน';
+    pinB.onclick = () => { fs.picking = !fs.picking; redraw(); };
+    titleRow.append(pinB);
+    if (ctx.row.mapId) {
+      const clearB = el('button', 'floor-pinbtn', '🚫 ล้างตำแหน่ง');
+      clearB.title = 'เอาฉากนี้ออกจากแผนที่';
+      clearB.onclick = async () => {
+        await updateSceneRow(ctx.dPath, ctx.row.id, (r) => { delete r.mapId; delete r.pinId; });
+        setStatus('ล้างตำแหน่งของฉากแล้ว');
+        redraw();
+      };
+      titleRow.append(clearB);
+    }
+  }
+  head.append(titleRow);
+
+  if (cur) {
+    const crumbs = breadcrumb(maps, cur.id);
+    if (crumbs.length > 1) {
+      const bc = el('div', 'floor-crumb');
+      crumbs.forEach((c, i) => {
+        if (i) bc.append(el('span', 'floor-crumb-sep', '›'));
+        const item = el('span', 'floor-crumb-item', c.name || '(ไม่มีชื่อ)');
+        if (c.id !== cur.id) item.onclick = () => { fs.mapId = c.id; redraw(); };
+        else item.classList.add('on');
+        bc.append(item);
+      });
+      head.append(bc);
+    }
+  }
   wrap.append(head);
 
-  // ---- พื้นแผนที่ ----
-  const main = el('div', 'floor-main');
+  // ───────── พื้นแผนที่ ─────────
+  const main = el('div', 'floor-main' + (fs.picking ? ' floor-picking' : ''));
   if (cur && cur.image) {
     const holder = el('div', 'floor-canvas');
-    holder.style.cssText = 'position:relative;display:inline-block;max-width:100%';
     const img = el('img', 'floor-img');
     img.src = mapImgURL(cur.image);          // ผ่าน kapi.toFileURL — 'file://'+path พังบน Windows
-    img.style.maxWidth = '100%';
     holder.append(img);
+
+    // หมุดปกติของแผนที่
     for (const p of (cur.pins || [])) {
       const dot = el('span', 'floor-pin', PIN_KIND[p.kind]?.icon || '📌');
-      dot.style.cssText = `position:absolute;left:${p.x}%;top:${p.y}%;transform:translate(-50%,-100%);cursor:pointer`;
-      dot.title = p.label || '';
-      dot.onclick = () => setStatus('หมุด: ' + (p.label || '—'));
+      dot.style.left = p.x + '%'; dot.style.top = p.y + '%';
+      if (p.color) dot.style.color = p.color;
+      // ฉากที่ผูกกับหมุดนี้ — hover เห็นได้เลยว่าเกิดอะไรตรงนี้บ้าง
+      const here = scenes.filter((s) => s.mapId === cur.id && s.pinId === p.id);
+      dot.title = (p.label || '(ไม่มีชื่อ)')
+        + (here.length ? '\n' + here.map((s) => '📄 ' + s.title).join('\n') : '');
+      dot.onclick = (e) => {
+        e.stopPropagation();
+        if (fs.picking && ctx) return bindSceneTo(p.id, p.x, p.y);
+        setStatus('หมุด: ' + (p.label || '—') + (here.length ? ` · ${here.length} ฉาก` : ''));
+      };
+      if (here.length) dot.append(el('span', 'floor-pin-count', String(here.length)));
       holder.append(dot);
     }
+
+    // ตำแหน่งปัจจุบัน = ฉากที่เปิดอยู่ ถ้าผูกกับแผนที่นี้
+    if (ctx && ctx.row.mapId === cur.id) {
+      const pin = (cur.pins || []).find((p) => p.id === ctx.row.pinId);
+      const px = pin ? pin.x : ctx.row.pinX, py = pin ? pin.y : ctx.row.pinY;
+      if (px != null && py != null) {
+        const you = el('div', 'floor-you');
+        you.style.left = px + '%'; you.style.top = py + '%';
+        you.title = 'คุณอยู่ที่นี่: ' + (ctx.row.title || '');
+        you.append(el('span', 'floor-you-dot', '◉'));
+        you.append(el('span', 'floor-you-label', ctx.row.title || 'ฉากปัจจุบัน'));
+        holder.append(you);
+      }
+    }
+
+    // โหมดปัก: คลิกที่ว่างบนแผนที่ = เก็บพิกัดตรงนั้นให้ฉาก (ไม่ต้องมีหมุดก่อน)
+    if (fs.picking && ctx) {
+      holder.classList.add('floor-canvas-pick');
+      holder.onclick = (e) => {
+        const r = holder.getBoundingClientRect();
+        if (!r.width || !r.height) return;
+        bindSceneTo(null, clamp(((e.clientX - r.left) / r.width) * 100),
+                          clamp(((e.clientY - r.top) / r.height) * 100));
+      };
+    }
     main.append(holder);
+
+    async function bindSceneTo(pinId, x, y) {
+      await updateSceneRow(ctx.dPath, ctx.row.id, (r) => {
+        r.mapId = cur.id;
+        if (pinId) { r.pinId = pinId; delete r.pinX; delete r.pinY; }
+        else { delete r.pinId; r.pinX = +x.toFixed(1); r.pinY = +y.toFixed(1); }
+      });
+      fs.picking = false;
+      setStatus('ปักตำแหน่งฉาก "' + (ctx.row.title || '') + '" บนแผนที่ ' + (cur.name || '') + ' แล้ว');
+      redraw();
+    }
   } else {
     main.append(el('div', 'floor-ph', '🗺'));
     main.append(el('div', 'dim', maps.length ? 'แผนที่นี้ยังไม่มีรูป — ใส่รูปได้ที่หน้า แผนที่ (Maps)'
                                              : 'ยังไม่มีแผนที่ — สร้างได้ที่ มุมมอง → แผนที่ (Maps)'));
   }
+  if (fs.picking) main.append(el('div', 'floor-pickhint', '📌 คลิกบนแผนที่ (หรือบนหมุด) เพื่อกำหนดตำแหน่งของฉากนี้'));
 
-  // ---- แผงข้อมูลของฉากที่เปิดอยู่ ----
+  // ───────── แผงข้อมูลของฉากที่เปิดอยู่ ─────────
   const panel = el('div', 'floor-panel');
-  const { sceneCtx } = await import('./app.js');
-  const ctx = await sceneCtx();
 
   panel.append(el('div', 'floor-panel-title', '📄 ฉากที่เปิดอยู่'));
-  panel.append(el('div', 'dim', ctx ? (ctx.row.title || '—') : 'ยังไม่ได้เปิดฉาก'));
-
-  if (cur) {
-    panel.append(el('div', 'floor-panel-title', '🗺 แผนที่'));
-    panel.append(el('div', 'dim', `${cur.name || '—'} · ${(cur.pins || []).length} หมุด`));
+  panel.append(el('div', 'floor-cur', ctx ? (ctx.row.title || '—') : 'ยังไม่ได้เปิดฉาก'));
+  if (ctx) {
+    const where = ctx.row.mapId ? findMap(maps, ctx.row.mapId) : null;
+    const pin = where && (where.pins || []).find((p) => p.id === ctx.row.pinId);
+    panel.append(el('div', 'dim floor-where', where
+      ? '📍 ' + (where.name || '') + (pin ? ' · ' + (pin.label || 'หมุด') : '')
+      : 'ยังไม่ได้ปักตำแหน่ง — กด "📌 ปักตำแหน่งฉากนี้"'));
+    if (ctx.row.storyDate) panel.append(el('div', 'dim', '🕒 ' + ctx.row.storyDate));
   }
 
-  for (const [key2, label] of FIELDS) {
+  if (cur) {
+    const here = scenes.filter((s) => s.mapId === cur.id);
+    panel.append(el('div', 'floor-panel-title', '🗺 แผนที่'));
+    panel.append(el('div', 'dim',
+      `${cur.name || '—'} · ${(cur.pins || []).length} หมุด · ${here.length} ฉาก`));
+  }
+
+  for (const [key2, label, ph] of FIELDS) {
     panel.append(el('div', 'floor-panel-title', label));
     const vals = (ctx && Array.isArray(ctx.row[key2])) ? ctx.row[key2] : [];
-    const line = el('div', 'dim', vals.length ? vals.join(' · ') : '—');
-    panel.append(line);
+    if (!vals.length) panel.append(el('div', 'dim', '—'));
+    vals.forEach((v, i) => {
+      const row = el('div', 'floor-item');
+      row.append(el('span', 'floor-item-text', v));
+      if (ctx) {
+        const del = el('span', 'floor-item-del', '✕');
+        del.title = 'ลบรายการนี้';
+        del.onclick = async () => {
+          await updateSceneRow(ctx.dPath, ctx.row.id, (r) => {
+            r[key2] = (r[key2] || []).filter((_, k) => k !== i);
+            if (!r[key2].length) delete r[key2];
+          });
+          redraw();
+        };
+        row.append(del);
+      }
+      panel.append(row);
+    });
     if (ctx) {
       const add = el('button', 'floor-add', '+ เพิ่ม');
-      add.style.cssText = 'font-size:11px;padding:2px 8px;margin-top:4px';
       add.onclick = async () => {
         const { ask } = await import('./ui.js');
-        const v = await ask(label.replace(/^\S+\s/, '') + ' — เพิ่มรายการ');
+        const v = await ask(label.replace(/^\S+\s/, '') + ' — เพิ่มรายการ', { placeholder: ph });
         if (!v) return;
-        const { updateSceneRow } = await import('./app.js');
         await updateSceneRow(ctx.dPath, ctx.row.id, (r) => { r[key2] = [...(r[key2] || []), v]; });
-        await renderFloorPlan(pane, sel.value || (cur && cur.id));
+        redraw();
       };
       panel.append(add);
     }
   }
 
-  wrap.append(main, panel);
+  // ───────── เส้นเวลา: ฉากที่เกิดในสถานที่นี้ เรียงตามเวลาในเรื่อง ─────────
+  const tl = el('div', 'floor-timeline');
+  tl.append(el('div', 'floor-panel-title', '🕒 เส้นเวลาของสถานที่นี้'));
+  const here = cur ? scenes.filter((s) => s.mapId === cur.id).sort(byStoryDate) : [];
+  if (!here.length) {
+    tl.append(el('div', 'dim', cur
+      ? 'ยังไม่มีฉากผูกกับแผนที่นี้ — เปิดฉากแล้วกด "📌 ปักตำแหน่งฉากนี้"'
+      : 'ยังไม่มีแผนที่'));
+  } else {
+    const strip = el('div', 'floor-tl-strip');
+    for (const s of here) {
+      const item = el('div', 'floor-tl-item' + (ctx && ctx.row.id === s.id ? ' on' : ''));
+      if (s.color) item.style.borderLeftColor = s.color;
+      item.append(el('div', 'floor-tl-when', s.storyDate || '(ไม่ระบุเวลา)'));
+      item.append(el('div', 'floor-tl-title', s.title || '(ไม่มีชื่อ)'));
+      const pin = (cur.pins || []).find((p) => p.id === s.pinId);
+      if (pin) item.append(el('div', 'floor-tl-pin', '📍 ' + (pin.label || 'หมุด')));
+      const seen = [(s.clues || []).length && `👁${s.clues.length}`,
+                    (s.sounds || []).length && `🔊${s.sounds.length}`,
+                    (s.discoveries || []).length && `📦${s.discoveries.length}`].filter(Boolean);
+      if (seen.length) item.append(el('div', 'floor-tl-badges', seen.join(' ')));
+      item.title = [s.title, s.chapterName, s.synopsis].filter(Boolean).join('\n') + '\nคลิกเพื่อเปิดฉาก';
+      item.onclick = () => openScene(s.filePath, s.title);
+      strip.append(item);
+    }
+    tl.append(strip);
+  }
+
+  wrap.append(main, panel, tl);
   pane.append(wrap);
 }

@@ -18,6 +18,35 @@ export function dock(dir, children, sizes, id = nid('d')) {
 }
 function evenSizes(n) { return Array.from({ length: n }, () => +(1 / n).toFixed(4)); }
 
+// ───────── สัดส่วนของ dock: ต้องรักษาที่ผู้ใช้ปรับไว้ (บั๊ก #16) ─────────
+// เดิมทั้ง dockPanel และ removePanel สั่ง evenSizes() ทุกครั้ง → เปิด/ปิดแผงทีหนึ่ง
+// สัดส่วนที่ลากปรับเองก็หายหมด (40/60 → 33/33/33) ตอนนี้คำนวณต่อจากของเดิมแทน
+/** ทำผลรวมให้เป็น 1 โดยคงอัตราส่วนสัมพัทธ์ (ผลรวมเป็น 0/ว่าง → แบ่งเท่ากัน) */
+export function normalizeSizes(sizes) {
+  const s = (sizes || []).map((v) => (isFinite(v) && v > 0 ? v : 0));
+  if (!s.length) return [];
+  const sum = s.reduce((a, b) => a + b, 0);
+  if (sum <= 0) return evenSizes(s.length);
+  return s.map((v) => +(v / sum).toFixed(4));
+}
+/** แทรกลูกใหม่ที่ตำแหน่ง at: ลูกเดิมคงอัตราส่วนกันเอง แล้วหักที่ว่างให้ตัวใหม่ = ส่วนเฉลี่ย 1/(n+1) */
+export function insertSize(sizes, at) {
+  const prev = (sizes || []).map((v) => (isFinite(v) && v > 0 ? v : 0));
+  const n = prev.length;
+  if (!n) return [1];
+  const sum = prev.reduce((a, b) => a + b, 0);
+  const share = 1 / (n + 1);
+  const out = sum > 0 ? prev.map((v) => +((v * (1 - share)) / sum).toFixed(4)) : prev.slice();
+  out.splice(Math.max(0, Math.min(at | 0, n)), 0, +share.toFixed(4));
+  return out;
+}
+/** เอาลูกที่ดัชนี keep เท่านั้นไว้ แล้ว normalize — ลูกที่เหลือคงอัตราส่วนกันเองเหมือนเดิม */
+export function keepSizes(sizes, keep) {
+  const prev = sizes || [];
+  const fallback = prev.length ? 1 / prev.length : 1;   // ดัชนีที่ไม่มีค่าเดิม → ให้ส่วนเฉลี่ย
+  return normalizeSizes(keep.map((i) => (isFinite(prev[i]) ? prev[i] : fallback)));
+}
+
 // ───────── snap zone: จากตำแหน่งเมาส์เทียบกรอบ → โซนที่จะผนึก ─────────
 // คืน 'left'|'right'|'top'|'bottom'|'center'|null
 // edge = สัดส่วนความหนาขอบ (0..0.5) ที่ถือว่า "ชนขอบ"
@@ -76,8 +105,11 @@ export function dockPanel(root, targetId, side, newPanel) {
   // ถ้า parent เป็น dock ทิศเดียวกัน → แทรกเป็นพี่น้อง (ไม่ซ้อน dock เกินจำเป็น)
   if (parent.type === 'dock' && parent.dir === (wantRow ? 'row' : 'col')) {
     const at = before ? loc.index : loc.index + 1;
+    // บั๊ก #16a: เดิม evenSizes() ที่นี่ล้างสัดส่วนที่ผู้ใช้ลากปรับไว้ทุกครั้งที่เปิดแผงเพิ่ม
+    const cur = parent.sizes && parent.sizes.length === parent.children.length
+      ? parent.sizes : evenSizes(parent.children.length);
     parent.children.splice(at, 0, panelize(newPanel));
-    parent.sizes = evenSizes(parent.children.length);
+    parent.sizes = insertSize(cur, at);
   } else {
     parent.children[loc.index] = makeDock(parent.children[loc.index]);
   }
@@ -189,15 +221,26 @@ export function removePanel(root, id) {
   root = clone(root);
   const prune = (node) => {
     if (!node.children) return node;
-    node.children = node.children
-      .filter((c) => !(c.type === 'panel' && c.id === id))
-      .map(prune)
-      // ยุบ container ที่เหลือลูกเดียว/ว่าง
-      .filter((c) => !(c.children && c.children.length === 0));
+    // บั๊ก #16b: เดิมสั่ง evenSizes() ให้ "ทุก dock" ในต้นไม้ → ปิดแผงในชั้นใน แล้วสัดส่วนของ
+    // dock ชั้นนอกที่ไม่เกี่ยวกันก็โดนล้างไปด้วย ตอนนี้แก้เฉพาะ dock ที่จำนวนลูกเปลี่ยนจริง
+    const before = node.children;
+    const kids = [], keep = [];
+    for (let i = 0; i < before.length; i++) {
+      const c = before[i];
+      if (c.type === 'panel' && c.id === id) continue;
+      const pc = prune(c);
+      if (pc.children && pc.children.length === 0) continue;   // ยุบ container ที่ว่าง
+      kids.push(pc); keep.push(i);
+    }
+    node.children = kids;
     if (node.type === 'tabs') {
       if (node.active >= node.children.length) node.active = Math.max(0, node.children.length - 1);
     }
-    if (node.type === 'dock') node.sizes = evenSizes(node.children.length);
+    if (node.type === 'dock') {
+      node.sizes = kids.length === before.length && node.sizes && node.sizes.length === kids.length
+        ? node.sizes                       // ลูกครบเท่าเดิม → สัดส่วนเดิมยังใช้ได้
+        : keepSizes(node.sizes, keep);     // มีลูกหาย → แบ่งส่วนของตัวที่หายให้ตัวที่เหลือตามอัตราเดิม
+    }
     return node;
   };
   root = prune(root);
@@ -216,6 +259,8 @@ function rootFirstPanelId(root) {
 }
 
 // ───────── ปรับ ratio ของ dock (ลาก handle) ─────────
+// ที่จับอยู่ระหว่างลูก index กับ index+1 → แบ่งเฉพาะผลรวมของสองตัวนี้ (pair) ใหม่ตาม ratio
+// ลูกตัวอื่นในแถวเดียวกันไม่ถูกแตะ และผลรวมทั้ง dock ยังเท่าเดิม (ถูกแล้ว — อย่าเปลี่ยนเป็น normalize ทั้งแถว)
 export function resizeDock(root, dockId, index, ratio) {
   root = clone(root);
   let d = null; walk(root, (n) => { if (n.id === dockId && n.type === 'dock') d = n; });

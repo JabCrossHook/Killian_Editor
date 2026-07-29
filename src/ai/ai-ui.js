@@ -45,14 +45,15 @@ export async function openAIAssistant() {
   const fullText = t?.editor ? t.editor.getText() : (t?.sp ? t.sp.getText() : '');
 
   showDialog('✨ AI ผู้ช่วยเขียน', (box, ov) => {
+    const TASK_TH = { expand: 'ขยายความ', summarize: 'สรุปความ', rewrite: 'เขียนใหม่',
+                      changeTone: 'เปลี่ยนโทน', continue: 'เขียนต่อ' };
+    const TONE_TH = { formal: 'ทางการ', casual: 'กันเอง', humorous: 'ตลก', dark: 'มืดหม่น',
+                      romantic: 'โรแมนติก', tense: 'ระทึก', concise: 'กระชับ', lyrical: 'บรรยายละเอียด' };
     const taskSel = el('select');
-    ['expand', 'summarize', 'rewrite', 'changeTone', 'continue'].forEach((v) => {
-      taskSel.append(el('option', '', v, { value: v }));
-    });
+    Object.keys(TASK_TH).forEach((v) => taskSel.append(el('option', '', TASK_TH[v], { value: v })));
     const toneSel = el('select');
-    ['', 'formal', 'casual', 'humorous', 'dark', 'romantic', 'tense'].forEach((v) => {
-      toneSel.append(el('option', '', v || 'ไม่เปลี่ยนโทน', { value: v }));
-    });
+    toneSel.append(el('option', '', 'ไม่เปลี่ยนโทน', { value: '' }));
+    Object.keys(TONE_TH).forEach((v) => toneSel.append(el('option', '', TONE_TH[v], { value: v })));
     const instrInput = el('textarea'); instrInput.placeholder = 'คำแนะนำเพิ่มเติม (ถ้ามี)';
     instrInput.style.cssText = 'width:100%;min-height:60px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:8px;font:inherit;resize:vertical';
 
@@ -84,18 +85,18 @@ export async function openAIAssistant() {
       const instr = instrInput.value.trim();
       const text = textInput.value.trim() || fullText;
 
-      let prompt = text;
-      let system = 'คุณเป็นนักเขียนมืออาชีพ ตอบเป็นภาษาไทยเท่านั้น';
-      if (task === 'expand') { prompt = 'ขยายความข้อความต่อไปนี้ให้ละเอียดขึ้น: \n\n' + text; if (instr) prompt += '\n\nคำแนะนำ: ' + instr; }
-      else if (task === 'summarize') { prompt = 'สรุปความข้อความต่อไปนี้ให้สั้น กระชับ: \n\n' + text; }
-      else if (task === 'rewrite') { prompt = 'เขียนข้อความต่อไปนี้ใหม่ให้ดีขึ้น' + (instr ? ' โดย' + instr : '') + ': \n\n' + text; }
-      else if (task === 'changeTone') { prompt = 'เปลี่ยนโทนของข้อความต่อไปนี้เป็น' + (tone || '') + ': \n\n' + text; if (instr) prompt += '\n\nคำแนะนำ: ' + instr; }
-      else if (task === 'continue') { prompt = 'เขียนต่อจากข้อความนี้: \n\n' + text.slice(-2000); if (instr) prompt += '\n\nคำแนะนำ: ' + instr; }
-
-      if (tone) system += ' ใช้โทน: ' + tone;
-      const result = await callAI(prompt, system);
-      if (result) resultDiv.textContent = result;
-      else resultDiv.textContent = '❌ เกิดข้อผิดพลาด กรุณาลองใหม่';
+      // ใช้เอนจิน ai-assistant.js (prompt ต่อ task + RAG จากโปรเจกต์ + สตรีมผล)
+      const { aiAssistant } = await import('./ai-assistant.js');
+      const { getAIClient, getRag } = await import('./ai-bridge.js');
+      let rag = null;
+      try { rag = await getRag(); } catch {}
+      let acc = '';
+      const res = await aiAssistant(instr, { text }, {
+        client: getAIClient(), rag, task, tone: tone || undefined, instruction: instr, text,
+        stream: true, onChunk: (c) => { acc += c; resultDiv.textContent = acc; },
+      });
+      if (res.ok) resultDiv.textContent = res.text || acc || '(ไม่มีคำตอบ)';
+      else resultDiv.textContent = '❌ ' + (res.error || 'เกิดข้อผิดพลาด กรุณาลองใหม่');
       runBtn.disabled = false;
     };
 

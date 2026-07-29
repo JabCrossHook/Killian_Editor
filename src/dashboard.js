@@ -3,8 +3,10 @@
 import { $, state, el, SCENE_STATUSES } from './core.js';
 import { parseMdFile, countWords } from './md.js';
 import { getWordHistory, calcStreak } from './word-history.js';
+import { renderChoicePanel, showPlayerHistory } from './player-choices.js';
+import { findScenePath } from './project-scan.js';
 // ฟังก์ชันที่ยังอยู่ใน app.js (เรียกตอน runtime เท่านั้น — circular import ปลอดภัยกับ esbuild bundle)
-import { activate, closeTab, loadAllEntities, catIcon, catLabel, openScene } from './app.js';
+import { activate, closeTab, loadAllEntities, catIconHtml, catLabel, openScene } from './app.js';
 import { guid } from './app.js';
 
 export async function openDashboard() {
@@ -128,7 +130,9 @@ export async function renderDashboard(pane) {
     const max = Math.max(1, ...rows.map((r) => r.n));
     rows.forEach((r, i) => {
       const line = el('div', 'dash-stat-row');
-      line.append(el('div', 'dash-stat-name', r.label));
+      const nameEl = el('div', 'dash-stat-name');
+      nameEl.innerHTML = r.label;
+      line.append(nameEl);
       const track = el('div', 'dash-stat-track');
       const fill = el('div', 'dash-stat-fill');
       fill.style.width = Math.round((r.n / max) * 100) + '%';
@@ -161,7 +165,7 @@ export async function renderDashboard(pane) {
       right2.append(el('div', 'dash-apanel-title', '🗂 Wiki ตามหมวด'));
       right2.append(statBars(
         Object.entries(byCat).sort((a, b) => b[1] - a[1])
-          .map(([c, n]) => ({ label: catIcon(c) + ' ' + catLabel(c), n })), allEnts.length, PAL));
+          .map(([c, n]) => ({ label: catIconHtml(c) + ' ' + catLabel(c), n })), allEnts.length, PAL));
       grid.append(right2);
     }
 
@@ -177,6 +181,22 @@ export async function renderDashboard(pane) {
       grid.append(cpanel);
     }
   }
+  // ---- ประวัติการตัดสินใจ (ข้อ 83) — โผล่ที่แดชบอร์ด ไม่ใช่ซ่อนอยู่ในเมนู ----
+  {
+    const box = el('div', 'dash-choices');
+    renderChoicePanel(box, {
+      limit: 6,
+      onOpenScene: async (sceneId) => {
+        const hit = await findScenePath(state.root, sceneId);
+        if (hit && (await kapi.exists(hit.path))) openScene(hit.path, hit.title);
+      },
+    });
+    const openAll = el('button', 'k-tpl-add', 'ดูทั้งหมด / ส่งออก…');
+    openAll.onclick = () => showPlayerHistory();
+    box.append(openAll);
+    wrap.append(box);
+  }
+
   const favs = sceneRows.filter((r) => r.flag);
   if (favs.length) {
     wrap.append(el('div', 'wiki-sub', `⭐ ฉากปักหมุด (${favs.length})`));

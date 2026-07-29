@@ -26,6 +26,70 @@ export function choicesByScene(sceneId) {
   return getPlayerHistory().filter((c) => c.sceneId === sceneId);
 }
 
+/** การตัดสินใจที่เกี่ยวกับตัวละครคนหนึ่ง — เป็นผู้เลือกเอง หรือชื่อโผล่ในฉาก/ข้อความทางเลือก */
+export function choicesByCharacter(name) {
+  if (!name) return [];
+  const n = String(name).trim();
+  if (!n) return [];
+  return getPlayerHistory().filter((c) =>
+    (c.player && c.player === n)
+    || (c.choice && c.choice.includes(n))
+    || (c.sceneTitle && c.sceneTitle.includes(n)));
+}
+
+/** สถิติรวมสำหรับแดชบอร์ด */
+export function choiceStats() {
+  const h = getPlayerHistory();
+  const scenes = new Set(h.map((c) => c.sceneId).filter(Boolean));
+  const byChoice = {};
+  for (const c of h) if (c.choice) byChoice[c.choice] = (byChoice[c.choice] || 0) + 1;
+  const top = Object.entries(byChoice).sort((a, b) => b[1] - a[1])[0] || null;
+  return { total: h.length, scenes: scenes.size, top: top ? { choice: top[0], n: top[1] } : null,
+           last: h.length ? h[h.length - 1] : null };
+}
+
+/**
+ * แผงประวัติการตัดสินใจแบบฝังได้ — ใช้ซ้ำในแดชบอร์ด (ข้อ 83) และหน้า Wiki ตัวละคร
+ * @param {HTMLElement} host  กล่องที่จะวาดลงไป (ล้างของเดิมให้)
+ * @param {object} opts { limit, character, title, empty, onOpenScene }
+ */
+export function renderChoicePanel(host, opts = {}) {
+  const { limit = 8, character = '', title = '🎮 ประวัติการตัดสินใจ', empty = '', onOpenScene = null } = opts;
+  host.innerHTML = '';
+  const rows = character ? choicesByCharacter(character) : getPlayerHistory();
+  const st = choiceStats();
+
+  host.append(el('div', 'pc-panel-title', `${title} (${rows.length})`));
+  if (!rows.length) {
+    host.append(el('div', 'dim', empty
+      || 'ยังไม่มีการตัดสินใจ — เดินตามทางเลือกในผังแตกสาย (🌿) แล้วจะบันทึกที่นี่'));
+    return host;
+  }
+
+  if (!character && st.top) {
+    host.append(el('div', 'pc-sum',
+      `${st.total} ครั้ง · ${st.scenes} ฉาก · เลือกบ่อยสุด: “${st.top.choice}” (${st.top.n}×)`));
+  }
+
+  const list = el('div', 'pc-list');
+  for (const c of [...rows].reverse().slice(0, limit)) {
+    const row = el('div', 'pc-row');
+    // ข้อความจากผู้ใช้ → textContent เท่านั้น (innerHTML = ช่องโหว่สคริปต์ฝัง)
+    row.append(el('div', 'pc-choice', '🎯 ' + (c.choice || '')));
+    let when = '';
+    try { when = new Date(c.timestamp).toLocaleString('th-TH'); } catch { when = c.timestamp || ''; }
+    row.append(el('div', 'pc-meta', `📄 ${c.sceneTitle || '—'} · ${when}`));
+    if (onOpenScene && c.sceneId) {
+      row.classList.add('pc-clickable');
+      row.onclick = () => onOpenScene(c.sceneId, c.sceneTitle);
+    }
+    list.append(row);
+  }
+  host.append(list);
+  if (rows.length > limit) host.append(el('div', 'dim pc-more', `+ อีก ${rows.length - limit} รายการ`));
+  return host;
+}
+
 // Dialog แสดงประวัติ
 export async function showPlayerHistory() {
   const history = getPlayerHistory();

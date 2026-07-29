@@ -8,6 +8,12 @@ import { dumpMdFile, parseMdFile } from './md.js';
 
 export async function renameScene(dPath, ch, sc) {
   const title = await ask('ชื่อฉากใหม่', { value: sc.title }); if (!title) return;
+  return setSceneTitle(dPath, ch, sc, title);
+}
+
+// ตั้งชื่อฉากโดยไม่ต้องถามผู้ใช้ — ใช้โดย "แนะนำชื่อด้วย AI" (ข้อ 78) และ renameScene
+export async function setSceneTitle(dPath, ch, sc, title) {
+  if (!title || title === sc.title) return;
   const sf = await kapi.join(dPath, 'scenes.json');
   const d = await kapi.readJson(sf);
   for (const s of d.chapters[ch.guid] || []) if (s.id === sc.id) s.title = title;
@@ -23,6 +29,11 @@ export async function renameScene(dPath, ch, sc) {
 
 export async function renameChapter(dPath, ch) {
   const title = await ask('ชื่อบทใหม่', { value: ch.title }); if (!title) return;
+  return setChapterTitle(dPath, ch, title);
+}
+
+export async function setChapterTitle(dPath, ch, title) {
+  if (!title || title === ch.title) return;
   const df = await kapi.join(dPath, 'draft.json');
   const d = await kapi.readJson(df);
   for (const c of d.chapters || []) if (c.guid === ch.guid) c.title = title;

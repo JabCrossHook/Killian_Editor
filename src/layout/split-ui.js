@@ -1,128 +1,296 @@
-// split-ui.js — Split View (ข้อ 40): แบ่งพื้นที่แก้ไขเป็น 2 ช่อง ซ้าย-ขวา หรือ บน-ล่าง
-// รอบก่อนมีแต่การอัปเดต layout tree ในหน่วยความจำ — ไม่มีอะไรขึ้นจอเลย
-// ตอนนี้ต่อกับ DOM จริง (#panes) + เส้นคั่นที่ลากได้ + จำสัดส่วน/ทิศทางไว้
+// split-ui.js — Split View (ข้อ 40): แบ่งพื้นที่แก้ไขเป็นหลายช่อง ซ้อนได้ (recursive)
+//
+// บั๊ก #1: ก่อนหน้านี้ไฟล์นี้มี "สองระบบ" อยู่ด้วยกัน
+//   A) โหมดเทียบ 2 ช่องแบบ CSS inset (#panes.split + state.compareFile) — ใช้งานอยู่จริง แต่ได้แค่ 2 ช่อง
+//   B) ต้นไม้ split ซ้อนได้ (SplitManager + renderSplitTree) — โค้ดครบแต่ไม่มีใครเรียก = dead code
+// ตอนนี้เหลือระบบเดียว: ทุกเส้นทาง (ปุ่ม/คีย์ลัด/เมนู/เทียบเอกสาร/เทียบเวอร์ชัน/ผังแตกสาย)
+// วิ่งผ่าน SplitManager หมด แล้ววาดลง #panes ผ่าน renderSplit()
+//
+// โครง DOM:
+//   #panes                      ← .pane ของทุกแท็บอยู่ที่นี่ตามปกติ (ไม่ split = เหมือนเดิมทุกอย่าง)
+//     └ #split-root             ← มีเฉพาะตอน split · absolute inset:0
+//         └ .k-split-container[data-dir=row|col]
+//              ├ .k-split-pane  ← "ยืม" .pane ของแท็บนั้นมาใส่ (ย้าย element ไม่สร้างใหม่ → ProseMirror ไม่ถูกทำลาย)
+//              ├ .k-split-handle
+//              └ .k-split-pane
+//
+// pane ว่าง (leaf.tabId = null) รองรับด้วย — เปิดแยกจอตอนมีแท็บเดียวจึงทำได้ แล้วค่อยลากแท็บมาวาง
 import { $, el, setStatus, state } from '../core.js';
 import * as SL from '../layout/split-layout.js';
 
-let store = null;
-const LS_KEY = 'k2-split-view';
+const ROOT_ID = 'split-root';
 
-export function getSplitStore() {
-  if (!store) { store = new SL.SplitStore(); store.load(); }
-  return store;
+// hooks จาก app.js (กัน circular import — app.js เรียก setSplitHooks() ตอน bootstrap)
+let hooks = { activate: null, onRender: null };
+export function setSplitHooks(h) { hooks = { ...hooks, ...(h || {}) }; }
+
+let mgr = null;
+let _syncing = false;                    // กัน activate() ↔ renderSplit() เรียกวนกัน
+
+export function getSplitManager() {
+  if (!mgr) {
+    mgr = new SL.SplitManager();
+    mgr.onChange(() => renderSplit());
+  }
+  return mgr;
 }
 
-// ---- สถานะที่จำไว้ (ทิศทาง + สัดส่วน) ----
-function loadPrefs() {
-  try { return JSON.parse(localStorage.getItem(LS_KEY) || '{}') || {}; } catch { return {}; }
+// ───────── สถานะ ─────────
+export function isSplit() { return getSplitManager().paneCount() >= 2; }
+export function paneCount() { return getSplitManager().paneCount(); }
+/** แนวของการแบ่งชั้นบนสุด — 'right' = ซ้าย-ขวา · 'down' = บน-ล่าง */
+export function splitDir() {
+  const r = getSplitManager().root;
+  return r && r.type === 'split' && r.dir === 'col' ? 'down' : 'right';
 }
-function savePrefs(p) { try { localStorage.setItem(LS_KEY, JSON.stringify(p)); } catch {} }
-
-export function splitDir() { return loadPrefs().dir === 'down' ? 'down' : 'right'; }
-export function splitPos() {
-  const v = parseFloat(loadPrefs().pos);
-  return isFinite(v) && v > 10 && v < 90 ? v : 50;
+/** tabId ที่กำลังแสดงอยู่ในช่องต่าง ๆ (ตัด pane ว่างออก) */
+export function splitTabIds() {
+  const r = getSplitManager().root;
+  return r ? SL.tabIds(r).filter(Boolean) : [];
 }
-export function isSplit() { return !!(state.compareFile && $('#panes')?.classList.contains('split')); }
+/** tabId ของช่องที่โฟกัสอยู่ */
+export function activeSplitTab() { return getSplitManager().activeTabId(); }
 
-// ---- เลือกแท็บที่จะไปอยู่อีกฝั่ง ----
-function pickOther(tabId) {
-  const files = [...state.tabs.keys()];
-  const cur = tabId || state.active?.file || files[0];
-  return files.find((f) => f !== cur) || null;
+// ───────── ตัวช่วย DOM ─────────
+function panesEl() { return $('#panes'); }
+function rootEl() { return document.getElementById(ROOT_ID); }
+// คืน .pane ที่ถูกยืมไปไว้ในต้นไม้กลับมาเป็นลูกตรงของ #panes ก่อนล้าง/รื้อ
+// (ต้องย้าย ไม่ใช่ innerHTML='' ทับ — ไม่งั้น ProseMirror ของทุกแท็บถูกถอดออกจาก DOM ทิ้ง)
+function reclaimPanes(panes) {
+  if (!panes) return;
+  panes.querySelectorAll('.k-split-pane > .pane').forEach((p) => panes.appendChild(p));
+}
+function tabOf(id) {
+  const t = id && state.tabs.get(id);
+  return t && !t.floatWin && t.pane ? t : null;     // แท็บที่แยกเป็นหน้าต่างลอยไม่อยู่ใน #panes แล้ว
 }
 
-// ---- เส้นคั่นที่ลากได้ ----
-function ensureDivider() {
-  const panes = $('#panes');
-  if (!panes) return null;
-  let div = panes.querySelector('.k-split-div');
-  if (div) return div;
-  div = el('div', 'k-split-div');
-  div.title = 'ลากเพื่อปรับสัดส่วน (ดับเบิลคลิก = 50%)';
-  div.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    div.classList.add('k-dragging');
-    const horiz = panes.classList.contains('split-h');
+// state.compareFile ยังถูกใช้โดยโค้ด/เทสเดิม — นิยามใหม่ให้ตรงความหมาย:
+// "เอกสารอีกฉบับที่แสดงคู่กันอยู่" = tabId ของช่องที่ไม่ใช่แท็บที่ active (เฉพาะตอนมี 2 ช่อง)
+function syncCompareFile() {
+  const ids = splitTabIds();
+  state.compareFile = ids.length === 2 ? (ids.find((f) => f !== state.active?.file) ?? null) : null;
+}
+
+// ───────── วาด ─────────
+export function renderSplit() {
+  const panes = panesEl();
+  if (!panes) return;
+  const sm = getSplitManager();
+  reclaimPanes(panes);
+  document.querySelectorAll('.pane').forEach((p) => p.classList.remove('compare-on', 'k-in-split'));
+
+  if (!isSplit()) {                                  // เหลือช่องเดียว/ไม่มีเลย → รื้อต้นไม้ กลับโหมดปกติ
+    rootEl()?.remove();
+    panes.classList.remove('split', 'split-h');
+    document.querySelectorAll('.cmp-close').forEach((b) => b.remove());
+    syncCompareFile();
+    hooks.onRender?.();
+    return;
+  }
+
+  let host = rootEl();
+  if (!host) { host = el('div', 'k-split-root'); host.id = ROOT_ID; panes.appendChild(host); }
+  host.replaceChildren();
+  const tree = renderSplitNode(sm.root, sm);
+  if (tree) host.appendChild(tree);
+  panes.classList.add('split');
+  panes.classList.toggle('split-h', splitDir() === 'down');
+  syncCompareFile();
+  markCompare();
+  hooks.onRender?.();
+}
+
+// เดิมชื่อ syncSplitPanes() — เรียกหลัง activate()/ปิดแท็บ · ตัดช่องที่อ้างแท็บซึ่งถูกปิดไปแล้วด้วย
+export function syncSplitPanes() {
+  const sm = getSplitManager();
+  if (!sm.root) return;
+  // แท็บที่แยกเป็นหน้าต่างลอยยังนับว่า "มีอยู่" — ช่องของมันจะแสดงคำแนะนำช่องว่างไว้ก่อน
+  // แล้วกลับมาเองเมื่อผนึกแท็บคืน (ต่างจากแท็บที่ถูกปิดจริงซึ่งต้องยุบช่องทิ้ง)
+  const valid = [...state.tabs.keys()];
+  const stale = SL.tabIds(sm.root).some((id) => id && !valid.includes(id));
+  if (stale) sm.syncWithPanels([...valid, null]);    // null = อนุญาต pane ว่าง
+  else renderSplit();
+}
+
+function markCompare() {
+  for (const id of splitTabIds()) {
+    const t = tabOf(id);
+    if (!t) continue;
+    t.pane.classList.add('k-in-split');
+    t.pane.classList.toggle('compare-on', id !== state.active?.file);
+  }
+}
+
+export function renderSplitNode(node, sm) {
+  if (!node) return null;
+  if (node.type === 'leaf') return renderLeaf(node, sm);
+  if (node.type !== 'split') return null;
+
+  const box = el('div', 'k-split-container');
+  box.dataset.splitId = node.id;
+  box.dataset.dir = node.dir === 'col' ? 'col' : 'row';
+  const kids = node.children || [];
+  for (let i = 0; i < kids.length; i++) {
+    const childEl = renderSplitNode(kids[i], sm);
+    if (!childEl) continue;
+    childEl.style.flexGrow = String(node.sizes?.[i] ?? 1);
+    childEl.style.flexShrink = '1';
+    childEl.style.flexBasis = '0%';
+    box.appendChild(childEl);
+    if (i < kids.length - 1) box.appendChild(splitHandle(node, i, sm));
+  }
+  return box;
+}
+
+function renderLeaf(node, sm) {
+  const pane = el('div', 'k-split-pane' + (sm.focusId === node.id ? ' focus' : ''));
+  pane.dataset.leafId = node.id;
+  pane.dataset.tabId = node.tabId || '';
+  pane.addEventListener('mousedown', () => focusPane(node.id), true);
+
+  const t = tabOf(node.tabId);
+  if (t) pane.appendChild(t.pane);
+  else {
+    const hint = el('div', 'k-split-empty');
+    hint.append(el('div', 'k-split-empty-icon', '⌗'));
+    hint.append(el('div', '', 'ช่องว่าง — ลากหัวแท็บมาวางที่นี่'));
+    hint.append(el('div', 'dim', 'หรือคลิกช่องนี้แล้วเลือกแท็บด้านบน'));
+    pane.appendChild(hint);
+  }
+  // ปุ่มปิดช่องนี้ (ทุกช่องมีของตัวเอง — ปิดช่องไหนก็ได้ ไม่ใช่แค่ฝั่งขวา)
+  const cb = el('div', 'cmp-close', '✕ ปิดช่องนี้');
+  cb.title = 'ปิดช่องนี้ (แท็บยังเปิดอยู่)';
+  cb.onmousedown = (e) => e.stopPropagation();
+  cb.onclick = (e) => { e.stopPropagation(); closePane(node.id); };
+  pane.appendChild(cb);
+  return pane;
+}
+
+// ที่จับปรับสัดส่วน — ปรับ flex สดตอนลาก แล้ว commit ตอนปล่อย (ไม่ re-render ระหว่างลาก)
+function splitHandle(node, index, sm) {
+  const row = node.dir !== 'col';
+  const h = el('div', 'k-split-handle ' + (row ? 'k-sh-col' : 'k-sh-row'));
+  h.dataset.splitId = node.id;
+  h.dataset.index = String(index);
+  h.title = 'ลากเพื่อปรับสัดส่วน (ดับเบิลคลิก = 50%)';
+  h.addEventListener('dblclick', () => sm.resize(node.id, index, 0.5));
+  h.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault(); e.stopPropagation();
+    const prev = h.previousElementSibling, next = h.nextElementSibling;
+    if (!prev || !next) return;
+    const pr = prev.getBoundingClientRect(), nr = next.getBoundingClientRect();
+    const total = row ? pr.width + nr.width : pr.height + nr.height;
+    if (total <= 0) return;
+    const start = row ? e.clientX : e.clientY;
+    const base = row ? pr.width : pr.height;
+    const sum = (parseFloat(prev.style.flexGrow) || 1) + (parseFloat(next.style.flexGrow) || 1);
+    let ratio = base / total;
+    h.classList.add('k-dragging');
+    document.body.classList.add('k-resizing');
     const move = (ev) => {
-      const r = panes.getBoundingClientRect();
-      const raw = horiz ? ((ev.clientY - r.top) / r.height) * 100
-                        : ((ev.clientX - r.left) / r.width) * 100;
-      applyPos(snap(raw));
+      const d = (row ? ev.clientX : ev.clientY) - start;
+      ratio = Math.max(0.05, Math.min(0.95, (base + d) / total));
+      prev.style.flexGrow = String(sum * ratio);
+      next.style.flexGrow = String(sum * (1 - ratio));
     };
     const up = () => {
-      div.classList.remove('k-dragging');
+      h.classList.remove('k-dragging');
+      document.body.classList.remove('k-resizing');
       document.removeEventListener('mousemove', move);
       document.removeEventListener('mouseup', up);
-      savePrefs({ ...loadPrefs(), pos: splitPosLive() });
+      sm.resize(node.id, index, ratio);            // snap 50% ทำในเอนจิน (resizeSplit)
     };
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', up);
   });
-  div.addEventListener('dblclick', () => { applyPos(50); savePrefs({ ...loadPrefs(), pos: 50 }); });
-  panes.append(div);
-  return div;
-}
-// ใกล้ครึ่งจอ → ดูดเข้า 50% (กติกาเดียวกับ resizeSplit ในเอนจิน)
-function snap(v) {
-  const c = Math.max(15, Math.min(85, v));
-  return Math.abs(c - 50) < 3 ? 50 : +c.toFixed(1);
-}
-function splitPosLive() {
-  const raw = ($('#panes')?.style.getPropertyValue('--split-pos') || '50%').replace('%', '');
-  return parseFloat(raw) || 50;
-}
-function applyPos(pct) {
-  const panes = $('#panes');
-  if (panes) panes.style.setProperty('--split-pos', pct + '%');
+  return h;
 }
 
-/** เปิดโหมดแยกหน้าจอ (ไม่สลับ) — dir: 'right' = ซ้าย-ขวา · 'down' = บน-ล่าง */
+// ───────── โฟกัสช่อง ─────────
+export function focusPane(leafId) {
+  const sm = getSplitManager();
+  if (!sm.root) return false;
+  if (sm.focusId === leafId) return true;           // โฟกัสอยู่แล้ว → อย่ายิง activate ซ้ำทุกคลิกในเอดิเตอร์
+  if (!sm.focus(leafId)) return false;
+  for (const p of document.querySelectorAll('.k-split-pane')) p.classList.toggle('focus', p.dataset.leafId === leafId);
+  const tid = sm.activeTabId();
+  if (tid && tid !== state.active?.file && state.tabs.has(tid) && hooks.activate && !_syncing) {
+    _syncing = true;
+    try { hooks.activate(tid); } finally { _syncing = false; }
+  }
+  return true;
+}
+
+/** เรียกจาก activate(): แท็บที่เพิ่งถูกเลือกต้องไปโผล่ในช่องที่ถูกต้อง */
+export function syncActiveSplit(file) {
+  const sm = getSplitManager();
+  if (!isSplit() || !file || _syncing) { if (isSplit()) syncCompareFile(); return; }
+  const l = SL.findLeafByTab(sm.root, file);
+  if (l) {                                          // อยู่ช่องไหนอยู่แล้ว → แค่ย้ายโฟกัสไปช่องนั้น
+    if (sm.focusId !== l.id) {
+      sm.focusId = l.id;
+      for (const p of document.querySelectorAll('.k-split-pane')) p.classList.toggle('focus', p.dataset.leafId === l.id);
+    }
+    syncCompareFile();
+    markCompare();
+    return;
+  }
+  _syncing = true;
+  try { sm.open(file); } finally { _syncing = false; }   // แสดงในช่องที่โฟกัสอยู่ (emit → renderSplit)
+}
+
+// ───────── คำสั่ง ─────────
+/** เปิดโหมดแยกหน้าจอ (เพิ่มอีก 1 ช่อง) — dir: 'right' = ซ้าย-ขวา · 'down' = บน-ล่าง */
 export function createSplit(tabId, dir) {
-  const panes = $('#panes');
+  const panes = panesEl();
   if (!panes) return null;
-  if (state.tabs.size < 2) { setStatus('ต้องเปิดอย่างน้อย 2 แท็บจึงจะแยกหน้าจอได้'); return null; }
-  const other = state.compareFile && state.tabs.has(state.compareFile)
-    ? state.compareFile : pickOther(tabId);
-  if (!other) { setStatus('ไม่มีแท็บอื่นให้แสดงคู่กัน'); return null; }
+  const sm = getSplitManager();
+  const cur = tabId || state.active?.file || [...state.tabs.keys()].find((f) => tabOf(f)) || null;
+  const d = dir === 'down' ? 'down' : 'right';
+  const side = d === 'down' ? 'bottom' : 'right';
 
-  const d = dir || splitDir();
-  state.compareFile = other;
-  panes.classList.add('split');
-  panes.classList.toggle('split-h', d === 'down');
-  applyPos(splitPos());
-  ensureDivider();
-  syncSplitPanes();
-  savePrefs({ ...loadPrefs(), dir: d });
-
-  // ให้เอนจิน layout tree รู้ด้วย (ใช้ตอน persist/ทดสอบ)
-  const st = getSplitStore();
-  const base = st.root && st.root.type ? st.root : SL.leaf(tabId || state.active?.file || 'main');
-  try { st.update(SL.splitPane(base, base.id || SL.leafIds(base)[0], d === 'down' ? 'bottom' : 'right', other)); } catch {}
-
-  setStatus('แยกหน้าจอ: ' + (d === 'down' ? 'บน-ล่าง' : 'ซ้าย-ขวา'));
+  if (!sm.root) sm.open(cur);
+  else if (cur && !sm.has(cur)) sm.open(cur);
+  // แท็บอื่นที่ยังไม่มีช่องของตัวเอง → เอามาแสดงช่องใหม่ · ไม่มีเลยก็เปิดช่องว่างไว้ให้ลากแท็บมาวาง
+  // (เดิมกรณีมีแท็บเดียวจะขึ้นว่า "ต้องเปิดอย่างน้อย 2 แท็บ" แล้วไม่เกิดอะไรขึ้น = ดูเหมือน split พัง)
+  const other = [...state.tabs.keys()].find((f) => f !== cur && tabOf(f) && !sm.has(f)) || null;
+  sm.splitWith(other, side);
+  setStatus(other ? 'แยกหน้าจอ: ' + (d === 'down' ? 'บน-ล่าง' : 'ซ้าย-ขวา')
+                  : 'เปิดช่องว่างแล้ว — ลากหัวแท็บมาวางในช่อง หรือคลิกช่องแล้วเลือกแท็บ');
   return { dir: d, right: other };
 }
 
-/** ปิดโหมดแยกหน้าจอ */
+/** ปิดโหมดแยกหน้าจอ — เหลือช่องเดียวคือช่องที่โฟกัสอยู่ */
 export function closeSplit() {
-  const panes = $('#panes');
-  state.compareFile = null;
-  if (panes) {
-    panes.classList.remove('split', 'split-h');
-    panes.querySelector('.k-split-div')?.remove();
-  }
-  document.querySelectorAll('.pane').forEach((p) => p.classList.remove('compare-on'));
-  document.querySelectorAll('.pane .cmp-close').forEach((b) => b.remove());
+  const sm = getSplitManager();
+  const keep = sm.activeTabId() || state.active?.file || null;
+  if (!sm.root) { renderSplit(); return; }
+  sm.store.update(keep ? SL.leaf(keep) : null);
+  sm.focusId = sm.root ? sm.root.id : null;
+  if (keep && keep !== state.active?.file && state.tabs.has(keep)) hooks.activate?.(keep);
   setStatus('ยกเลิกแยกหน้าจอแล้ว');
+}
+
+/** ปิดเฉพาะช่องหนึ่ง (แท็บยังเปิดอยู่) */
+export function closePane(leafId) {
+  const sm = getSplitManager();
+  if (!sm.root) return false;
+  sm.closePane(leafId);
+  const tid = sm.activeTabId();
+  if (tid && tid !== state.active?.file && state.tabs.has(tid)) hooks.activate?.(tid);
+  return true;
 }
 
 /** สลับเปิด/ปิด — เรียกซ้ำด้วยทิศเดิม = ปิด · ทิศใหม่ = เปลี่ยนแนว */
 export function toggleSplit(tabId, dir) {
+  const sm = getSplitManager();
   if (isSplit()) {
-    if (dir && dir !== splitDir()) {          // สลับแนวแทนการปิด
-      savePrefs({ ...loadPrefs(), dir });
-      $('#panes').classList.toggle('split-h', dir === 'down');
+    if (dir && dir !== splitDir()) {                // สลับแนวแทนการปิด
+      const next = JSON.parse(JSON.stringify(sm.root));
+      if (next.type === 'split') next.dir = dir === 'down' ? 'col' : 'row';
+      sm.store.update(next);
       setStatus('แยกหน้าจอ: ' + (dir === 'down' ? 'บน-ล่าง' : 'ซ้าย-ขวา'));
       return true;
     }
@@ -132,32 +300,176 @@ export function toggleSplit(tabId, dir) {
   return !!createSplit(tabId, dir);
 }
 
-/** เรียกหลัง activate()/ปิดแท็บ เพื่อคง pane ฝั่งที่สองไว้ */
-export function syncSplitPanes() {
-  const panes = $('#panes');
-  if (!panes || !panes.classList.contains('split')) return;
-  const rt = state.compareFile && state.tabs.get(state.compareFile);
-  if (!rt || state.compareFile === state.active?.file) { closeSplit(); return; }
-  document.querySelectorAll('.pane').forEach((p) => p.classList.remove('compare-on'));
-  rt.pane.classList.add('compare-on');
-  if (!rt.pane.querySelector('.cmp-close')) {
-    const cb = el('div', 'cmp-close', '✕ ปิดแยกจอ');
-    cb.onclick = () => closeSplit();
-    rt.pane.append(cb);
+/** เอาแท็บไปแสดงคู่กันอีกช่อง — ใช้แทน applyCompare()/เทียบเวอร์ชัน/ผังแตกสาย */
+export function openInSplit(tabId, side = 'right') {
+  const sm = getSplitManager();
+  const cur = state.active?.file;
+  if (!isSplit()) {
+    // ยังไม่ได้แยกจอ → ช่องแรกต้องเป็นเอกสารที่เปิดอยู่ตอนนี้เสมอ
+    // (ต้นไม้ที่ค้างจากการแยกจอรอบก่อนอาจยังอ้างแท็บอื่นอยู่ → ได้คู่เทียบผิดคู่)
+    if (cur && cur !== tabId && tabOf(cur)) { sm.store.update(SL.leaf(cur)); sm.focusId = sm.root.id; }
+    else if (!sm.root) sm.open(tabId);
   }
-  ensureDivider();
-  applyPos(splitPosLive() || splitPos());
+  if (!sm.root) { sm.open(tabId); renderSplit(); return false; }
+  if (sm.has(tabId)) {                              // เปิดอยู่แล้ว → แค่โฟกัสช่องนั้น
+    const l = SL.findLeafByTab(sm.root, tabId);
+    if (l) focusPane(l.id);
+    return true;
+  }
+  const empty = emptyLeafId();
+  if (empty) sm.moveTab(tabId, empty, 'center');    // มีช่องว่างอยู่ → เติมลงช่องนั้นก่อน
+  else sm.splitWith(tabId, side === 'down' ? 'bottom' : side);
+  syncCompareFile();
+  markCompare();
+  return true;
+}
+function emptyLeafId() {
+  const r = getSplitManager().root;
+  if (!r) return null;
+  let id = null;
+  SL.walk(r, (n) => { if (id === null && n.type === 'leaf' && !tabOf(n.tabId)) id = n.id; });
+  return id;
 }
 
-// ---- helpers เดิม (ยังใช้ในเทส/โมดูลอื่น) ----
-export function getSplitLayout() { return store ? store.root : null; }
-export function resetSplit() { closeSplit(); if (store) { store.reset(); store = null; } }
+/** ปิดแท็บ → ช่องที่ถืออยู่ต้องหายไปด้วย */
+export function closeTabInSplit(tabId) {
+  const sm = getSplitManager();
+  if (!sm.root || !sm.has(tabId)) return;
+  sm.close(tabId);
+}
+
+// ───────── ลากหัวแท็บไปวางในช่อง (ขอบ = แบ่งช่องใหม่ · กลาง = แทนที่) ─────────
+export function makeTabSplitDraggable(strip) {
+  if (!strip || strip._splitDrag) return;
+  strip._splitDrag = true;
+  strip.addEventListener('mousedown', (e) => {
+    const btn = e.target.closest('.tab');
+    if (!btn || e.button !== 0 || e.target.classList.contains('tab-x')) return;
+    const file = fileOfTabBtn(btn);
+    if (!file) return;
+    const sx = e.clientX, sy = e.clientY;
+    let moved = false, ghost = null, hit = null;
+    const ov = dropOverlay();
+    const move = (ev) => {
+      if (!moved) {
+        if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < 8) return;
+        moved = true;
+        document.body.classList.add('k-panel-dragging');
+        ghost = el('div', 'k-drag-ghost', btn.textContent.replace(/×$/, '').trim());
+        document.body.appendChild(ghost);
+      }
+      ghost.style.left = (ev.clientX + 12) + 'px';
+      ghost.style.top = (ev.clientY + 14) + 'px';
+      hit = hitPane(ev.clientX, ev.clientY);
+      if (hit) { ov.show(zoneRect(hit.rect, hit.zone), hit.zone); } else ov.hide();
+    };
+    const up = (ev) => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      ov.hide(); ghost?.remove();
+      document.body.classList.remove('k-panel-dragging');
+      if (!moved) return;                            // คลิกเฉย ๆ → ปล่อยให้ onclick ทำงาน
+      const sm = getSplitManager();
+      if (hit) {
+        if (hit.zone === 'center') sm.moveTab(file, hit.leafId, 'center');
+        else sm.splitWith(file, hit.zone === 'left' ? 'left' : hit.zone === 'top' ? 'top'
+                              : hit.zone === 'bottom' ? 'bottom' : 'right', hit.leafId);
+        hooks.activate?.(file);
+        return;
+      }
+      // ลากไปปล่อยกลางพื้นที่เอกสารตอนยังไม่ split → เปิดช่องใหม่ด้านขวา
+      const panes = panesEl();
+      if (!panes || isSplit()) return;
+      const r = panes.getBoundingClientRect();
+      if (ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom) return;
+      const cur = state.active?.file;
+      if (!cur || cur === file) return;
+      if (!sm.root) sm.open(cur);
+      sm.splitWith(file, ev.clientX > r.left + r.width / 2 ? 'right' : 'left');
+      hooks.activate?.(file);
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  });
+}
+
+function fileOfTabBtn(btn) {
+  for (const [f, t] of state.tabs) if (t.tabBtn === btn) return f;
+  return null;
+}
+
+function hitPane(mx, my) {
+  let best = null;
+  for (const e of document.querySelectorAll('#panes .k-split-pane')) {
+    const r = e.getBoundingClientRect();
+    if (!r.width || !r.height) continue;
+    const rect = { x: r.left, y: r.top, w: r.width, h: r.height };
+    const zone = SL.dropZone(mx, my, rect);
+    if (!zone) continue;
+    const area = r.width * r.height;
+    if (!best || area < best.area) best = { leafId: e.dataset.leafId, zone, rect, area };
+  }
+  return best;
+}
+export function zoneRect(rect, zone) {
+  const { x, y, w, h } = rect;
+  switch (zone) {
+    case 'left':   return { x, y, w: w / 2, h };
+    case 'right':  return { x: x + w / 2, y, w: w / 2, h };
+    case 'top':    return { x, y, w, h: h / 2 };
+    case 'bottom': return { x, y: y + h / 2, w, h: h / 2 };
+    default:       return { x, y, w, h };
+  }
+}
+let _ov = null;
+function dropOverlay() {
+  if (_ov && _ov.el.isConnected) return _ov;
+  const box = el('div', 'k-drop-zone');
+  box.style.display = 'none';
+  document.body.appendChild(box);
+  _ov = {
+    el: box,
+    show(rect, zone) {
+      box.dataset.zone = zone || '';
+      box.style.left = Math.round(rect.x) + 'px';
+      box.style.top = Math.round(rect.y) + 'px';
+      box.style.width = Math.round(rect.w) + 'px';
+      box.style.height = Math.round(rect.h) + 'px';
+      box.style.display = 'block';
+    },
+    hide() { box.style.display = 'none'; },
+  };
+  return _ov;
+}
+
+// ───────── เริ่มระบบ / ล้าง ─────────
+/** ผูกระบบ split เข้ากับ #panes + แถบแท็บ (เรียกครั้งเดียวตอน bootstrap) */
+export function initSplitSystem(h) {
+  setSplitHooks(h);
+  getSplitManager();                                 // สร้าง + ผูก onChange → renderSplit
+  makeTabSplitDraggable($('#tabs'));
+  return mgr;
+}
+
+export function resetSplitSystem() {
+  const panes = panesEl();
+  reclaimPanes(panes);
+  rootEl()?.remove();
+  panes?.classList.remove('split', 'split-h');
+  document.querySelectorAll('.pane').forEach((p) => p.classList.remove('compare-on', 'k-in-split'));
+  document.querySelectorAll('.cmp-close').forEach((b) => b.remove());
+  state.compareFile = null;
+  if (mgr) { mgr.store.root = null; mgr.focusId = null; try { mgr.store.save(); } catch {} }
+}
+
+// ---- helpers เดิมที่โมดูล/เทสอื่นยังอ้าง ----
+export function getSplitLayout() { return getSplitManager().root; }
 export function getLeaves() {
-  if (!store || !store.root) return [];
-  return SL.leafIds(store.root).map((id) => SL.findLeaf(store.root, id));
+  const r = getSplitManager().root;
+  return r ? SL.leafIds(r).map((id) => SL.findLeaf(r, id)) : [];
 }
 export function setLeafTab(leafId, tabId) {
-  if (!store || !store.root) return;
-  store.update(SL.setLeafTab(store.root, leafId, tabId));
+  const sm = getSplitManager();
+  if (sm.root) sm.store.update(SL.setLeafTab(sm.root, leafId, tabId));
 }
-export function resetSplitSystem() { store = null; }
+export function resetSplit() { resetSplitSystem(); renderSplit(); }

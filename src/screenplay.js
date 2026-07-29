@@ -46,7 +46,7 @@ export const spSchema = new Schema({
 
 // inline **หนา** ฯลฯ — ชุดเดียวกับ md.js (import ตรงจะวนกันเอง จึงรับผ่านพารามิเตอร์)
 import { mdToDoc, docToMd } from './md.js';
-import { spellPlugin, mentionPlugin, refreshMentions, focusLinePlugin } from './editor.js';
+import { spellPlugin, mentionPlugin, refreshMentions, focusLinePlugin, commentAnchorPlugin } from './editor.js';
 import { IMG_RE } from './fountain.js';
 function inlineContent(text) {
   const doc = mdToDoc(text);
@@ -98,6 +98,7 @@ export class SPEditor {
           history(),
           ...(getChecker ? [spellPlugin(getChecker)] : []),
           focusLinePlugin(),
+          commentAnchorPlugin(),
         ],
       }),
       handleKeyDown(view, ev) { return onKeyDown ? onKeyDown(ev) : false; },

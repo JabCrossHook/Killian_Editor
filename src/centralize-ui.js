@@ -1,164 +1,226 @@
-// centralize-ui.js — Dashboard แบบ Real-time + Backlinks + รายการต้องอัปเดต (ข้อ 87)
-import { $, el, state, setStatus } from './core.js';
+// centralize-ui.js — ศูนย์รวม (ข้อ 87): แดชบอร์ดสด + Backlinks จาก Auto-link Engine
+// เดิมสแกนไฟล์ดิบทุกฉาก × ทุกเอนทิตี้ ด้วย raw.includes(ชื่อ) → ช้าและจับผิด
+// (ชื่อ "แดง" ไปโดนคำว่า "แดงกล่ำ" · ไม่รู้จักชื่อรอง/alias)
+// ตอนนี้ใช้ดัชนีเดียวกับแท็บ Backlinks ของ Wiki: world-story/auto-link.js
+//   → รู้จัก aliases, เช็คขอบคำภาษาอังกฤษ, นับจำนวนครั้ง, และแคชลง project.khn.json
+//
+// "Real-time": วาดใหม่ทุกครั้งที่กลับมาที่แท็บนี้ + ทุกครั้งที่บันทึกไฟล์ (markCentralizeStale)
+import { $, el, state, setStatus, log } from './core.js';
+import { ensureAutoLink, resetAutoLink } from './world-story/auto-link-ui.js';
+import { listScenes, listEntities, findScenePath } from './project-scan.js';
+import { getFutureNotes } from './session-notes.js';
+import { choiceStats } from './player-choices.js';
+
+const KEY = '::centralize::';
+const REFRESH_DELAY = 1500;   // ms — หน่วงก่อนสร้างดัชนีใหม่ (บันทึกรัว ๆ จะได้ไม่สแกนซ้ำทุกครั้ง)
+let stale = true;             // ดัชนีล้าสมัยหรือยัง (ตั้งเมื่อมีการบันทึกไฟล์)
+let timer = null;
+
+/**
+ * เรียกจาก saveTab: ข้อมูลเปลี่ยนแล้ว → ครั้งถัดไปที่เห็นแท็บนี้ให้สร้างดัชนีใหม่
+ * ถ้าแท็บศูนย์รวมแสดงอยู่ตอนนี้ ก็อัปเดตให้เห็นเลย แต่ **หน่วงและรวบการเรียกซ้ำ** —
+ * การสร้างดัชนีอ่านไฟล์ฉากทั้งโปรเจกต์ ถ้ายิงทุกครั้งที่ autosave จะหน่วงทั้งแอป
+ */
+export function markCentralizeStale() {
+  stale = true;
+  const tab = state.tabs.get(KEY);
+  if (!tab || state.active !== tab) return;
+  if (timer) clearTimeout(timer);
+  timer = setTimeout(() => {
+    timer = null;
+    const t = state.tabs.get(KEY);
+    if (t && state.active === t && stale) renderCentralize(t.pane);
+  }, REFRESH_DELAY);
+}
+
+/** เรียกจาก activate(): กลับมาที่แท็บศูนย์รวม → รีเฟรชถ้าข้อมูลเปลี่ยนไปแล้ว */
+export function onCentralizeShown() {
+  const tab = state.tabs.get(KEY);
+  if (tab && stale) renderCentralize(tab.pane);
+}
+
+/** เปลี่ยนโปรเจกต์ → ทิ้งสถานะเก่า */
+export function resetCentralize() {
+  stale = true;
+  if (timer) { clearTimeout(timer); timer = null; }
+}
 
 export async function openCentralizeUI() {
   if (!state.root) { setStatus('ยังไม่ได้เปิดโปรเจกต์'); return; }
-  const key = '::centralize::';
-  if (state.tabs.has(key)) {
-    const { activate } = await import('./app.js');
-    activate(key);
-    return;
-  }
+  const { activate, closeTab } = await import('./app.js');
+  if (state.tabs.has(KEY)) { activate(KEY); onCentralizeShown(); return; }
   const pane = el('div', 'pane');
   $('#panes').append(pane);
   const tabBtn = el('div', 'tab');
-  tabBtn.append(el('span', 'tab-title', '📊 Centralize'));
+  tabBtn.append(el('span', 'tab-title', '📊 ศูนย์รวม'));
   const x = el('span', 'tab-x', '×'); tabBtn.append(x);
   $('#tabs').append(tabBtn);
-  const tab = { file: key, title: 'Centralize', pane, tabBtn, dirty: false, editor: null, plain: null, wiki: null, gal: null, dash: true };
-  tabBtn.onclick = (e) => { if (e.target !== x) { import('./app.js').then(m => m.activate(key)); } };
-  x.onclick = () => { import('./app.js').then(m => m.closeTab(key)); };
-  state.tabs.set(key, tab);
-  const { activate } = await import('./app.js');
-  activate(key);
-  renderCentralize(pane);
+  const tab = { file: KEY, title: 'ศูนย์รวม', pane, tabBtn, dirty: false,
+                editor: null, plain: null, wiki: null, gal: null, dash: true };
+  tabBtn.onclick = (e) => { if (e.target !== x) activate(KEY); };
+  x.onclick = () => closeTab(KEY);
+  state.tabs.set(KEY, tab);
+  activate(KEY);
+  await renderCentralize(pane);
 }
 
-async function renderCentralize(pane) {
+// เปิดฉากจาก sceneId (ผลลัพธ์ของ auto-link เก็บเป็น id ไม่ใช่ path)
+async function openSceneById(sceneId, fallbackTitle) {
+  const hit = await findScenePath(state.root, sceneId);
+  if (hit && (await kapi.exists(hit.path))) {
+    const { openScene } = await import('./app.js');
+    openScene(hit.path, hit.title || fallbackTitle);
+  } else setStatus('ไม่พบไฟล์ฉาก');
+}
+
+export async function renderCentralize(pane) {
   pane.innerHTML = '';
   const wrap = el('div', 'cent-wrap');
+  pane.append(wrap);
 
-  // ---- Panel 1: สถิติสด ----
+  const headRow = el('div', 'cent-head');
+  headRow.append(el('div', 'cent-title', '📊 ศูนย์รวม'));
+  const liveDot = el('span', 'cent-live', '● สด');
+  liveDot.title = 'อัปเดตอัตโนมัติทุกครั้งที่บันทึกไฟล์';
+  headRow.append(liveDot);
+  const refreshB = el('button', 'cent-refresh', '🔄 สร้างดัชนีใหม่');
+  refreshB.onclick = () => { resetAutoLink(); stale = true; renderCentralize(pane); };
+  headRow.append(refreshB);
+  wrap.append(headRow);
+
+  // ---- โหลดข้อมูลผ่านชั้นสแกนกลาง (project-scan) + Auto-link Engine ----
+  const loading = el('div', 'dim', 'กำลังสร้างดัชนีเชื่อมโยง…');
+  wrap.append(loading);
+
+  let scenes = [], entities = [], autoLink = null;
+  try {
+    [scenes, entities] = await Promise.all([
+      listScenes(state.root, { withText: false }),
+      listEntities(state.root),
+    ]);
+    if (stale) resetAutoLink();               // บังคับสร้างดัชนีใหม่เมื่อไฟล์เปลี่ยน
+    autoLink = await ensureAutoLink();
+    stale = false;
+  } catch (e) {
+    log('error', 'centralize: สร้างดัชนีไม่สำเร็จ', e);
+  }
+  loading.remove();
+
+  // ───────── แผง 1: สถิติสด ─────────
   const stats = el('div', 'cent-panel');
   stats.append(el('div', 'cent-panel-title', '📊 สถิติ'));
-  let totalScenes = 0, totalWords = 0, totalChars = 0;
-  try {
-    for (const sec of await kapi.listDirs(state.root)) {
-      if (['Wiki','Bible','Images','Memos','Recycle','Snapshots','Backups','Plugins','Research'].includes(sec)) continue;
-      const sp = await kapi.join(state.root, sec);
-      if (!(await kapi.exists(await kapi.join(sp, 'section.json')))) continue;
-      const dr = await kapi.join(sp, 'Draft');
-      if (!(await kapi.exists(dr))) continue;
-      for (const dn of await kapi.listDirs(dr)) {
-        const dp = await kapi.join(dr, dn);
-        const sf = await kapi.join(dp, 'scenes.json');
-        if (!(await kapi.exists(sf))) continue;
-        const d = await kapi.readJson(sf);
-        for (const cg of Object.keys(d.chapters || {})) {
-          for (const sc of (d.chapters[cg] || [])) {
-            if (sc.type !== 'memo') { totalScenes++; totalWords += sc.wordCount || 0; }
-          }
-        }
-      }
-    }
-    // ตัวละคร
-    const chDir = await kapi.join(state.root, 'Wiki', 'characters');
-    if (await kapi.exists(chDir)) totalChars = (await kapi.listFiles(chDir, '.json')).length;
-  } catch {}
-  stats.append(el('div', 'cent-stat', `📄 ${totalScenes} ฉาก · 📝 ${totalWords.toLocaleString()} คำ · 👤 ${totalChars} ตัวละคร`));
+  // listScenes คืนแถวดิบไว้ใน .row (ไม่ใช่ระดับบนสุด) — wordCount/status อยู่ในนั้น
+  const words = scenes.reduce((n, s) => n + ((s.row && s.row.wordCount) || 0), 0);
+  const byCat = {};
+  for (const e of entities) byCat[e.cat || e.entityTypeKey || 'อื่น ๆ'] = (byCat[e.cat || e.entityTypeKey || 'อื่น ๆ'] || 0) + 1;
+  const grid = el('div', 'cent-stats-grid');
+  const statCard = (num, label) => {
+    const c = el('div', 'cent-stat-card');
+    c.append(el('div', 'cent-stat-num', String(num)), el('div', 'cent-stat-lbl', label));
+    grid.append(c);
+  };
+  statCard(scenes.length.toLocaleString(), 'ฉาก');
+  statCard(words.toLocaleString(), 'คำ');
+  statCard(entities.length.toLocaleString(), 'Wiki');
+  if (autoLink) {
+    const s = autoLink.stats();
+    statCard(s.links.toLocaleString(), 'จุดเชื่อมโยง');
+  }
+  stats.append(grid);
+  // แถวสรุปแบบบรรทัดเดียว — e2e เดิมอ้าง .cent-stat จึงคงชื่อคลาสไว้
+  stats.append(el('div', 'cent-stat',
+    `📄 ${scenes.length} ฉาก · 📝 ${words.toLocaleString()} คำ · 👤 ${byCat.characters || 0} ตัวละคร`));
+  if (Object.keys(byCat).length) {
+    stats.append(el('div', 'cent-stat',
+      '🗂 ' + Object.entries(byCat).sort((a, b) => b[1] - a[1])
+        .map(([c, n]) => `${c} ${n}`).join(' · ')));
+  }
   wrap.append(stats);
 
-  // ---- Panel 2: Backlinks (ที่มา) ----
+  // ───────── แผง 2: Backlinks จาก Auto-link Engine ─────────
   const blinks = el('div', 'cent-panel');
   blinks.append(el('div', 'cent-panel-title', '🔗 Backlinks (ฉากที่อ้างถึง Wiki นี้)'));
   const blList = el('div', 'cent-list');
-  try {
-    // สแกนทุกฉาก หา mentions ของ entity ใน Wiki
-    const entities = [];
-    const scanWiki = async (wikiDir) => {
-      if (!(await kapi.exists(wikiDir))) return;
-      for (const cat of await kapi.listDirs(wikiDir)) {
-        for (const f of await kapi.listFiles(await kapi.join(wikiDir, cat), '.json')) {
-          try {
-            const e = await kapi.readJson(await kapi.join(wikiDir, cat, f));
-            if (e.name) entities.push(e.name);
-          } catch {}
-        }
-      }
-    };
-    await scanWiki(await kapi.join(state.root, 'Wiki'));
-    await scanWiki(await kapi.join(state.root, 'Bible'));
+  blinks.append(blList);
 
-    // สแกนฉากทั้งหมดหา mentions
-    const mentions = {};
-    for (const sec of await kapi.listDirs(state.root)) {
-      if (['Wiki','Bible','Images','Memos','Recycle','Snapshots','Backups','Plugins','Research'].includes(sec)) continue;
-      const sp = await kapi.join(state.root, sec);
-      if (!(await kapi.exists(await kapi.join(sp, 'section.json')))) continue;
-      const dr = await kapi.join(sp, 'Draft');
-      if (!(await kapi.exists(dr))) continue;
-      for (const dn of await kapi.listDirs(dr)) {
-        const dp = await kapi.join(dr, dn);
-        const draftData = await kapi.readJson(await kapi.join(dp, 'draft.json')).catch(() => ({}));
-        const scData = await kapi.readJson(await kapi.join(dp, 'scenes.json')).catch(() => ({}));
-        const chMap = scData.chapters || {};        // ร่างที่ไม่มี scenes.json → เดิม throw ทั้งแผง
-        for (const ch of (draftData.chapters || [])) {
-          for (const sc of (chMap[ch.guid] || [])) {
-            if (sc.type === 'memo') continue;
-            const fp = await kapi.join(dp, 'Chapters', ch.folderName, sc.fileName);
-            try {
-              const raw = await kapi.readFile(fp);
-              for (const ent of entities) {
-                if (raw.includes(ent)) {
-                  mentions[ent] = mentions[ent] || [];
-                  mentions[ent].push(sc.title);
-                }
-              }
-            } catch {}
-          }
-        }
-      }
-    }
+  if (!autoLink) {
+    blList.append(el('div', 'dim', 'สร้างดัชนีไม่สำเร็จ — กด "🔄 สร้างดัชนีใหม่"'));
+  } else {
+    // จัดอันดับเอนทิตี้ตามจำนวนฉากที่กล่าวถึง
+    const ranked = entities
+      .map((e) => ({ ent: e, links: autoLink.getRelatedScenes(e.path || e.id) }))
+      .filter((r) => r.links.length)
+      .sort((a, b) => b.links.length - a.links.length);
 
-    // แสดง backlinks
-    const topMentions = Object.entries(mentions).sort((a, b) => b[1].length - a[1].length).slice(0, 15);
-    if (!topMentions.length) {
-      blList.append(el('div', 'dim', 'ยังไม่มี backlinks — พิมพ์ชื่อตัวละคร/สถานที่ในฉากเพื่อให้ปรากฏที่นี่'));
+    if (!ranked.length) {
+      blList.append(el('div', 'dim',
+        'ยังไม่มี backlinks — พิมพ์ชื่อตัวละคร/สถานที่ในฉากเพื่อให้ปรากฏที่นี่'));
     } else {
-      for (const [ent, scenes] of topMentions) {
+      for (const { ent, links } of ranked.slice(0, 15)) {
         const row = el('div', 'cent-link-row');
         // ชื่อ entity + ชื่อฉากมาจากไฟล์ผู้ใช้ → ห้าม innerHTML
-        const name = el('strong', null, ent);
-        const rest = el('span', null,
-          ` ← ${scenes.length} ฉาก: ${scenes.slice(0, 3).join(', ')}${scenes.length > 3 ? ' …' : ''}`);
-        row.append(name, rest);
+        const name = el('strong', null, ent.name);
+        row.append(name, el('span', null, ` ← ${links.length} ฉาก: `));
+        links.slice(0, 3).forEach((l, i) => {
+          if (i) row.append(el('span', null, ', '));
+          const a = el('span', 'cent-scene-link', l.title || l.sceneId);
+          a.title = `กล่าวถึง ${l.count || 1} ครั้ง — คลิกเปิดฉาก`;
+          a.onclick = () => openSceneById(l.sceneId, l.title);
+          row.append(a);
+        });
+        if (links.length > 3) row.append(el('span', 'dim', ` … +${links.length - 3}`));
+        blList.append(row);
+      }
+
+      // เอนทิตี้ที่ไม่มีใครพูดถึงเลย — ช่องโหว่ของเรื่องที่มองไม่เห็นถ้าไม่มีดัชนี
+      const orphans = entities.filter((e) => !autoLink.getRelatedScenes(e.path || e.id).length);
+      if (orphans.length) {
+        const row = el('div', 'cent-link-row cent-orphan');
+        row.append(el('strong', null, '🕳 ยังไม่ถูกกล่าวถึงเลย'));
+        row.append(el('span', null, ` (${orphans.length}): `
+          + orphans.slice(0, 6).map((e) => e.name).join(', ')
+          + (orphans.length > 6 ? ' …' : '')));
         blList.append(row);
       }
     }
-  } catch {}
-  blinks.append(blList);
+  }
   wrap.append(blinks);
 
-  // ---- Panel 3: รายการต้องอัปเดต ----
+  // ───────── แผง 3: สิ่งที่ต้องอัปเดต ─────────
   const todo = el('div', 'cent-panel');
   todo.append(el('div', 'cent-panel-title', '📋 สิ่งที่ต้องอัปเดต'));
   const todoList = el('div', 'cent-list');
-  // แสดงฉากที่ไม่มีสถานะ, ตัวละครที่เพิ่งสร้าง
-  const pendingItems = [];
-  if (totalScenes > 0) {
-    pendingItems.push(`📄 ${totalScenes} ฉาก — ตรวจสอบว่าใช้ข้อมูลล่าสุดแล้ว`);
+  const pending = [];
+
+  // โน้ต "ไว้ทำภายหลัง" ที่ยังค้าง (ข้อ 85)
+  for (const n of getFutureNotes().slice(-5).reverse()) {
+    pending.push({ text: '📝 ' + n.text.slice(0, 70), sceneId: n.sceneId, title: n.sceneTitle });
   }
-  if (state.meta && state.meta.wordHistory && state.meta.wordHistory.length) {
+  // ฉากที่ยังไม่ได้ตั้งสถานะ
+  const noStatus = scenes.filter((s) => !(s.row && s.row.status));
+  if (noStatus.length) pending.push({ text: `📄 ${noStatus.length} ฉากยังไม่ได้ตั้งสถานะ` });
+  // ยังไม่ได้เขียนวันนี้
+  if (state.meta && Array.isArray(state.meta.wordHistory) && state.meta.wordHistory.length) {
     const today = new Date().toISOString().slice(0, 10);
-    const todayWords = state.meta.wordHistory.find((w) => w.date === today);
-    if (!todayWords || todayWords.words === 0) {
-      pendingItems.push('🔥 วันนี้ยังไม่ได้เขียน!');
-    }
+    const t2 = state.meta.wordHistory.find((w) => w.date === today);
+    if (!t2 || !t2.words) pending.push({ text: '🔥 วันนี้ยังไม่ได้เขียน!' });
   }
-  if (!pendingItems.length) {
+  // การตัดสินใจล่าสุด (ข้อ 83)
+  const cs = choiceStats();
+  if (cs.total) pending.push({ text: `🎮 บันทึกการตัดสินใจไว้ ${cs.total} ครั้ง` });
+
+  if (!pending.length) {
     todoList.append(el('div', 'dim', '✅ ทุกอย่างเป็นปัจจุบัน'));
   } else {
-    for (const item of pendingItems) {
-      todoList.append(el('div', 'cent-todo-item', item));
+    for (const item of pending) {
+      const d = el('div', 'cent-todo-item', item.text);
+      if (item.sceneId) {
+        d.classList.add('cent-clickable');
+        d.onclick = () => openSceneById(item.sceneId, item.title);
+      }
+      todoList.append(d);
     }
   }
   todo.append(todoList);
   wrap.append(todo);
-
-  // ปุ่มรีเฟรช
-  const refreshB = el('button', 'k-ok'); refreshB.textContent = '🔄 รีเฟรช'; refreshB.style.marginTop = '12px';
-  refreshB.onclick = () => renderCentralize(pane);
-  wrap.append(refreshB);
-
-  pane.append(wrap);
 }

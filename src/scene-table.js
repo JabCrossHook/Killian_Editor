@@ -1,6 +1,7 @@
 // scene-table.js — มุมมอง "ตารางฉาก" แสดงทุกฉากเป็นตาราง Grid คลิกแถวเพื่อเปิด, เรียง/กรองได้ทุกคอลัมน์
-import { $, el, state, setStatus, log, SCENE_STATUSES } from './core.js';
+import { $, el, state, setStatus, log } from './core.js';
 import { getVisualTags, renderVisualTagChips } from './visual-tags.js';
+import { statusColor } from './custom-status.js';
 
 export async function openSceneTable() {
   const key = '::scenetable::';
@@ -178,12 +179,8 @@ async function renderBody(wrap, filter) {
     // สถานะ
     const tdStatus = el('td');
     tdStatus.textContent = sc.status || '—';
-    // สีตามสถานะ
-    const si = SCENE_STATUSES.indexOf(sc.status);
-    if (si >= 0) {
-      const colors = ['#8a8f98', '#5f9fd9', '#6fae6f', '#a97fd0'];
-      tdStatus.style.color = colors[si];
-    }
+    // สีตามสถานะ — เดิมมีสีแค่ 4 ตัวสำหรับสถานะมาตรฐาน 5 ตัว และสถานะที่ผู้ใช้เพิ่มเองไม่มีสีเลย
+    if (sc.status) tdStatus.style.color = statusColor(sc.status);
     row.append(tdStatus);
 
     // จำนวนคำ

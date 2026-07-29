@@ -121,6 +121,48 @@ export function refreshFocusLine(view) {
   if (view) view.dispatch(view.state.tr.setMeta(focusKey, true));
 }
 
+// ---- สมอคอมเมนต์: ไฮไลต์ข้อความที่มีคอมเมนต์ผูกอยู่ (บั๊ก #25) ----
+// ใช้ decoration แบบเดียวกับตรวจคำผิด — ห้ามใส่ class ลง DOM ตรง ๆ (DOMObserver ของ PM ซ่อมกลับ)
+// จับคู่ด้วย "ข้อความที่คอมเมนต์" (quote) ไม่ใช่ offset — ผู้เขียนแก้ไฟล์แล้วไฮไลต์ยังตามไปถูกที่
+const cmKey = new PMKey('kcomment');
+let _cmQuotes = [], _cmActive = '';
+export function setCommentAnchors(quotes, active) {
+  _cmQuotes = [...new Set((quotes || []).filter((q) => q && q.length >= 2))];   // '' ทำให้ indexOf วนไม่รู้จบ
+  _cmActive = active || '';
+}
+export function commentAnchors() { return _cmQuotes.slice(); }
+function cmDecos(doc) {
+  if (!_cmQuotes.length) return DecoSet.empty;
+  const out = [];
+  doc.descendants((node, pos) => {
+    if (!node.isText || !node.text) return;
+    for (const q of _cmQuotes) {
+      let i = -1;
+      while ((i = node.text.indexOf(q, i + 1)) >= 0) {
+        out.push(Deco.inline(pos + i, pos + i + q.length,
+          { class: 'k-cm-anchor' + (q === _cmActive ? ' on' : ''), title: 'มีคอมเมนต์ผูกกับข้อความนี้' }));
+      }
+    }
+  });
+  return DecoSet.create(doc, out);
+}
+export function commentAnchorPlugin() {
+  return new PMPlugin({
+    key: cmKey,
+    state: {
+      init: (_c, st) => cmDecos(st.doc),
+      apply(tr, prev, _o, st) {
+        if (!tr.docChanged && !tr.getMeta(cmKey)) return prev.map(tr.mapping, tr.doc);
+        return cmDecos(st.doc);
+      },
+    },
+    props: { decorations(state) { return cmKey.getState(state); } },
+  });
+}
+export function refreshCommentAnchors(view) {
+  if (view) view.dispatch(view.state.tr.setMeta(cmKey, true));
+}
+
 
 export const schema = new Schema({
   nodes: {
@@ -241,6 +283,7 @@ export class KEditor {
         ...(this.getNames ? [mentionPlugin(this.getNames)] : []),
         ...(this.getChecker ? [spellPlugin(this.getChecker)] : []),
         focusLinePlugin(),
+        commentAnchorPlugin(),
         buildRules(schema),
         keymap({
           // ขึ้นบรรทัดใหม่แล้วรูปแบบตัวอักษร (หนา/เอียง/ขีด) ต้องติดไปด้วย — แบบ Word

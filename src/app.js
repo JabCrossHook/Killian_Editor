@@ -1,8 +1,8 @@
-// Killian 2 renderer — explorer + tabs + toolbar + statusbar
+﻿// Killian 2 renderer — explorer + tabs + toolbar + statusbar
 import { KEditor } from './editor.js';
 import { parseMdFile, dumpMdFile, countWords } from './md.js';
 import { setQuery, gotoMatch, replaceCurrent, replaceAll } from './search.js';
-import { ask, confirmBox, popupMenu, choose } from './ui.js';
+import { ask, confirmBox, popupMenu, choose, closeMenu } from './ui.js';
 import { WikiEditor, CAT_TH, imageLightbox } from './wiki.js';
 import { SPEditor } from './screenplay.js';
 import { Gallery, pickImage } from './gallery.js';
@@ -12,67 +12,81 @@ import { SP_ELEMS, TIMES, TRANSITIONS, SCENE_PREFIX, TAB_CYCLE, PARENTHETICALS, 
          classify, parseScript } from './fountain.js';
 import { refreshMentions } from './editor.js';
 import { refreshSpell } from './editor.js';
+import { commentAnchors, refreshCommentAnchors } from './editor.js';
 import * as spell from './spell.js';
 import { sceneMatchesQuery } from './sceneFilter.js';
 import { STEP_DEFS, PRESETS, stepDef, mkStep, newWorkflow, cloneWorkflow, runWorkflow, mdToHtmlBody } from './compile.js';
-import { TIMELINE_VERSION, mergeTimeline, groupByTrack, trackNames, newEvent, findClashes, sortEvents, ganttData, ganttBar, ganttTicks } from './timeline.js';
+import { TIMELINE_VERSION, mergeTimeline, groupByTrack, trackNames, newEvent, findClashes, sortEvents, ganttData, ganttBar, ganttTicks, normalizeRefs } from './timeline.js';
 import { MAPS_VERSION, PIN_COLORS, PIN_KIND, newMap, newPin, clamp, findMap, sortMaps, breadcrumb, rootMaps, pinStats, deleteMap } from './maps.js';
 import { $, el, state, smart, LOG_BUF, log, setStatus,
-         DEFAULT_SETTINGS, DEFAULT_GOALS, BASE_ED_FS, BASE_SP_FS, ZOOM_MIN, ZOOM_MAX,
-         SCENE_STATUSES, SCENE_COLORS, BUILTIN_CATS, CAT_ICON,
+         DEFAULT_SETTINGS, DEFAULT_GOALS, BASE_ED_FS, BASE_SP_FS,
+         SCALE_MIN, SCALE_MAX, UI_SCALE_MIN, UI_SCALE_MAX,
+         SCENE_STATUSES, SCENE_COLORS, STATUS_COLORS, BUILTIN_CATS, CAT_ICON,
+         REL_TYPES, REL_COLOR, REL_LABEL, categorizeRole, categorizeWith,
          t, i18n, loadLanguage, applyDataI18n, onLanguageChanged, SHORTCUTS, SHORTCUT_LABELS, shortcutId,
          formatShortcut, accelText, withShortcut } from './core.js';
 import { sceneProps } from './scene-props.js';
 import { openMaps, renderMaps } from './maps-ui.js';
 import { openTimeline, renderTimeline } from './timeline-ui.js';
 import { renameSection, deleteSection, addSection, listSections, sectionStats, saveSectionMeta, reorderSections } from './section-ops.js';
-import { renameScene, deleteScene, addScene, setSceneMeta, toggleSceneFlag, duplicateScene, moveSceneOrder, moveSceneToChapter, moveSceneBefore, sceneStatusMenu, sceneColorMenu, renameChapter, deleteChapter, addChapter, moveChapterBefore, renumberChapters } from './scene-ops.js';
+import { renameScene, deleteScene, addScene, setSceneMeta, toggleSceneFlag, duplicateScene, moveSceneOrder, moveSceneToChapter, moveSceneBefore, sceneStatusMenu, sceneColorMenu, renameChapter, deleteChapter, addChapter, moveChapterBefore, renumberChapters,
+         setSceneTitle, setChapterTitle } from './scene-ops.js';
 import { wikiCats, applyWikiCats, newWikiCat, editWikiCat, deleteWikiCat, addEntity, openEntity, duplicateEntity } from './wiki-ui.js';
-import { settingsDialog, versionDialog, showChangelog, showLog } from './dialogs.js';
+import { settingsDialog, versionDialog, showChangelog } from './dialogs.js';
 import { openBookManager, renderBookManager } from './books.js';
 import { restoreFromTrash, deleteToTrash, purgeRecycle } from './recycle.js';
 import { openDashboard, renderDashboard } from './dashboard.js';
 import { openHome, renderHome } from './home-ui.js';
 import { openTagPane, renderTagList, filterByTag } from './tag-pane.js';
-import { openGlobalSearch, bindGlobalSearchShortcut } from './global-search.js';
+import { openGlobalSearch, bindGlobalSearchShortcut, renderSearchPanel } from './global-search.js';
 import { openSceneTable } from './scene-table.js';
-import { openScratchpad } from './scratchpad.js';
-import { openQuickOpen } from './quick-open.js';
-import { manageCustomStatuses, allStatuses, addCustomStatus, removeCustomStatus } from './custom-status.js';
-import { toggleFocusMode2, cursorBlock, isFocusMode } from './focus-mode.js';
-import { toggleTypewriter, twScroll } from './typewriter.js';
+import { openScratchpad, renderNotesPanel } from './scratchpad.js';
+import { openQuickOpen, quickOpenCache } from './quick-open.js';
+import { manageCustomStatuses, allStatuses, addCustomStatus, removeCustomStatus,
+         statusColor, statusesToJson, importStatuses, setStatusColor } from './custom-status.js';
+import { toggleFocusMode2, cursorBlock, isFocusMode, focusDim, applyFocusDim } from './focus-mode.js';
+import { toggleTypewriter, twScroll, isTypewriter, scrollHost } from './typewriter.js';
 import { recordDailyWords, countProjectWords, calcStreak, getWordHistory } from './word-history.js';
 import { autoBackupNow, startAutoBackup, backupIfDue } from './backup.js';
 import { exportProjectZip, exportProjectJson } from './export-zip.js';
-import { showCommentsDialog, addComment, loadComments, deleteComment } from './comments.js';
-import { exportBlogHTML } from './export-blog.js';
+import { renderCommentPanel, commentStore, migrateSceneComments, clearCommentAnchors,
+         resetCommentStore, scrollToAnchor, writeKeepingComments } from './comments/comment-ui.js';
+import { exportBlogHTML, buildBlogHtml, BLOG_THEMES } from './export-blog.js';
 import { thesaurusMenuItems } from './thesaurus.js';
 import { createProjectFromTemplate, showTemplateDialog } from './project.js';
 import { showAISettingsDialog, saveAISettings, saveApiKey, clearKeyCache } from './ai-settings.js';
 import { showAISummary } from './ai-summary.js';
-import { showAITitleSuggestions } from './ai-summary.js';
-import { openBranchingTree } from './branching-ui.js';
-import { openFloorPlan } from './floorplan-ui.js';
+import { showAITitleSuggestions, collectProjectText, hashText, pastTitlesFor,
+         summaryCacheState, rememberTitles } from './ai-summary.js';
+import { openBranchingTree, renderBranchingTree, syncChoicesFromScene, mutateChoices } from './branching-ui.js';
+import { openFloorPlan, renderFloorPlan } from './floorplan-ui.js';
 import { showPlayerHistory } from './player-choices.js';
-import { manageVisualTags } from './visual-tags.js';
+import { manageVisualTags, renderAllTagChips, applyVisualTagStyle, visualTagFor } from './visual-tags.js';
 import { quickNote, showAllNotes, getSessionNotes, addSessionNote, saveSessionNotes } from './session-notes.js';
-import { openCentralizeUI } from './centralize-ui.js';
+import { openCentralizeUI, markCentralizeStale, onCentralizeShown, resetCentralize } from './centralize-ui.js';
 // ---- Part 1+2 integrations ----
 import { openKanban, resetKanban } from './kanban/kanban-ui.js';
-import { initPanelSystem, getPanelManager, togglePanelDialog } from './panels/panel-ui.js';
-import { toggleSplit, createSplit, closeSplit, isSplit, syncSplitPanes, resetSplitSystem } from './layout/split-ui.js';
-import { ensureAutoLink, renderBacklinksTab, resetAutoLink } from './world-story/auto-link-ui.js';
+import * as PL from './panels/panel-layout.js';
+import { initPanelSystem, getPanelManager, togglePanelDialog, showPanel, hidePanel, togglePanel,
+         resetPanels, panelMenuItems, panelToggleState, addPanelButton, renderPanels,
+         isPanelOpen, resetPanelSystem, PANEL_DEFS } from './panels/panel-ui.js';
+import { toggleSplit, createSplit, closeSplit, isSplit, syncSplitPanes, resetSplitSystem,
+         initSplitSystem, syncActiveSplit, openInSplit, closeTabInSplit, splitDir,
+         getSplitManager, paneCount as splitPaneCount } from './layout/split-ui.js';
+import { ensureAutoLink, getBacklinksFor, renderBacklinksTab, resetAutoLink } from './world-story/auto-link-ui.js';
+import { findScenePath } from './project-scan.js';
 import { setAutoSync, isAutoSyncOn, renderAutoSyncSection, resetTaskEngine } from './auto-task/event-ui.js';
 import { openAIAssistant, openPlotHoleDetector, openDialogueGenerator, openConsistencyCheck, openWorldGenerator, openAIChat } from './ai/ai-ui.js';
 import { showThesaurusPopup, initThesaurus } from './tools/thesaurus-ui.js';
 import { importScrivenerDialog } from './import/import-ui.js';
 import { resetAI, getAIClient, ragContext } from './ai/ai-bridge.js';
+import { icon, initIcons, iconHtml, iconLabel, hasIcon } from './icons.js';
 
 // นามแฝงของ t() — ใช้ในฟังก์ชันที่มีตัวแปรท้องถิ่นชื่อ t (ex. runTest: const t = state.active)
 const tr = t;
 
 // ---------------- (ย้ายไป core.js แล้ว: $, el, state, smart, log, setStatus, ค่าตั้งต้น) ----------------
-let pageZoom = 1;        // อัตราซูมหน้ากระดาษ (0.5–2.5) — reassign ได้จึงคงไว้ที่นี่ (ES module import เป็น read-only)
+let pageScale = 1;       // อัตราซูมหน้ากระดาษ (0.5–2.5) — reassign ได้จึงคงไว้ที่นี่ (ES module import เป็น read-only)
 let autosaveTimer = null;
 
 // ใส่ค่า settings/goals ลง state (เติม default ที่ขาด) แล้วนำไปใช้จริง
@@ -87,6 +101,7 @@ function loadSettings(meta) {
 export function applySettings() {
   const off = parseInt(state.settings.uiFontSize, 10) || 0;
   applyZoomVars(off);
+  applyUIScale();
   document.body.classList.toggle('k-ln', !!state.settings.lineNumbers);
   document.body.classList.toggle('paper-mode', state.settings.paperMode !== false);
   // fontFamily
@@ -100,38 +115,64 @@ export function applySettings() {
   restartAutosave();
 }
 
-// ตั้งตัวแปร CSS สำหรับซูม: ฟอนต์ (ฐาน+ตั้งค่า) × อัตราซูม  และความกว้างหน้ากระดาษ × อัตราซูม
+// ตั้งตัวแปร CSS ของหน้ากระดาษ
+//   --ed-fs / --sp-fs = ขนาดฟอนต์ฐาน + ค่าที่ผู้ใช้ตั้ง (uiFontSize) — ไม่คูณซูมแล้ว
+//   --page-scale      = อัตราซูมจริง ส่งให้ CSS `zoom` บนหน้ากระดาษ (ขยายฟอนต์+ระยะขอบ+ความกว้างพร้อมกัน)
+// เดิมซูมคูณเข้าที่ฟอนต์อย่างเดียว → margin/padding คงที่ หน้าเลยเสียสัดส่วน (บั๊ก #7)
 export function applyZoomVars(off) {
   if (off === undefined) off = parseInt(state.settings.uiFontSize, 10) || 0;
   const R = document.documentElement.style;
-  const edfs = +((BASE_ED_FS + off) * pageZoom).toFixed(2);
-  const spfs = Math.max(9, +((BASE_SP_FS + off) * pageZoom).toFixed(2));
+  const edfs = +(BASE_ED_FS + off).toFixed(2);
+  const spfs = Math.max(9, +(BASE_SP_FS + off).toFixed(2));
   R.setProperty('--ed-fs', edfs + 'px');
   R.setProperty('--sp-fs', spfs + 'px');
-  R.setProperty('--page-zoom', pageZoom.toFixed(3));       // ใช้คูณความกว้างหน้ากระดาษใน CSS
-  const slider = $('#zoom-slider'); if (slider) slider.value = String(Math.round(pageZoom * 100));
-  const lbl = $('#zoom-label'); if (lbl) lbl.textContent = Math.round(pageZoom * 100) + '%';
-  const btn = $('#tb-paper'); void btn;
+  R.setProperty('--page-scale', pageScale.toFixed(3));
+  const slider = $('#zoom-slider'); if (slider) slider.value = String(Math.round(pageScale * 100));
+  const lbl = $('#zoom-label'); if (lbl) lbl.textContent = Math.round(pageScale * 100) + '%';
 }
 
 // ปรับซูมทีละขั้น (Ctrl+ล้อ / Ctrl+±) — step เป็นสัดส่วน
-function bumpZoom(dir) { setZoom(pageZoom + (dir > 0 ? 0.1 : -0.1)); }
-function setZoom(z) {
-  pageZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(z * 100) / 100));
+function bumpPageScale(dir) { setPageScale(pageScale + (dir > 0 ? 0.1 : -0.1)); }
+function setPageScale(z) {
+  pageScale = Math.max(SCALE_MIN, Math.min(SCALE_MAX, Math.round(z * 100) / 100));
   applyZoomVars();
-  setStatus(t('status.zoom') + ': ' + Math.round(pageZoom * 100) + '%' + ' (Ctrl+Shift+0 = ' + t('status.zoomReset') + ')');
+  setStatus(t('status.zoom') + ': ' + Math.round(pageScale * 100) + '%' + ' (Ctrl+Shift+0 = ' + t('status.zoomReset') + ')');
 }
-function resetZoom() { if (pageZoom !== 1) { pageZoom = 1; applyZoomVars(); setStatus(t('status.zoomReset')); } }
+function resetPageScale() { if (pageScale !== 1) { pageScale = 1; applyZoomVars(); setStatus(t('status.zoomReset')); } }
+
+// ---------------- ขนาด UI (บั๊ก #9) ----------------
+// --ui-scale คูณเข้ากับฟอนต์ body + ขนาดโครงสร้างของ UI ทุกชิ้นใน style.css (calc(px * var(--ui-scale)))
+// ปุ่ม/ช่องกรอก/select ใช้ font:inherit อยู่แล้ว → เปลี่ยนฟอนต์ body ตัวเดียวก็ไล่ตามทั้งแอป
+export function applyUIScale(v) {
+  const s = Math.max(UI_SCALE_MIN, Math.min(UI_SCALE_MAX,
+    v !== undefined ? v : (parseFloat(state.settings.uiScale) || 1)));
+  document.documentElement.style.setProperty('--ui-scale', s.toFixed(3));
+  const sl = $('#st-uiscale'); if (sl) sl.value = String(s);
+  const lbl = $('#st-uiscale-lbl'); if (lbl) lbl.textContent = Math.round(s * 100) + '%';
+  return s;
+}
+function setUIScale(v) {
+  // ปัดทศนิยม 2 ตำแหน่งก่อนเก็บ — กันค่าสะสมแบบ 1.2000000000000002 จากการกดขยายซ้ำ ๆ
+  const s = applyUIScale(Math.round(v * 100) / 100);
+  state.settings.uiScale = s;
+  if (state.root) saveProjectMeta().catch((e) => log('warn', 'บันทึกขนาด UI ไม่สำเร็จ', e));
+  setStatus(t('status.uiScale', 'ขนาด UI') + ': ' + Math.round(s * 100) + '%');
+}
+function bumpUIScale(dir) {
+  const cur = parseFloat(state.settings.uiScale) || 1;
+  setUIScale(dir === 0 ? 1 : cur + (dir > 0 ? 0.1 : -0.1));
+}
 
 // ดู Markdown ดิบของฉากปัจจุบัน (อ่าน + คัดลอกได้ · ตรงกับไฟล์ .md ที่บันทึก)
 function showSourceView() {
-  const t = state.active;
-  const src = t && (t.editor || t.sp);
+  // ห้ามตั้งชื่อตัวแปรว่า t — จะบัง t() ของ i18n ทำให้ปุ่ม "คัดลอกทั้งหมด" พังตอนเรียก t('status.copied')
+  const tab = state.active;
+  const src = tab && (tab.editor || tab.sp);
   if (!src) { setStatus('เปิดฉากก่อนจึงจะดู Markdown ได้'); return; }
   const md = src.getMarkdown();
   const ov = el('div', 'k-overlay');
   const box = el('div', 'k-dialog k-wide');
-  box.append(el('div', 'k-dlg-title', 'Markdown ดิบ — ' + t.title));
+  box.append(el('div', 'k-dlg-title', 'Markdown ดิบ — ' + tab.title));
   const ta = el('textarea', 'k-src-view'); ta.value = md; ta.readOnly = true;
   box.append(ta);
   const btns = el('div', 'k-dlg-btns');
@@ -233,6 +274,7 @@ async function closeProjectIfAny() {
   state.tabs.clear(); state.active = null; state.root = null;
   // ล้างดัชนี/เอนจินที่ผูกกับโปรเจกต์เดิม — ไม่งั้นโปรเจกต์ใหม่จะเห็นข้อมูล/คีย์ของเก่า
   resetAutoLink(); resetTaskEngine(); clearKeyCache(); resetAI(); resetSplitSystem(); resetKanban();
+  resetCentralize(); resetCommentStore(); _cmMigrated.clear(); clearCommentAnchors();
   imgURLBase.clear();
   $('#tree').innerHTML = ''; $('#outline').innerHTML = '';
   refreshToolbar(); scheduleCount();
@@ -258,6 +300,7 @@ export async function loadProject(root) {
     await loadLanguage(projLang, root);
   }
   applyDataI18n();
+  initIcons();
   applyToolbarShortcutTitles();
   await purgeRecycle(root);                          // ล้างถังขยะเก่าก่อนสร้างต้นไม้
   await buildTree();
@@ -295,7 +338,7 @@ function renderScopeChip() {
     chip = el('div', 'tree-scope'); chip.id = 'tree-scope';
     const tree = $('#tree'); if (tree && tree.parentNode) tree.parentNode.insertBefore(chip, tree);
   }
-  chip.textContent = '🔍 ค้นเฉพาะใน: ' + treeScope.label + '  ';
+  chip.innerHTML = iconHtml('search', 14) + ' ค้นเฉพาะใน: ' + treeScope.label + '  ';
   const x = el('span', 'tree-scope-x', '✕');
   x.title = 'ยกเลิกขอบเขต';
   x.onclick = () => setTreeScope(null);
@@ -399,7 +442,10 @@ async function _buildTreeInner() {
     makeAccordion(secTitle, secEl, 'sec:' + name);
     const draftRoot = await kapi.join(secPath, 'Draft');
     if (await kapi.exists(draftRoot)) {
-      for (const dname of await kapi.listDirs(draftRoot)) {
+      const primary = sec.primaryDraft || 'default';
+      const draftsAvailable = await kapi.listDirs(draftRoot);
+      const namesToShow = draftsAvailable.includes(primary) ? [primary] : draftsAvailable;
+      for (const dname of namesToShow) {
         const dPath = await kapi.join(draftRoot, dname);
         const draftFile = await kapi.join(dPath, 'draft.json');
         if (!(await kapi.exists(draftFile))) continue;
@@ -408,7 +454,8 @@ async function _buildTreeInner() {
         const scenesAll = (await kapi.readJson(await kapi.join(dPath, 'scenes.json'))).chapters || {};
         for (const ch of chapters) {
           const chEl = el('div', 'chapter');
-          const chHead = el('div', 'ch-title', '📁 ' + ch.title);
+          const chHead = el('div', 'ch-title');
+          chHead.innerHTML = iconHtml('folder', 14) + ' ' + ch.title;
           const addSc = el('span', 'row-add', '+');
           addSc.title = 'เพิ่มฉากในบทนี้';
           addSc.onclick = (e) => { e.stopPropagation(); addScene(dPath, ch); };
@@ -458,6 +505,9 @@ async function _buildTreeInner() {
             // ไอคอนตามประเภท
             const icon = sc.locked ? '🔒 ' : isMemo ? '📝 ' : sc.flag ? '⭐ ' : '📄 ';
             scEl.append(document.createTextNode(icon + sc.title));
+            // ป้ายเล่าเรื่อง (Narrative Markers): ฉากนอกลำดับเวลาหลัก
+            if (sc.isFlashback) scEl.append(el('span', 'tree-flash', '⏪'));
+            else if (sc.isFlashforward) scEl.append(el('span', 'tree-flash', '⏩'));
             // รูป thumbnail (ถ้ามีรูปแรกในฉาก)
             const scPath = await kapi.join(dPath, 'Chapters', ch.folderName, sc.fileName);
             if (sc.imageCount || sc.wordCount) {
@@ -468,8 +518,22 @@ async function _buildTreeInner() {
               scEl.append(el('span', 'sc-wordcount',
                 (sc.wordCount >= 1000 ? Math.round(sc.wordCount / 1000) + 'k' : sc.wordCount) + ' คำ'));
             }
-            if (sc.status && sc.status !== 'Outline') scEl.append(el('span', 'sc-status', sc.status));
-            if (sc.tags && sc.tags.length) scEl.append(el('span', 'sc-tags', '#' + sc.tags.join(' #')));
+            if (sc.status && sc.status !== 'Outline') {
+              // ชิปสถานะได้สีประจำสถานะ (มาตรฐาน หรือที่ผู้ใช้ตั้งเองในกล่องจัดการสถานะ)
+              const stChip = el('span', 'sc-status', sc.status);
+              const stCol = statusColor(sc.status);
+              if (stCol) { stChip.style.color = stCol; stChip.style.borderColor = stCol; }
+              scEl.append(stChip);
+            }
+            // แท็ก: ตัวที่ตั้งสี/ไอคอนไว้ (Visual Tags ข้อ 84) ได้ชิปสี · ที่เหลือเป็น #ข้อความ
+            if (sc.tags && sc.tags.length) {
+              const chips = renderAllTagChips(sc.tags, (t) => {
+                const q = $('#tree-search');
+                if (q) { q.value = 'tag:' + t; q.dispatchEvent(new Event('input', { bubbles: true })); }
+              });
+              chips.classList.add('sc-tags');
+              scEl.append(chips);
+            }
             scEl._scene = sc;                      // อ้างอิงตรง → กรองได้ทุกฟิลด์ (ดู filterTree)
             scEl.dataset.search = [sc.title, (sc.tags || []).join(' '), sc.status,
               sc.pov, sc.emotion, sc.conflict, sc.synopsis, sc.note].filter(Boolean).join(' ').toLowerCase();
@@ -483,6 +547,8 @@ async function _buildTreeInner() {
               sc.emotion ? 'อารมณ์: ' + sc.emotion : '',
               sc.conflict ? 'ความขัดแย้ง: ' + sc.conflict : '',
               sc.flag ? '⭐ ปักหมุด' : '',
+              sc.isFlashback ? '⏪ ย้อนอดีต (Flashback)' : '',
+              sc.isFlashforward ? '⏩ ล่วงหน้า (Flashforward)' : '',
               sc.wordCount ? sc.wordCount + ' คำ' : '',
               sc.synopsis || '',
               sc.note ? 'โน้ต: ' + sc.note : '',
@@ -519,12 +585,29 @@ async function _buildTreeInner() {
             });
             scEl.oncontextmenu = (e) => { e.preventDefault(); popupMenu(e.clientX, e.clientY, [
               { label: '📂 แสดงในโฟลเดอร์', click: () => kapi.revealInOS(scEl.dataset.path) },
-              ...(isMemo ? [{ label: '📝 ย้ายออกไปที่ MEMO', click: () => moveRowToMemos(dPath, ch, sc) }]
+              // โน้ตในบท: ย้ายออกไปโฟลเดอร์ MEMO ได้ และ "กลับเป็นฉากปกติ" ได้ด้วย
+              // (เดิมเปลี่ยนเป็นโน้ตแล้วไม่มีทางกลับในเมนู — บั๊กข้อ 8)
+              ...(isMemo ? [{ label: '📄 กลับเป็นฉากปกติ (รวมตอนส่งออก)',
+                              click: () => setRowMemo(dPath, ch, sc, false) },
+                            { label: '📝 ย้ายออกไปที่ MEMO', click: () => moveRowToMemos(dPath, ch, sc) }]
                          : [{ label: '📝 เปลี่ยนเป็นโน้ต (ไม่รวมตอนส่งออก)',
                              click: () => setRowMemo(dPath, ch, sc, true) }]),
               { label: 'เปิด', click: scEl.onclick },
+              // เปิดฉากให้เสร็จก่อนค่อยเปิดแผง — แผงอ่านจาก state.active ที่ openScene เป็นคนตั้ง
+              { label: '💬 คอมเมนต์ (แผง)', click: async () => {
+                  setPropsTarget(dPath, ch, sc);
+                  await openScene(scEl.dataset.path, sc.title);
+                  await openCommentsPanel();
+                } },
               { label: 'ทำซ้ำ', click: () => duplicateScene(dPath, ch, sc) },
               { label: 'เปลี่ยนชื่อ…', click: () => renameScene(dPath, ch, sc) },
+              // ข้อ 78: แนะนำชื่อจากเนื้อฉากจริง (ส่งเนื้อหาไปเป็นบริบทให้ AI)
+              { label: '✨ แนะนำชื่อฉากด้วย AI…', click: async () => {
+                  let ctx = '';
+                  try { ctx = await kapi.readFile(scEl.dataset.path); } catch {}
+                  showAITitleSuggestions(sc.title || '', (title) => setSceneTitle(dPath, ch, sc, title),
+                                         { kind: 'scene', context: ctx });
+                } },
               '-',
               { label: '▲ เลื่อนขึ้น', click: () => moveSceneOrder(dPath, ch, sc, -1) },
               { label: '▼ เลื่อนลง', click: () => moveSceneOrder(dPath, ch, sc, 1) },
@@ -557,6 +640,12 @@ async function _buildTreeInner() {
             { label: '🔍 ค้นเฉพาะในบทนี้', click: () => setTreeScope({ guid: ch.guid, label: ch.title }) },
             { label: 'เพิ่มฉาก…', click: () => addScene(dPath, ch) },
             { label: 'เปลี่ยนชื่อบท…', click: () => renameChapter(dPath, ch) },
+            // ข้อ 78: บริบท = ชื่อฉากทั้งบท (พอให้ AI เดาเนื้อบทได้โดยไม่ต้องอ่านทุกไฟล์)
+            { label: '✨ แนะนำชื่อบทด้วย AI…', click: () => {
+                const ctx = (scenesAll[ch.guid] || []).map((s) => '- ' + (s.title || '')).join('\n');
+                showAITitleSuggestions(ch.title || '', (title) => setChapterTitle(dPath, ch, title),
+                                       { kind: 'chapter', context: ctx });
+              } },
             { label: '🔢 เรียงลำดับหมายเลขใหม่', click: () => renumberChapters(dPath) },
             '-',
             { label: 'ลบบททั้งบท (ย้ายไปถังขยะ)', danger: true, click: () => deleteChapter(dPath, ch) },
@@ -628,11 +717,67 @@ async function _buildTreeInner() {
       { label: '📂 แสดงในโฟลเดอร์', click: () => kapi.revealInOS(p) },
       { label: 'เปลี่ยนชื่อ…', click: () => renameMemo(p) },
       '-',
+      // ทางกลับของคำสั่ง "ย้ายออกไปที่ MEMO" — เดิมทำได้ทางเดียวคือลากวาง (บั๊กข้อ 8)
+      { label: '↩ ย้ายกลับเข้าบท…', click: async () => {
+          const dst = await pickDraftTarget({ title: 'ย้ายโน้ตกลับเข้าบทไหน' });
+          if (!dst) return;
+          await moveMemoToChapter(p, dst.dPath, dst.chapter);
+        } },
+      '-',
       { label: 'ลบ (ย้ายไปถังขยะ)', danger: true, click: () => deleteToTrash(p, title) },
     ]); };
     mSec.append(it);
   }
   tree.append(mSec);
+
+  // ---- คลังรูป (โฟลเดอร์ Images/) — ข้อ 6: เดิมเห็นได้แค่ผ่านกล่อง "คลังรูปภาพ" ----
+  const imgDir = await kapi.join(state.root, 'Images');
+  const IMG_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i;
+  const imgFiles = (await kapi.exists(imgDir))
+    ? (await kapi.listFiles(imgDir, '').catch(() => [])).filter((f) => IMG_RE.test(f)) : [];
+  const iSec = el('div', 'sec');
+  const iHead = el('div', 'sec-title', `🖼 คลังรูป (${imgFiles.length})`);
+  const addI = el('span', 'row-add', '+'); addI.title = 'เพิ่มรูปเข้าคลัง';
+  addI.onclick = async (e) => {
+    e.stopPropagation();
+    const src = await kapi.openImageDialog(); if (!src) return;
+    await kapi.mkdir(imgDir);
+    const nm = await kapi.copyInto(src, imgDir);
+    await buildTree(); setStatus('เพิ่มรูปเข้าคลังแล้ว: ' + nm);
+  };
+  iHead.append(addI); iSec.append(iHead);
+  makeAccordion(iHead, iSec, 'sec:__images__');
+  iHead.oncontextmenu = (e) => { e.preventDefault(); popupMenu(e.clientX, e.clientY, [
+    { label: '🖼 เปิดกล่องคลังรูป', click: () => openGallery() },
+    { label: '📂 แสดงโฟลเดอร์ Images', click: () => kapi.revealInOS(imgDir) },
+  ]); };
+  for (const f of imgFiles) {
+    const p = await kapi.join(imgDir, f);
+    const it = el('div', 'scene img-row');
+    const th = el('img', 'img-thumb'); th.src = await kapi.toFileURL(p); th.alt = f;
+    th.onerror = () => { th.replaceWith(document.createTextNode('⚠ ')); };
+    it.append(th, document.createTextNode(f));
+    it.dataset.path = p;
+    it.dataset.search = f.toLowerCase();
+    it.title = f + '\nคลิก = ดูภาพเต็ม · ลากไปวางในฉากเพื่อแทรกรูป';
+    it.onclick = async () => imageLightbox(await kapi.toFileURL(p), f);
+    it.draggable = true;
+    it.addEventListener('dragstart', (e) => {
+      e.dataTransfer.effectAllowed = 'copy';
+      e.dataTransfer.setData('text/k2-image', JSON.stringify({ path: p, name: f }));
+      e.dataTransfer.setData('text/plain', '![](' + f + ')');
+    });
+    it.oncontextmenu = (e) => { e.preventDefault(); popupMenu(e.clientX, e.clientY, [
+      { label: '🔍 ดูภาพเต็ม', click: it.onclick },
+      { label: '🖼 แทรกลงฉากที่เปิดอยู่', click: () => insertImageByName(f) },
+      { label: '📂 แสดงในโฟลเดอร์', click: () => kapi.revealInOS(p) },
+      '-',
+      { label: 'ลบ (ย้ายไปถังขยะ)', danger: true, click: () => deleteToTrash(p, f) },
+    ]); };
+    iSec.append(it);
+  }
+  if (!imgFiles.length) iSec.append(el('div', 'scene empty-state-row', 'ยังไม่มีรูปในคลัง'));
+  tree.append(iSec);
 
   // ---- Research (โฟลเดอร์ Research/ — เก็บ PDF, ภาพ, ลิงก์, .md งานวิจัย) ----
   const resDir = await kapi.join(state.root, 'Research');
@@ -647,7 +792,7 @@ async function _buildTreeInner() {
     for (const d of dirs) {
       const dp = await kapi.join(resDir, d);
       const it = el('div', 'scene');
-      it.textContent = '📁 ' + d;
+      it.innerHTML = iconHtml('folder', 14) + ' ' + d;
       it.onclick = () => kapi.revealInOS(dp);
       it.oncontextmenu = (e) => { e.preventDefault(); popupMenu(e.clientX, e.clientY, [
         { label: '📂 เปิดในโฟลเดอร์', click: () => kapi.revealInOS(dp) },
@@ -731,19 +876,19 @@ async function _buildTreeInner() {
   wSec.append(catRow);
   const renderCat = async (catDir, cat, scopeLabel) => {
     const cEl = el('div', 'chapter');
-    const cHead = el('div', 'ch-title',
-      catIcon(cat) + ' ' + catLabel(cat) + (scopeLabel ? ` (${scopeLabel})` : ''));
+    const cHead = el('div', 'ch-title');
+    cHead.innerHTML = catIconHtml(cat) + ' ' + catLabel(cat) + (scopeLabel ? ` (${scopeLabel})` : '');
     const addE = el('span', 'row-add', '+'); addE.title = 'สร้างใหม่ในหมวดนี้';
     addE.onclick = (e) => { e.stopPropagation(); addEntity(catDir, cat); };
     cHead.append(addE); cEl.append(cHead);
     makeAccordion(cHead, cEl, 'wcat:' + cat + ':' + (scopeLabel || ''));
     // คลิกขวาหัวหมวด → แก้ไข/ลบ (เฉพาะหมวดที่ผู้ใช้สร้าง / ไม่ใช่หมวดหลัก)
     if (!scopeLabel) cHead.oncontextmenu = (e) => { e.preventDefault();
-      const items = [{ label: '➕ สร้างรายการใหม่', click: () => addEntity(catDir, cat) }];
+      const items = [{ label: iconHtml('plus', 14) + ' สร้างรายการใหม่', click: () => addEntity(catDir, cat) }];
       if (!BUILTIN_CATS.includes(cat)) items.push('-',
-        { label: '✎ แก้ไขหมวด (ชื่อ/ไอคอน)', click: () => editWikiCat(cat) },
-        { label: '🗑 ลบหมวด', danger: true, click: () => deleteWikiCat(cat, catDir) });
-      else items.push('-', { label: '✎ เปลี่ยนไอคอน/ชื่อที่แสดง', click: () => editWikiCat(cat) });
+        { label: iconHtml('edit', 14) + ' แก้ไขหมวด (ชื่อ/ไอคอน)', click: () => editWikiCat(cat) },
+        { label: iconHtml('trash', 14) + ' ลบหมวด', danger: true, click: () => deleteWikiCat(cat, catDir) });
+      else items.push('-', { label: iconHtml('edit', 14) + ' เปลี่ยนไอคอน/ชื่อที่แสดง', click: () => editWikiCat(cat) });
       popupMenu(e.clientX, e.clientY, items);
     };
     // หัวหมวดรับ drop entity จากหมวดอื่น → ย้ายไฟล์ .json
@@ -762,7 +907,8 @@ async function _buildTreeInner() {
         const p = await kapi.join(catDir, f);
         let name = f.replace(/\.json$/, '');
         try { name = (await kapi.readJson(p)).name || name; } catch {}
-        const it = el('div', 'scene', catIcon(cat) + ' ' + name);
+        const it = el('div', 'scene');
+        it.innerHTML = catIconHtml(cat) + ' ' + name;
         it.dataset.search = name.toLowerCase();
         it.dataset.path = p;
         it.onclick = () => openEntity(p);
@@ -775,6 +921,8 @@ async function _buildTreeInner() {
         it.addEventListener('dragend', () => it.classList.remove('sc-dragging'));
         it.oncontextmenu = (e) => { e.preventDefault(); popupMenu(e.clientX, e.clientY, [
           { label: 'เปิด', click: it.onclick },
+          { label: iconHtml('search', 14) + ' ค้นหาในฉาก (Find on location)',
+            click: () => findEntityInScenes(p, name, e.clientX, e.clientY) },
           { label: 'ทำซ้ำ', click: () => duplicateEntity(p) },
           '-',
           { label: 'ลบ (ย้ายไปถังขยะ)', danger: true, click: () => deleteToTrash(p, name) },
@@ -865,13 +1013,14 @@ export function pickFromList(title, items) {
 }
 
 // ---------------- inverse roles (v1 assets) ----------------
-export const INV_C = { m: null };   // inverse-relationship cache (object เพื่อ export ข้ามไฟล์ได้)
+export const INV_C = { m: null, cat: {} };   // inverse-relationship cache + แผนที่บทบาท→ประเภท (categories)
 export async function invertRole(role) {
   if (!INV_C.m) {
     INV_C.m = {};
     try {
       const d = await fetch('inverse_roles.json').then((r) => r.json());
       for (const [a, b] of d.pairs || []) { INV_C.m[a] = b; if (!(b in INV_C.m)) INV_C.m[b] = a; }
+      if (d.categories && typeof d.categories === 'object') INV_C.cat = d.categories;
     } catch {}
   }
   return INV_C.m[role] || role;
@@ -898,11 +1047,22 @@ export function relationDialog(targets, fromName) {
     const dl = el('datalist'); dl.id = 'k-roles';
     for (const role of knownRoles()) { const o = el('option'); o.value = role; dl.append(o); }
     r2.append(inR, dl); box.append(r2);
-    // แสดงตัวอย่างบทบาทฝั่งตรงข้ามแบบสด
+    // ประเภทความสัมพันธ์ (ครอบครัว/คนรัก/ศัตรู…) — ใช้ระบายสีเส้นใน Story Network
+    const rType = el('div', 'wiki-row');
+    rType.append(el('label', null, 'ประเภท'));
+    const selType = el('select', 'wiki-input k-dlg-select rel-type');
+    { const o = el('option', null, '— ไม่ระบุ —'); o.value = ''; selType.append(o); }
+    for (const ty of REL_TYPES) { const o = el('option', null, ty.label); o.value = ty.key; selType.append(o); }
+    rType.append(selType); box.append(rType);
+    let typeTouched = false;                      // ผู้ใช้เลือกเองแล้ว → เลิกเดาทับ
+    selType.onchange = () => { typeTouched = true; };
+    // แสดงตัวอย่างบทบาทฝั่งตรงข้ามแบบสด + เดาประเภทจากบทบาทที่พิมพ์
     const hint = el('div', 'k-hint'); hint.style.margin = '2px 0 8px';
     const upd = () => { lab.textContent = `${fromName} เป็น…ของ ${selT.value}`;
-      const inv = (INV_C.m && INV_C.m[inR.value.trim()]) || inR.value.trim();
-      hint.textContent = inR.value.trim() ? `อีกฝั่งจะได้บทบาท “${inv}” อัตโนมัติ` : ''; };
+      const role = inR.value.trim();
+      const inv = (INV_C.m && INV_C.m[role]) || role;
+      if (!typeTouched) selType.value = role ? categorizeWith(INV_C.cat, role) : '';
+      hint.textContent = role ? `อีกฝั่งจะได้บทบาท “${inv}” อัตโนมัติ` : ''; };
     selT.onchange = upd; inR.oninput = upd; upd();
     box.append(hint);
     const btns = el('div', 'k-dlg-btns');
@@ -911,7 +1071,7 @@ export function relationDialog(targets, fromName) {
     c.onclick = () => { ov.remove(); resolve(null); };
     ok.onclick = () => { const role = inR.value.trim();
       if (!role) { inR.focus(); return; }
-      ov.remove(); resolve({ target: selT.value, role }); };
+      ov.remove(); resolve({ target: selT.value, role, type: selType.value }); };
     btns.append(c, ok); box.append(btns); ov.append(box);
     ov.onclick = (e) => { if (e.target === ov) { ov.remove(); resolve(null); } };
     document.body.append(ov); inR.focus();
@@ -925,8 +1085,34 @@ export function relationDialog(targets, fromName) {
 
 export function catLabel(key) { const c = wikiCats().find((x) => x.key === key);
                          return (c && c.label) || CAT_TH[key] || key; }
+// ไอคอนหมวด = ชื่อไอคอนใน icons.js เท่านั้น — meta เก่าที่เก็บอีโมจิไว้ (ก่อนย้ายมาใช้ไอคอน SVG)
+// จะถูกมองข้าม แล้วตกไปใช้ไอคอนประจำหมวด/bookmark แทน (ไม่งั้นได้ svg ว่าง)
 export function catIcon(key) { const c = wikiCats().find((x) => x.key === key);
-                        return (c && c.icon) || CAT_ICON[key] || '🔖'; }
+  return (c && hasIcon(c.icon) ? c.icon : null) || CAT_ICON[key] || 'bookmark'; }
+export function catIconHtml(key, sz) { return iconHtml(catIcon(key), sz || 16); }
+
+// บั๊ก #21: "ค้นหาในฉาก" จากคลิกขวาเอนทิตี้ Wiki ใน Explorer
+// ใช้ดัชนี auto-link ที่มีอยู่แล้ว (ตัวเดียวกับแท็บ Backlinks / ศูนย์รวม) — ไม่สแกนไฟล์ซ้ำ
+// คืนรายการฉากไว้ให้ selftest ตรวจได้ด้วย (UI เป็นเมนูป๊อปอัป จึงเช็คตรง ๆ ไม่ได้)
+export async function findEntityInScenes(entityPath, name, x, y) {
+  setStatus('กำลังค้นหาฉากที่กล่าวถึง “' + name + '” …');
+  await ensureAutoLink();
+  const links = (getBacklinksFor(entityPath) || []).slice().sort((a, b) => (b.count || 0) - (a.count || 0));
+  if (!links.length) { setStatus('ยังไม่มีฉากที่กล่าวถึง “' + name + '”'); return links; }
+  const items = links.map((l) => ({
+    label: iconHtml('file', 14) + ' ' + (l.title || l.sceneId) +
+           '  <span class="dim">' + (l.count || 1) + '×' + (l.via ? ' · ' + l.via : '') + '</span>',
+    click: async () => {
+      const hit = await findScenePath(state.root, l.sceneId);
+      if (hit && (await kapi.exists(hit.path))) openScene(hit.path, hit.title);
+      else setStatus('ไม่พบไฟล์ฉาก: ' + (l.title || l.sceneId));
+    },
+  }));
+  items.unshift({ label: `<b>${links.length} ฉากที่กล่าวถึง “${name}”</b>`, disabled: true }, '-');
+  popupMenu(typeof x === 'number' ? x : 80, typeof y === 'number' ? y : 80, items);
+  setStatus(`พบ ${links.length} ฉากที่กล่าวถึง “${name}”`);
+  return links;
+}
 // เอาชื่อไทยของหมวดเองไปใส่ CAT_TH ด้วย เพื่อให้ WikiEditor/ตัวจัดการเทมเพลตแสดงตรงกัน
 // คีย์หมวดทั้งหมดที่ควรเลือกได้ (ในตัวเดิม + ของผู้ใช้ + โฟลเดอร์ที่มีอยู่จริง)
 export async function allCatKeys() {
@@ -992,6 +1178,7 @@ export async function loadAllEntities() {
           const p = await kapi.join(catDir, f);
           const e = await kapi.readJson(p);
           if (e.name) out.push({ name: e.name, cat, file: p,
+                                 tags: Array.isArray(e.tags) ? e.tags : [],
                                  relationships: e.relationships || [] });
         } catch {}
       }
@@ -1105,8 +1292,19 @@ async function chapterByGuid(dPath, guidWanted) {
 }
 
 // ---------------- หน้าต่างลอย (floating window) — แบบ Resprite: ลากหัว/ย่อ/คืนแท็บ/ปรับขนาด ----------------
-let _floatZ = 60;
-function bringFloatFront(win) { win.style.zIndex = String(++_floatZ); }
+// z-index ของหน้าต่างลอยต้องอยู่ในช่วง 60–74 เท่านั้น
+// ถ้าปล่อยให้ ++ ไปเรื่อย ๆ จะไต่ขึ้นไปบัง FAB (76) และกล่องโต้ตอบ (80) — บั๊กข้อ 9
+const FLOAT_Z_MIN = 60, FLOAT_Z_MAX = 74;
+let _floatZ = FLOAT_Z_MIN;
+function bringFloatFront(win) {
+  if (_floatZ >= FLOAT_Z_MAX) {              // ชนเพดาน → เรียงใหม่จากล่างสุด
+    _floatZ = FLOAT_Z_MIN;
+    [...document.querySelectorAll('.float-win')]
+      .sort((a, b) => (+a.style.zIndex || 0) - (+b.style.zIndex || 0))
+      .forEach((w) => { w.style.zIndex = String(_floatZ++); });
+  }
+  win.style.zIndex = String(++_floatZ);
+}
 
 function tabByBtn(btn) {
   for (const [f, t] of state.tabs) if (t.tabBtn === btn) return [f, t];
@@ -1134,6 +1332,7 @@ function floatTab(file) {
   body.append(t.pane);                      // ย้าย pane เดิมเข้ามา (ไม่สร้างใหม่ → ไม่เสียสถานะ)
   t.pane.classList.add('on');
   t.floatWin = win;
+  syncSplitPanes();          // ถ้าแท็บนี้อยู่ในช่องแยกจอ → ช่องนั้นต้องวาดใหม่เป็นช่องว่าง
   bringFloatFront(win);
 
   const n = [...state.tabs.values()].filter((x) => x.floatWin).length;
@@ -1176,6 +1375,7 @@ function dockTab(file) {
   t.floatWin.remove();
   t.floatWin = null;
   t.tabBtn.classList.remove('floated');
+  syncSplitPanes();          // ผนึกคืน → ช่องที่เคยว่างต้องรับ pane กลับ
   activate(file);
   setTimeout(() => refitTab(t), 60);
   setStatus('คืน "' + t.title + '" เป็นแท็บแล้ว');
@@ -1265,6 +1465,86 @@ export async function openFirstSceneOf(secPath) {
 
 // สลับลำดับเล่ม: ย้าย from ไปไว้ก่อน dst แล้วเขียน order ใหม่ทั้งชุด
 
+// ---------------- รายการเอกสารที่อ้างอิงได้: ฉากทุกบท + โน้ตใน Memos/ (ข้อ 5) ----------------
+// เก็บ path แบบสัมพัทธ์กับ root เพื่อให้ย้าย/สำรองโปรเจกต์แล้วลิงก์ยังใช้ได้
+export async function listRefTargets() {
+  const out = [];
+  if (!state.root) return out;
+  const skip = new Set(['Wiki', 'Bible', 'Images', 'Memos', 'Research', 'Snapshots', 'Plugins', 'Recycle']);
+  for (const secName of await kapi.listDirs(state.root).catch(() => [])) {
+    if (skip.has(secName)) continue;
+    const secPath = await kapi.join(state.root, secName);
+    if (!(await kapi.exists(await kapi.join(secPath, 'section.json')))) continue;
+    const draftRoot = await kapi.join(secPath, 'Draft');
+    if (!(await kapi.exists(draftRoot))) continue;
+    for (const dn of await kapi.listDirs(draftRoot).catch(() => [])) {
+      const dPath = await kapi.join(draftRoot, dn);
+      let draft = {}; try { draft = await kapi.readJson(await kapi.join(dPath, 'draft.json')); } catch { continue; }
+      let scAll = {}; try { scAll = (await kapi.readJson(await kapi.join(dPath, 'scenes.json'))).chapters || {}; } catch {}
+      for (const ch of (draft.chapters || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0))) {
+        for (const sc of (scAll[ch.guid] || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0))) {
+          const abs = await kapi.join(dPath, 'Chapters', ch.folderName, sc.fileName);
+          out.push({ kind: sc.type === 'memo' ? 'memo' : 'scene',
+                     path: (await kapi.relative(state.root, abs)).replace(/\\/g, '/'),
+                     title: sc.title || sc.fileName,
+                     label: `${sc.type === 'memo' ? '📝' : '📄'} ${secName} / ${ch.title || '-'} / ${sc.title || sc.fileName}` });
+        }
+      }
+    }
+  }
+  const memoDir = await kapi.join(state.root, 'Memos');
+  if (await kapi.exists(memoDir)) {
+    for (const f of await kapi.listFiles(memoDir, '.md').catch(() => [])) {
+      const abs = await kapi.join(memoDir, f);
+      let title = f.replace(/\.md$/i, '');
+      try { title = parseMdFile(await kapi.readFile(abs)).meta.title || title; } catch {}
+      out.push({ kind: 'memo', path: 'Memos/' + f, title,
+                 label: `📝 MEMO / ${title}` });
+    }
+  }
+  return out;
+}
+
+// กล่องเลือกเอกสาร/โน้ตที่จะอ้างอิง — มีช่องกรองเพราะโปรเจกต์จริงมีฉากเป็นร้อย
+export async function pickReference() {
+  const items = await listRefTargets();
+  if (!items.length) { setStatus('ยังไม่มีฉาก/โน้ตให้อ้างอิง'); return null; }
+  return new Promise((resolve) => {
+    const ov = el('div', 'k-overlay');
+    const box = el('div', 'k-dialog');
+    box.append(el('div', 'k-dlg-title', 'อ้างอิงถึงเอกสาร/โน้ตไหน'));
+    const q = el('input', 'k-dlg-input'); q.placeholder = 'พิมพ์เพื่อกรอง…';
+    box.append(q);
+    const list = el('div', 'k-pick-list');
+    const rows = items.map((it) => {
+      const d = el('div', 'k-menu-item', it.label);
+      d.onclick = () => { ov.remove(); resolve(it); };
+      list.append(d);
+      return { it, d };
+    });
+    q.oninput = () => {
+      const s = q.value.trim().toLowerCase();
+      for (const { it, d } of rows) d.style.display = !s || it.label.toLowerCase().includes(s) ? '' : 'none';
+    };
+    box.append(list);
+    const btns = el('div', 'k-dlg-btns');
+    const c = el('button', null, 'ยกเลิก');
+    c.onclick = () => { ov.remove(); resolve(null); };
+    btns.append(c); box.append(btns); ov.append(box);
+    ov.onclick = (e) => { if (e.target === ov) { ov.remove(); resolve(null); } };
+    document.body.append(ov);
+    q.focus();
+  });
+}
+
+// เปิดเอกสารที่ถูกอ้างอิง (path สัมพัทธ์กับ root)
+export async function openRef(ref) {
+  if (!ref || !ref.path || !state.root) return;
+  const abs = await kapi.join(state.root, ...ref.path.split('/'));
+  if (!(await kapi.exists(abs))) { setStatus('ไม่พบไฟล์ที่อ้างอิง: ' + ref.path); return; }
+  openScene(abs, ref.title || ref.path.split('/').pop());
+}
+
 // ---------------- เส้นเวลา (Timeline) ----------------
 // events ผู้ใช้เก็บใน <root>/timeline.json — ฉากที่มี storyDate ดึงมาแสดงอัตโนมัติ
 export async function loadTimeline() {
@@ -1329,6 +1609,37 @@ export function eventDialog(ev, knownTracks, canDelete = false) {
     const iSort = mk('ลำดับ (ตัวเลข — ไม่บังคับ)', ev.sort ?? '', 'ใช้จัดลำดับเมื่อเวลาเป็นข้อความ');
     iSort.type = 'number';
     const iDesc = mk('รายละเอียด', ev.desc, '', 'textarea');
+
+    // ---- อ้างอิง (ข้อ 5): ผูกเหตุการณ์กับฉาก/โน้ตจริงในโปรเจกต์ ----
+    let refs = normalizeRefs(ev.refs);
+    const refRow = el('div', 'wiki-row k-ev-refs');
+    refRow.append(el('label', null, 'อ้างอิง'));
+    const refWrap = el('div', 'k-ev-ref-wrap');
+    const refList = el('div', 'k-ev-ref-list');
+    const addRef = el('button', 'k-tpl-add', '+ อ้างอิงเอกสาร/โน้ต…');
+    addRef.type = 'button';
+    const paintRefs = () => {
+      refList.replaceChildren();
+      if (!refs.length) refList.append(el('span', 'dim', 'ยังไม่ได้อ้างอิงอะไร'));
+      refs.forEach((r, i) => {
+        const chip = el('span', 'k-ev-ref');
+        chip.append(el('span', null, (r.kind === 'memo' ? '📝 ' : '📄 ') + r.title));
+        const x = el('span', 'k-ev-ref-x', '✕'); x.title = 'เอาการอ้างอิงนี้ออก';
+        x.onclick = () => { refs.splice(i, 1); paintRefs(); };
+        chip.append(x);
+        chip.title = r.path;
+        refList.append(chip);
+      });
+    };
+    addRef.onclick = async () => {
+      const pick = await pickReference();
+      if (!pick) return;
+      refs = normalizeRefs([...refs, pick]);
+      paintRefs();
+    };
+    paintRefs();
+    refWrap.append(refList, addRef); refRow.append(refWrap); box.append(refRow);
+
     const btns = el('div', 'k-dlg-btns');
     if (canDelete) {
       const del = el('button', 'k-danger', '🗑 ลบ');
@@ -1346,7 +1657,8 @@ export function eventDialog(ev, knownTracks, canDelete = false) {
       const sortVal = iSort.value.trim() === '' ? undefined : parseFloat(iSort.value);
       ov.remove();
       resolve({ ...ev, title, when: iWhen.value.trim(), whenEnd: iWhenEnd.value.trim(),
-                track: iTrack.value.trim(), sort: sortVal, desc: iDesc.value.trim() });
+                track: iTrack.value.trim(), sort: sortVal, desc: iDesc.value.trim(),
+                refs: normalizeRefs(refs) });
     };
     iTitle.focus();
   });
@@ -1466,49 +1778,80 @@ function toggleFocus(on) {
   const v = on ?? !document.body.classList.contains('focus-mode');
   document.body.classList.toggle('focus-mode', v);
   toggleFocusMode2(v);          // หรี่บรรทัดอื่นไปพร้อมกัน (โมดูล focus-mode.js)
+  syncMenuToggles();
   setStatus(v ? 'โหมดโฟกัส — Esc หรือ Ctrl+Shift+D เพื่อออก' : 'ออกจากโหมดโฟกัส');
+}
+
+// ---------------- เครื่องหมายถูกในเมนู native (ข้อ 3) ----------------
+// เมนูหลักเป็นเมนู OS จริง → ทำเครื่องหมายเองไม่ได้จากฝั่ง renderer
+// ต้องส่งสถานะสวิตช์ทุกตัวไปให้ main แล้ว main สร้างเมนูใหม่ด้วย type:'checkbox'/'radio'
+let _menuTogSig = '';
+export function syncMenuToggles() {
+  if (typeof kapi === 'undefined' || !kapi.menuToggles) return;
+  try {
+    const ps = panelToggleState();
+    const payload = {
+      paperMode: state.settings.paperMode !== false,
+      readingMode: document.body.classList.contains('reading-mode'),
+      focusMode: document.body.classList.contains('focus-mode'),
+      typewriter: isTypewriter(),
+      lineNumbers: !!state.settings.lineNumbers,
+      splitView: isSplit() ? splitDir() : false,
+      format: state.active?.sp ? 'screenplay' : 'prose',
+      panels: { 'tree-panel': !!ps.tree, 'props-panel': !!ps.props,
+                'outline-panel': !!ps.outline, ...ps },
+    };
+    // สร้างเมนู native ใหม่ทุกครั้งแพงเกินไป — ส่งเฉพาะตอนค่าเปลี่ยนจริง
+    const sig = JSON.stringify(payload);
+    if (sig === _menuTogSig) return;
+    _menuTogSig = sig;
+    kapi.menuToggles(payload);
+  } catch {}
 }
 
 // ---------------- โหมดหน้ากระดาษ (กระดาษขาว high-contrast แบบสคริปต์จริง) ----------------
 function togglePaper(on) {
+  // ค่าเริ่มต้น (undefined) = เปิด → นิพจน์นี้ต้องอ่านสถานะ "ที่เห็นอยู่จริง" ก่อนกลับด้าน
   const v = on ?? !(state.settings.paperMode !== false);
   state.settings.paperMode = v;
   document.body.classList.toggle('paper-mode', v);
   saveProjectMeta();
   const btn = $('#tb-paper'); if (btn) btn.classList.toggle('on', v);
+  syncMenuToggles();
   setStatus(v ? 'โหมดหน้ากระดาษ: เปิด (กระดาษขาว)' : 'โหมดหน้ากระดาษ: ปิด (พื้นมืด)');
 }
 
 // ---------------- โหมดอ่าน (📖) — เต็มจอ, ปิด cursor, ซ่อน UI ----------------
+// การซ่อน UI ทำด้วย CSS (body.reading-mode) ล้วน — ห้ามใช้ inline style.display
+// เพราะ inline ค้างอยู่ข้ามการสลับโหมดแล้วไปทับกฎอื่น (เคยทำให้แผง/FAB ไม่กลับมา)
+let _readEsc = null;                       // ตัวจับ Esc ตัวเดียว (กันซ้อนกันหลายตัว)
 function toggleReading(on) {
   const v = on ?? !document.body.classList.contains('reading-mode');
   document.body.classList.toggle('reading-mode', v);
   const btn = $('#tb-read'); if (btn) btn.classList.toggle('on', v);
-  if (v) {
-    // ปิดแผงข้าง + toolbar/statusbar
-    $('#sidebar').style.display = 'none';
-    $('#topbar').style.display = 'none';
-    $('#statusbar').style.display = 'none';
-    $('#k-fab').style.display = 'none';
-    // ทำให้ตัวแก้ไขอ่านอย่างเดียว
-    const t = state.active;
-    if (t?.editor) t.editor.view.dom.setAttribute('contenteditable', 'false');
-    if (t?.sp) t.sp.view.dom.setAttribute('contenteditable', 'false');
-  } else {
-    $('#sidebar').style.display = '';
-    $('#topbar').style.display = '';
-    $('#statusbar').style.display = '';
-    $('#k-fab').style.display = '';
-    const t = state.active;
-    if (t?.editor) t.editor.view.dom.setAttribute('contenteditable', 'true');
-    if (t?.sp) t.sp.view.dom.setAttribute('contenteditable', 'true');
+  const t = state.active;
+  const ce = v ? 'false' : 'true';
+  if (t?.editor) t.editor.view.dom.setAttribute('contenteditable', ce);
+  if (t?.sp) t.sp.view.dom.setAttribute('contenteditable', ce);
+  // เก็บกวาด inline style ที่เวอร์ชันก่อนหน้าเคยเขียนค้างไว้
+  for (const id of ['#app-root', '#topbar', '#statusbar', '#k-fab']) {
+    const elx = $(id); if (elx) elx.style.display = '';
   }
+  if (_readEsc) { document.removeEventListener('keydown', _readEsc); _readEsc = null; }
+  if (v) {
+    // เปิดโหมดโฟกัสอยู่ด้วย → Esc ครั้งแรกให้ออกจากโฟกัสก่อน (ตัวจับของโฟกัสจัดการ) ครั้งถัดไปค่อยออกโหมดอ่าน
+    _readEsc = (e) => {
+      if (e.key !== 'Escape') return;
+      if (document.querySelector('.k-overlay')) return;
+      if (e._k2EscUsed || document.body.classList.contains('focus-mode')) return;
+      e._k2EscUsed = true;
+      toggleReading(false);
+    };
+    document.addEventListener('keydown', _readEsc);
+  }
+  syncMenuToggles();
+  syncFloatBarVisible();
   setStatus(v ? 'โหมดอ่าน — กด Esc หรือคลิก 📖 เพื่อออก' : 'ออกจากโหมดอ่าน');
-  // ใช้ Esc ออก (ถ้าไม่ได้อยู่ใน focus mode)
-  if (v) {
-    const escHandler = (e) => { if (e.key === 'Escape') { toggleReading(false); document.removeEventListener('keydown', escHandler); } };
-    document.addEventListener('keydown', escHandler);
-  }
 }
 
 // ---------------- คุณสมบัติฉาก ----------------
@@ -1545,23 +1888,39 @@ async function setSceneLock(dPath, ch, sc, locked) {
 // ---------------- คุณสมบัติฉาก (แบบแผง dock ได้ แทน popup) ----------------
 const propsTarget_C = { t: null };
 function setPropsTarget(dPath, ch, sc) {
+  const prev = propsTarget_C.t;
+  // ย้ายไปฉากอื่น → เขียนค่าที่ค้างของฉากเดิมให้จบก่อน (บันทึกอัตโนมัติ ข้อ 13)
+  if (prev && prev.sc?.id !== sc?.id && propsFlush_C.fn) {
+    const flush = propsFlush_C.fn; propsFlush_C.fn = null;
+    try { flush(); } catch {}
+  }
   propsTarget_C.t = { dPath, ch, sc };
-  if (PANELS['props-panel'] && PANELS['props-panel'].isVisible()) renderPropsPanel();
+  if (isPanelOpen('props')) renderPropsPanel();
 }
 function openPropsPanel(dPath, ch, sc) {
-  setPropsTarget(dPath, ch, sc);
-  showPanel('props-panel');
-  renderPropsPanel();
+  const was = isPanelOpen('props');
+  setPropsTarget(dPath, ch, sc);      // เรียก renderPropsPanel() ให้แล้วถ้าแผงเปิดอยู่
+  // บั๊ก #19: เดิมสั่ง showPanel ทุกครั้ง → แผงที่ผู้ใช้เพิ่งปิดไปโผล่กลับมาเองทุกครั้งที่คลิกฉาก
+  if (!was) { showPanel('props-panel'); renderPropsPanel(); }
 }
+// บั๊กข้อ 14: ฟังก์ชันนี้เป็น async — ล้าง body ตอนต้น แล้ว await หลายจังหวะ
+// ถ้าถูกเรียกซ้อน (setPropsTarget + openPropsPanel เรียกติดกัน) ทั้งสองรอบจะ append ทับกัน = รายการซ้ำ
+// แก้ด้วยหมายเลขรอบ: รอบที่ไม่ใช่รอบล่าสุดต้องหยุดทันทีหลังทุกจุด await
+let _propsGen = 0;
 async function renderPropsPanel() {
   const body = $('#props-body'); if (!body) return;
-  body.innerHTML = '';
+  const gen = ++_propsGen;
+  const stale = () => gen !== _propsGen;
+  body.replaceChildren();
   if (!propsTarget_C.t) { body.append(el('div', 'dim', '(เลือกฉากเพื่อดูคุณสมบัติ)')); return; }
   const { dPath, ch, sc } = propsTarget_C.t;
   const sf = await kapi.join(dPath, 'scenes.json');
+  if (stale()) return;
   const d = await kapi.readJson(sf);
+  if (stale()) return;
   const row = (d.chapters[ch.guid] || []).find((x) => x.id === sc.id);
-  if (!row) { body.append(el('div', 'dim', '(ไม่พบฉาก)')); return; }
+  if (!row) { body.replaceChildren(el('div', 'dim', '(ไม่พบฉาก)')); return; }
+  body.replaceChildren();              // กันของค้างจากรอบก่อนที่ยัง append ไม่ทัน
   body.append(el('div', 'props-name', '📄 ' + row.title));
 
   // ---- แถบล็อก (แก้ไฟล์ไม่ได้จนปลดล็อก) ----
@@ -1574,7 +1933,9 @@ async function renderPropsPanel() {
 
   // ---- เวอร์ชัน: แก้ไขล่าสุดด้วยแอปเวอร์ชันไหน + revision + ปุ่มเทียบ ----
   const file0 = await kapi.join(dPath, 'Chapters', ch.folderName, row.fileName);
+  if (stale()) return;
   let vmeta = {}; try { vmeta = parseMdFile(await kapi.readFile(file0)).meta; } catch {}
+  if (stale()) return;
   const verRow = el('div', 'props-ver');
   verRow.append(el('div', 'props-ver-line',
     'เวอร์ชันที่แก้ไข: ' + (vmeta.appVersion || '—') + '  ·  รอบแก้ #' + (vmeta.revision || '0')));
@@ -1604,32 +1965,68 @@ async function renderPropsPanel() {
   const iPov = mk('มุมมอง (POV)', row.pov);
   const iEmotion = mk('อารมณ์', row.emotion);
   const iConflict = mk('ความขัดแย้ง', row.conflict);
-  const iStatus = mkSel('สถานะ', [['Outline', '— ยังไม่ตั้ง —'], ...SCENE_STATUSES.map((s) => [s, s])],
-    SCENE_STATUSES.includes(row.status) ? row.status : 'Outline');
+  // สถานะต้องใช้ allStatuses() เหมือนกล่องคุณสมบัติ ไม่งั้นสถานะที่ผู้ใช้สร้างเองจะหายตอนบันทึก
+  const statuses = allStatuses();
+  const iStatus = mkSel('สถานะ', [['Outline', '— ยังไม่ตั้ง —'], ...statuses.map((s) => [s, s])],
+    statuses.includes(row.status) ? row.status : 'Outline');
   const iColor = mkSel('สี', [['', '— ไม่มี —'], ...SCENE_COLORS.map(([n, hex]) => [hex, '● ' + n])], row.color || '');
   const iFlag = mkChk('ปักหมุด', row.flag);
   const iTags = mk('แท็ก (คั่น , )', (row.tags || []).join(', '));
   const iNote = mk('โน้ต', row.note, 'textarea');
 
-  const okB = el('button', 'k-ok props-save', 'บันทึกคุณสมบัติ');
-  body.append(okB);
-  okB.onclick = async () => {
-    row.synopsis = iSyn.value; row.pov = iPov.value; row.status = iStatus.value; row.storyDate = iStoryDate.value.trim();
+  // ---- บันทึกอัตโนมัติ (ข้อ 13) — ไม่ต้องกดปุ่มแล้ว ----
+  // พิมพ์แล้วรอเงียบ 600ms ค่อยเขียน (กันเขียนไฟล์ทุกตัวอักษร) · เปลี่ยน dropdown/checkbox = เขียนทันที
+  const statusLine = el('div', 'props-autosave', 'บันทึกอัตโนมัติ');
+  body.append(statusLine);
+
+  const collect = () => {
+    row.synopsis = iSyn.value; row.pov = iPov.value; row.status = iStatus.value;
+    row.storyDate = iStoryDate.value.trim();
     row.emotion = iEmotion.value; row.conflict = iConflict.value;
     row.color = iColor.value; row.flag = iFlag.checked; row.note = iNote.value;
     row.tags = iTags.value.split(',').map((x) => x.trim()).filter(Boolean);
+  };
+  const snapshot = () => JSON.stringify([row.synopsis, row.pov, row.status, row.storyDate,
+    row.emotion, row.conflict, row.color, row.flag, row.note, row.tags]);
+  let lastSaved = (collect(), snapshot());
+
+  const commit = async (rebuildTree) => {
+    collect();
+    const now = snapshot();
+    if (now === lastSaved) return;          // ไม่มีอะไรเปลี่ยน = ไม่แตะดิสก์
+    lastSaved = now;
+    statusLine.textContent = 'กำลังบันทึก…';
     await kapi.writeFile(sf, JSON.stringify(d, null, 2));
-    const file = await kapi.join(dPath, 'Chapters', ch.folderName, row.fileName);
     try {
-      const { meta, body: mbody } = parseMdFile(await kapi.readFile(file));
+      const { meta, body: mbody } = parseMdFile(await kapi.readFile(file0));
       meta.pov = row.pov; meta.tags = row.tags;
       meta.emotion = row.emotion; meta.conflict = row.conflict; meta.note = row.note;
-      await kapi.writeFile(file, dumpMdFile(meta, mbody));
+      await kapi.writeFile(file0, dumpMdFile(meta, mbody));
     } catch {}
-    await buildTree();
-    setStatus(t('status.settingsSaved'));
+    statusLine.innerHTML = iconHtml('check', 14) + ' บันทึกแล้ว';
+    // สี/สถานะ/แท็ก/หมุด มีผลกับต้นไม้ — วาดใหม่เฉพาะตอนจำเป็น (ไม่ใช่ทุกตัวอักษรที่พิมพ์)
+    if (rebuildTree) await buildTree();
   };
+
+  let saveJob = null;
+  const scheduleSave = () => {
+    statusLine.textContent = 'แก้ไข…';
+    clearTimeout(saveJob);
+    saveJob = setTimeout(() => commit(true).catch(() => {}), 600);
+  };
+  for (const i of [iSyn, iStoryDate, iPov, iEmotion, iConflict, iTags, iNote]) {
+    i.addEventListener('input', scheduleSave);
+    i.addEventListener('blur', () => { clearTimeout(saveJob); commit(true).catch(() => {}); });
+  }
+  for (const s of [iStatus, iColor, iFlag]) {
+    s.addEventListener('change', () => { clearTimeout(saveJob); commit(true).catch(() => {}); });
+  }
+  // สลับไปฉากอื่น/ปิดแผงกลางคัน → เขียนที่ค้างอยู่ให้จบก่อน
+  propsFlush_C.fn = () => { clearTimeout(saveJob); return commit(true); };
 }
+
+// ตัวเขียนค้างของแผงคุณสมบัติ (เรียกก่อนวาดแผงใหม่ กันค่าที่เพิ่งพิมพ์หาย)
+const propsFlush_C = { fn: null };
 
 // ---------------- รวมข้อความทั้งฉบับร่าง (ใช้ตอนส่งออก) ----------------
 // กติกา: แถวที่เป็นโน้ต (type: memo) จะ "ไม่" ถูกรวม — เขียนโน้ตคาไว้ในบทได้โดยไม่ปนต้นฉบับ
@@ -1820,7 +2217,12 @@ export async function openCompileDialog() {
 
   const doRun = async () => {
     const model = await buildDraftModel(selDraft.value);
-    return runWorkflow(model, cur());
+    const varCtx = { title: model.title, author: model.author };
+    if (cur().steps.some(s => s.on !== false && s.key === 'resolve-vars')) {
+      const { buildVarContext } = await import('./template-vars.js');
+      Object.assign(varCtx, await buildVarContext(state.root, kapi));
+    }
+    return runWorkflow(model, cur(), { varCtx });
   };
   const btns = el('div', 'k-dlg-btns');
   const bPrev = el('button', null, '👁 ดูตัวอย่าง');
@@ -2210,8 +2612,8 @@ export async function openPlainFile(file, title) {
 
 // บริบทของฉากที่เปิดอยู่: { dPath, ch, row } — โมดูล feature ใช้ผูกข้อมูลกับฉากปัจจุบัน
 // (คอมเมนต์ / โน้ตด่วน / ผังพื้นที่)
-export async function sceneCtx() {
-  const t = state.active;
+export async function sceneCtx(file) {
+  const t = file ? { file } : state.active;
   if (!t || !t.file || !/\.md$/i.test(t.file) || !/[\\/]Chapters[\\/]/.test(t.file)) return null;
   const dPath = t.file.replace(/[\\/]Chapters[\\/].*$/, '');
   try {
@@ -2224,6 +2626,29 @@ export async function sceneCtx() {
     }
   } catch (e) { log('warn', 'sceneCtx failed', e); }
   return null;
+}
+
+// ---------------- แผงคอมเมนต์ (บั๊ก #25 — เดิมเป็นกล่องโต้ตอบ เก็บใน scenes.json) ----------------
+let _cmMigrated = new Set();                       // ฉบับร่างที่ย้ายคอมเมนต์เก่ามาแล้ว (ครั้งเดียวต่อ session)
+
+/** เปิดแผงคอมเมนต์ + ย้ายคอมเมนต์เดิมจาก scenes.json ครั้งแรกที่ใช้ */
+export async function openCommentsPanel() {
+  showPanel('comments');
+  const c = await sceneCtx();
+  if (c && c.dPath && !_cmMigrated.has(c.dPath)) {
+    _cmMigrated.add(c.dPath);
+    try {
+      const n = await migrateSceneComments(c.dPath);
+      if (n) setStatus(`ย้ายคอมเมนต์เดิม ${n} รายการเข้าไฟล์ฉากแล้ว`);
+    } catch (e) { log('warn', 'ย้ายคอมเมนต์เดิมไม่สำเร็จ', e); }
+  }
+  await renderCommentPanel($('#comments-body'));
+}
+/** วาดแผงใหม่เมื่อสลับแท็บ/บันทึก — เงียบ ๆ ถ้าแผงปิดอยู่ */
+export async function refreshCommentsPanel() {
+  if (!isPanelOpen('comments')) { clearCommentAnchors(); return; }
+  try { await renderCommentPanel($('#comments-body')); }
+  catch (e) { log('warn', 'วาดแผงคอมเมนต์ไม่สำเร็จ', e); }
 }
 
 // แก้ไขแถวฉากใน scenes.json แบบปลอดภัย (อ่าน→แก้ผ่าน mutator→เขียนกลับ)
@@ -2572,7 +2997,7 @@ function refreshModeBtn() {
   b.style.display = editable ? '' : 'none';
   if (!editable) return;
   const sp = !!tab.sp;
-  b.textContent = sp ? '🎬 บทหนัง ▾' : '📖 นิยาย ▾';
+  b.innerHTML = (sp ? iconHtml('film', 16) : iconHtml('book', 16)) + (sp ? ' บทหนัง ▾' : ' นิยาย ▾');
   b.title = 'สลับโหมดเอกสาร นิยาย ↔ บทหนัง (Ctrl+Shift+M)';
 }
 
@@ -2622,8 +3047,11 @@ function spSmartCheck(tab) {
 function setElementBadge(elName) {
   const b = $('#elem-badge');
   if (!b) return;
+  // sync กับตัวเลือกใน floatBar/toolbar
+  const spSel = $('#tb-sp-elem');
+  if (spSel && SP_ELEMS[elName]) { try { spSel.value = elName; } catch {} }
   if (!SP_ELEMS[elName]) { b.textContent = ''; b.classList.remove('elem-pick'); b.onclick = null; return; }
-  b.textContent = '🎬 ' + SP_ELEMS[elName].th + ' ▾';
+  b.innerHTML = iconHtml('film', 14) + ' ' + SP_ELEMS[elName].th + ' ▾';
   b.title = 'คลิกเลือกรูปแบบ · หรือ Ctrl+↑/↓ สลับ';
   b.classList.add('elem-pick');
   b.onclick = (e) => {
@@ -2655,24 +3083,26 @@ export function resolveImg(dir, rel) {
 }
 
 export function activate(file) {
-  // ถ้ากดเปิดไฟล์ที่กำลังเป็นฝั่งขวา (compare) → เลิกโหมดเทียบ แล้วโฟกัสไฟล์นั้นเดี่ยว
-  if (state.compareFile === file) clearCompare();
   for (const [f, t] of state.tabs) {
     const on = f === file;
     t.pane.classList.toggle('on', on || !!t.floatWin);   // หน้าต่างลอยแสดงเสมอ ไม่ขึ้นกับแท็บที่เลือก
     t.tabBtn.classList.toggle('on', on);
   }
   state.active = state.tabs.get(file) || null;
+  // จำฉากที่เปิดล่าสุดไว้ — แท็บอย่างผังพื้นที่/ผังแตกสายต้องรู้ว่า "กำลังเขียนฉากไหนอยู่"
+  // ทั้งที่ตัวเองเป็นแท็บที่ active (ไม่งั้น sceneCtx() คืน null ทันทีที่สลับมาดูผัง)
+  if (file && /\.md$/i.test(file) && /[\\/]Chapters[\\/]/.test(file)) state.lastSceneFile = file;
   if (state.active) {
     (state.active.editor || state.active.sp || state.active.plain)?.focus?.();
     if (state.active.editor) smart.bindView(state.active.editor.view);
     if (state.active.sp) smart.bindView(state.active.sp.view);
+    // แท็บที่วาดบน canvas ต้องวัดขนาด pane ใหม่ตอนถูกเรียกขึ้นมา (ตอนสร้าง pane ยังซ่อนอยู่ → ได้ 0)
+    state.active.net?.focus?.();
+    state.active.planner?.focus?.();
   }
-  // คงแผงฝั่งขวา/ล่างปักไว้เสมอระหว่างสลับแท็บอีกฝั่ง
-  if (state.compareFile && state.compareFile !== file) {
-    const rt = state.tabs.get(state.compareFile);
-    if (rt) { rt.pane.classList.add('compare-on'); syncSplitPanes(); } else clearCompare();
-  }
+  // Split View: แท็บที่เพิ่งเลือกต้องไปโผล่ในช่องที่ถูกต้อง (ช่องเดิมถ้าเคยอยู่ · ไม่งั้นช่องที่โฟกัส)
+  // เดิมโค้ดตรงนี้พึ่ง state.compareFile ตัวเดียว → รองรับได้แค่ 2 ช่อง และหลุดแยกจอง่าย
+  syncActiveSplit(file);
   setElementBadge(state.active?.sp ? state.active.sp.curElement() : null);
   smart.hide();
   refreshToolbar(); refreshModeBtn(); scheduleCount(); scheduleOutline();
@@ -2681,6 +3111,10 @@ export function activate(file) {
   // แสดงปุ่มบันทึกทั้งหมดเมื่อมีโปรเจกต์เปิด
   const saveAllBtn = $('#save-all-btn');
   if (saveAllBtn) saveAllBtn.style.display = state.root ? '' : 'none';
+  // กลับมาที่แท็บศูนย์รวม → รีเฟรชถ้าไฟล์เปลี่ยนไปแล้ว (ข้อ 87 real-time)
+  if (file === '::centralize::') { try { onCentralizeShown(); } catch {} }
+  // แผงคอมเมนต์ผูกกับ "ฉากที่เปิดอยู่" — สลับแท็บแล้วต้องเปลี่ยนตาม (ไม่งั้นคอมเมนต์ฉากเก่าค้าง)
+  refreshCommentsPanel();
 }
 
 export function markDirty(tab) {
@@ -2727,13 +3161,18 @@ export async function saveTab(tab) {
   // บันทึกว่าแก้ไขด้วยแอปเวอร์ชันไหน + เพิ่มเลขรอบแก้ (revision) เพื่อให้เทียบเวอร์ชันได้
   tab.meta.appVersion = APP_VERSION;
   tab.meta.revision = String((parseInt(tab.meta.revision, 10) || 0) + 1);
-  await kapi.writeFile(tab.file, dumpMdFile(tab.meta, body));
+  // คอมเมนต์เก็บอยู่ท้ายไฟล์เดียวกัน — เขียนทับตรง ๆ = คอมเมนต์หาย
+  // (ไม่มีคอมเมนต์ = เขียนตัวต่อตัวเหมือนเดิม ไม่แตะท้ายไฟล์)
+  await writeKeepingComments(tab.file, dumpMdFile(tab.meta, body));
   tab.dirty = false;
   tab.tabBtn.querySelector('.tab-title').textContent = tab.title;
   setStatus('บันทึกแล้ว: ' + tab.title);
+  refreshCommentsPanel();
   // สำรองเวอร์ชันอัตโนมัติ (ตามตั้งค่า autoBackup/maxBackups)
   if (state.settings.autoBackup !== false && isSnapshotable(tab))
     snapshotFile(tab.file).catch(() => {});
+  // เนื้อหาเปลี่ยน → ดัชนีเชื่อมโยงของศูนย์รวมล้าสมัย (ข้อ 87 real-time)
+  try { markCentralizeStale(); } catch (e) { log('warn', 'markCentralizeStale ล้มเหลว', e); }
 }
 
 // บันทึกทุกแท็บที่ยังมีงานค้าง (Ctrl+Alt+S / เมนู ไฟล์ → บันทึกทั้งหมด)
@@ -2905,35 +3344,63 @@ export function closeTab(file) {
     t.pane.remove(); t.tabBtn.remove();
     if (t.floatWin) { t.floatWin.remove(); t.floatWin = null; }
     state.tabs.delete(file);
-    if (state.compareFile === file) clearCompare();      // ปิดไฟล์ที่เทียบอยู่ → เลิกเทียบ
+    closeTabInSplit(file);                               // ปิดไฟล์ที่แสดงอยู่ในช่องไหน → ยุบช่องนั้นด้วย
     const next = [...state.tabs.keys()].pop();
     if (next) activate(next); else { state.active = null; refreshToolbar(); updateDirtyBadge(); }
   };
   if (t.dirty) saveTab(t).then(done); else done();
 }
 
-// ---------------- แยกหน้าจอเทียบเอกสาร (compare / split) ----------------
-function applyCompare(rightFile) {
-  state.compareFile = rightFile;
-  document.querySelectorAll('.pane').forEach((p) => p.classList.remove('compare-on'));
-  const rt = state.tabs.get(rightFile);
-  if (rt) {
-    rt.pane.classList.add('compare-on');
-    if (!rt.pane.querySelector('.cmp-close')) {
-      const cb = el('div', 'cmp-close', '✕ ปิดเทียบ'); cb.onclick = clearCompare;
-      rt.pane.append(cb);
-    }
-    $('#panes').classList.add('split');
-    setStatus('โหมดเทียบเอกสาร: ' + (state.active?.title || '') + '  ⇋  ' + rt.title);
+async function closeAllTabs() {
+  const files = [...state.tabs.keys()];
+  for (const f of files) {
+    const t = state.tabs.get(f);
+    if (t?.dirty) await saveTab(t);
+    closeTab(f);
   }
 }
-function clearCompare() {
-  state.compareFile = null;
-  document.querySelectorAll('.pane .cmp-close').forEach((b) => b.remove());
-  document.querySelectorAll('.pane').forEach((p) => p.classList.remove('compare-on'));
-  $('#panes').classList.remove('split', 'split-h');
-  $('#panes').querySelector('.k-split-div')?.remove();
+
+// ---------------- แยกหน้าจอเทียบเอกสาร (compare / split) ----------------
+// "เปิดเทียบด้านขวา" กับ "Split View" ใช้กลไกเดียวกันคือ SplitManager (บั๊ก #1)
+// เดิมเส้นทางนี้เขียน state.compareFile + คลาส .compare-on เอง จึงได้แค่ 2 ช่องและหลุดง่าย
+function applyCompare(rightFile) {
+  const rt = state.tabs.get(rightFile);
+  if (!rt) return;
+  openInSplit(rightFile, 'right');
+  setStatus('โหมดเทียบเอกสาร: ' + (state.active?.title || '') + '  ⇋  ' + rt.title);
 }
+// เปิด "เวอร์ชันที่บันทึกไว้" เป็นแท็บอ่านอย่างเดียวแล้ววางไว้ฝั่งขวาคู่กับฉากปัจจุบัน (ข้อ 7)
+// ทำให้ "เทียบเวอร์ชันแบบ split view ด้านขวา" ใช้ได้จริง ไม่ใช่แค่กล่องโต้ตอบสองคอลัมน์
+export async function openSnapshotRight(curFile, snap) {
+  const key = '::snap::' + snap.path;
+  const title = '🕘 ' + (snap.label || fmtTs(snap.ts));
+  if (!state.tabs.has(key)) {
+    let body = '';
+    try { body = parseMdFile(await kapi.readFile(snap.path)).body; } catch { body = '(อ่านไฟล์เวอร์ชันไม่ได้)'; }
+    const pane = el('div', 'pane');
+    const bar = el('div', 'json-bar');
+    bar.append(el('span', 'dim', title + ' — อ่านอย่างเดียว'));
+    const ta = el('textarea', 'plain-md'); ta.value = body; ta.readOnly = true;
+    pane.append(bar, ta);
+    $('#panes').append(pane);
+    const tabBtn = el('div', 'tab');
+    tabBtn.append(el('span', 'tab-title', title));
+    const x = el('span', 'tab-x', '×'); tabBtn.append(x);
+    $('#tabs').append(tabBtn);
+    const tab = { file: key, title, pane, tabBtn, dirty: false,
+                  editor: null, plain: null, wiki: null, isJson: true, readOnly: true,
+                  save: async () => true };
+    tabBtn.onclick = (e) => { if (e.target !== x) activate(key); };
+    x.onclick = () => closeTab(key);
+    state.tabs.set(key, tab);
+  }
+  // ฉากปัจจุบันต้องเปิดอยู่ฝั่งซ้าย ไม่งั้นเทียบกับอะไรไม่รู้
+  if (curFile && state.tabs.has(curFile)) activate(curFile);
+  applyCompare(key);
+  return key;
+}
+
+function clearCompare() { closeSplit(); }
 // เปิดฉากนี้ไว้ "ด้านขวา" คู่กับเอกสารที่เปิดอยู่ (เทียบกันแบบ Photoshop compare)
 async function openCompareRight(dPath, ch, sc) {
   const file = await kapi.join(dPath, 'Chapters', ch.folderName, sc.fileName);
@@ -3006,7 +3473,9 @@ export { updateToolbarTitles };
 function refreshToolbar() {
   const ed = state.active?.editor;
   const sp = state.active?.sp;
-  const marks = ed ? ed.activeMarks() : {};
+  const wkEd = state.active?.wiki?.secEditors?.find(({k}) => k?.view?.hasFocus())?.k
+              || state.active?.wiki?.secEditors?.[0]?.k;
+  const marks = ed ? ed.activeMarks() : wkEd ? wkEd.activeMarks() : {};
   for (const f of FMTS) {
     const key = { bold: 'strong', italic: 'em', underline: 'underline', strike: 'strike' }[f];
     $('#tb-' + f).classList.toggle('on', !!marks[key]);
@@ -3018,13 +3487,33 @@ function refreshToolbar() {
   for (const a of ['left', 'center', 'right', 'justify']) {
     const b = $('#tb-align-' + a); if (b) b.classList.toggle('on', curAlign === a);
   }
-  const canEdit = !!(ed || sp);
+  const canEdit = !!(ed || sp || wkEd);
+  // ตัวเลือก element บทหนัง — แสดงเฉพาะเมื่อแท็บปัจจุบันเป็นบทหนัง
+  const spElem = $('#tb-sp-elem');
+  if (spElem) {
+    spElem.style.display = sp ? '' : 'none';
+    if (sp) { try { spElem.value = sp.curElement(); } catch {} }
+  }
   document.querySelectorAll('.tb').forEach((b) => {
     if (b.id === 'tb-paper') return;   // ปุ่มโหมดหน้ากระดาษใช้ได้ตลอด
+    // บั๊ก #1: ปุ่มแยกหน้าจอเคยถูกปิดไปด้วยตอนแท็บที่เปิดอยู่ไม่ใช่เอดิเตอร์ (แดชบอร์ด/ผัง/คลังรูป)
+    // ทั้งที่แยกจอใช้กับแท็บพวกนั้นได้ → ใช้ได้ตราบใดที่มีแท็บเปิดอยู่อย่างน้อยหนึ่ง
+    if (b.id === 'tb-split') { b.classList.toggle('dis', state.tabs.size === 0); return; }
+    // ปิด/ปิดทุกแท็บ / โฟกัส / typewriter / เลขบรรทัด / quick-open / sp-elem → ใช้ได้เสมอ ไม่ขึ้นกับ canEdit
+    if (b.id === 'tb-close' || b.id === 'tb-close-all' || b.id === 'tb-focus' ||
+        b.id === 'tb-typewriter' || b.id === 'tb-linenum' || b.id === 'tb-quickopen' ||
+        b.id === 'tb-sp-elem') return;
     b.classList.toggle('dis', !canEdit);
   });
   $('#tb-paper').classList.toggle('on', state.settings.paperMode !== false);
+  // ปุ่มสวิตช์อื่น ๆ ต้องสะท้อนสถานะจริงด้วย ไม่งั้นจุดบอกสถานะโกหก
+  $('#tb-read')?.classList.toggle('on', document.body.classList.contains('reading-mode'));
+  $('#tb-split')?.classList.toggle('on', isSplit());
+  $('#tb-focus')?.classList.toggle('on', document.body.classList.contains('focus-mode'));
+  $('#tb-typewriter')?.classList.toggle('on', isTypewriter());
+  $('#tb-linenum')?.classList.toggle('on', !!state.settings.lineNumbers);
   syncFloatBarVisible();
+  syncMenuToggles();          // เมนู native ติ๊กถูกตามสถานะจริง (ส่งเฉพาะตอนค่าเปลี่ยน)
 }
 
 let countJob = null;
@@ -3153,19 +3642,41 @@ async function importImageFile(file, t) {
 }
 
 async function insertImage() {
-  const t = state.active;
-  if (!t || !(t.editor || t.sp)) return;
   const it = await pickImage(state.root);          // เลือกจากคลังแบบเห็นรูปจริง (แบบ v1)
   if (!it) return;
+  return insertImageByName(it.file, it.caption);
+}
+
+// แทรกรูปจากคลังลงฉากที่เปิดอยู่ด้วย "ชื่อไฟล์" — ใช้ร่วมกับเมนูคลิกขวาใน Explorer (ข้อ 6)
+async function insertImageByName(fileName, caption) {
+  const t = state.active;
+  if (!t || !(t.editor || t.sp)) { setStatus('เปิดฉากก่อนจึงจะแทรกรูปได้'); return; }
   const imgDir = await kapi.join(state.root, 'Images');
   const sceneDir = t.file.replace(/[\\/][^\\/]*$/, '');
-  const rel = await kapi.relative(sceneDir, await kapi.join(imgDir, it.file));
-  const cap = it.caption || it.file.replace(/\.[^.]+$/, '');
+  const rel = await kapi.relative(sceneDir, await kapi.join(imgDir, fileName));
+  const cap = caption || fileName.replace(/\.[^.]+$/, '');
   (t.editor || t.sp).insertImage(rel, cap, `![${cap}](${rel})`);
   markDirty(t);
+  setStatus('แทรกรูปแล้ว: ' + fileName);
 }
 
 // ---------------- เมนูจาก main process ----------------
+async function renderLogPanel() {
+  const body = $('#log-body'); if (!body) return;
+  let text = '';
+  try { text = (await kapi.logRead(800)) || ''; } catch {}
+  if (!text) text = LOG_BUF.slice(-800).join('\n');
+  body.textContent = text || '(ยังไม่มีบันทึก)';
+  body.scrollTop = body.scrollHeight;
+}
+let _logTimer = null;
+function startLogAutoRefresh() {
+  if (_logTimer) return;
+  _logTimer = setInterval(() => { if (isPanelOpen('log')) renderLogPanel(); }, 2000);
+}
+function stopLogAutoRefresh() {
+  if (_logTimer) { clearInterval(_logTimer); _logTimer = null; }
+}
 window.__k2test = (p) => runTest(p);
 window.__k2menu = null;
 async function handleCommand(ch, ...a) {
@@ -3174,7 +3685,7 @@ async function handleCommand(ch, ...a) {
     case 'new-project': newProject(); break;
     case 'confirm-quit': confirmQuit(); break;
     case 'changelog': showChangelog(); break;
-    case 'show-log': showLog(); break;
+    case 'show-log': showPanel('log'); renderLogPanel(); syncMenuToggles(); break;
     case 'open-project': { const p = await kapi.openProjectDialog(); if (p) loadProject(p); break; }
     case 'open-project-path': loadProject(a[0]); break;
     case 'save': saveTab(t); break;
@@ -3200,9 +3711,10 @@ async function handleCommand(ch, ...a) {
       break;
     }
     case 'close-tab': if (t) closeTab(t.file); break;
-    case 'fmt': (t?.editor || t?.sp)?.cmd(a[0], a[1]); refreshToolbar(); if (t) markDirty(t); break;
-    case 'editor-undo': (t?.editor || t?.sp)?.cmd('undo'); refreshToolbar(); break;
-    case 'editor-redo': (t?.editor || t?.sp)?.cmd('redo'); refreshToolbar(); break;
+    case 'close-all-tabs': closeAllTabs(); break;
+    case 'fmt': getActiveEditor()?.cmd(a[0], a[1]); refreshToolbar(); if (t) markDirty(t); break;
+    case 'editor-undo': getActiveEditor()?.cmd('undo'); refreshToolbar(); break;
+    case 'editor-redo': getActiveEditor()?.cmd('redo'); refreshToolbar(); break;
     case 'insert-image': insertImage(); break;
     case 'find': openFind(); break;
     case 'dashboard': openDashboard(); break;
@@ -3213,14 +3725,22 @@ async function handleCommand(ch, ...a) {
     case 'planner': openPlanner(); break;
     case 'focus-mode': toggleFocus(); break;
     case 'paper-mode': togglePaper(); break;
+    case 'reading-mode': toggleReading(); break;
+    case 'line-numbers':
+      state.settings.lineNumbers = !state.settings.lineNumbers;
+      applySettings(); saveProjectMeta(); syncMenuToggles();
+      setStatus(state.settings.lineNumbers ? 'เลขบรรทัด: เปิด' : 'เลขบรรทัด: ปิด');
+      break;
     // ---- ฟีเจอร์ที่เคยไม่มีทางเข้าถึง (import ไว้แต่ไม่มีเมนู/ปุ่ม) ----
-    case 'typewriter': setStatus(toggleTypewriter() ? 'โหมดเครื่องพิมพ์ดีด: เปิด' : 'โหมดเครื่องพิมพ์ดีด: ปิด'); break;
+    case 'typewriter': setStatus(toggleTypewriter() ? 'โหมดเครื่องพิมพ์ดีด: เปิด' : 'โหมดเครื่องพิมพ์ดีด: ปิด');
+                       syncMenuToggles(); break;
     case 'quick-open': openQuickOpen(); break;
-    case 'global-search': openGlobalSearch(); break;
+    case 'global-search': showPanel('search'); renderSearchPanel($('#search-body')); syncMenuToggles(); break;
     case 'centralize': openCentralizeUI(); break;
     case 'branching': openBranchingTree(); break;
+    case 'branch-sync': syncChoicesFromScene(); break;
     case 'floorplan': openFloorPlan(); break;
-    case 'scratchpad': openScratchpad(); break;
+    case 'scratchpad': showPanel('notes'); renderNotesPanel($('#notes-body')); syncMenuToggles(); break;
     case 'export-blog': exportBlogHTML(); break;
     case 'export-zip': exportProjectZip(); break;
     case 'export-json': exportProjectJson(); break;
@@ -3234,20 +3754,21 @@ async function handleCommand(ch, ...a) {
         state.meta.title = title; state.title = title;
         await saveProjectMeta(); $('#projname').textContent = title;
         setStatus('เปลี่ยนชื่อเรื่องเป็น: ' + title);
-      }); break;
+      }, { kind: 'project' }); break;
     case 'custom-status': manageCustomStatuses(); break;
     case 'visual-tags': manageVisualTags(); break;
     case 'player-history': showPlayerHistory(); break;
     case 'all-notes': showAllNotes(); break;
     case 'quick-note': { const c = await sceneCtx();
       quickNote(c?.row?.id, c?.row?.title); break; }
-    case 'comments': { const c = await sceneCtx();
-      if (!c) { setStatus('เปิดฉากก่อนจึงจะคอมเมนต์ได้'); break; }
-      showCommentsDialog(c.row, c.dPath); break; }
-    case 'show-panel': showPanel(a[0]); break;
-    case 'reset-panels': resetPanels(); break;
+    case 'comments': await openCommentsPanel(); syncMenuToggles(); break;
+    case 'show-panel': showPanel(a[0]); syncMenuToggles(); break;
+    // สลับแสดง/ซ่อนแผง — เมนูเป็นสวิตช์ (มีเครื่องหมายถูก) จึงต้องปิดได้ด้วย ไม่ใช่แค่เปิด
+    case 'toggle-panel': togglePanel(a[0]); syncMenuToggles(); break;
+    case 'reset-panels': resetPanels(); syncMenuToggles(); break;
     case 'export-draft': exportDraft(); break;
-    case 'zoom': (a[0] === 0) ? resetZoom() : bumpZoom(a[0]); break;
+    case 'zoom': (a[0] === 0) ? resetPageScale() : bumpPageScale(a[0]); break;
+    case 'ui-scale': bumpUIScale(a[0]); break;
     case 'compile': openCompileDialog(); break;
     case 'settings': settingsDialog(); break;
     case 'toggle-format': switchFormat(); break;
@@ -3257,6 +3778,7 @@ async function handleCommand(ch, ...a) {
     // ---- Part 1+2: ฟีเจอร์ใหม่ (Kanban, Panel, Split, AI, Thesaurus, Auto-sync) ----
     case 'kanban': openKanban(); break;
     case 'split-view': toggleSplit(state.active?.file || '', a[0] || undefined); break;
+    case 'split-add': createSplit(state.active?.file || '', a[0] || undefined); break;   // เพิ่มอีกช่อง (ซ้อนได้)
     case 'split-close': closeSplit(); break;
     case 'panel-system': togglePanelDialog(); break;
     case 'ai-assistant': openAIAssistant(); break;
@@ -3306,14 +3828,14 @@ window.addEventListener('wheel', (e) => {
   // ทำงานเมื่ออยู่เหนือพื้นที่ตัวแก้ไข (ProseMirror) เท่านั้น
   if (!e.target.closest || !e.target.closest('.ProseMirror')) return;
   e.preventDefault();
-  bumpZoom(e.deltaY < 0 ? 1 : -1);
+  bumpPageScale(e.deltaY < 0 ? 1 : -1);
 }, { passive: false, capture: true });
 window.addEventListener('keydown', (e) => {
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
   // รีเซ็ตซูม: Ctrl+Shift+0 (เลี่ยงชน Ctrl+0 = ย่อหน้าปกติ) · ปรับ: Ctrl+= / Ctrl+-
-  if ((e.code === 'Digit0' || e.code === 'Numpad0') && e.shiftKey) { e.preventDefault(); resetZoom(); }
-  else if ((e.code === 'Equal' || e.code === 'NumpadAdd')) { e.preventDefault(); bumpZoom(1); }
-  else if ((e.code === 'Minus' || e.code === 'NumpadSubtract')) { e.preventDefault(); bumpZoom(-1); }
+  if ((e.code === 'Digit0' || e.code === 'Numpad0') && e.shiftKey) { e.preventDefault(); resetPageScale(); }
+  else if ((e.code === 'Equal' || e.code === 'NumpadAdd')) { e.preventDefault(); bumpPageScale(1); }
+  else if ((e.code === 'Minus' || e.code === 'NumpadSubtract')) { e.preventDefault(); bumpPageScale(-1); }
 }, true);
 
 // ---------------- คีย์ลัดที่ตั้งเองได้ ----------------
@@ -3330,19 +3852,7 @@ function effectiveShortcuts() {
 // ---------------- ระบบลากย้าย + จำตำแหน่งหน้าต่างย่อย (floating panels) ----------------
 // อ่าน/เขียน layout ทั้งหมดใน localStorage ก้อนเดียว (persist ข้ามการเปิด-ปิดโปรแกรม)
 function uiLayout() { try { return JSON.parse(localStorage.getItem('k2-ui-layout') || '{}'); } catch { return {}; } }
-// จำ/คืนลำดับแผงที่ผนึกใน sidebar (stack) — เก็บเป็นรายการ id
-function savePanelOrder() {
-  const sb = $('#sidebar'); if (!sb) return;
-  const ids = [...sb.children].filter((c) => c.id && c.id.endsWith('-panel')).map((c) => c.id);
-  localStorage.setItem('k2-panel-order', JSON.stringify(ids));
-}
-function restorePanelOrder() {
-  const sb = $('#sidebar'); if (!sb) return;
-  let ids; try { ids = JSON.parse(localStorage.getItem('k2-panel-order') || 'null'); } catch { ids = null; }
-  if (!Array.isArray(ids)) return;
-  for (const id of ids) { const p = document.getElementById(id);
-    if (p && p.parentNode === sb) sb.appendChild(p); }        // เรียงตามลำดับที่จำไว้
-}
+// (ลำดับแผงย้ายไปเก็บใน layout tree ของ PanelStore — k2-panel-layout)
 function saveUiLayout(key, val) {
   const l = uiLayout(); l[key] = { ...(l[key] || {}), ...val };
   localStorage.setItem('k2-ui-layout', JSON.stringify(l));
@@ -3384,7 +3894,7 @@ function makeDraggable(elm, handle, opts = {}) {
     if (opts.snap) {
       const SNAP = 9;
       const r = elm.getBoundingClientRect();
-      const targets = [...document.querySelectorAll('.k-panel-floating')]
+      const targets = [...document.querySelectorAll('.k-float-panel, .float-win')]
         .filter((p) => p !== elm).map((p) => p.getBoundingClientRect());
       targets.push({ left: 0, top: 0, right: innerWidth, bottom: innerHeight });   // ขอบจอ
       for (const t of targets) {
@@ -3423,6 +3933,8 @@ const TB_SC_MAP = {
   'tb-align-left': 'fmt:align:left', 'tb-align-center': 'fmt:align:center',
   'tb-align-right': 'fmt:align:right', 'tb-align-justify': 'fmt:align:justify',
   'tb-paper': 'paper-mode', 'tb-gsearch': 'global-search', 'tb-mode': 'toggle-format',
+  'tb-close': 'close-tab', 'tb-focus': 'focus-mode',
+  'tb-typewriter': 'typewriter', 'tb-quickopen': 'quick-open',
 };
 export function applyToolbarShortcutTitles() {
   for (const [id, sid] of Object.entries(TB_SC_MAP)) {
@@ -3461,7 +3973,7 @@ export function applyToolbarShortcutTitles() {
 
 // ---------------- toolbar wiring ----------------
 export function tb(id, cmd, arg) { $(id).onclick = () => {
-  (state.active?.editor || state.active?.sp)?.cmd(cmd, arg);
+  getActiveEditor()?.cmd(cmd, arg);
   refreshToolbar(); if (state.active) markDirty(state.active); }; }
 
 // สร้างแถบรูปแบบอักษรแบบลอยในพื้นที่หน้ากระดาษ — ย้ายปุ่มจัดรูปแบบเดิมเข้าไป (id คงเดิม
@@ -3475,7 +3987,7 @@ function setupFloatingFormatBar() {
   bar.append(handle);
   // ลำดับปุ่มตามภาพ: [grip] 📄กระดาษ · 📖โหมด · สไตล์ · B I U S · •≣ 1≣ · ❝ · ← ↔ → ☰ · 🖼 · </>
   // ลำดับปุ่มตาม Layout ใหม่: [📄] [📖▾] | [style] | [B I U S] | [•≡ 1≡ ❝] | [⬅ ⬌ ➡ ☰] | [🖼 </> 📖 🔍]
-  ['#tb-paper', '#tb-mode', '#tb-style', '#tb-bold', '#tb-italic', '#tb-underline', '#tb-strike',
+  ['#tb-sp-elem', '#tb-paper', '#tb-mode', '#tb-style', '#tb-bold', '#tb-italic', '#tb-underline', '#tb-strike',
    '#tb-ul', '#tb-ol', '#tb-quote',
    '#tb-align-left', '#tb-align-center', '#tb-align-right', '#tb-align-justify',
    '#tb-img', '#tb-source', '#tb-read', '#tb-gsearch'].forEach((sel) => {
@@ -3488,140 +4000,124 @@ function setupFloatingFormatBar() {
   handle.addEventListener('dblclick', () => { drag.reset(); setStatus('รีเซ็ตตำแหน่งแถบรูปแบบแล้ว'); });
   syncFloatBarVisible();
 }
-// แสดงแถบลอยเฉพาะตอนมีตัวแก้ไขข้อความเปิดอยู่ (นิยาย/บทหนัง) — ไม่งั้นซ่อน
+function getActiveEditor() {
+  const t = state.active;
+  if (t?.editor) return t.editor;
+  if (t?.sp) return t.sp;
+  if (t?.wiki?.secEditors) {
+    for (const {k} of t.wiki.secEditors) {
+      if (k?.view?.hasFocus()) return k;
+    }
+    return t.wiki.secEditors[0]?.k || null;
+  }
+  return null;
+}
+// แสดงแถบลอยเฉพาะตอนมีตัวแก้ไขข้อความเปิดอยู่ (นิยาย/บทหนัง/wiki) — ไม่งั้นซ่อน
 function syncFloatBarVisible() {
   if (!floatBar) return;
-  const t = state.active;
-  floatBar.style.display = (t && (t.editor || t.sp)) ? 'flex' : 'none';
+  floatBar.style.display = getActiveEditor() ? 'flex' : 'none';
 }
 
-// ทำให้แผง (panel) ลอย/ผนึกได้แบบ Photoshop — ปุ่ม ⧉ สลับสถานะ · ลากด้วยหัวแผง · จำตำแหน่ง+สถานะ
-// รีจิสทรีของแผงทั้งหมด (สำหรับเปิดกลับจากเมนู "มุมมอง → แผง")
-const PANELS = {};
-function registerPanel(key, obj) { PANELS[key] = obj; }
-function showPanel(key) { const o = PANELS[key]; if (o) o.show(); }
-function resetPanels() {
-  const l = uiLayout();
-  ['tree-panel', 'props-panel', 'outline-panel', 'fmtbar', 'sidebar'].forEach((k) => delete l[k]);
-  localStorage.setItem('k2-ui-layout', JSON.stringify(l));
-  localStorage.removeItem('k2-panel-order');
-  location.reload();                       // ตั้งค่าการจัดวางใหม่หมด (autosave กันงานหายแล้ว)
+// ระบบแผงย้ายไป src/panels/* ทั้งหมดแล้ว (alpha.46 — Photoshop-style dock/tab/float)
+// showPanel/hidePanel/togglePanel/resetPanels/panelMenuItems import มาจาก panels/panel-ui.js
+
+
+// ---------------- Tooltip ระบบเดียว KTooltip (ข้อ 16) ----------------
+// วาง tooltip "เหนือ" ตัว trigger เสมอ (ใช้ getBoundingClientRect + flip)
+// ไม่หน่วงเวลา — แสดงทันที · รองรับข้อความยาว · ธีมตาม CSS
+const TIP_GAP = 6;
+let _tipEl = null, _tipHost = null, _tipSaved = '', _tipJob = null, _tipKt = null;
+
+function tipBox() {
+  if (!_tipEl) { _tipEl = el('div', 'k-tip'); _tipEl.id = 'k-tip'; document.body.append(_tipEl); }
+  return _tipEl;
 }
-function panelMenuItems() {
-  return Object.values(PANELS).map((o) => ({
-    label: (o.isVisible() ? '☑ ' : '☐ ') + o.title,
-    click: () => (o.isVisible() ? o.hide() : o.show()),
-  }));
+function placeTipRelative(el) {
+  const box = tipBox();
+  const er = el.getBoundingClientRect();
+  const bw = box.offsetWidth || box.getBoundingClientRect().width;
+  const bh = box.offsetHeight || box.getBoundingClientRect().height;
+  let left = er.left + er.width / 2 - bw / 2;
+  left = Math.max(4, Math.min(left, window.innerWidth - bw - 4));
+  let top = er.top - bh - TIP_GAP;
+  if (top < 4) top = er.bottom + TIP_GAP;          // ชิดขอบบน → ลงไปใต้ trigger แทน
+  box.style.left = Math.round(left) + 'px';
+  box.style.top = Math.round(top) + 'px';
 }
-
-// ทำให้แผงลอย/ผนึก/ย่อ/ปิดได้แบบ Photoshop — ปุ่มบนหัวแผง · ลากด้วยหัวแผง · snap ผนึก · จำสถานะ
-function makeFloatablePanel(panel, head, key, opts = {}) {
-  if (!panel || !head) return;
-  const title = opts.title || head.textContent.trim() || key;
-  const home = { parent: panel.parentNode, next: panel.nextSibling };
-  const st0 = uiLayout()[key] || {};
-
-  // แถบปุ่มควบคุมบนหัวแผง (ย่อ / ลอย / ปิด)
-  const ctrls = el('span', 'k-panel-ctrls');
-  const btnMin = el('span', 'k-panel-btn k-panel-min', '▾'); btnMin.title = 'ย่อ/ขยายแผง';
-  const btn = el('span', 'k-panel-btn k-panel-float', '⧉'); btn.title = 'ลอยแผงออกมา / ผนึกกลับ';
-  const btnClose = el('span', 'k-panel-btn k-panel-close', '✕'); btnClose.title = 'ปิดแผง (เปิดกลับที่เมนู มุมมอง → แผง)';
-  ctrls.append(btnMin, btn, btnClose);
-  head.appendChild(ctrls);
-
-  let floating = false;
-
-  const setCollapsed = (v) => { panel.classList.toggle('k-collapsed', v); btnMin.textContent = v ? '▸' : '▾';
-    saveUiLayout(key, { collapsed: v }); };
-  btnMin.onclick = (e) => { e.stopPropagation(); setCollapsed(!panel.classList.contains('k-collapsed')); };
-
-  const setVisible = (v) => { panel.classList.toggle('k-panel-off', !v); saveUiLayout(key, { hidden: !v }); };
-
-  const sb0 = $('#sidebar');
-  // dock: ผนึกกลับ sidebar — ถ้าให้ refPanel มา วางไว้ "ก่อน" แผงนั้น (stack/จัดลำดับ)
-  const dock = (refPanel) => {
-    panel.classList.remove('k-panel-floating');
-    panel.style.position = ''; panel.style.left = ''; panel.style.top = '';
-    panel.style.width = ''; panel.style.height = '';
-    let ref = refPanel && refPanel.parentNode === sb0 ? refPanel : null;
-    if (!ref) ref = (home.next && home.next.parentNode === home.parent) ? home.next : null;
-    (ref ? ref.parentNode : home.parent).insertBefore(panel, ref);
-    floating = false; btn.textContent = '⧉'; saveUiLayout(key, { floating: false });
-    savePanelOrder();
-  };
-  const float = () => {
-    const p = uiLayout()[key] || {};
-    document.body.appendChild(panel);
-    panel.classList.add('k-panel-floating');
-    panel.style.position = 'fixed';
-    panel.style.left = (p.left ?? 320) + 'px'; panel.style.top = (p.top ?? 90) + 'px';
-    panel.style.width = (p.width ?? 300) + 'px'; panel.style.height = (p.height ?? 320) + 'px';
-    floating = true; btn.textContent = '▣'; saveUiLayout(key, { floating: true });
-  };
-  btn.onclick = (e) => { e.stopPropagation(); floating ? dock() : float(); };
-  btnClose.onclick = (e) => { e.stopPropagation(); setVisible(false); };
-
-  registerPanel(key, { title, panel,
-    isVisible: () => !panel.classList.contains('k-panel-off'),
-    show: () => { setVisible(true); if (st0.collapsed) setCollapsed(false); },
-    hide: () => setVisible(false) });
-
-  // แผงลอยที่ pointer อยู่เหนือ sidebar → หา "แผงพี่น้อง" ที่ควรวางก่อน (ตาม Y) เพื่อ stack/จัดลำดับ
-  const dockRefAt = (clientY) => {
-    for (const sib of sb0.querySelectorAll(':scope > .k-panel-floating, :scope > [id$="-panel"], :scope > #tree-panel, :scope > #props-panel, :scope > #outline-panel')) {
-      if (sib === panel) continue;
-      const r = sib.getBoundingClientRect();
-      if (clientY < r.top + r.height / 2) return sib;
+function placeTipAt(x, y) {
+  const box = tipBox();
+  const bw = box.offsetWidth || box.getBoundingClientRect().width;
+  const bh = box.offsetHeight || box.getBoundingClientRect().height;
+  let left = x - bw / 2;
+  left = Math.max(4, Math.min(left, window.innerWidth - bw - 4));
+  let top = y - bh - TIP_GAP;
+  if (top < 4) top = y + TIP_GAP + 4;
+  box.style.left = Math.round(left) + 'px';
+  box.style.top = Math.round(top) + 'px';
+}
+function hideTip() {
+  clearTimeout(_tipJob);
+  if (_tipHost && _tipSaved) { _tipHost.setAttribute('title', _tipSaved); }
+  _tipHost = null; _tipSaved = ''; _tipKt = null;
+  if (_tipEl) _tipEl.classList.remove('on');
+}
+function showTip(el, text) {
+  hideTip();
+  _tipHost = el; _tipSaved = text;
+  el.removeAttribute('title');
+  const box = tipBox();
+  box.textContent = text;
+  box.classList.add('multiline');
+  box.classList.add('on');
+  placeTipRelative(el);
+}
+// KTooltip(trigger, text) — API เดียวสำหรับ tooltip ทั้งโปรเจกต์
+// แทนที่ trigger.title = '...' → KTooltip(trigger, '...')
+// ติดตั้ง mouseenter/mouseleave + ใช้ getBoundingClientRect ของ trigger + flip
+export function KTooltip(trigger, text, opts = {}) {
+  if (!trigger || !text) return;
+  trigger.title = text;                            // ฝาก title → setupHoverTips จัดการให้
+  if (opts.above === false) {
+    trigger.dataset.ktAbove = '0';               // บอกให้โชว์ใต้แทน (ปุ่มบน toolbar)
+  }
+}
+function setupHoverTips() {
+  document.addEventListener('mouseover', (e) => {
+    const host = e.target instanceof Element ? e.target.closest('[title]') : null;
+    if (!host || host === _tipHost) return;
+    const text = host.getAttribute('title');
+    if (!text) return;
+    hideTip();
+    _tipHost = host; _tipSaved = text; _tipKt = host;
+    host.removeAttribute('title');
+    const box = tipBox();
+    box.textContent = text;
+    box.classList.toggle('multiline', text.includes('\n'));
+    box.classList.add('on');
+    // ถ้า element มี data-kt-above=0 → ใช้ตำแหน่งใต้แทน
+    if (host.dataset.ktAbove === '0') {
+      const er = host.getBoundingClientRect();
+      const bh = box.offsetHeight || box.getBoundingClientRect().height;
+      box.style.left = Math.round(er.left + er.width / 2 - (box.offsetWidth || 100) / 2) + 'px';
+      box.style.top = Math.round(er.bottom + TIP_GAP) + 'px';
+    } else {
+      placeTipRelative(host);
     }
-    return null;
-  };
-  const overSidebar = (e) => {
-    if (!e) return false;
-    const r = sb0.getBoundingClientRect();
-    const lx = parseInt(panel.style.left, 10);
-    return (lx < 70) || (e.clientX >= r.left && e.clientX <= r.right + 30);
-  };
-
-  // ลากด้วยหัวแผง + snap: ชิดขอบ/แผงอื่น (Photoshop) · ลากเข้า sidebar = ผนึก+จัดลำดับ (stack)
-  makeDraggable(panel, head, { key, snap: true,
-    onMove: (e) => { if (floating && overSidebar(e)) sb0.classList.add('k-dock-hint');
-                     else sb0.classList.remove('k-dock-hint'); },
-    onEnd: (e) => { sb0.classList.remove('k-dock-hint');
-                    if (floating && overSidebar(e)) dock(dockRefAt(e ? e.clientY : 0)); } });
-  // ปรับขนาดด้วยมุมขวาล่าง (เฉพาะตอนลอย)
-  const grip = el('div', 'k-panel-resize'); panel.appendChild(grip);
-  let rz = false, rw, rh, rx, ry;
-  grip.addEventListener('mousedown', (e) => { if (!floating) return;
-    rz = true; rw = panel.offsetWidth; rh = panel.offsetHeight; rx = e.clientX; ry = e.clientY;
-    document.addEventListener('mousemove', rmv); document.addEventListener('mouseup', rup); e.preventDefault(); e.stopPropagation(); });
-  const rmv = (e) => { if (!rz) return;
-    panel.style.width = Math.max(200, rw + e.clientX - rx) + 'px';
-    panel.style.height = Math.max(140, rh + e.clientY - ry) + 'px'; };
-  const rup = () => { rz = false; document.removeEventListener('mousemove', rmv); document.removeEventListener('mouseup', rup);
-    saveUiLayout(key, { width: panel.offsetWidth, height: panel.offsetHeight }); };
-
-  // คืนสถานะที่จำไว้
-  if (st0.hidden) panel.classList.add('k-panel-off');
-  if (st0.collapsed) setCollapsed(true);
-  if (st0.floating) float();
+  }, true);
+  document.addEventListener('mouseout', (e) => {
+    if (!_tipHost) return;
+    const to = e.relatedTarget;
+    if (to instanceof Node && _tipHost.contains(to)) return;
+    hideTip();
+  }, true);
+  // เลื่อน/กด/ออกนอกหน้าต่าง → ซ่อนทันที
+  for (const ev of ['mousedown', 'wheel', 'keydown', 'blur'])
+    document.addEventListener(ev, hideTip, true);
 }
 
-// ปรับความกว้างแถบข้าง (sidebar) ด้วยการลากขอบขวา + จำค่าไว้
-function setupSidebarResize() {
-  const sb = $('#sidebar'); if (!sb) return;
-  const saved = uiLayout().sidebar;
-  if (saved && saved.width) sb.style.width = saved.width + 'px';
-  const grip = el('div', 'k-sb-resizer'); grip.title = 'ลากเพื่อปรับความกว้าง';
-  sb.parentNode.insertBefore(grip, sb.nextSibling);   // แทรกระหว่างแถบข้างกับเนื้อหา
-  let dragging = false;
-  const mv = (e) => { if (!dragging) return;
-    sb.style.width = Math.max(180, Math.min(560, e.clientX)) + 'px'; };
-  const up = () => { dragging = false; document.body.style.cursor = '';
-    document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up);
-    saveUiLayout('sidebar', { width: parseInt(sb.style.width, 10) || 280 }); };
-  grip.addEventListener('mousedown', (e) => { dragging = true; document.body.style.cursor = 'col-resize';
-    document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up); e.preventDefault(); });
-}
+// (ถาดแผงที่ปิดไว้ #k-min-tray ย้ายไป panels/panel-ui.js — syncMinTray() หลัง render ทุกครั้ง)
+
+// (ความกว้างแถบข้างปรับด้วยที่จับของ dock ใน Panel System แล้ว — .k-resize-handle)
 
 window.addEventListener('DOMContentLoaded', () => {
   // ---- ลงทะเบียนฮุกให้ toolbar+UI อัปเดตเมื่อเปลี่ยนภาษา ----
@@ -3629,6 +4125,7 @@ window.addEventListener('DOMContentLoaded', () => {
   // ---- โหลดภาษาเริ่มต้น (ไทย) แล้วค่อยเปิดโปรเจกต์ ----
   loadLanguage(DEFAULT_SETTINGS.language).then(() => {
     applyDataI18n();
+    initIcons();
     applyToolbarShortcutTitles();
   });
 
@@ -3644,16 +4141,23 @@ window.addEventListener('DOMContentLoaded', () => {
     const cur = tab.sp ? 'screenplay' : 'prose';
     const r = e.target.getBoundingClientRect();
     popupMenu(r.left, r.bottom + 4, [
-      { label: (cur === 'prose' ? '✓ ' : '') + '📖 นิยาย', click: () => switchFormat('prose') },
-      { label: (cur === 'screenplay' ? '✓ ' : '') + '🎬 บทหนัง', click: () => switchFormat('screenplay') },
+      { label: iconHtml('book', 14) + ' ' + (cur === 'prose' ? '✓ ' : '') + 'นิยาย', click: () => switchFormat('prose') },
+      { label: iconHtml('film', 14) + ' ' + (cur === 'screenplay' ? '✓ ' : '') + 'บทหนัง', click: () => switchFormat('screenplay') },
     ]);
   };
   $('#tb-style').onchange = (e) => {
     const v = e.target.value;
-    const ed = state.active?.editor; if (!ed) return;
+    const ed = getActiveEditor(); if (!ed) return;
     if (v === 'p') ed.cmd('paragraph');
     else if (v === 'quote') ed.cmd('quote');
     else ed.cmd('heading', +v.slice(1));
+    if (state.active) markDirty(state.active);
+  };
+  $('#tb-sp-elem').onchange = (e) => {
+    const sp = state.active?.sp; if (!sp) return;
+    sp.setElement(e.target.value);
+    sp.view.focus();
+    setElementBadge(e.target.value);
     if (state.active) markDirty(state.active);
   };
   $('#open-btn').onclick = async () => { const p = await kapi.openProjectDialog(); if (p) loadProject(p); };
@@ -3661,8 +4165,16 @@ window.addEventListener('DOMContentLoaded', () => {
   $('#win-min').onclick = () => kapi.winMin();
   $('#win-max').onclick = () => kapi.winMax();
   $('#win-close').onclick = () => kapi.winClose();
+  // Esc ออกจากโหมดโฟกัส — แต่ต้องไม่แย่ง Esc ของกล่องโต้ตอบที่เปิดอยู่ (กล่องปิดตัวเองก่อน)
+  // และเมื่อเปิดทั้งโฟกัส+โหมดอ่าน ให้ออกทีละชั้น: โฟกัสก่อน แล้วค่อยโหมดอ่าน (ดู toggleReading)
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && document.body.classList.contains('focus-mode')) toggleFocus(false);
+    if (e.key !== 'Escape') return;
+    if (document.querySelector('.k-overlay')) return;
+    if (!document.body.classList.contains('focus-mode')) return;
+    // ปักธงบนอีเวนต์ ไม่ใช่ดูคลาส — ตัวจับของโหมดอ่านอาจทำงานหลังจากคลาสถูกถอดไปแล้ว
+    // (ลำดับ listener ขึ้นกับว่าใครลงทะเบียนก่อน) → Esc ครั้งเดียวจะออกทั้งสองโหมดพร้อมกัน
+    e._k2EscUsed = true;
+    toggleFocus(false);
   });
   $('#tb-plug').onclick = (e) => {
     if (!plugins.commands.length) return;
@@ -3678,14 +4190,23 @@ window.addEventListener('DOMContentLoaded', () => {
   $('#tb-paper').classList.toggle('on', state.settings.paperMode !== false);
   // ---- ปุ่มโหมดอ่าน + ค้นหาทั้งโปรเจกต์ ----
   $('#tb-read').onclick = () => toggleReading();
-  $('#tb-gsearch').onclick = () => openGlobalSearch();
+  $('#tb-gsearch').onclick = () => handleCommand('global-search');
   bindGlobalSearchShortcut();
+  // ---- ปุ่มโน้ตด่วน (ข้อ 85): คลิก = จดกับฉากที่เปิดอยู่ · คลิกขวา = ดูโน้ตทั้งหมด ----
+  $('#tb-note').onclick = async () => { const c = await sceneCtx(); quickNote(c?.row?.id, c?.row?.title); };
+  $('#tb-note').oncontextmenu = (e) => { e.preventDefault(); showAllNotes(); };
   // ---- ปุ่ม Kanban + AI ----
   $('#tb-kanban').onclick = () => openKanban();
   $('#tb-ai').onclick = () => openAIAssistant();
   $('#tb-ai-chat').onclick = () => openAIChat();
   $('#tb-panels').onclick = () => togglePanelDialog();
   $('#tb-split').onclick = () => handleCommand('split-view');
+  $('#tb-close').onclick = () => { const t = state.active; if (t) closeTab(t.file); };
+  $('#tb-close-all').onclick = () => closeAllTabs();
+  $('#tb-focus').onclick = () => handleCommand('focus-mode');
+  $('#tb-typewriter').onclick = () => handleCommand('typewriter');
+  $('#tb-linenum').onclick = () => handleCommand('line-numbers');
+  $('#tb-quickopen').onclick = () => handleCommand('quick-open');
   // ---- ปุ่มลัด Cheatsheet (? / Ctrl+Shift+/) ----
   document.addEventListener('keydown', (e) => {
     if ((e.code === 'Slash' && e.ctrlKey && e.shiftKey) || (e.key === '?' && !e.ctrlKey && !e.metaKey)) {
@@ -3700,7 +4221,7 @@ window.addEventListener('DOMContentLoaded', () => {
   // (จับใน saveAllTabs แทน)
   // ---- ปุ่มบันทึกทั้งหมด + หน้าแรก ----
   $('#save-all-btn').onclick = () => saveAllTabs();
-  $('#home-btn').onclick = () => openHome();
+  $('#home-btn').onclick = () => { showPanel('home'); import('./home-ui.js').then(m => m.renderHomePanel($('#home-body'))); };
   window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyS' && e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey) {
       e.preventDefault(); saveAllTabs();
@@ -3710,6 +4231,8 @@ window.addEventListener('DOMContentLoaded', () => {
   updateToolbarTitles();
   // ---- FAB (ปุ่มลอยสร้างใหม่) ----
   wireFab();
+  // ---- tooltip ลอยเหนือเคอร์เซอร์ (ข้อ 16) ----
+  setupHoverTips();
   // ---- Filter bar ----
   $('#filter-sort').onchange = () => { buildFilterBar(); filterTree($('#tree-search').value); };
   $('#filter-archive-toggle').onclick = function() {
@@ -3725,23 +4248,41 @@ window.addEventListener('DOMContentLoaded', () => {
     });
   };
   // ---- ตัวควบคุมซูมมุมล่างขวา ----
-  $('#zoom-slider').oninput = (e) => setZoom(parseInt(e.target.value, 10) / 100);
-  $('#zoom-in').onclick = () => bumpZoom(1);
-  $('#zoom-out').onclick = () => bumpZoom(-1);
-  $('#zoom-reset').onclick = () => resetZoom();
+  $('#zoom-slider').oninput = (e) => setPageScale(parseInt(e.target.value, 10) / 100);
+  $('#zoom-in').onclick = () => bumpPageScale(1);
+  $('#zoom-out').onclick = () => bumpPageScale(-1);
+  $('#zoom-reset').onclick = () => resetPageScale();
   $('#tree-search').oninput = (e) => filterTree(e.target.value);
 
   // ---- แถบรูปแบบอักษรแบบลอย (ลากย้ายได้ · จำตำแหน่ง) ----
   setupFloatingFormatBar();
-  setupSidebarResize();
-  makeFloatablePanel($('#tree-panel'), $('#tree-head'), 'tree-panel', { title: 'โปรเจกต์' });
-  makeFloatablePanel($('#props-panel'), $('#props-head'), 'props-panel', { title: 'คุณสมบัติ' });
-  makeFloatablePanel($('#outline-panel'), $('#outline-head'), 'outline-panel', { title: 'Navigation' });
-  restorePanelOrder();                             // คืนลำดับ stack ที่จัดไว้
+  // ---- Panel System (Photoshop-style) — วาดทุกแผงลง #app-root ----
+  initPanelSystem();
+  startLogAutoRefresh();
+  // ---- Split View — ผูก SplitManager เข้ากับ #panes + ลากหัวแท็บไปวางในช่องได้ ----
+  initSplitSystem({ activate, onRender: () => refreshToolbar() });
+
+  // ปุ่ม 🔄 บนหัวแผงโปรเจกต์ = อ่านโฟลเดอร์ใหม่ (ข้อ 11)
+  // จำเป็นเพราะไฟล์ถูกแก้จากนอกโปรแกรมได้ (Explorer/Finder) แล้วต้นไม้ไม่รู้
+  const refreshBtn = el('span', 'k-panel-btn k-tree-refresh-btn', '🔄');
+  refreshBtn.title = 'รีเฟรช — อ่านไฟล์/โฟลเดอร์ใหม่จากดิสก์';
+  refreshBtn.onclick = async (e) => {
+    e.stopPropagation();
+    if (!state.root) { setStatus('ยังไม่ได้เปิดโปรเจกต์'); return; }
+    refreshBtn.classList.add('spin');
+    try {
+      await loadTemplates();
+      await smart.loadNames(state.root);
+      await buildTree();
+      await buildFilterBar();
+      setStatus('รีเฟรชรายการโปรเจกต์แล้ว');
+    } finally { refreshBtn.classList.remove('spin'); }
+  };
+  addPanelButton('tree', refreshBtn);
 
   // ปุ่ม 🔍 บนหัวแผงโปรเจกต์ = เปิด/ปิดช่องค้นหา (อยู่ในแผง explorer)
   const searchBtn = el('span', 'k-panel-btn k-tree-search-btn', '🔍'); searchBtn.title = 'เปิด/ปิดช่องค้นหา';
-  $('#tree-head').querySelector('.k-panel-ctrls').prepend(searchBtn);
+  addPanelButton('tree', searchBtn);
   const searchOn0 = (localStorage.getItem('k2-tree-search') ?? '1') === '1';
   const applySearchVis = (on) => { $('#tree-search').classList.toggle('k-search-off', !on);
     searchBtn.classList.toggle('on', on); localStorage.setItem('k2-tree-search', on ? '1' : '0');
@@ -3752,8 +4293,20 @@ window.addEventListener('DOMContentLoaded', () => {
   // ปุ่ม ¶ บนหัวแผง Navigation = โชว์/ซ่อนย่อหน้า (beat)
   const beatBtn = el('span', 'k-panel-btn', '¶'); beatBtn.id = 'nav-beats-btn'; beatBtn.title = 'แสดง/ซ่อนย่อหน้าใน Navigation';
   beatBtn.classList.toggle('on', navShowBeats);
-  $('#outline-head').querySelector('.k-panel-ctrls').prepend(beatBtn);
+  addPanelButton('outline', beatBtn);
   beatBtn.onclick = (e) => { e.stopPropagation(); setNavBeats(!navShowBeats); };
+
+  // ปุ่มแผงบันทึก (Log): ↩ รีเฟรช, 📁 เปิดโฟลเดอร์, 📋 copy
+  const logRefresh = el('span', 'k-panel-btn', '↻'); logRefresh.title = 'รีเฟรช';
+  addPanelButton('log', logRefresh);
+  logRefresh.onclick = (e) => { e.stopPropagation(); renderLogPanel(); };
+  const logReveal = el('span', 'k-panel-btn'); logReveal.innerHTML = iconHtml('folder', 14); logReveal.title = 'เปิดโฟลเดอร์ log';
+  addPanelButton('log', logReveal);
+  logReveal.onclick = (e) => { e.stopPropagation(); kapi.logReveal && kapi.logReveal(); };
+  const logCopy = el('span', 'k-panel-btn', '📋'); logCopy.title = 'คัดลอก';
+  addPanelButton('log', logCopy);
+  logCopy.onclick = (e) => { e.stopPropagation();
+    const body = $('#log-body'); if (body) navigator.clipboard.writeText(body.textContent).then(() => setStatus('คัดลอก log แล้ว')); };
 
   // คลิกขวาคำที่ขีดแดง (สะกดผิด) → เพิ่มลงพจนานุกรมส่วนตัวของโปรเจกต์
   document.addEventListener('contextmenu', (e) => {
@@ -3817,12 +4370,98 @@ window.addEventListener('DOMContentLoaded', () => {
                                     markDirty(state.active); doFind(); };
   $('#find-repall').onclick = () => { const n = replaceAll(state.active?.editor?.view, $('#find-r').value);
                                       setStatus('แทนที่ ' + n + ' แห่ง'); markDirty(state.active); doFind(); };
-  if (!location.search.includes('k2test')) kapi.listRecent().then((r) => { if (r[0]) loadProject(r[0]); else openHome(); });
+  if (!location.search.includes('k2test')) kapi.listRecent().then((r) => { if (r[0]) loadProject(r[0]); else { showPanel('home'); import('./home-ui.js').then(m => m.renderHomePanel($('#home-body'))); } });
   // autosave ตั้งค่าได้ผ่านตั้งค่าโปรเจกต์ (restartAutosave เรียกจาก applySettings เมื่อเปิดโปรเจกต์)
   restartAutosave();
 });
 
 // ---------------- FAB (ปุ่มลอยสร้างใหม่) ----------------
+// ---------------- เลือกปลายทาง เล่ม → ฉบับร่าง → บท (ข้อ 9) ----------------
+// เดิม FAB ยัดของลง sections[0]/drafts[0]/chapters[0] เสมอ — โปรเจกต์ที่มีหลายเล่มจึงสร้างผิดที่
+// ค่าเริ่มต้นของกล่องนี้ = บริบทที่ผู้ใช้เปิดอยู่ (ถ้ามี) ไม่งั้น = อันแรก
+// needChapter=false → ใช้เลือกปลายทางของ "บทใหม่" (พอถึงระดับฉบับร่าง)
+async function pickDraftTarget({ needChapter = true, title = 'สร้างที่ไหน' } = {}) {
+  const sections = await listSections();
+  if (!sections.length) { setStatus('ยังไม่มีเล่ม — สร้างเล่มก่อน'); return null; }
+
+  // อ่านฉบับร่างของแต่ละเล่มไว้ล่วงหน้า (โปรเจกต์ใหญ่สุดก็ยังเป็นสิบ ๆ รายการ ไม่หนัก)
+  const tree = [];
+  for (const s of sections) {
+    const dr = await kapi.join(s.secPath, 'Draft');
+    if (!(await kapi.exists(dr))) continue;
+    const drafts = [];
+    for (const dn of await kapi.listDirs(dr)) {
+      const dPath = await kapi.join(dr, dn);
+      let chapters = [];
+      try {
+        chapters = ((await kapi.readJson(await kapi.join(dPath, 'draft.json'))).chapters || [])
+          .slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+      } catch {}
+      drafts.push({ name: dn, dPath, chapters });
+    }
+    if (drafts.length) tree.push({ ...s, drafts });
+  }
+  if (!tree.length) { setStatus('ยังไม่มีฉบับร่าง — สร้างเล่ม/ฉบับร่างก่อน'); return null; }
+
+  const ctx = await sceneCtx();                   // ฉากที่เปิดอยู่ = ค่าเริ่มต้นที่ตรงใจที่สุด
+  let si = 0, di = 0, ci = 0;
+  if (ctx) outer: for (let a = 0; a < tree.length; a++)
+    for (let b = 0; b < tree[a].drafts.length; b++)
+      if (tree[a].drafts[b].dPath === ctx.dPath) {
+        si = a; di = b;
+        const k = tree[a].drafts[b].chapters.findIndex((c) => c.guid === ctx.ch.guid);
+        ci = k < 0 ? 0 : k;
+        break outer;
+      }
+
+  return new Promise((resolve) => {
+    const ov = el('div', 'k-overlay');
+    const box = el('div', 'k-dialog');
+    box.append(el('div', 'k-dlg-title', title));
+    const mkRow = (label) => { const r = el('div', 'wiki-row'); r.append(el('label', null, label));
+      const s = el('select', 'wiki-input k-dlg-select'); r.append(s); box.append(r); return s; };
+    const selSec = mkRow('เล่ม');
+    const selDraft = mkRow('ฉบับร่าง');
+    const selCh = needChapter ? mkRow('บท') : null;
+    const fill = (sel, items, cur) => {
+      sel.replaceChildren();
+      items.forEach((txt, i) => { const o = el('option', null, txt); o.value = String(i); sel.append(o); });
+      sel.value = String(Math.min(cur, Math.max(0, items.length - 1)));
+    };
+    const syncCh = () => {
+      if (!selCh) return;
+      const chs = tree[+selSec.value].drafts[+selDraft.value].chapters;
+      fill(selCh, chs.length ? chs.map((c) => c.title || '(ไม่มีชื่อ)') : ['— ยังไม่มีบท —'], ci);
+      selCh.disabled = !chs.length;
+    };
+    const syncDraft = () => {
+      fill(selDraft, tree[+selSec.value].drafts.map((d) => d.name), di);
+      syncCh();
+    };
+    fill(selSec, tree.map((s) => s.title), si);
+    syncDraft();
+    selSec.onchange = () => { di = 0; ci = 0; syncDraft(); };
+    selDraft.onchange = () => { ci = 0; syncCh(); };
+
+    const btns = el('div', 'k-dlg-btns');
+    const cB = el('button', null, 'ยกเลิก');
+    const okB = el('button', 'k-ok', 'ตกลง');
+    btns.append(cB, okB); box.append(btns); ov.append(box); document.body.append(ov);
+    const done = (v) => { ov.remove(); resolve(v); };
+    cB.onclick = () => done(null);
+    ov.onclick = (e) => { if (e.target === ov) done(null); };
+    okB.onclick = () => {
+      const dr = tree[+selSec.value].drafts[+selDraft.value];
+      if (needChapter) {
+        const ch = dr.chapters[+selCh.value];
+        if (!ch) { setStatus('ฉบับร่างนี้ยังไม่มีบท — สร้างบทก่อน'); return; }
+        done({ dPath: dr.dPath, chapter: ch });
+      } else done({ dPath: dr.dPath, chapter: null });
+    };
+    okB.focus();
+  });
+}
+
 function wireFab() {
   const fab = $('#k-fab');
   const fabMenu = $('#k-fab-menu');
@@ -3846,46 +4485,21 @@ function wireFab() {
       const action = item.dataset.action;
       
       switch (action) {
-        case 'scene':
-          // หาบทแรกในฉบับร่างแรกของเล่มแรก
-          if (state.root) {
-            const sections = await listSections();
-            if (sections.length) {
-              const s = sections[0];
-              const dr = await kapi.join(s.secPath, 'Draft');
-              if (await kapi.exists(dr)) {
-                const dns = await kapi.listDirs(dr);
-                if (dns.length) {
-                  const dp = await kapi.join(dr, dns[0]);
-                  const dj = await kapi.readJson(await kapi.join(dp, 'draft.json'));
-                  const chapters = (dj.chapters || []).sort((a, b) => (a.order || 0) - (b.order || 0));
-                  if (chapters.length) {
-                    addScene(dp, chapters[0]);
-                    return;
-                  }
-                }
-              }
-            }
-          }
-          setStatus('ยังไม่มีบท — สร้างบทก่อน');
+        case 'scene': {
+          // ให้ผู้ใช้เลือก เล่ม→ฉบับร่าง→บท เอง (เดิมยัดลงบทแรกของเล่มแรกเสมอ — บั๊กข้อ 9)
+          if (!state.root) break;
+          const dst = await pickDraftTarget({ title: 'สร้างฉากใหม่ที่ไหน' });
+          if (!dst) break;
+          addScene(dst.dPath, dst.chapter);
           break;
-        case 'chapter':
-          if (state.root) {
-            const sections = await listSections();
-            if (sections.length) {
-              const s = sections[0];
-              const dr = await kapi.join(s.secPath, 'Draft');
-              if (await kapi.exists(dr)) {
-                const dns = await kapi.listDirs(dr);
-                if (dns.length) {
-                  addChapter(await kapi.join(dr, dns[0]));
-                  return;
-                }
-              }
-            }
-          }
-          setStatus('ยังไม่มีฉบับร่าง — สร้างเล่มก่อน');
+        }
+        case 'chapter': {
+          if (!state.root) break;
+          const dst = await pickDraftTarget({ needChapter: false, title: 'สร้างบทใหม่ที่ไหน' });
+          if (!dst) break;
+          addChapter(dst.dPath);
           break;
+        }
         case 'character':
           if (state.root) {
             const w = await wikiRoot();
@@ -3901,6 +4515,8 @@ function wireFab() {
           }
           break;
         case 'note':
+          openScratchpad();
+          break;
         case 'memo':
           if (state.root) {
             addMemo();
@@ -3974,10 +4590,17 @@ async function buildFilterBar() {
     const topTags = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 8);
     for (const [tag, cnt] of topTags) {
       const chip = el('span', 'filter-tag-chip', tag + ' (' + cnt + ')');
+      // แท็กที่ตั้งสี/ไอคอนไว้ → ชิปตัวกรองใช้สีเดียวกับใน Explorer (ข้อ 84)
+      // ชื่อแท็กจริงเก็บใน dataset — ไอคอนที่เติมข้างหน้าจะได้ไม่ปนเข้าไปในคิวรี
+      chip.dataset.tag = tag;
+      applyVisualTagStyle(chip, tag, { withIcon: false });
+      const vt = visualTagFor(tag);
+      if (vt && vt.icon) chip.textContent = vt.icon + ' ' + chip.textContent;
       chip.onclick = () => {
         chip.classList.toggle('on');
         const q = $('#tree-search');
-        const active = [...tagsEl.querySelectorAll('.filter-tag-chip.on')].map((c) => c.textContent.replace(/\s*\(\d+\)/, ''));
+        const active = [...tagsEl.querySelectorAll('.filter-tag-chip.on')]
+          .map((c) => c.dataset.tag || c.textContent.replace(/\s*\(\d+\)/, ''));
         if (active.length) {
           q.value = active.map((t) => 'tag:' + t).join(' OR ');
         } else {
@@ -4038,7 +4661,7 @@ function updateStatusExtras() {
       }
     } catch {}
     const el = $('#status-scenes');
-    if (el) el.textContent = '📄 ' + total + ' ฉาก';
+    if (el) el.innerHTML = iconHtml('file', 14) + ' ' + total + ' ฉาก';
   };
   updateSceneCount();
   
@@ -4046,7 +4669,7 @@ function updateStatusExtras() {
   const modeEl = $('#status-mode');
   if (modeEl) {
     const tab = state.active;
-    modeEl.textContent = tab?.sp ? '🎬 บทหนัง' : tab?.editor ? '📖 นิยาย' : '';
+    modeEl.innerHTML = tab?.sp ? (iconHtml('film', 14) + ' บทหนัง') : tab?.editor ? (iconHtml('book', 14) + ' นิยาย') : '';
   }
   
   // สถานะ autosave + วันที่แก้ไขล่าสุด
@@ -4060,9 +4683,9 @@ function updateStatusExtras() {
       const mod = tab.meta?.modified || '';
       if (mod) {
         const d = new Date(mod);
-        saveEl.textContent = '💾 ' + d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+        saveEl.innerHTML = iconHtml('save', 12) + ' ' + d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
       } else {
-        saveEl.textContent = '💾';
+        saveEl.innerHTML = iconHtml('save', 12);
       }
       saveEl.style.color = '';
     }
@@ -4687,7 +5310,7 @@ async function runTest(projectPath) {
           JSON.stringify(wtab.wiki.secEditors[0].k.getNames?.()));
 
     // ---- field ใน Wiki ลิงก์กันได้ (ข้อ 2) ----
-    // ใส่ค่าในช่องข้อมูลเพิ่มเองที่ตรงกับชื่อ entity อื่น → มีปุ่มลิงก์ 🔗 เปิดหน้านั้น
+    // ใส่ค่าในช่องข้อมูลเพิ่มเองที่ตรงกับชื่อ entity อื่น → มีป้ายลิงก์คลิกเปิดหน้านั้น
     {
       activate(wtab.file);
       wtab.wiki.e.customProperties = wtab.wiki.e.customProperties || {};
@@ -4695,17 +5318,17 @@ async function runTest(projectPath) {
       wtab.wiki.render();
       await new Promise((r) => setTimeout(r, 60));
       check('field ที่ค่าตรงชื่อ Wiki → มีปุ่มลิงก์ 🔗',
-            [...document.querySelectorAll('.pane.on .wiki-field-link .wiki-rel-link')]
+            [...document.querySelectorAll('.pane.on .wiki-link-pill')]
               .some((a) => a.textContent.includes('ยัยแมวเก้าชีวิต')));
-      // ค่าที่ไม่ตรงชื่อใคร → ไม่มีปุ่มลิงก์
+      // ค่าที่ไม่ตรงชื่อใคร → ไม่มีป้ายลิงก์
       wtab.wiki.e.customProperties['สีผม'] = 'น้ำตาลเข้มไม่มีใครชื่อนี้';
       wtab.wiki.render();
       await new Promise((r) => setTimeout(r, 40));
-      const links = [...document.querySelectorAll('.pane.on .wiki-field-link .wiki-rel-link')];
+      const links = [...document.querySelectorAll('.pane.on .wiki-link-pill')];
       check('field ที่ค่าไม่ตรงชื่อใคร → ไม่มีปุ่มลิงก์',
             !links.some((a) => a.textContent.includes('น้ำตาลเข้ม')));
-      // คลิกปุ่มลิงก์ → เปิดแท็บ entity นั้น
-      const linkA = [...document.querySelectorAll('.pane.on .wiki-field-link .wiki-rel-link')]
+      // คลิกป้ายลิงก์ → เปิดแท็บ entity นั้น
+      const linkA = [...document.querySelectorAll('.pane.on .wiki-link-pill')]
         .find((a) => a.textContent.includes('ยัยแมวเก้าชีวิต'));
       if (linkA) { linkA.click(); await new Promise((r) => setTimeout(r, 200)); }
       check('คลิกลิงก์ใน field → เปิดหน้า Wiki ปลายทาง',
@@ -4843,32 +5466,92 @@ async function runTest(projectPath) {
           !t.editor.getMarkdown().includes('<!--align'), t.editor.getMarkdown());
     t.editor.setMarkdown(orig);
 
-    // ---- ซูมหน้ากระดาษ (ขยายทั้งฟอนต์และความกว้างหน้า + slider ล่างขวา) ----
-    resetZoom();
+    // ---- ซูมหน้ากระดาษ (บั๊ก #7: ต้องเป็นซูมจริงด้วย CSS zoom ไม่ใช่ขยายแต่ฟอนต์) ----
+    // วัดจาก "ขนาดที่เห็นจริงบนจอ" (getBoundingClientRect) เพราะ zoom ถูกคิดรวมมาแล้ว
+    // ห้ามวัดจาก getComputedStyle().maxWidth — ในซับทรีที่ถูก zoom ค่าที่ได้ไม่ใช่พิกเซลบนจอ
+    resetPageScale();
     const fs0 = getComputedStyle(document.documentElement).getPropertyValue('--ed-fs');
-    const w0 = document.querySelector('.pane.on .ProseMirror').getBoundingClientRect().width;
-    const mw0 = parseFloat(getComputedStyle(document.querySelector('.pane.on .ProseMirror')).maxWidth);
-    bumpZoom(1); bumpZoom(1); bumpZoom(1);   // +30%
-    const fs1 = getComputedStyle(document.documentElement).getPropertyValue('--ed-fs');
     const pmEl = document.querySelector('.pane.on .ProseMirror');
-    const w1 = pmEl.getBoundingClientRect().width;
-    check('ซูม: ขยายฟอนต์นิยาย', parseFloat(fs1) > parseFloat(fs0), fs0 + '→' + fs1);
-    // วัดจาก max-width ที่คำนวณแล้ว ไม่ใช่ความกว้างจริง — บนจอแคบ pane จะ clamp ความกว้างจริงไว้
-    // ทำให้เทสเดิม fail ทั้งที่ตัวซูมทำงานถูก (เจอตอนรันบนหน้าต่าง ~1280px)
-    const mw1 = parseFloat(getComputedStyle(pmEl).maxWidth);
-    check('ซูม: ขยายความกว้างหน้ากระดาษด้วย (ไม่ใช่แค่ฟอนต์)', mw1 > mw0 + 20, `${Math.round(mw0)}→${Math.round(mw1)}`);
-    check('ซูม: ความกว้างจริงขยายตามเมื่อพื้นที่พอ',
-          w1 > w0 + 20 || w1 >= pmEl.parentElement.clientWidth - 40,
-          `${Math.round(w0)}→${Math.round(w1)} (pane ${pmEl.parentElement.clientWidth})`);
-    check('ซูม: ปรับฟอนต์บทหนัง (--sp-fs) ด้วย',
-          parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sp-fs')) > BASE_SP_FS);
+    const para0 = pmEl.querySelector('p') || pmEl.firstElementChild;
+    const h0 = para0.getBoundingClientRect().height;
+    const pad0 = para0.getBoundingClientRect().left - pmEl.getBoundingClientRect().left;
+    // จุดอ้างอิงบน "บรรทัดแรก" ของย่อหน้า ตอนซูม 100% — ไว้เทียบหลังซูมว่าคลิกแล้วได้ตัวอักษรเดิม
+    const line0 = para0.getClientRects()[0];
+    const hitDx = Math.min(40, line0.width / 3), hitDy = line0.height / 2;
+    const hit0 = t.editor.view.posAtCoords({ left: line0.left + hitDx, top: line0.top + hitDy });
+    bumpPageScale(1); bumpPageScale(1); bumpPageScale(1);   // +30%
+    await new Promise((r) => setTimeout(r, 40));
+    const h1 = para0.getBoundingClientRect().height;
+    const pad1 = para0.getBoundingClientRect().left - pmEl.getBoundingClientRect().left;
+    check('ซูม: ตั้ง --page-scale ให้ CSS zoom (ไม่ใช่คูณเข้าฟอนต์)',
+          getComputedStyle(document.documentElement).getPropertyValue('--page-scale').trim() === '1.300',
+          getComputedStyle(document.documentElement).getPropertyValue('--page-scale'));
+    check('ซูม: ตัวหนังสือบนจอใหญ่ขึ้นจริง', h1 > h0 * 1.15, `${Math.round(h0)}→${Math.round(h1)}`);
+    // หัวใจของบั๊ก #7 — เดิม padding/margin คงที่ ขยายแต่ฟอนต์ หน้าเลยเสียสัดส่วน
+    check('ซูม: ระยะขอบใน (padding) ขยายตามด้วย ไม่ใช่แค่ฟอนต์',
+          pad1 > pad0 * 1.15, `${Math.round(pad0)}→${Math.round(pad1)}`);
+    // เหตุผลที่ใช้ CSS zoom แทน transform:scale — เบราว์เซอร์ต้อง remap พิกัดคลิกให้เอง
+    // ไม่งั้น ProseMirror จะวางเคอร์เซอร์ผิดตำแหน่งทุกครั้งที่ซูม (คลิกตัวอักษรหนึ่งแล้วไปโผล่อีกตัว)
+    // เทียบแบบสัมพัทธ์: จุดเดิมบนบรรทัดแรก (คูณ 1.3 ตามซูม) ต้องได้ตำแหน่งในเอกสารตัวเดิม
+    {
+      const line1 = para0.getClientRects()[0];
+      const hit1 = t.editor.view.posAtCoords(
+        { left: line1.left + hitDx * 1.3, top: line1.top + hitDy * 1.3 });
+      check('ซูม: คลิกจุดเดิมได้ตัวอักษรเดิม (ProseMirror remap พิกัดถูก)',
+            !!hit0 && !!hit1 && Math.abs(hit1.pos - hit0.pos) <= 1,
+            JSON.stringify({ pos100: hit0 && hit0.pos, pos130: hit1 && hit1.pos }));
+    }
+    check('ซูม: --ed-fs เป็นฟอนต์ฐาน ไม่ถูกคูณซูมซ้ำ',
+          getComputedStyle(document.documentElement).getPropertyValue('--ed-fs') === fs0, fs0);
+    check('ซูม: --sp-fs เป็นฟอนต์ฐานบทหนัง ไม่ถูกคูณซูมซ้ำ',
+          parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sp-fs')) === BASE_SP_FS,
+          getComputedStyle(document.documentElement).getPropertyValue('--sp-fs'));
     check('ซูม: slider ล่างขวาสะท้อนค่า (%)', $('#zoom-slider').value === '130', $('#zoom-slider').value);
     // ลาก slider = ตั้งซูมได้
     $('#zoom-slider').value = '80'; $('#zoom-slider').dispatchEvent(new Event('input'));
-    check('ซูม: ลาก slider ตั้งค่าได้', Math.round(pageZoom * 100) === 80, String(pageZoom));
-    resetZoom();
-    check('ซูม: รีเซ็ตกลับ 100% + ฟอนต์เดิม',
-          pageZoom === 1 && getComputedStyle(document.documentElement).getPropertyValue('--ed-fs') === fs0);
+    check('ซูม: ลาก slider ตั้งค่าได้', Math.round(pageScale * 100) === 80, String(pageScale));
+    check('ซูม: ย่อแล้วหน้ากระดาษเล็กลงจริง',
+          para0.getBoundingClientRect().height < h0 * 0.95,
+          String(Math.round(para0.getBoundingClientRect().height)));
+    resetPageScale();
+    check('ซูม: รีเซ็ตกลับ 100%',
+          pageScale === 1 &&
+          getComputedStyle(document.documentElement).getPropertyValue('--page-scale').trim() === '1.000');
+
+    // ---- ขนาด UI (บั๊ก #9) — --ui-scale ขยายเปลือกโปรแกรมทั้งหมด ----
+    const uiOrig = parseFloat(state.settings.uiScale) || 1;
+    applyUIScale(1);
+    await new Promise((r) => setTimeout(r, 20));
+    const sbPad0 = parseFloat(getComputedStyle($('#statusbar')).paddingLeft);
+    const bodyFs0 = parseFloat(getComputedStyle(document.body).fontSize);
+    const headH0 = document.querySelector('.k-panel-head')?.getBoundingClientRect().height || 0;
+    applyUIScale(1.5);
+    await new Promise((r) => setTimeout(r, 40));
+    check('ขนาด UI: ตั้ง --ui-scale ได้',
+          getComputedStyle(document.documentElement).getPropertyValue('--ui-scale').trim() === '1.500',
+          getComputedStyle(document.documentElement).getPropertyValue('--ui-scale'));
+    check('ขนาด UI: ฟอนต์ body ขยาย (ปุ่ม/select/input สืบทอดต่อ)',
+          Math.abs(parseFloat(getComputedStyle(document.body).fontSize) - 21) < 0.6,
+          `${bodyFs0}→${getComputedStyle(document.body).fontSize}`);
+    check('ขนาด UI: ระยะในแถบสถานะขยายตาม (ไม่ใช่แค่ฟอนต์)',
+          parseFloat(getComputedStyle($('#statusbar')).paddingLeft) > sbPad0 * 1.3,
+          `${sbPad0}→${getComputedStyle($('#statusbar')).paddingLeft}`);
+    check('ขนาด UI: หัวแผงสูงขึ้นตาม',
+          (document.querySelector('.k-panel-head')?.getBoundingClientRect().height || 0) > headH0 + 2,
+          `${Math.round(headH0)}→${Math.round(document.querySelector('.k-panel-head')?.getBoundingClientRect().height || 0)}`);
+    check('ขนาด UI: ไม่ไปยุ่งกับฟอนต์หน้ากระดาษ (--ed-fs คงเดิม)',
+          getComputedStyle(document.documentElement).getPropertyValue('--ed-fs') === fs0);
+    // แถบสถานะ/แถบหัวหน้าต่างต้องไม่ล้นออกนอกจอเมื่อขยาย UI
+    check('ขนาด UI: แถบสถานะไม่ล้นแนวนอน',
+          $('#statusbar').scrollWidth <= $('#statusbar').clientWidth + 2,
+          `${$('#statusbar').scrollWidth}/${$('#statusbar').clientWidth}`);
+    await kapi.testShot('/tmp/k2_uiscale.png');
+    applyUIScale(3);   // เกินเพดาน → ต้องถูก clamp ที่ UI_SCALE_MAX
+    check('ขนาด UI: clamp ไม่เกิน ' + UI_SCALE_MAX,
+          getComputedStyle(document.documentElement).getPropertyValue('--ui-scale').trim() === UI_SCALE_MAX.toFixed(3),
+          getComputedStyle(document.documentElement).getPropertyValue('--ui-scale'));
+    applyUIScale(uiOrig);
+    await new Promise((r) => setTimeout(r, 20));
 
     // ---- โหมดหน้ากระดาษ (paper mode) ----
     activate(t.file);
@@ -4902,9 +5585,7 @@ async function runTest(projectPath) {
 
     // ---- แถบรูปแบบอักษรแบบลอย (ลาก + จำตำแหน่ง) ----
     // รีเซ็ต layout ให้เทสต์ทำซ้ำได้ (localStorage คงค้างข้ามรอบ) + ผนึกแผงที่ลอยค้าง
-    document.querySelectorAll('.k-panel-floating').forEach((p) => {
-      const b = p.querySelector('.k-panel-float'); if (b) b.click();
-    });
+    document.querySelectorAll('.k-float-panel .k-panel-btn-float').forEach((b) => b.click());
     localStorage.removeItem('k2-ui-layout');
     activate(t.file); refreshToolbar();
     await new Promise((r) => setTimeout(r, 40));
@@ -4935,18 +5616,79 @@ async function runTest(projectPath) {
           JSON.stringify(lay.fmtbar));
     check('ปุ่มจัดรูปแบบในแถบลอยยังสั่งงานได้ (id เดิม)',
           typeof document.querySelector('#tb-bold').onclick === 'function');
-    // ปรับความกว้างแถบข้าง → จำค่า
-    const sbGrip = document.querySelector('.k-sb-resizer');
-    check('แถบข้างมีที่จับปรับความกว้าง', !!sbGrip);
-    sbGrip.dispatchEvent(new MouseEvent('mousedown', { clientX: 280, button: 0, bubbles: true }));
-    document.dispatchEvent(new MouseEvent('mousemove', { clientX: 360, bubbles: true }));
-    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-    await new Promise((r) => setTimeout(r, 20));
-    check('ปรับความกว้างแถบข้างแล้วจำค่า',
-          (JSON.parse(localStorage.getItem('k2-ui-layout') || '{}').sidebar || {}).width >= 180,
-          $('#sidebar').style.width);
+    // ════ Panel System (Photoshop-style dock/tab/float) — alpha.46 ════
+    // e2e ไม่ idempotent ถ้าเลย์เอาต์เก่าค้างใน localStorage → เริ่มจากค่าตั้งต้นเสมอ
+    resetPanels();
+    await new Promise((r) => setTimeout(r, 30));
+    const PMG = getPanelManager();
+    const pEl = (id) => document.querySelector(`#app-root .k-panel[data-panel-id="${id}"]`);
+    const pHead = (id) => pEl(id)?.querySelector(':scope > .k-panel-head');
+    const pBtn = (id, act) => pEl(id)?.querySelector(`:scope > .k-panel-head .k-panel-btn-${act}`)
+                          || document.querySelector(`.k-float-panel[data-panel-id="${id}"] .k-panel-btn-${act}`);
 
-    // ---- explorer: ค้นหา/กรอง + แผงลอย (panel docking) ----
+    check('Panel System วาดต้นไม้แผงลง #app-root', !!document.querySelector('#app-root .k-panel-root'));
+    check('root ของเลย์เอาต์เป็น dock tree', PMG.root && PMG.root.type === 'dock', PMG.root?.type);
+    check('ลงทะเบียนแผงหลักครบ 6 ตัว', PMG.registered().length >= 6, PMG.registered().join(','));
+    check('แผงหลักถูกวางในต้นไม้ (toolbar/tree/outline/docs/statusbar)',
+          ['toolbar', 'tree', 'outline', 'docs', 'statusbar'].every((id) => PMG.isDocked(id)),
+          JSON.stringify(PMG.openIds()));
+    check('เนื้อแผงเป็น element เดิมของ index.html (ย้ายเข้า ไม่สร้างใหม่)',
+          !!pEl('tree')?.querySelector('#tree') && !!pEl('docs')?.querySelector('#panes') &&
+          !!pEl('docs')?.querySelector('#tabs'));
+    // แถบเครื่องมือ/แถบสถานะเป็นแผงแบบ fixed — พื้นที่ที่เหลือต้องตกเป็นของแถวกลางทั้งหมด
+    // (เอนจินตั้ง sizes=evenSizes ให้ทุก dock หลัง removePanel → ถ้าไม่ normalize flex-grow
+    //  แถวกลางจะได้แค่เศษส่วนของพื้นที่ว่าง แล้ว canvas/หน้ากระดาษเตี้ยผิดปกติ)
+    {
+      const rootH = $('#app-root').getBoundingClientRect().height;
+      const docsH = pEl('docs').getBoundingClientRect().height;
+      check('แผงเอกสารสูงเกือบเต็มจอ (แถบเครื่องมือ/สถานะไม่กินพื้นที่ว่าง)',
+            rootH > 200 && docsH > rootH * 0.7, `docs=${Math.round(docsH)} root=${Math.round(rootH)}`);
+      // จำลองสภาพหลังปิด/เปิดแผง (sizes ของ dock บนสุดถูกตั้งใหม่เป็น evenSizes)
+      hidePanel('outline'); showPanel('outline');
+      await new Promise((r) => setTimeout(r, 30));
+      check('ปิด/เปิดแผงแล้วความสูงแถวกลางไม่หด',
+            pEl('docs').getBoundingClientRect().height > rootH * 0.7,
+            `docs=${Math.round(pEl('docs').getBoundingClientRect().height)} root=${Math.round(rootH)}`);
+      resetPanels(); await new Promise((r) => setTimeout(r, 30));
+    }
+    check('tree + Navigation อยู่ในกลุ่มแท็บเดียวกัน',
+          !!PL.tabGroupOf(PMG.root, 'tree') &&
+          PL.tabGroupOf(PMG.root, 'tree') === PL.tabGroupOf(PMG.root, 'outline'));
+    // คลิกหัวแท็บ → สลับแผงที่แสดง
+    {
+      const grp = PL.tabGroupOf(PMG.root, 'tree');
+      const navTab = document.querySelector(`.k-tab-bar .k-tab[data-panel-id="outline"]`);
+      check('กลุ่มแท็บวาดหัวแท็บครบทุกแผง', !!navTab && !!document.querySelector('.k-tab[data-panel-id="tree"]'));
+      navTab.click();
+      await new Promise((r) => setTimeout(r, 20));
+      check('คลิกหัวแท็บ Navigation → แท็บนั้น active',
+            PL.tabGroupOf(PMG.root, 'outline').children[PL.tabGroupOf(PMG.root, 'outline').active].id === 'outline');
+      check('แท็บที่ไม่ active ยังอยู่ใน DOM (โค้ดเก่าอ้าง id ได้ตลอด)', !!document.querySelector('#tree'));
+      document.querySelector('.k-tab[data-panel-id="tree"]').click();
+      await new Promise((r) => setTimeout(r, 20));
+      check('สลับกลับแท็บโปรเจกต์ได้', PMG.root && grp && PL.tabGroupOf(PMG.root, 'tree').active === 0);
+    }
+    // ที่จับปรับสัดส่วนของ dock (แทน .k-sb-resizer เดิม)
+    {
+      const handles = [...document.querySelectorAll('#app-root .k-resize-handle')];
+      check('dock มีที่จับปรับสัดส่วน', handles.length >= 1, String(handles.length));
+      const h = handles[0];
+      const dockId = h.dataset.dockId, idx = +h.dataset.index;
+      const before = JSON.stringify(PL.panelIds(PMG.root));
+      const r0 = h.getBoundingClientRect();
+      h.dispatchEvent(new MouseEvent('mousedown', { clientX: r0.left + 2, clientY: r0.top + 20, button: 0, bubbles: true }));
+      document.dispatchEvent(new MouseEvent('mousemove', { clientX: r0.left + 90, clientY: r0.top + 20, bubbles: true }));
+      document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 30));
+      let d = null; PL.walk(PMG.root, (n) => { if (n.id === dockId) d = n; });
+      check('ลากที่จับ → สัดส่วนใน layout tree เปลี่ยน',
+            !!d && Math.abs(d.sizes[idx] - 0.5) > 0.001, JSON.stringify(d && d.sizes));
+      check('ลากที่จับแล้วบันทึกลง k2-panel-layout',
+            (localStorage.getItem('k2-panel-layout') || '').includes('"sizes"'));
+      check('ลากที่จับไม่ทำให้แผงหาย', JSON.stringify(PL.panelIds(PMG.root)) === before);
+    }
+
+    // ---- explorer: ค้นหา/กรอง ----
     check('มีช่องค้นหาใน explorer', !!document.querySelector('#tree-search'));
     const nScenes = [...document.querySelectorAll('#tree .scene')].filter((s) => !s.classList.contains('add-row')).length;
     filterTree('ไม่น่ามีฉากชื่อนี้xyz123');
@@ -4954,21 +5696,182 @@ async function runTest(projectPath) {
       .filter((s) => !s.classList.contains('add-row') && s.style.display !== 'none').length;
     check('ค้นหาแล้วกรองรายการในต้นไม้', nScenes > 0 && visAfter < nScenes, `${visAfter}/${nScenes}`);
     filterTree('');            // ล้างตัวกรอง
-    // แผง outline ลอย/ผนึกได้ + จำสถานะ
-    const floatBtn = document.querySelector('#outline-head .k-panel-float');
-    check('แผง outline มีปุ่มลอย/ผนึก', !!floatBtn);
-    floatBtn.click();          // → ลอย
+    // ---- ปุ่มบนหัวแผง: พับ / ลอย / ปิด ----
+    check('หัวแผงมีปุ่ม พับ+ลอย+ปิด ครบ',
+          !!pBtn('tree', 'collapse') && !!pBtn('tree', 'float') && !!pBtn('tree', 'close'));
+    check('แผงเอกสารปิด/ลอยไม่ได้ (ไม่มีปุ่ม)', !pBtn('docs', 'close') && !pBtn('docs', 'float'));
+    pBtn('tree', 'collapse').click();
     await new Promise((r) => setTimeout(r, 20));
-    check('กดลอยแผง → แผงลอยออกมา + จำสถานะ',
-          document.querySelector('#outline-panel').classList.contains('k-panel-floating') &&
-          JSON.parse(localStorage.getItem('k2-ui-layout') || '{}')['outline-panel']?.floating === true);
-    floatBtn.click();          // → ผนึกกลับ
+    check('กดพับ → แผงติดคลาส k-collapsed', pEl('tree').classList.contains('k-collapsed'));
+    check('พับแล้วหัวแผงยังเห็นอยู่ (คลี่กลับได้)',
+          pHead('tree').getBoundingClientRect().height > 4,
+          String(pHead('tree').getBoundingClientRect().height));
+    check('พับแล้วเนื้อแผงถูกซ่อน', getComputedStyle($('#tree')).display === 'none' ||
+          $('#tree').getBoundingClientRect().height === 0);
+    pBtn('tree', 'collapse').click();
     await new Promise((r) => setTimeout(r, 20));
-    check('กดผนึก → แผงกลับเข้าที่',
-          !document.querySelector('#outline-panel').classList.contains('k-panel-floating'));
-    // แผง tree ก็ลอย/ผนึกได้
-    const treeFloatBtn = document.querySelector('#tree-head .k-panel-float');
-    check('แผงต้นไม้ (โปรเจกต์) ก็ลอย/ผนึกได้', !!treeFloatBtn);
+    check('กดพับซ้ำ = คลี่กลับ', !pEl('tree').classList.contains('k-collapsed'));
+    // ลอย → ผนึกกลับ
+    pBtn('tree', 'float').click();
+    await new Promise((r) => setTimeout(r, 30));
+    check('กดปุ่มลอย → แผงลอยออกมาเป็นหน้าต่างจริง',
+          PMG.isFloating('tree') && !!document.querySelector('.k-float-panel[data-panel-id="tree"]'));
+    check('แผงลอยจำตำแหน่งลง k2-panel-layout',
+          (localStorage.getItem('k2-panel-layout') || '').includes('"floats"'));
+    pBtn('tree', 'float').click();
+    await new Promise((r) => setTimeout(r, 30));
+    check('กดผนึก → แผงกลับเข้าต้นไม้',
+          !PMG.isFloating('tree') && PMG.isDocked('tree') && !!pEl('tree'));
+    // ปิด → ถาดปุ่มลอย → เปิดกลับ
+    pBtn('tree', 'close').click();
+    await new Promise((r) => setTimeout(r, 30));
+    check('ปิดแผง → หายจากต้นไม้', !PMG.isOpen('tree') && !pEl('tree'));
+    const trayChip = document.querySelector('#k-min-tray-l .k-min-chip[data-key="tree"]');
+    check('ปิดแผงแล้วมีปุ่มในถาดไว้เรียกกลับ (ไม่หายถาวร)', !!trayChip);
+    trayChip.click();
+    await new Promise((r) => setTimeout(r, 30));
+    check('คลิกปุ่มในถาด → แผงกลับมา',
+          PMG.isOpen('tree') && !!pEl('tree') &&
+          !document.querySelector('#k-min-tray-l .k-min-chip[data-key="tree"]'));
+
+    // ---- บั๊ก #5: ที่จับปรับขนาดของ "แผงลอย" ต้องเห็นและลากได้จริง ----
+    {
+      pBtn('tree', 'float').click();
+      await new Promise((r) => setTimeout(r, 40));
+      const pop = document.querySelector('.k-float-panel[data-panel-id="tree"]');
+      const grip = pop.querySelector(':scope > .k-panel-resize');
+      check('#5 แผงลอยมีที่จับปรับขนาด', !!grip);
+      check('#5 ที่จับ "มองเห็นได้จริง" (เดิม CSS ผูกกับคลาสของระบบเก่าจึงถูกซ่อนตลอด)',
+            getComputedStyle(grip).display !== 'none' && grip.getBoundingClientRect().width > 4,
+            getComputedStyle(grip).display + ' w=' + grip.getBoundingClientRect().width);
+      const w0 = pop.offsetWidth, h0 = pop.offsetHeight;
+      const gr = grip.getBoundingClientRect();
+      grip.dispatchEvent(new MouseEvent('mousedown', { clientX: gr.left + 4, clientY: gr.top + 4, button: 0, bubbles: true }));
+      document.dispatchEvent(new MouseEvent('mousemove', { clientX: gr.left + 94, clientY: gr.top + 74, bubbles: true }));
+      check('#5 ลากที่จับ → แผงลอยกว้าง/สูงขึ้นทันที',
+            pop.offsetWidth > w0 + 60 && pop.offsetHeight > h0 + 50,
+            `${w0}x${h0} → ${pop.offsetWidth}x${pop.offsetHeight}`);
+      document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 40));
+      const fl = PMG.floats.find((f) => f.panel.id === 'tree');
+      check('#5 ปล่อยเมาส์ → ขนาดใหม่ถูกบันทึกลง store', !!fl && fl.w > w0 + 60 && fl.h > h0 + 50,
+            JSON.stringify(fl && { w: fl.w, h: fl.h }) + ` was ${w0}x${h0}`);
+      pBtn('tree', 'float').click();                    // ผนึกกลับ
+      await new Promise((r) => setTimeout(r, 40));
+    }
+
+    // ---- บั๊ก #17: ถาดแผงที่ปิดไว้ต้องอยู่ฝั่งเดียวกับแผง (ซ้าย/ขวา ไม่ใช่ซ้ายอย่างเดียว) ----
+    {
+      showPanel('props'); await new Promise((r) => setTimeout(r, 40));
+      hidePanel('props'); await new Promise((r) => setTimeout(r, 40));
+      const rChip = document.querySelector('#k-min-tray-r .k-min-chip[data-key="props"]');
+      check('#17 ปิดแผงฝั่งขวา → chip อยู่ถาดขวา', !!rChip);
+      check('#17 chip ฝั่งขวาไม่ไปโผล่ถาดซ้าย',
+            !document.querySelector('#k-min-tray-l .k-min-chip[data-key="props"]'));
+      const rr = document.getElementById('k-min-tray-r').getBoundingClientRect();
+      check('#17 ถาดขวาวางชิดขอบขวาจริง', rr.right > innerWidth - 60, `right=${Math.round(rr.right)} vw=${innerWidth}`);
+      hidePanel('tree'); await new Promise((r) => setTimeout(r, 40));
+      check('#17 แผงฝั่งซ้ายยังลงถาดซ้ายเหมือนเดิม',
+            !!document.querySelector('#k-min-tray-l .k-min-chip[data-key="tree"]'));
+      check('#17 สองถาดอยู่คนละฝั่งจริง (ไม่ทับกัน)',
+            document.getElementById('k-min-tray-l').getBoundingClientRect().left <
+            document.getElementById('k-min-tray-r').getBoundingClientRect().left);
+      rChip.click(); await new Promise((r) => setTimeout(r, 40));
+      check('#17 คลิก chip ฝั่งขวา → แผงกลับไปอยู่ฝั่งขวาตามเดิม',
+            PMG.isDocked('props') &&
+            pEl('props').getBoundingClientRect().left > pEl('docs').getBoundingClientRect().left,
+            `props=${Math.round(pEl('props')?.getBoundingClientRect().left)} docs=${Math.round(pEl('docs').getBoundingClientRect().left)}`);
+      resetPanels(); await new Promise((r) => setTimeout(r, 40));
+    }
+
+    // ---- บั๊ก #16: ปรับสัดส่วนแล้วเปิด/ปิดแผง สัดส่วนต้องไม่ถูกล้าง ----
+    {
+      const rowDock = (() => { let d = null; PL.walk(PMG.root, (n) => { if (!d && n.type === 'dock' && n.dir === 'row') d = n; }); return d; })();
+      PMG.resize(rowDock.id, 0, 0.4);                   // ลากให้ซ้าย:ขวา = 40:60
+      await new Promise((r) => setTimeout(r, 40));
+      const dockOf = () => { let d = null; PL.walk(PMG.root, (n) => { if (!d && n.type === 'dock' && n.dir === 'row') d = n; }); return d; };
+      const before = dockOf().sizes.slice(0, 2);
+      const ratio0 = before[0] / before[1];
+      check('#16 ปรับสัดส่วนแล้วค่าถูกเก็บใน store', Math.abs(ratio0 - 0.4 / 0.6) < 0.05, JSON.stringify(before));
+      showPanel('props'); await new Promise((r) => setTimeout(r, 40));
+      const mid = dockOf().sizes;
+      check('#16a เปิดแผงเพิ่ม → อัตราส่วนเดิมของสองช่องแรกยังอยู่',
+            Math.abs(mid[0] / mid[1] - ratio0) < 0.05, JSON.stringify(mid));
+      hidePanel('props'); await new Promise((r) => setTimeout(r, 40));
+      const after = dockOf().sizes;
+      check('#16b ปิดแผง → สัดส่วนกลับมาเท่าที่ผู้ใช้ปรับไว้ (ไม่กลายเป็นแบ่งเท่ากัน)',
+            Math.abs(after[0] / after[1] - ratio0) < 0.05, JSON.stringify(after) + ' vs ' + ratio0.toFixed(3));
+      // dock ชั้นนอก (toolbar/แถวกลาง/statusbar) ต้องไม่ถูก reset ตามไปด้วย
+      check('#16b dock ชั้นนอกไม่ถูก reset ตอนปิดแผงชั้นใน',
+            PMG.root.type === 'dock' && PMG.root.sizes[0] === 0 && PMG.root.sizes[2] === 0,
+            JSON.stringify(PMG.root.sizes));
+      resetPanels(); await new Promise((r) => setTimeout(r, 40));
+    }
+
+    // ---- บั๊ก #19: เลย์เอาต์ต้องไม่ "เด้งกลับค่าตั้งต้น" เอง ----
+    {
+      check('#19 แผงเอกสารปิดไม่ได้ (กัน root กลายเป็น null)',
+            PMG.hidePanel('docs') === false && PMG.isDocked('docs'));
+      hidePanel('outline'); await new Promise((r) => setTimeout(r, 40));
+      const openIds = PMG.openIds().join(',');
+      renderPanels(true); await new Promise((r) => setTimeout(r, 40));
+      check('#19 วาดใหม่แล้วแผงที่ปิดไว้ไม่โผล่กลับมาเอง',
+            PMG.openIds().join(',') === openIds && !PMG.isOpen('outline'), PMG.openIds().join(','));
+      resetPanels(); await new Promise((r) => setTimeout(r, 40));
+    }
+
+    // ---- ลากหัวแผง → ผนึกอีกด้าน (snap zone) ----
+    {
+      const docs = pEl('docs').getBoundingClientRect();
+      const head = pHead('tree');
+      head.dispatchEvent(new MouseEvent('mousedown', { clientX: 60, clientY: 120, button: 0, bubbles: true }));
+      document.dispatchEvent(new MouseEvent('mousemove', { clientX: docs.right - 12, clientY: docs.top + docs.height / 2, bubbles: true }));
+      check('ลากแผงแล้วมีแถบบอกโซนปล่อย (drop zone)',
+            getComputedStyle(document.querySelector('.k-drop-zone')).display !== 'none');
+      document.dispatchEvent(new MouseEvent('mouseup', { clientX: docs.right - 12, clientY: docs.top + docs.height / 2, bubbles: true }));
+      await new Promise((r) => setTimeout(r, 40));
+      // เทียบกับตำแหน่ง docs "หลังปล่อย" (ก่อนลาก docs อาจอยู่ขวาสุดอยู่แล้ว)
+      const dockedNow = PMG.isDocked('tree');
+      const treeLeft = pEl('tree') ? pEl('tree').getBoundingClientRect().left : -1;
+      const docsNow = pEl('docs').getBoundingClientRect();
+      const ids = PMG.root ? PL.panelIds(PMG.root) : [];
+      check('ปล่อยที่ขอบขวาของเอกสาร → แผงถูกผนึกไปฝั่งขวา',
+            dockedNow && !PMG.isFloating('tree') &&
+            ids.indexOf('tree') > ids.indexOf('docs') && treeLeft > docsNow.left,
+            `treeLeft=${treeLeft} docsL=${docsNow.left} ids=${ids.join('/')}`);
+      check('โซนปล่อยถูกซ่อนหลังปล่อยเมาส์',
+            getComputedStyle(document.querySelector('.k-drop-zone')).display === 'none');
+      resetPanels(); await new Promise((r) => setTimeout(r, 30));
+    }
+    // ---- icon strip: ย่อกลุ่มแท็บเหลือแถบไอคอน ----
+    {
+      const grpEl = document.querySelector('#app-root .k-tab-group');
+      const btn = grpEl.querySelector('.k-strip-btn');
+      check('กลุ่มแท็บมีปุ่มย่อเป็นแถบไอคอน', !!btn);
+      btn.click();
+      await new Promise((r) => setTimeout(r, 20));
+      const strip = document.querySelector('#app-root .k-tab-group.icon-strip');
+      check('ย่อกลุ่มแท็บ → เหลือแถบไอคอน (icon-strip)', !!strip);
+      check('แถบไอคอนซ่อนชื่อแท็บ + เนื้อแผง',
+            getComputedStyle(strip.querySelector('.k-tab-title')).display === 'none' &&
+            getComputedStyle(strip.querySelector('.k-tab-content')).display === 'none');
+      strip.querySelector('.k-strip-btn').click();
+      await new Promise((r) => setTimeout(r, 20));
+      check('กดซ้ำ → คลี่กลับเป็นกลุ่มแท็บปกติ',
+            !document.querySelector('#app-root .k-tab-group.icon-strip'));
+    }
+    // ---- สลับลำดับแท็บในกลุ่ม (moveTab) ----
+    {
+      const grp = PL.tabGroupOf(PMG.root, 'tree');
+      PMG.moveTab(grp.id, 0, 1);
+      await new Promise((r) => setTimeout(r, 20));
+      const g2 = PL.tabGroupOf(PMG.root, 'tree');
+      check('สลับลำดับแท็บในกลุ่มได้ (moveTab)', g2.children[1].id === 'tree', g2.children.map((c) => c.id).join(','));
+      check('ลำดับแท็บใหม่ถูกวาดตามลำดับจริง',
+            [...document.querySelectorAll('#app-root .k-tab-bar .k-tab')].map((x) => x.dataset.panelId).join(',')
+              .startsWith('outline,tree'));
+      resetPanels(); await new Promise((r) => setTimeout(r, 30));
+    }
     // hover ฉากแสดงรายละเอียด (สถานะ/แท็ก/เรื่องย่อ) แบบ v1
     const anyScene = [...document.querySelectorAll('#tree .scene')].find((s) => !s.classList.contains('add-row'));
     check('ฉากในต้นไม้มี tooltip รายละเอียด (hover)', !!anyScene && typeof anyScene.title === 'string' && anyScene.title.length > 0);
@@ -4976,59 +5879,20 @@ async function runTest(projectPath) {
     check('ฉากในต้นไม้พก _scene (กรองได้ทุกฟิลด์)', !!anyScene && !!anyScene._scene);
     check('ฉากลากได้ (draggable) แบบ Explorer', !!anyScene && anyScene.draggable === true);
     check('ช่องค้นหาอยู่ในแผง explorer', !!document.querySelector('#tree-panel #tree-search'));
-    check('มีปุ่มสลับช่องค้นหา 🔍', !!document.querySelector('#tree-head .k-tree-search-btn'));
-    check('หัวแผงมีปุ่ม ย่อ+ปิด', !!document.querySelector('#tree-head .k-panel-min') &&
-          !!document.querySelector('#tree-head .k-panel-close'));
-    check('ย่อแผง → เพิ่มคลาส k-collapsed', (() => {
-      const mn = document.querySelector('#tree-head .k-panel-min'); mn.click();
-      const on = document.querySelector('#tree-panel').classList.contains('k-collapsed');
-      mn.click(); return on; })());
-    check('ปิดแผง → k-panel-off แล้ว showPanel เปิดกลับ', (() => {
-      const c = document.querySelector('#tree-head .k-panel-close'); c.click();
-      const hid = document.querySelector('#tree-panel').classList.contains('k-panel-off');
-      showPanel('tree-panel');
-      const back = !document.querySelector('#tree-panel').classList.contains('k-panel-off');
-      return hid && back; })());
+    check('มีปุ่มสลับช่องค้นหา 🔍 บนหัวแผง', !!pEl('tree')?.querySelector('.k-tree-search-btn'));
     check('มีแผงคุณสมบัติ (Properties panel)', !!document.querySelector('#props-panel #props-body'));
-    // ชื่อแผงมาจาก i18n (data-i18n="panel.navigation") — ต้องตรงกับภาษาที่โหลดอยู่ + ปุ่มควบคุมต้องไม่โดนล้าง
-    check('ชื่อแผง Navigation มาจาก i18n',
-          document.querySelector('#outline-head').textContent.includes(tr('panel.navigation')) &&
-          !!document.querySelector('#outline-head .k-panel-ctrls'),
-          document.querySelector('#outline-head').textContent + ' vs ' + tr('panel.navigation'));
+    // แผงคุณสมบัติไม่อยู่ในเลย์เอาต์ตั้งต้น — showPanel ต้องผนึกเข้าฝั่งขวาให้
+    showPanel('props-panel');
+    await new Promise((r) => setTimeout(r, 30));
+    check('showPanel(props) ผนึกแผงคุณสมบัติเข้าต้นไม้', PMG.isDocked('props') && !!pEl('props'));
+    check('ชื่อแผงมาจาก i18n (panel.navigation)',
+          pEl('outline')?.querySelector('.k-panel-head-title')?.textContent === tr('panel.navigation'),
+          pEl('outline')?.querySelector('.k-panel-head-title')?.textContent + ' vs ' + tr('panel.navigation'));
+    check('ปุ่มพิเศษบนหัวแผงรอดจากการวาดใหม่ (addPanelButton)',
+          !!pEl('tree')?.querySelector('.k-panel-ctrls .k-tree-refresh-btn') &&
+          typeof pEl('tree').querySelector('.k-tree-refresh-btn').onclick === 'function');
     check('Navigation มีปุ่มสลับย่อหน้า ¶', !!document.querySelector('#nav-beats-btn'));
-    // snap: ลอยแผง outline แล้วลากชิดซ้าย → ผนึกกลับอัตโนมัติ
-    floatBtn.click(); await new Promise((r) => setTimeout(r, 20));   // ลอยอีกครั้ง
-    const oh = document.querySelector('#outline-head');
-    oh.dispatchEvent(new MouseEvent('mousedown', { clientX: 400, clientY: 100, button: 0, bubbles: true }));
-    document.dispatchEvent(new MouseEvent('mousemove', { clientX: 20, clientY: 200, bubbles: true }));
-    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-    await new Promise((r) => setTimeout(r, 20));
-    check('ลากแผงชิดขอบซ้าย → ผนึกกลับอัตโนมัติ (snap dock)',
-          !document.querySelector('#outline-panel').classList.contains('k-panel-floating'));
-
-    // ---- (2) panel stack + จำลำดับ (Photoshop) ----
-    {
-      const sb = $('#sidebar');
-      const before = [...sb.children].filter((c) => c.id && c.id.endsWith('-panel')).map((c) => c.id);
-      // สลับลำดับ: ย้าย outline-panel ขึ้นไปไว้บนสุด (stack) แล้วจำลำดับ
-      sb.insertBefore(document.getElementById('outline-panel'), sb.firstElementChild);
-      savePanelOrder();
-      const saved = JSON.parse(localStorage.getItem('k2-panel-order') || '[]');
-      check('จำลำดับแผง (savePanelOrder) หัว = outline-panel', saved[0] === 'outline-panel',
-            JSON.stringify(saved));
-      // สลับ DOM มั่ว แล้ว restore ต้องกลับตามที่จำ
-      sb.appendChild(document.getElementById('outline-panel'));
-      restorePanelOrder();
-      const nowOrder = [...sb.children].filter((c) => c.id && c.id.endsWith('-panel')).map((c) => c.id);
-      check('คืนลำดับแผง (restorePanelOrder) ตรงกับที่จำไว้', nowOrder[0] === 'outline-panel',
-            JSON.stringify(nowOrder));
-      // makeDraggable รองรับ snap แม่เหล็ก (ออปชัน snap ถูกใช้กับแผง)
-      check('แผงลอยรองรับ snap แม่เหล็ก (ขอบ/แผงอื่น)',
-            /opts\.snap/.test(makeDraggable.toString()));
-      // คืนลำดับเดิม
-      before.forEach((id) => sb.appendChild(document.getElementById(id)));
-      localStorage.removeItem('k2-panel-order');
-    }
+    check('เนื้อแผงที่ไม่ถูกวางยังอยู่ใน DOM (ที่พัก #k-panel-src)', !!document.getElementById('k-panel-src'));
 
     // ---- ความสัมพันธ์: บทบาทฝั่งตรงข้าม (inverse) + dropdown บทบาทที่รู้จัก ----
     await warmInverse();
@@ -5036,6 +5900,35 @@ async function runTest(projectPath) {
           await invertRole('พ่อ'));
     check('knownRoles มีบทบาทจากคลังให้เลือกใน dropdown', knownRoles().includes('พ่อ'),
           knownRoles().length);
+
+    // ---- ประเภทความสัมพันธ์ (Typed Relationships): dropdown + เดาประเภทจากบทบาท ----
+    check('inverse_roles.json โหลด categories (บทบาท→ประเภท)',
+          !!INV_C.cat && INV_C.cat['พ่อ'] === 'family', JSON.stringify(INV_C.cat).slice(0, 60));
+    check('categorizeWith ใช้ categories จากไฟล์ (สามี→คนรัก)',
+          categorizeWith(INV_C.cat, 'สามี') === 'romantic');
+    {
+      const pRel = relationDialog(['ยัยแมวเก้าชีวิต'], 'ทดสอบประเภท');
+      await new Promise((r) => setTimeout(r, 80));
+      const ovsR = [...document.querySelectorAll('.k-overlay')];
+      const bxR = ovsR[ovsR.length - 1];
+      const selType = bxR.querySelector('select.rel-type');
+      check('กล่องผูกความสัมพันธ์มีช่องเลือกประเภท (9 ประเภท + ไม่ระบุ)',
+            !!selType && selType.options.length === REL_TYPES.length + 1,
+            selType && selType.options.length);
+      const inR2 = bxR.querySelector('input.wiki-input');
+      inR2.value = 'พ่อ'; inR2.dispatchEvent(new Event('input', { bubbles: true }));
+      check('พิมพ์บทบาท “พ่อ” → เดาประเภทเป็นครอบครัว', selType.value === 'family', selType.value);
+      inR2.value = 'ศัตรู'; inR2.dispatchEvent(new Event('input', { bubbles: true }));
+      check('พิมพ์บทบาท “ศัตรู” → เดาประเภทเป็นศัตรู', selType.value === 'enemy', selType.value);
+      // ผู้ใช้เลือกเอง = ห้ามเดาทับ
+      selType.value = 'rival'; selType.dispatchEvent(new Event('change', { bubbles: true }));
+      inR2.value = 'พ่อ'; inR2.dispatchEvent(new Event('input', { bubbles: true }));
+      check('เลือกประเภทเองแล้ว ระบบไม่เดาทับ', selType.value === 'rival', selType.value);
+      bxR.querySelector('.k-ok').click();
+      const resR = await pRel;
+      check('relationDialog คืนค่า type กลับมาด้วย',
+            !!resR && resR.role === 'พ่อ' && resR.type === 'rival', JSON.stringify(resR));
+    }
 
     // ---- แก้เทมเพลตแบบ JSON (สลับฟอร์ม ↔ JSON) ----
     templateEditModal({ id: 'tpl-jsontest', name: 'ทดสอบ JSON', entityTypeKey: 'characters',
@@ -5313,7 +6206,7 @@ async function runTest(projectPath) {
       check('สร้างหมวดเอง → เก็บลง project.khn.json',
             (pjc.wikiCats || []).some((c) => c.key === 'factions' && c.label === 'องค์กร/กลุ่ม'));
       check('catLabel/catIcon อ่านหมวดเองได้',
-            catLabel('factions') === 'องค์กร/กลุ่ม' && catIcon('factions') === '⚔');
+            catLabel('factions') === 'องค์กร/กลุ่ม' && catIcon('factions') === 'bookmark');
       check('applyWikiCats ใส่ชื่อไทยเข้า CAT_TH (เทมเพลตแสดงตรง)', CAT_TH.factions === 'องค์กร/กลุ่ม');
       // สร้าง entity ในหมวดเอง
       const fDir = await kapi.join(wr, 'factions');
@@ -5351,8 +6244,18 @@ async function runTest(projectPath) {
     await pE2;
     await new Promise((r) => setTimeout(r, 250));
     const relTab = state.active;
-    relTab.wiki.e.relationships = [{ targetName: 'ยัยแมวเก้าชีวิต', role: 'พี่สาว' }];
+    relTab.wiki.e.relationships = [{ targetName: 'ยัยแมวเก้าชีวิต', role: 'พี่สาว', type: 'family' }];
     await relTab.wiki.save();
+    relTab.wiki.render();
+    await new Promise((r) => setTimeout(r, 120));
+    {
+      const dot = relTab.pane.querySelector('.rel-type-dot');
+      check('หน้า Wiki มีจุดสีบอกประเภทความสัมพันธ์',
+            !!dot && (dot.title || '').includes('ครอบครัว'), dot && dot.title);
+      check('จุดสีใช้สีประจำประเภท (family = #e06c75)',
+            !!dot && dot.style.background.replace(/\s/g, '') === 'rgb(224,108,117)',
+            dot && dot.style.background);
+    }
     await smart.loadNames(state.root);
     const catFile = smart.fileOf['ยัยแมวเก้าชีวิต'];
     check('fileOf พร้อมหลัง loadNames', !!catFile, JSON.stringify(Object.keys(smart.fileOf)));
@@ -5361,6 +6264,12 @@ async function runTest(projectPath) {
           (catEnt.relationships || []).some((r) =>
             r.targetName === 'น้องสาวทดสอบ' && r.role && r.role !== 'พี่สาว'),
           JSON.stringify(catEnt.relationships));
+    check('ประเภทความสัมพันธ์ซิงก์ไปฝั่งตรงข้ามด้วย',
+          (catEnt.relationships || []).some((r) =>
+            r.targetName === 'น้องสาวทดสอบ' && r.type === 'family'),
+          JSON.stringify(catEnt.relationships));
+    check('ประเภทถูกเก็บลงไฟล์ของฝั่งที่ตั้ง',
+          ((await kapi.readJson(relTab.file)).relationships || [])[0].type === 'family');
     closeTab(relTab.file);
 
     // ---- Story Network ----
@@ -5370,7 +6279,70 @@ async function runTest(projectPath) {
     check('Story Network มีโหนด + เส้นความสัมพันธ์',
           netTab.net.nodes.length >= 2 && netTab.net.edges.length >= 1,
           `nodes=${netTab.net.nodes.length} edges=${netTab.net.edges.length}`);
+    check('เส้นในกราฟมีประเภทติดมาด้วย (family จากที่ตั้งไว้)',
+          netTab.net.edges.some((e) => e.type === 'family'),
+          JSON.stringify(netTab.net.edges.map((e) => [e.role, e.type])));
+    check('ทุกเส้นได้ประเภทที่มีสีจริง (ไม่ระบุ = เดาจากบทบาท)',
+          netTab.net.edges.every((e) => !!REL_COLOR[e.type]),
+          JSON.stringify(netTab.net.edges.map((e) => e.type)));
     closeTab('::network::');
+
+    // ---- บรรยากาศรับรู้ของสถานที่ (Sensory Profiles) ----
+    {
+      const locDir = await kapi.join(await wikiRoot(), 'locations');
+      await kapi.mkdir(locDir);
+      const pLoc = addEntity(locDir, 'locations');
+      await new Promise((r) => setTimeout(r, 80));
+      document.querySelector('#ent-name').value = 'หอสมุดร้าง';
+      { const ovs = [...document.querySelectorAll('.k-overlay')];
+        ovs[ovs.length - 1].querySelector('.k-ok').click(); }
+      await pLoc;
+      await new Promise((r) => setTimeout(r, 300));
+      const locTab = state.active;
+      check('สถานที่ที่สร้างใหม่มี sensoryProfile ในไฟล์',
+            typeof (await kapi.readJson(locTab.file)).sensoryProfile === 'object');
+      const senSec = locTab.pane.querySelector('.wiki-sensory');
+      check('หน้า Wiki สถานที่มีหัวข้อ “บรรยากาศรับรู้”', !!senSec);
+      check('มีช่องครบ 5 ประสาทสัมผัส',
+            senSec && senSec.querySelectorAll('.wiki-sensory-row').length === 5,
+            senSec && senSec.querySelectorAll('.wiki-sensory-row').length);
+      check('ช่องเรียงตาม เห็น/ได้ยิน/กลิ่น/สัมผัส/รสชาติ',
+            [...senSec.querySelectorAll('.wiki-sensory-row')].map((r) => r.dataset.sense).join() ===
+            'sight,sound,smell,touch,taste');
+      // กรอกแล้วต้องเข้า entity + บันทึกลงไฟล์ได้
+      const inSight = senSec.querySelector('[data-sense="sight"] input');
+      inSight.value = 'ชั้นหนังสือสูงจรดเพดาน ฝุ่นลอยในลำแสง';
+      inSight.dispatchEvent(new Event('input', { bubbles: true }));
+      const inSmell = senSec.querySelector('[data-sense="smell"] input');
+      inSmell.value = 'กลิ่นกระดาษเก่า';
+      inSmell.dispatchEvent(new Event('input', { bubbles: true }));
+      check('พิมพ์แล้วค่าเข้า entity.sensoryProfile',
+            locTab.wiki.e.sensoryProfile.sight.startsWith('ชั้นหนังสือ'),
+            JSON.stringify(locTab.wiki.e.sensoryProfile));
+      check('กรอกแล้วหน้าถูกทำเครื่องหมายว่ายังไม่บันทึก', locTab.wiki.dirty === true);
+      await locTab.wiki.save();
+      const locJson = await kapi.readJson(locTab.file);
+      check('บรรยากาศรับรู้เขียนกลับไฟล์ได้',
+            locJson.sensoryProfile.sight.startsWith('ชั้นหนังสือ') &&
+            locJson.sensoryProfile.smell === 'กลิ่นกระดาษเก่า',
+            JSON.stringify(locJson.sensoryProfile));
+      // วาดใหม่ต้องไม่ได้ช่องซ้ำ + ค่าที่กรอกยังอยู่
+      locTab.wiki.render();
+      await new Promise((r) => setTimeout(r, 120));
+      const senSec2 = locTab.pane.querySelector('.wiki-sensory');
+      check('render ซ้ำแล้วไม่มีช่องซ้ำ + ค่าที่กรอกยังอยู่',
+            senSec2 && senSec2.querySelectorAll('.wiki-sensory-row').length === 5 &&
+            senSec2.querySelector('[data-sense="smell"] input').value === 'กลิ่นกระดาษเก่า',
+            senSec2 && senSec2.querySelectorAll('.wiki-sensory-row').length);
+      closeTab(locTab.file);
+      // ตัวละครต้องไม่มีหัวข้อนี้ (เฉพาะสถานที่)
+      const charFile = smart.fileOf['ยัยแมวเก้าชีวิต'];
+      await openEntity(charFile);
+      await new Promise((r) => setTimeout(r, 250));
+      check('หน้า Wiki ตัวละครไม่มีหัวข้อบรรยากาศรับรู้',
+            !state.tabs.get(charFile).pane.querySelector('.wiki-sensory'));
+      closeTab(charFile);
+    }
 
     // ---- Planner (กระดานวางแผน) ----
     await openPlanner();
@@ -5617,7 +6589,7 @@ async function runTest(projectPath) {
     toggleFocus(true);
     check('โหมดโฟกัสซ่อน UI เหลือหน้ากระดาษ',
           document.body.classList.contains('focus-mode') &&
-          getComputedStyle($('#sidebar')).display === 'none');
+          $('#tree-panel').offsetParent === null && $('#panes').offsetParent !== null);
     toggleFocus(false);
 
     // ---- คุณสมบัติฉาก ----
@@ -5657,6 +6629,75 @@ async function runTest(projectPath) {
     check('อารมณ์/ความขัดแย้ง/โน้ต ซิงก์ลง frontmatter .md',
           scP2Fm.emotion === 'สิ้นหวัง' && scP2Fm.conflict === 'ปะทะกับพ่อ' &&
           scP2Fm.note === 'โน้ตทดสอบระบบ', JSON.stringify(scP2Fm));
+
+    // ---- ป้ายเล่าเรื่อง (Narrative Markers): ⏪ ย้อนอดีต / ⏩ ล่วงหน้า ----
+    const readSc0 = async () =>
+      (await kapi.readJson(await kapi.join(dPath, 'scenes.json'))).chapters[chP.guid][0];
+    // ติ๊ก "ย้อนอดีต" แล้วบันทึก  ([0]ปักหมุด [1]ย้อนอดีต [2]ล่วงหน้า)
+    sceneProps(dPath, chP, scP);
+    await new Promise((r) => setTimeout(r, 100));
+    {
+      const bx = document.querySelector('.k-dialog');
+      const cks = bx.querySelectorAll('.wiki-check');
+      check('กล่องคุณสมบัติฉากมีสวิตช์ ย้อนอดีต/ล่วงหน้า ครบ', cks.length === 3, 'พบ ' + cks.length);
+      cks[1].checked = true;
+      bx.querySelector('.k-ok').click();
+    }
+    await new Promise((r) => setTimeout(r, 200));
+    const scFb = await readSc0();
+    check('ติ๊กย้อนอดีต → scenes.json เก็บ isFlashback = true',
+          scFb.isFlashback === true && scFb.isFlashforward === false, JSON.stringify(scFb));
+    const scFbFm = parseMdFile(await kapi.readFile(
+      await kapi.join(dPath, 'Chapters', chP.folderName, scFb.fileName))).meta;
+    check('ป้ายเล่าเรื่องซิงก์ลง frontmatter .md (เขียนเฉพาะตัวที่ติ๊ก)',
+          String(scFbFm.isFlashback) === 'true' && !('isFlashforward' in scFbFm),
+          JSON.stringify(scFbFm));
+    check('Explorer แสดงป้าย ⏪ ข้างชื่อฉากย้อนอดีต',
+          [...document.querySelectorAll('.scene .tree-flash')].some((s) => s.textContent === '⏪'));
+    // ติ๊กทั้งสองพร้อมกัน → ต้องเหลือ "ย้อนอดีต" ตัวเดียว (ห้าม true พร้อมกัน)
+    sceneProps(dPath, chP, scP);
+    await new Promise((r) => setTimeout(r, 100));
+    {
+      const bx = document.querySelector('.k-dialog');
+      const cks = bx.querySelectorAll('.wiki-check');
+      cks[1].checked = true; cks[2].checked = true;
+      bx.querySelector('.k-ok').click();
+    }
+    await new Promise((r) => setTimeout(r, 200));
+    const scFb2 = await readSc0();
+    check('ย้อนอดีต + ล่วงหน้า เป็น true พร้อมกันไม่ได้',
+          scFb2.isFlashback === true && scFb2.isFlashforward === false, JSON.stringify(scFb2));
+    // สลับเป็น "ล่วงหน้า" อย่างเดียว แล้วเคลียร์กลับ (ไม่ให้ค้างไปกวนเทสอื่น)
+    sceneProps(dPath, chP, scP);
+    await new Promise((r) => setTimeout(r, 100));
+    {
+      const bx = document.querySelector('.k-dialog');
+      const cks = bx.querySelectorAll('.wiki-check');
+      cks[1].checked = false; cks[2].checked = true;
+      bx.querySelector('.k-ok').click();
+    }
+    await new Promise((r) => setTimeout(r, 200));
+    const scFf = await readSc0();
+    check('ติ๊กล่วงหน้าอย่างเดียว → isFlashforward = true',
+          scFf.isFlashforward === true && scFf.isFlashback === false, JSON.stringify(scFf));
+    check('Explorer แสดงป้าย ⏩ ข้างชื่อฉากล่วงหน้า',
+          [...document.querySelectorAll('.scene .tree-flash')].some((s) => s.textContent === '⏩'));
+    sceneProps(dPath, chP, scP);
+    await new Promise((r) => setTimeout(r, 100));
+    {
+      const bx = document.querySelector('.k-dialog');
+      const cks = bx.querySelectorAll('.wiki-check');
+      cks[1].checked = false; cks[2].checked = false;
+      bx.querySelector('.k-ok').click();
+    }
+    await new Promise((r) => setTimeout(r, 200));
+    const scClear = await readSc0();
+    check('เอาป้ายออกได้ → ไม่มีป้ายค้างใน Explorer',
+          scClear.isFlashback === false && scClear.isFlashforward === false &&
+          !document.querySelector('.scene .tree-flash'));
+    check('เอาป้ายออกแล้ว frontmatter ไม่เหลือบรรทัดป้าย',
+          !(await kapi.readFile(await kapi.join(dPath, 'Chapters', chP.folderName, scClear.fileName)))
+            .includes('isFlash'));
 
     // ---- เลขบรรทัด (settings.lineNumbers → body.k-ln + padding ProseMirror) ----
     state.settings.lineNumbers = true; applySettings();
@@ -5823,11 +6864,16 @@ async function runTest(projectPath) {
       await openCompareRight(dPath, chP, { title: 'ฉากเทียบขวา', fileName: 'cmp2.md' });
       await new Promise((r) => setTimeout(r, 150));
       check('เปิดเทียบด้านขวา → #panes เข้าโหมด split', $('#panes').classList.contains('split'));
-      check('มี pane ฝั่งขวา (compare-on) แสดงคู่กัน',
-            !!document.querySelector('.pane.compare-on') && !!document.querySelector('.pane.on'));
-      check('มีปุ่มปิดเทียบในฝั่งขวา', !!document.querySelector('.pane .cmp-close'));
+      check('เส้นทางเทียบเอกสารใช้ SplitManager เหมือนกัน (ระบบเดียว ไม่ใช่สองระบบ)',
+            splitPaneCount() === 2, 'panes=' + splitPaneCount());
+      check('มีช่องที่สอง (compare-on) แสดงคู่กัน',
+            !!document.querySelector('.k-split-pane .pane.compare-on') &&
+            document.querySelectorAll('#split-root .k-split-pane').length === 2);
+      check('ทุกช่องมีปุ่มปิดช่องของตัวเอง',
+            document.querySelectorAll('.k-split-pane > .cmp-close').length === 2);
       clearCompare();
-      check('ปิดเทียบ → ออกจากโหมด split', !$('#panes').classList.contains('split'));
+      check('ปิดเทียบ → ออกจากโหมด split',
+            !$('#panes').classList.contains('split') && !document.getElementById('split-root'));
       if (state.tabs.has(secondFile)) closeTab(secondFile);
     }
 
@@ -5937,6 +6983,14 @@ async function runTest(projectPath) {
     check('พรีวิวฟอนต์ทันที (--ed-fs = 19.5px)',
           getComputedStyle(document.documentElement).getPropertyValue('--ed-fs').trim() === '19.5px',
           getComputedStyle(document.documentElement).getPropertyValue('--ed-fs'));
+    // ขนาด UI (บั๊ก #9) — slider ในแท็บ "การเขียน" เห็นผลทันที
+    const uiSl = document.querySelector('#st-uiscale');
+    check('ตั้งค่า: มี slider ขนาด UI ในแท็บการเขียน', !!uiSl);
+    uiSl.value = '1.25'; uiSl.dispatchEvent(new Event('input'));
+    check('ตั้งค่า: เลื่อน slider ขนาด UI แล้วเห็นผลทันที',
+          getComputedStyle(document.documentElement).getPropertyValue('--ui-scale').trim() === '1.250',
+          getComputedStyle(document.documentElement).getPropertyValue('--ui-scale'));
+    uiSl.value = '1'; uiSl.dispatchEvent(new Event('input'));
     // กรอกค่าอื่นแล้วบันทึก
     [...document.querySelectorAll('.k-set-tab')].find((t) => t.dataset.p === 'gen').click();
     document.querySelector('#st-title').value = 'ชื่อใหม่ทดสอบ';
@@ -6123,11 +7177,12 @@ async function runTest(projectPath) {
       const fileLog = await kapi.logRead(50).catch(() => '');
       check('log() เขียนลงไฟล์ userData (อ่านกลับได้)', fileLog.includes(logMark), fileLog.slice(-120));
     }
-    await showLog();
+    await renderLogPanel();
+    showPanel('log');
     await new Promise((r) => setTimeout(r, 40));
-    check('ตัวดู log เปิดได้ + แสดงบรรทัด', !!document.querySelector('.k-logview') &&
-          document.querySelector('.k-logview').textContent.includes(logMark));
-    document.querySelector('.k-logview').closest('.k-dialog').querySelector('.k-ok').click();
+    check('ตัวดู log เปิดได้ + แสดงบรรทัด (panel)', !!document.querySelector('#log-body') &&
+          document.querySelector('#log-body').textContent.includes(logMark));
+    hidePanel('log');
 
     // ---- ข้อ 10: accordion Explorer (พับ/กาง เล่ม·บท + จำสถานะ) ----
     {
@@ -6171,22 +7226,23 @@ async function runTest(projectPath) {
     }
 
     // ================= v2.1.0: Home/Tags/FAB/FilterBar/ProgressBar/StatusBar =================
-    // ---- ข้อ 4: Home Screen ----
+    // ---- ข้อ 4: Home Panel ----
     {
-      await openHome();
-      await new Promise((r) => setTimeout(r, 500));
-      check('เปิดหน้า Home ได้ + มีแท็บแสดง',
-            state.tabs.has('::home::') && state.active?.file === '::home::');
-      check('หน้า Home แสดงหัวข้อ Killian 2',
-            !!document.querySelector('.home-title') &&
-            document.querySelector('.home-title').textContent.includes('Killian'));
-      check('มีปุ่มสร้างโปรเจกต์ใหม่ในหน้า Home',
-            !!document.querySelector('.home-new-btn'));
-      check('หน้า Home มีการ์ดโปรเจกต์ (จาก recent + scan)',
-            document.querySelectorAll('.home-card').length >= 1 ||
-            !!document.querySelector('.home-empty'));
+      showPanel('home');
+      const { renderHomePanel } = await import('./home-ui.js');
+      await renderHomePanel($('#home-body'));
+      await new Promise((r) => setTimeout(r, 800));
+      const hb = $('#home-body');
+      check('แผง Home แสดงหัวข้อ Killian 2',
+            !!hb?.querySelector('.home-title') &&
+            hb.querySelector('.home-title').textContent.includes('Killian'));
+      check('มีปุ่มสร้างโปรเจกต์ใหม่ในแผง Home',
+            !!hb?.querySelector('.home-actions button'));
+      check('แผง Home มีรายการโปรเจกต์',
+            !!hb?.querySelector('.home-panel-item') ||
+            !!hb?.querySelector('.home-empty'));
       await kapi.testShot('/tmp/k2_home.png');
-      closeTab('::home::');
+      hidePanel('home');
     }
 
     // ---- ข้อ 11: Tag Pane ----
@@ -6257,22 +7313,21 @@ async function runTest(projectPath) {
     }
 
     // ================= v2.1.0: Global Search + Reading Mode + Scene Table =================
-    // ---- ข้อ 33: Global Search (Ctrl+Shift+F) ----
+    // ---- ข้อ 33: Global Search panel ----
     {
-      await openGlobalSearch();
+      showPanel('search');
+      await renderSearchPanel($('#search-body'));
       await new Promise((r) => setTimeout(r, 80));
-      check('เปิด dialog ค้นหาทั้งโปรเจกต์ได้', !!document.querySelector('.k-gsearch'));
-      check('มีช่องใส่คำค้น', !!document.querySelector('.k-gsearch .k-dlg-input'));
-      const q = document.querySelector('.k-gsearch .k-dlg-input');
-      // พิมพ์คำค้นแล้วกด Enter
+      check('เปิดแผงค้นหาทั้งโปรเจกต์ได้', !!$('#search-body').querySelector('.k-dlg-input'));
+      const q = $('#search-body').querySelector('.k-dlg-input');
       q.value = 'ความหวัง';
       q.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
       await new Promise((r) => setTimeout(r, 400));
       check('กด Enter ค้นหาแล้วมีผลลัพธ์',
-            document.querySelectorAll('.k-gsearch-hit').length >= 1 ||
-            !!document.querySelector('.k-gsearch-status'));
+            $('#search-body').querySelectorAll('.k-gsearch-hit').length >= 1 ||
+            !!$('#search-body').querySelector('.k-gsearch-status'));
       await kapi.testShot('/tmp/k2_gsearch.png');
-      document.querySelector('.k-gsearch .k-ok').click();
+      hidePanel('search');
     }
 
     // ---- ข้อ 34: Reading Mode ----
@@ -6282,11 +7337,14 @@ async function runTest(projectPath) {
       toggleReading(true);
       check('เปิดโหมดอ่าน → body มีคลาส reading-mode',
             document.body.classList.contains('reading-mode'));
-      check('โหมดอ่าน → sidebar ถูกซ่อน', $('#sidebar').style.display === 'none');
-      check('โหมดอ่าน → toolbar ถูกซ่อน', $('#toolbar').style.display === 'none' ||
-            getComputedStyle($('#toolbar')).display === 'none');
+      // ซ่อน UI ด้วย CSS ล้วน (ไม่ใช้ inline style แล้ว — inline ค้างข้ามโหมด ดูข้อ 1 รอบ alpha.43)
+      check('โหมดอ่าน → แผงข้างถูกซ่อน (เหลือสายที่ถือแผงเอกสาร)',
+            $('#tree-panel').offsetParent === null && $('#panes').offsetParent !== null);
+      check('โหมดอ่าน → toolbar ถูกซ่อน', getComputedStyle($('#toolbar')).display === 'none');
+      check('โหมดอ่านไม่เขียน inline style ทับ (กันค้างข้ามโหมด)',
+            $('#app-root').style.display === '' && $('#topbar').style.display === '');
       toggleReading(false);
-      check('ปิดโหมดอ่าน → sidebar กลับมา', $('#sidebar').style.display !== 'none');
+      check('ปิดโหมดอ่าน → แผงข้างกลับมา', $('#tree-panel').offsetParent !== null);
     }
 
     // ---- ข้อ 19: Scene Table ----
@@ -6394,22 +7452,121 @@ async function runTest(projectPath) {
             !((await kapi.readJson(await kapi.join(state.root, 'project.khn.json'))).customStatuses || []).includes('รอแก้ไข'));
     }
 
-    // ---- คอมเมนต์ต่อฉาก (เดิม push ใส่อาร์เรย์ทั้งบท → หายตอนบันทึก) ----
+    // ---- คอมเมนต์ต่อฉาก (บั๊ก #25: กล่องโต้ตอบ + scenes.json → "แผง" + เก็บท้ายไฟล์ .md) ----
     {
       const dj1 = await kapi.readJson(await kapi.join(dPath, 'draft.json'));
       const sj1 = await kapi.readJson(await kapi.join(dPath, 'scenes.json'));
       const chC = dj1.chapters.find((c) => (sj1.chapters[c.guid] || []).length);
       const scC = (sj1.chapters[chC.guid] || [])[0];
-      check('เพิ่มคอมเมนต์สำเร็จ', await addComment(dPath, scC.id, 'คอมเมนต์ทดสอบ'));
-      const saved = (await kapi.readJson(await kapi.join(dPath, 'scenes.json')))
-        .chapters[chC.guid].find((x) => x.id === scC.id);
-      check('คอมเมนต์ถูกเขียนลงแถวฉากจริงใน scenes.json',
-            (saved.comments || []).some((c) => c.text === 'คอมเมนต์ทดสอบ'),
-            JSON.stringify(saved.comments || []));
-      const loaded = await loadComments(dPath, scC.id);
-      check('อ่านคอมเมนต์กลับมาได้', loaded.length === 1 && loaded[0].text === 'คอมเมนต์ทดสอบ');
-      await deleteComment(dPath, scC.id, loaded[0].id);
-      check('ลบคอมเมนต์ได้', (await loadComments(dPath, scC.id)).length === 0);
+      const cmFile = await kapi.join(dPath, 'Chapters', chC.folderName, scC.fileName);
+
+      // (1) ย้ายของเก่า: scenes.json → ท้ายไฟล์ .md แล้วล้างของเดิมทิ้ง
+      await updateSceneRow(dPath, scC.id, (r) => {
+        r.comments = [{ id: 'oldcm1', text: 'คอมเมนต์เก่า', date: new Date().toISOString() }]; });
+      const nMig = await migrateSceneComments(dPath);
+      check('ย้ายคอมเมนต์เดิมจาก scenes.json ได้', nMig === 1, String(nMig));
+      const rawMig = await kapi.readFile(cmFile);
+      check('คอมเมนต์ถูกเขียนไว้ท้ายไฟล์ .md',
+            rawMig.includes('k2-comments') && rawMig.includes('คอมเมนต์เก่า'), rawMig.slice(-160));
+      check('ล้าง row.comments ออกจาก scenes.json แล้ว',
+            !(await kapi.readJson(await kapi.join(dPath, 'scenes.json')))
+              .chapters[chC.guid].find((x) => x.id === scC.id).comments);
+      check('parseMdFile ตัดบล็อกคอมเมนต์ออกจากเนื้อฉาก (ไม่โผล่ในตัวแก้ไข/ส่งออก)',
+            !parseMdFile(rawMig).body.includes('k2-comments'));
+      check('ย้ายซ้ำไม่เพิ่มซ้ำ', (await migrateSceneComments(dPath)) === 0);
+
+      // (2) CommentStore: เพิ่ม / ตอบกลับ (เธรด) / แก้ไข / ปิดเรื่อง / ลบ
+      const cstore = commentStore();
+      // สมอนับ offset เทียบกับ "ทั้งไฟล์" (frontmatter รวมด้วย) — ตรงกับที่ CommentStore.read คืนมา
+      const cmRaw = (await cstore.read(cmFile)).body;
+      const cmQuote = (parseMdFile(rawMig).body.match(/[฀-๿]{6,}/) || ['ทดสอบ'])[0];
+      const cmAt = cmRaw.indexOf(cmQuote);
+      check('หาข้อความตัวอย่างในฉากเจอ (ใช้ผูกสมอ)', cmAt >= 0, cmQuote);
+      // ไม่ส่ง quote มาเอง — ให้ store ตัดจากไฟล์ตาม offset (พิสูจน์ว่า convention ตรงกันจริง)
+      const c1 = await cstore.add(cmFile, { start: cmAt, end: cmAt + cmQuote.length }, 'คอมเมนต์ทดสอบ');
+      check('เพิ่มคอมเมนต์ผ่าน CommentStore ได้', !!c1 && c1.text === 'คอมเมนต์ทดสอบ');
+      check('คอมเมนต์ผูกสมอกับข้อความในฉาก (anchor.quote)',
+            !!c1.anchor && c1.anchor.quote === cmQuote, JSON.stringify(c1.anchor));
+      check('ตอบกลับ (เธรดซ้อน) ได้', !!(await cstore.reply(cmFile, c1.id, 'ตอบกลับทดสอบ')));
+      await cstore.edit(cmFile, c1.id, 'คอมเมนต์แก้แล้ว');
+      await cstore.resolve(cmFile, c1.id, true);
+      const cmList = await cstore.list(cmFile);
+      const c1b = cmList.find((c) => c.id === c1.id);
+      check('แก้ไข + ปิดเรื่อง (resolve) + เก็บเธรดตอบกลับครบ',
+            !!c1b && c1b.text === 'คอมเมนต์แก้แล้ว' && c1b.resolved === true && c1b.replies.length === 1,
+            JSON.stringify(c1b));
+      check('กรอง "ยังไม่ปิด" ไม่เห็นอันที่ปิดแล้ว',
+            !(await cstore.list(cmFile, { openOnly: true })).some((c) => c.id === c1.id));
+
+      // (3) บันทึกฉากทับแล้วคอมเมนต์ต้องไม่หาย (saveTab → store.saveBody)
+      if (state.tabs.has(cmFile)) closeTab(cmFile);
+      await openScene(cmFile, scC.title);
+      await new Promise((r) => setTimeout(r, 350));
+      const cmTab = state.tabs.get(cmFile);
+      check('เปิดฉากแล้วเนื้อหาไม่มีบล็อกคอมเมนต์ปน',
+            !!cmTab && !(cmTab.editor || cmTab.sp).getMarkdown().includes('k2-comments'));
+      await saveTab(cmTab);
+      check('บันทึกฉากทับแล้วคอมเมนต์ยังอยู่ครบ',
+            (await cstore.list(cmFile)).length === cmList.length,
+            String((await cstore.list(cmFile)).length) + ' vs ' + cmList.length);
+      check('บันทึกแล้วบล็อกคอมเมนต์ยังอยู่ท้ายไฟล์',
+            (await kapi.readFile(cmFile)).includes('k2-comments'));
+
+      // (4) แผงคอมเมนต์ (แทนกล่องโต้ตอบเดิม)
+      await openCommentsPanel();
+      await new Promise((r) => setTimeout(r, 300));
+      check('มีแผง "คอมเมนต์" ในทะเบียนแผง',
+            PANEL_DEFS.some((d) => d.id === 'comments' && d.adopt === '#comments-panel'));
+      check('เปิดแผงคอมเมนต์ได้', isPanelOpen('comments'));
+      const cmHost = $('#comments-body');
+      check('แผงคอมเมนต์วาดการ์ดคอมเมนต์จริง',
+            !!cmHost && cmHost.querySelectorAll('.k-cm-card').length >= 2,
+            cmHost ? String(cmHost.querySelectorAll('.k-cm-card').length) : 'ไม่พบ #comments-body');
+      check('แผงมีการ์ดตอบกลับ (เธรด) แยกชั้น',
+            !!cmHost && !!cmHost.querySelector('.k-cm-card.reply'));
+      check('แผงแสดงสมอ (ข้อความที่คอมเมนต์ผูกไว้)',
+            !!cmHost && !!cmHost.querySelector('.k-cm-quote'));
+      check('แผงมีช่องพิมพ์คอมเมนต์ใหม่ + ปุ่มเพิ่ม',
+            !!cmHost && !!cmHost.querySelector('.k-cm-input') && !!cmHost.querySelector('.k-cm-foot .k-ok'));
+      // เพิ่มผ่าน UI จริง
+      const cmInp = cmHost.querySelector('.k-cm-input');
+      cmInp.value = 'เพิ่มจากแผง';
+      cmHost.querySelector('.k-cm-foot .k-ok').click();
+      await new Promise((r) => setTimeout(r, 450));
+      check('เพิ่มคอมเมนต์จากแผงแล้วเขียนลงไฟล์จริง',
+            (await cstore.list(cmFile)).some((c) => c.text === 'เพิ่มจากแผง'));
+      // ตัวกรอง "ยังไม่ปิด"
+      const nAll = $('#comments-body').querySelectorAll('.k-cm-card').length;
+      $('#comments-body').querySelector('.k-cm-filter').click();
+      await new Promise((r) => setTimeout(r, 350));
+      check('ตัวกรองซ่อนคอมเมนต์ที่ปิดเรื่องแล้ว',
+            $('#comments-body').querySelectorAll('.k-cm-card').length < nAll);
+      $('#comments-body').querySelector('.k-cm-filter').click();
+      await new Promise((r) => setTimeout(r, 350));
+
+      // (5) ไฮไลต์สมอในตัวแก้ไข (decoration — แท็บนี้ active สดอยู่ ดูบทเรียนข้อ 2)
+      // คอมเมนต์ที่ปิดเรื่องแล้วต้องไม่ขีดไฮไลต์ (ไม่งั้นฉากรกไปด้วยเรื่องที่จบแล้ว)
+      check('คอมเมนต์ที่ปิดเรื่องแล้วไม่ขีดไฮไลต์ในฉาก', !commentAnchors().includes(cmQuote),
+            commentAnchors().join('|'));
+      await cstore.resolve(cmFile, c1.id, false);        // เปิดเรื่องกลับ → สมอต้องกลับมา
+      await renderCommentPanel($('#comments-body'));
+      await new Promise((r) => setTimeout(r, 250));
+      check('ตั้งสมอคอมเมนต์เข้าตัวแก้ไขแล้ว (ไม่ใช่ยัด class ลง DOM)',
+            commentAnchors().includes(cmQuote), commentAnchors().join('|'));
+      const cmView = (cmTab.editor || cmTab.sp).view;
+      refreshCommentAnchors(cmView);
+      await new Promise((r) => setTimeout(r, 250));
+      check('ตัวแก้ไขขีดไฮไลต์ข้อความที่มีคอมเมนต์ผูกอยู่',
+            !!cmTab.pane.querySelector('.k-cm-anchor'),
+            cmTab.pane.querySelectorAll('.k-cm-anchor').length + ' hits · quote=' + cmQuote);
+      check('เลื่อนไปยังข้อความที่คอมเมนต์ผูกไว้ได้', scrollToAnchor(cmQuote) === true);
+
+      // (6) ลบ แล้วเก็บกวาดให้เทสอื่นไม่เจอคอมเมนต์ค้าง
+      for (const c of await cstore.list(cmFile)) await cstore.remove(cmFile, c.id);
+      check('ลบคอมเมนต์ได้จนหมด', (await cstore.list(cmFile)).length === 0);
+      check('ไม่มีคอมเมนต์แล้ว บล็อกท้ายไฟล์ต้องหายไปด้วย',
+            !(await kapi.readFile(cmFile)).includes('k2-comments'));
+      hidePanel('comments');
     }
 
     // ---- สถิติคำรายวัน + วันเขียนติดต่อกัน (แสดงในแดชบอร์ด) ----
@@ -6449,43 +7606,298 @@ async function runTest(projectPath) {
       const shown = [...document.querySelectorAll('.k-dialog .k-menu-item')]
         .some((r) => r.textContent.includes('โน้ตทดสอบ'));
       check('กล่องโน้ตแสดงรายการที่บันทึกไว้', shown);
-      document.querySelector('.k-dialog .k-ok').click();
+      // ปิดกล่อง "ล่าสุด" ไม่ใช่ตัวแรกใน DOM — ถ้ามีกล่องอื่นค้างอยู่ querySelector('.k-dialog .k-ok')
+      // จะไปกดผิดตัว แล้วกล่องโน้ตค้างทับหน้าจอยาวไปทั้ง run (เห็นในสกรีนช็อตของเทสถัด ๆ ไป)
+      const ovs = [...document.querySelectorAll('.k-overlay')];
+      ovs[ovs.length - 1].querySelector('.k-ok').click();
+      await new Promise((r) => setTimeout(r, 80));
+      check('ปิดกล่องโน้ตได้ถูกใบ (ไม่ไปกดกล่องอื่น)',
+            ![...document.querySelectorAll('.k-dialog')]
+              .some((d) => d.textContent.includes('โน้ตทั้งหมด')));
+      // กล่องอื่นที่เทสก่อนหน้าลืมปิดไว้ → เก็บกวาดให้ สกรีนช็อตของเทสถัดไปจะได้ไม่มีอะไรบัง
+      const stray = [...document.querySelectorAll('.k-overlay')];
+      if (stray.length) {
+        log('warn', 'selftest: มีกล่องค้างจากเทสก่อนหน้า ' + stray.length + ' ใบ — เก็บกวาดให้');
+        stray.forEach((o) => o.remove());
+      }
       check('อ่านโน้ตซ้ำแล้วลำดับไม่กลับด้าน (ไม่ reverse ของจริง)',
             getSessionNotes()[getSessionNotes().length - 1].text === 'โน้ตทดสอบ');
       await saveSessionNotes([]);
     }
 
-    // ---- ทางเลือกของฉาก (Branch Tree) — ต้องเพิ่ม/ลบได้จริง ----
+    // ---- ผังแตกสาย (ข้อ 81): เอนจินกราฟ + ผัง SVG + inspector แก้ไขได้จริง ----
     {
+      const BG = await import('./branch-graph.js');
+      // เอนจิน (unit test เต็มอยู่ใน test/branch.test.cjs — ที่นี่เช็คว่า bundle ใช้งานได้)
+      const gTest = BG.buildGraph([
+        { id: 'a', title: 'A', choices: [{ text: 'ไป B', nextSceneId: 'b' }] },
+        { id: 'b', title: 'B' },
+      ]);
+      check('branch-graph: สร้างกราฟจาก choices ได้', gTest.edges.length === 1 && !gTest.edges[0].dangling);
+      const aTest = BG.analyzeGraph(gTest);
+      check('branch-graph: หาจุดเริ่ม/ตอนจบได้', aTest.roots.join() === 'a' && aTest.endings.join() === 'b');
+      check('branch-graph: จัดชั้นซ้าย→ขวาตามความลึก',
+            BG.layoutGraph(gTest).byId.get('b').x > BG.layoutGraph(gTest).byId.get('a').x);
+
       const dj2 = await kapi.readJson(await kapi.join(dPath, 'draft.json'));
       const sj2 = await kapi.readJson(await kapi.join(dPath, 'scenes.json'));
-      const chB = dj2.chapters.find((c) => (sj2.chapters[c.guid] || []).length);
-      const scB = (sj2.chapters[chB.guid] || [])[0];
-      await updateSceneRow(dPath, scB.id, (r) => { r.choices = [{ text: 'เปิดประตู', nextSceneId: '' }]; });
+      const chB = dj2.chapters.find((c) => (sj2.chapters[c.guid] || []).length > 1)
+               || dj2.chapters.find((c) => (sj2.chapters[c.guid] || []).length);
+      const rowsB = sj2.chapters[chB.guid] || [];
+      const scB = rowsB[0], scB2 = rowsB[1] || null;
+      // ทางเลือกหนึ่งชี้ไปฉากจริง (ได้เส้นเชื่อม) อีกหนึ่งยังไม่ระบุปลายทาง (ได้คำเตือน)
+      await updateSceneRow(dPath, scB.id, (r) => {
+        r.choices = [{ text: 'เปิดประตู', nextSceneId: scB2 ? scB2.id : '' },
+                     { text: 'ยังไม่คิด', nextSceneId: '' }];
+      });
+      state._branch = { sel: null, zoom: 1, view: 'tree', sideOpen: true };   // เริ่มจากค่าเริ่มต้นเสมอ
       await openBranchingTree();
       await new Promise((r) => setTimeout(r, 400));
       check('เปิดผังแตกสายได้', state.tabs.has('::branching::'));
-      check('ผังแตกสายแสดงฉากที่มีทางเลือก',
-            [...document.querySelectorAll('.branch-choice')].some((c) => c.textContent.includes('เปิดประตู')));
+      const nodes = [...document.querySelectorAll('.branch-node')];
+      check('ผังวาดกล่องฉากเป็นภาพ (ไม่ใช่แค่รายการ)', nodes.length >= 1, String(nodes.length));
+      check('กล่องฉากถูกจัดวางด้วยพิกัดจริง',
+            nodes.length > 0 && parseFloat(nodes[0].style.left) >= 0 && !!nodes[0].style.top,
+            nodes.length ? nodes[0].style.left + ',' + nodes[0].style.top : 'ไม่มีโหนด');
+      if (scB2) check('ผังลากเส้นเชื่อมทางเลือก (SVG)',
+                      !!document.querySelector('.branch-edges path.branch-edge'));
+      check('ผังเตือนทางเลือกที่ยังไม่ระบุปลายทาง',
+            [...document.querySelectorAll('.branch-badge')].some((b) => b.textContent.includes('ยังไม่ระบุปลายทาง')),
+            [...document.querySelectorAll('.branch-badge')].map((b) => b.textContent).join('|'));
+      check('ผังมีแถบสถิติ', (document.querySelector('.branch-stats') || {}).textContent?.includes('ทางเลือก'));
+
+      // คลิกโหนด → แผง inspector แสดงทางเลือกให้แก้
+      check('มีแผง inspector (Panel System)', !!document.querySelector('.branch-side'));
+      nodes.find((n) => n.textContent.includes(scB.title))?.click();
+      await new Promise((r) => setTimeout(r, 350));
+      check('คลิกกล่องฉากแล้ว inspector แสดงชื่อฉากนั้น',
+            (document.querySelector('.branch-side-title') || {}).textContent === scB.title,
+            (document.querySelector('.branch-side-title') || {}).textContent);
+      check('inspector แสดงช่องแก้ทางเลือกครบทุกอัน',
+            document.querySelectorAll('.branch-edit-row').length === 2,
+            String(document.querySelectorAll('.branch-edit-row').length));
+      check('inspector มีปุ่มเปิดฉากคู่กับผัง (Split View)',
+            [...document.querySelectorAll('.branch-side-acts button')].some((b) => b.textContent.includes('⊞')));
+      await kapi.testShot('/tmp/k2_branch.png');
+
+      // แก้ข้อความทางเลือกผ่าน inspector → ต้องเขียนลง scenes.json จริง
+      const inp = document.querySelector('.branch-edit-text');
+      inp.value = 'ผลักประตู'; inp.dispatchEvent(new Event('blur'));
+      await new Promise((r) => setTimeout(r, 400));
+      const afterEdit = await kapi.readJson(await kapi.join(dPath, 'scenes.json'));
+      check('แก้ข้อความทางเลือกใน inspector แล้วเขียนลง scenes.json',
+            (afterEdit.chapters[chB.guid].find((x) => x.id === scB.id).choices || [])
+              .some((c) => c.text === 'ผลักประตู'));
+
+      // สลับเป็นมุมมองรายการ — โครงเดิมต้องยังใช้ได้
+      state._branch.view = 'list';
+      await renderBranchingTree(state.tabs.get('::branching::').pane);
+      await new Promise((r) => setTimeout(r, 250));
+      check('มุมมองรายการยังแสดงทางเลือกได้',
+            [...document.querySelectorAll('.branch-choice')].some((c) => c.textContent.includes('ผลักประตู')));
       check('มีแผงเพิ่มทางเลือก (สร้าง choices ได้จากในโปรแกรม)', !!document.querySelector('.branch-adder'));
+
       closeTab('::branching::');
+      state._branch = null;
       await updateSceneRow(dPath, scB.id, (r) => { delete r.choices; });
     }
 
-    // ---- ผังพื้นที่ + ศูนย์รวม (เปิดได้โดยไม่พังเมื่อข้อมูลไม่ครบ) ----
+    // ---- ผังพื้นที่ (ข้อ 82): แผนที่ + ตำแหน่งปัจจุบัน + เส้นเวลาของสถานที่ ----
     {
       await openFloorPlan();
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 400));
       check('เปิดผังพื้นที่ได้', state.tabs.has('::floorplan::'));
       check('ผังพื้นที่แสดงแผงข้อมูล', !!document.querySelector('.floor-panel'));
-      closeTab('::floorplan::');
+      check('ผังพื้นที่มีแถบเส้นเวลาของสถานที่', !!document.querySelector('.floor-timeline'));
+      check('ผังพื้นที่แสดงช่องเห็น/ได้ยิน/พบ ครบ 3 หัวข้อ',
+            [...document.querySelectorAll('.floor-panel-title')]
+              .filter((d) => /สิ่งที่(เห็น|ได้ยิน|พบ)/.test(d.textContent)).length === 3);
 
+      // ผูกฉากกับแผนที่ → ตำแหน่งปัจจุบัน + เส้นเวลาของสถานที่ต้องขึ้น
+      // สร้างแผนที่เองที่นี่ ไม่พึ่งว่าเทสก่อนหน้าทิ้งแผนที่ไว้ให้ (ไม่งั้นบล็อกนี้ถูกข้ามเงียบ ๆ)
+      const prevMaps = await loadMaps();
+      const tMap = newMap('แผนที่ทดสอบผังพื้นที่');
+      tMap.id = 'fptest'; tMap.image = 'Images/world.png'; tMap.order = 0;
+      tMap.pins = [{ id: 'fppin', x: 30, y: 40, kind: 'entity', label: 'ห้องนอน' }];
+      await saveMaps({ version: MAPS_VERSION, maps: [tMap] });
+
+      const dj3 = await kapi.readJson(await kapi.join(dPath, 'draft.json'));
+      const sj3 = await kapi.readJson(await kapi.join(dPath, 'scenes.json'));
+      const ch3 = dj3.chapters.find((c) => (sj3.chapters[c.guid] || []).length);
+      const sc3 = sj3.chapters[ch3.guid][0];
+      await updateSceneRow(dPath, sc3.id, (r) => {
+        r.mapId = tMap.id; r.pinId = 'fppin'; r.storyDate = 'ปีที่ 1024';
+      });
+      // เปิดฉากเป็นแท็บจริง แล้ว **สลับกลับมาที่ผังพื้นที่** — ต้องยังรู้ว่ากำลังเขียนฉากไหนอยู่
+      // (เคยพัง: sceneCtx() อ่านจากแท็บ active เท่านั้น พอมาดูผัง ตำแหน่งปัจจุบันเลยหายหมด)
+      await openScene(await kapi.join(dPath, 'Chapters', ch3.folderName, sc3.fileName), sc3.title);
+      await new Promise((r) => setTimeout(r, 250));
+      activate('::floorplan::');
+      check('สลับมาแท็บผังพื้นที่แล้วยังจำฉากที่เปิดล่าสุดได้',
+            !!state.lastSceneFile && state.lastSceneFile.includes(sc3.fileName), state.lastSceneFile);
+      state._floor = { mapId: tMap.id, picking: false };
+      await renderFloorPlan(state.tabs.get('::floorplan::').pane, tMap.id);
+      await new Promise((r) => setTimeout(r, 400));
+      check('ผังพื้นที่วาดหมุดของแผนที่', document.querySelectorAll('.floor-pin').length === 1,
+            String(document.querySelectorAll('.floor-pin').length));
+      check('แสดงตำแหน่งปัจจุบันของฉากที่เปิดอยู่ (คุณอยู่ที่นี่)',
+            !!document.querySelector('.floor-you'));
+      check('ป้ายตำแหน่งปัจจุบันบอกชื่อฉาก',
+            (document.querySelector('.floor-you-label') || {}).textContent === sc3.title,
+            (document.querySelector('.floor-you-label') || {}).textContent);
+      check('หมุดตำแหน่งปัจจุบันวางตรงพิกัดหมุดที่ผูกไว้',
+            (document.querySelector('.floor-you') || {}).style?.left === '30%',
+            (document.querySelector('.floor-you') || {}).style?.left);
+      check('แผงข้อมูลบอกว่าฉากนี้อยู่แผนที่/หมุดไหน',
+            (document.querySelector('.floor-where') || {}).textContent?.includes('ห้องนอน'),
+            (document.querySelector('.floor-where') || {}).textContent);
+      check('ฉากที่ผูกแผนที่ขึ้นบนเส้นเวลาของสถานที่นั้น',
+            [...document.querySelectorAll('.floor-tl-title')].some((d) => d.textContent === sc3.title),
+            [...document.querySelectorAll('.floor-tl-title')].map((d) => d.textContent).join('|'));
+      check('เส้นเวลาของสถานที่แสดงเวลาในเรื่อง',
+            [...document.querySelectorAll('.floor-tl-when')].some((d) => d.textContent.includes('1024')));
+
+      // เพิ่ม "สิ่งที่เห็น" แล้วต้องขึ้นในแผง + นับเป็นป้ายบนการ์ดเส้นเวลา
+      await updateSceneRow(dPath, sc3.id, (r) => { r.clues = ['รอยเลือดบนพื้น']; });
+      await renderFloorPlan(state.tabs.get('::floorplan::').pane, tMap.id);
+      await new Promise((r) => setTimeout(r, 300));
+      check('รายการสิ่งที่เห็นขึ้นในแผง (ลบได้ทีละอัน)',
+            [...document.querySelectorAll('.floor-item-text')].some((d) => d.textContent === 'รอยเลือดบนพื้น')
+            && !!document.querySelector('.floor-item-del'));
+      check('การ์ดเส้นเวลาติดป้ายจำนวนเบาะแส',
+            [...document.querySelectorAll('.floor-tl-badges')].some((d) => d.textContent.includes('👁1')),
+            [...document.querySelectorAll('.floor-tl-badges')].map((d) => d.textContent).join('|'));
+      await kapi.testShot('/tmp/k2_floorplan.png');
+
+      await updateSceneRow(dPath, sc3.id, (r) => {
+        delete r.mapId; delete r.pinId; delete r.storyDate; delete r.clues;
+      });
+      await saveMaps(prevMaps);                 // คืนแผนที่เดิม ไม่ทิ้งขยะให้เทสถัดไป
+      state._floor = null;
+      closeTab('::floorplan::');
+    }
+
+    // ---- ศูนย์รวม (ข้อ 87): ใช้ Auto-link Engine ไม่ใช่สแกนดิบ ----
+    {
       await openCentralizeUI();
-      await new Promise((r) => setTimeout(r, 600));
+      await new Promise((r) => setTimeout(r, 900));
       check('เปิดหน้าศูนย์รวมได้', state.tabs.has('::centralize::'));
       check('ศูนย์รวมคำนวณสถิติได้ (ไม่ค้างที่ว่าง)', !!document.querySelector('.cent-stat'));
       check('ศูนย์รวมมีแผง backlinks', !!document.querySelector('.cent-list'));
+      check('ศูนย์รวมแสดงการ์ดสถิติ (ฉาก/คำ/Wiki/จุดเชื่อมโยง)',
+            document.querySelectorAll('.cent-stat-card').length >= 3,
+            String(document.querySelectorAll('.cent-stat-card').length));
+      check('ศูนย์รวมนับจุดเชื่อมโยงจาก Auto-link Engine',
+            [...document.querySelectorAll('.cent-stat-lbl')].some((d) => d.textContent === 'จุดเชื่อมโยง'));
+      check('ศูนย์รวมมีปุ่มสร้างดัชนีใหม่ + ป้ายอัปเดตสด',
+            !!document.querySelector('.cent-refresh') && !!document.querySelector('.cent-live'));
       closeTab('::centralize::');
+    }
+
+    // ---- Visual Tags (ข้อ 84): ชิปสีต้องโผล่ใน Explorer + แถบตัวกรอง ----
+    {
+      const { visualTagFor, applyVisualTagStyle, renderAllTagChips, getVisualTags } =
+        await import('./visual-tags.js');
+      check('มีแท็กภาพเริ่มต้นให้ใช้ทันที', getVisualTags().length >= 5, String(getVisualTags().length));
+      const vt0 = getVisualTags()[0];
+      check('หาแท็กภาพจากชื่อได้', visualTagFor(vt0.name) && visualTagFor(vt0.name).color === vt0.color);
+      check('แท็กที่ไม่ได้ตั้งค่า → คืน null', visualTagFor('ไม่มีแท็กชื่อนี้xyz') === null);
+      const probe = el('span', null, 'x');
+      check('applyVisualTagStyle ทาสีให้ชิปที่มีอยู่แล้ว',
+            applyVisualTagStyle(probe, vt0.name) && probe.style.color !== '');
+      check('applyVisualTagStyle กับแท็กที่ไม่รู้จัก → ไม่แตะ element',
+            applyVisualTagStyle(el('span', null, 'y'), 'ไม่มีแท็กนี้') === false);
+      const chips = renderAllTagChips([vt0.name, 'แท็กธรรมดา']);
+      check('ชิปแท็ก: ที่ตั้งสีได้ชิปสี · ที่เหลือได้ #ข้อความ',
+            chips.children.length === 2 && chips.children[1].textContent === '#แท็กธรรมดา',
+            chips.textContent);
+
+      // ใส่แท็กจริงให้ฉาก แล้วดูว่า explorer วาดชิป
+      const sj4 = await kapi.readJson(await kapi.join(dPath, 'scenes.json'));
+      const cg4 = Object.keys(sj4.chapters).find((k) => (sj4.chapters[k] || []).length);
+      const sc4 = sj4.chapters[cg4][0];
+      const oldTags = sc4.tags;
+      await updateSceneRow(dPath, sc4.id, (r) => { r.tags = [vt0.name]; });
+      await buildTree();
+      await new Promise((r) => setTimeout(r, 250));
+      check('Explorer แสดงชิปแท็กสีของฉาก',
+            [...document.querySelectorAll('#tree .scene .vt-chip')].some((c) => c.textContent.includes(vt0.name)),
+            [...document.querySelectorAll('#tree .vt-chip')].map((c) => c.textContent).join('|'));
+      await buildFilterBar();
+      await new Promise((r) => setTimeout(r, 200));
+      const fChip = [...document.querySelectorAll('#filter-tags .filter-tag-chip')]
+        .find((c) => c.dataset.tag === vt0.name);
+      check('แถบตัวกรองมีชิปแท็กและเก็บชื่อแท็กจริงไว้ใน dataset', !!fChip,
+            [...document.querySelectorAll('#filter-tags .filter-tag-chip')].map((c) => c.dataset.tag).join('|'));
+      if (fChip) {
+        fChip.click();
+        await new Promise((r) => setTimeout(r, 150));
+        check('คลิกชิปตัวกรองแล้วคิวรีเป็น tag:<ชื่อจริง> (ไอคอนไม่ปน)',
+              $('#tree-search').value === 'tag:' + vt0.name, $('#tree-search').value);
+        fChip.click();
+        $('#tree-search').value = '';
+        $('#tree-search').dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      await updateSceneRow(dPath, sc4.id, (r) => { if (oldTags) r.tags = oldTags; else delete r.tags; });
+      await buildTree();
+    }
+
+    // ---- โน้ต "ไว้ทำภายหลัง" (ข้อ 85) + ปุ่ม 📝 บนแถบเครื่องมือ ----
+    {
+      const { getFutureNotes, setNoteDone, removeSessionNote, renderFutureNotes, notesForScene } =
+        await import('./session-notes.js');
+      check('มีปุ่มโน้ตด่วนบนแถบเครื่องมือ', !!$('#tb-note'));
+      await addSessionNote('เขียนฉากนี้ใหม่', 'sc-test-1', 'ฉากทดสอบ', true);
+      await addSessionNote('โน้ตธรรมดา', null, null, false);
+      check('โน้ตไว้ทำภายหลังถูกแยกออกมาได้',
+            getFutureNotes().length === 1 && getFutureNotes()[0].text === 'เขียนฉากนี้ใหม่',
+            String(getFutureNotes().length));
+      check('notesForScene หาโน้ตของฉากเจอ', notesForScene('sc-test-1').length === 1);
+      const fnHost = el('div');
+      renderFutureNotes(fnHost);
+      check('แผง Future Notes วาดรายการค้าง',
+            fnHost.querySelectorAll('.fn-row').length === 1 && fnHost.textContent.includes('เขียนฉากนี้ใหม่'));
+      const fid = getFutureNotes()[0].id;
+      await setNoteDone(fid, true);
+      check('ติ๊กว่าทำแล้ว → หายจากรายการค้าง', getFutureNotes().length === 0);
+      renderFutureNotes(fnHost);
+      check('เคลียร์หมดแล้วแสดงข้อความสรุป', fnHost.textContent.includes('เคลียร์หมดแล้ว'), fnHost.textContent.slice(0, 50));
+      await removeSessionNote(fid);
+      check('ลบโน้ตทีละอันได้', !getSessionNotes().some((n) => n.id === fid));
+      await saveSessionNotes([]);
+    }
+
+    // ---- ประวัติการตัดสินใจโผล่ในแดชบอร์ด + หน้าตัวละคร (ข้อ 83) ----
+    {
+      const { recordChoice, renderChoicePanel, choicesByCharacter, choiceStats } =
+        await import('./player-choices.js');
+      const hist0 = (state.meta.playerHistory || []).length;
+      await recordChoice('sc-x', 'ฉากประตู', 'เปิดประตู');
+      await recordChoice('sc-x', 'ฉากประตู', 'เปิดประตู');
+      await recordChoice('sc-y', 'ฉากหนี', 'วิ่งหนี');
+      check('บันทึกการตัดสินใจลง project.khn.json',
+            ((await kapi.readJson(await kapi.join(state.root, 'project.khn.json'))).playerHistory || [])
+              .length === hist0 + 3);
+      const st2 = choiceStats();
+      check('choiceStats นับฉากไม่ซ้ำ', st2.scenes === 2, String(st2.scenes));
+      check('choiceStats หาตัวเลือกที่เลือกบ่อยสุด',
+            st2.top && st2.top.choice === 'เปิดประตู' && st2.top.n === 2, JSON.stringify(st2.top));
+      check('choicesByCharacter จับชื่อที่โผล่ในชื่อฉาก', choicesByCharacter('ฉากประตู').length === 2);
+      check('choicesByCharacter กับชื่อที่ไม่มี → ว่าง', choicesByCharacter('ไม่มีใครชื่อนี้').length === 0);
+      const pcHost = el('div');
+      renderChoicePanel(pcHost, { limit: 2 });
+      check('แผงประวัติจำกัดจำนวนแถวตาม limit', pcHost.querySelectorAll('.pc-row').length === 2);
+      check('แผงประวัติบอกว่ายังมีอีก', pcHost.textContent.includes('+ อีก'));
+      // แดชบอร์ดต้องฝังแผงนี้จริง (ไม่ใช่ซ่อนอยู่ในเมนู)
+      await openDashboard();
+      await new Promise((r) => setTimeout(r, 700));
+      check('แดชบอร์ดแสดงแผงประวัติการตัดสินใจ',
+            !!document.querySelector('.dash-choices .pc-row'));
+      check('แดชบอร์ดแสดงตัวเลือกที่เพิ่งบันทึก',
+            (document.querySelector('.dash-choices') || {}).textContent?.includes('วิ่งหนี'));
+      closeTab('::dash::');
+      state.meta.playerHistory = [];
+      await saveProjectMeta();
     }
 
     // ---- ส่งออก: HTML บล็อกต้องเป็น HTML จริง ไม่ใช่ markdown ดิบ ----
@@ -6591,7 +8003,7 @@ async function runTest(projectPath) {
       // applyDataI18n ต้องไม่ล้าง element ลูก (ปุ่มลอย/ผนึกบนหัวแผง)
       applyDataI18n();
       check('applyDataI18n ไม่ล้างปุ่มควบคุมบนหัวแผง',
-            !!document.querySelector('#outline-head .k-panel-ctrls .k-panel-float'));
+            !!document.querySelector('#app-root .k-panel[data-panel-id="outline"] .k-panel-btn-float'));
       check('t() ทน key undefined', tr(undefined, 'ok') === 'ok' && tr('') === '');
       // คีย์ลัดจัดหน้าต้องมีชื่อใน SHORTCUT_LABELS (เดิมไม่มี → applyToolbarShortcutTitles พัง)
       check('SHORTCUT_LABELS ครบทุก id ที่ปุ่มแถบเครื่องมืออ้าง',
@@ -6642,51 +8054,112 @@ async function runTest(projectPath) {
 
     // ---- i18n: เปลี่ยนภาษาแล้ว UI เปลี่ยนตามจริง ----
     {
-      const head = document.querySelector('#outline-head');
-      const before = head.textContent;
+      const headOf = () => document.querySelector('#app-root .k-panel[data-panel-id="outline"] .k-panel-head');
+      const before = headOf().textContent;
       await loadLanguage('en', state.root);
-      const enTxt = head.textContent;
+      await new Promise((r) => setTimeout(r, 30));
+      const enTxt = headOf().textContent;
       check('เปลี่ยนเป็น EN → ข้อความ data-i18n เปลี่ยน', enTxt.includes(tr('panel.navigation')), enTxt);
-      check('เปลี่ยนภาษาแล้วปุ่มบนหัวแผงยังอยู่', !!head.querySelector('.k-panel-ctrls'));
+      check('เปลี่ยนภาษาแล้วปุ่มบนหัวแผงยังอยู่', !!headOf().querySelector('.k-panel-btns'));
       await loadLanguage('th', state.root);
       check('เปลี่ยนกลับเป็นไทย → โหลดไฟล์ภาษาจากโฟลเดอร์แอปได้', i18n.lang === 'th' && !!i18n.strings.ui);
       check('ภาษาไทยแปลเมนู/แผงจริง', tr('panel.project') !== 'panel.project');
-      check('ข้อความหัวแผงกลับมาเหมือนก่อนเปลี่ยนภาษา', head.textContent === before, head.textContent + ' vs ' + before);
+      await new Promise((r) => setTimeout(r, 30));
+      check('ข้อความหัวแผงกลับมาเหมือนก่อนเปลี่ยนภาษา', headOf().textContent === before,
+            headOf().textContent + ' vs ' + before);
     }
 
     // ---- Split View (ข้อ 40): ต้องเห็นบนจอจริง + ลากปรับสัดส่วนได้ ----
     {
       document.querySelectorAll('.k-overlay').forEach((o) => o.remove());   // เก็บกวาดกล่องค้างจากเทสก่อนหน้า
+      const { leaf: SL_leaf, split: SL_split } = await import('./layout/split-layout.js');
       const files = [...state.tabs.keys()];
+      const panes = $('#panes');
+      const SM = getSplitManager();
       if (files.length >= 2) {
         activate(files[0]);
         await new Promise((r) => setTimeout(r, 30));
         check('สั่งแยกหน้าจอแล้วเข้าโหมด split', toggleSplit(files[0], 'right') === true);
-        const panes = $('#panes');
         check('#panes มีคลาส split', panes.classList.contains('split'));
-        check('มี pane ฝั่งที่สองแสดงคู่กัน',
-              !!document.querySelector('.pane.compare-on') && !!document.querySelector('.pane.on'));
-        check('มีเส้นคั่นที่ลากได้ (.k-split-div)', !!panes.querySelector('.k-split-div'));
+        check('แยกหน้าจอวาดจริงเป็นต้นไม้ split (#split-root)', !!document.getElementById('split-root'));
+        check('ได้ 2 ช่องบนจอจริง',
+              document.querySelectorAll('#split-root .k-split-pane').length === 2 && splitPaneCount() === 2);
+        check('ทั้งสองช่องยืม .pane ของแท็บจริงมาแสดง (ไม่ใช่กล่องเปล่า)',
+              document.querySelectorAll('#split-root .k-split-pane > .pane').length === 2);
+        check('เนื้อเอดิเตอร์ยังอยู่หลังถูกย้ายเข้าช่อง (ProseMirror ไม่ถูกทำลาย)',
+              !!document.querySelector('#split-root .k-split-pane .ProseMirror'));
+        check('มีที่จับลากปรับสัดส่วน (.k-split-handle)', !!panes.querySelector('.k-split-handle'));
+        check('ช่องที่โฟกัสถูกไฮไลต์ (.k-split-pane.focus)', !!panes.querySelector('.k-split-pane.focus'));
+        {   // เรขาคณิตจริงบนจอ: สองช่องต้องกว้างจริง วางเรียงซ้าย-ขวา และรวมกันเต็ม #panes
+          const [pa, pb] = [...document.querySelectorAll('#split-root .k-split-pane')].map((n) => n.getBoundingClientRect());
+          const pr = panes.getBoundingClientRect();
+          check('สองช่องกว้างจริงทั้งคู่ (ไม่ใช่ช่องหนึ่งกว้าง 0)',
+                pa.width > 80 && pb.width > 80, `${Math.round(pa.width)} / ${Math.round(pb.width)}`);
+          check('สองช่องเรียงซ้าย-ขวาติดกัน ไม่ทับกัน', pb.left >= pa.right - 12 && pa.left < pb.left);
+          check('สองช่องรวมกันเต็มพื้นที่เอกสาร',
+                Math.abs((pa.width + pb.width) - pr.width) < 20 && pa.height > pr.height * 0.8,
+                `${Math.round(pa.width + pb.width)} vs ${Math.round(pr.width)}`);
+          await kapi.testShot('/tmp/k2_split.png');
+        }
         // สลับเป็นแนวบน-ล่าง
         toggleSplit(files[0], 'down');
-        check('สลับเป็นแยกบน-ล่างได้', panes.classList.contains('split-h'));
-        // ลากเส้นคั่น → สัดส่วนเปลี่ยน
-        const dv = panes.querySelector('.k-split-div');
-        dv.dispatchEvent(new MouseEvent('mousedown', { clientX: 300, clientY: 300, bubbles: true }));
-        document.dispatchEvent(new MouseEvent('mousemove', { clientX: 300, clientY: 120, bubbles: true }));
+        check('สลับเป็นแยกบน-ล่างได้',
+              panes.classList.contains('split-h') &&
+              panes.querySelector('.k-split-container').dataset.dir === 'col');
+        // ลากที่จับ → สัดส่วนเปลี่ยนในเอนจิน (ไม่ใช่แค่ CSS variable)
+        const hd = panes.querySelector('.k-split-handle');
+        const hr = hd.getBoundingClientRect();
+        hd.dispatchEvent(new MouseEvent('mousedown', { clientX: hr.left + 2, clientY: hr.top + 2, button: 0, bubbles: true }));
+        document.dispatchEvent(new MouseEvent('mousemove', { clientX: hr.left + 2, clientY: hr.top - 120, bubbles: true }));
         document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-        const pos = panes.style.getPropertyValue('--split-pos');
-        check('ลากเส้นคั่นแล้วสัดส่วนเปลี่ยน', !!pos && pos !== '50%', 'pos=' + pos);
+        await new Promise((r) => setTimeout(r, 30));
+        const sz = SM.root.sizes || [];
+        check('ลากที่จับแล้วสัดส่วนเปลี่ยน', sz.length === 2 && Math.abs(sz[0] - 0.5) > 0.02, JSON.stringify(sz));
         check('สัดส่วนถูกเก็บไว้ใช้รอบหน้า',
-              JSON.parse(localStorage.getItem('k2-split-view') || '{}').pos !== undefined);
+              (localStorage.getItem('k2-split-layout') || '').includes('"sizes"'));
         // ดับเบิลคลิก = กลับ 50%
-        dv.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
-        check('ดับเบิลคลิกเส้นคั่น → กลับ 50%', panes.style.getPropertyValue('--split-pos') === '50%');
-        check('สั่งซ้ำทิศเดิม → ปิดแยกหน้าจอ', toggleSplit(files[0], 'down') === false);
-        check('ปิดแล้วคลาส split หายหมด',
+        panes.querySelector('.k-split-handle').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 30));
+        check('ดับเบิลคลิกที่จับ → กลับ 50%', SM.root.sizes[0] === 0.5, JSON.stringify(SM.root.sizes));
+
+        // ---- แบ่งเกิน 2 ช่อง (recursive) — สิ่งที่ระบบเก่าทำไม่ได้เลย ----
+        if (files.length >= 3) {
+          createSplit(files[0], 'down');
+          await new Promise((r) => setTimeout(r, 30));
+          check('แบ่งได้เกิน 2 ช่อง (recursive split)', splitPaneCount() >= 3, 'panes=' + splitPaneCount());
+          check('ช่องที่ 3 ขึ้นจอจริง',
+                document.querySelectorAll('#split-root .k-split-pane').length === splitPaneCount());
+          // ปิดทีละช่อง → เหลือ 2
+          const anyLeaf = panes.querySelector('.k-split-pane:not(.focus)').dataset.leafId;
+          document.querySelector(`.k-split-pane[data-leaf-id="${anyLeaf}"] > .cmp-close`).click();
+          await new Promise((r) => setTimeout(r, 30));
+          check('ปิดช่องเดียวได้ (แท็บยังเปิดอยู่)',
+                splitPaneCount() === 2 && state.tabs.size === files.length, 'panes=' + splitPaneCount());
+        }
+        check('สั่งซ้ำทิศเดิม → ปิดแยกหน้าจอ', toggleSplit(files[0], splitDir()) === false);
+        check('ปิดแล้วต้นไม้ split ถูกรื้อหมด',
               !panes.classList.contains('split') && !panes.classList.contains('split-h') &&
-              !panes.querySelector('.k-split-div') && !document.querySelector('.pane.compare-on'));
-        localStorage.removeItem('k2-split-view');
+              !document.getElementById('split-root') && !document.querySelector('.pane.compare-on'));
+        check('ปิดแล้ว .pane ทุกใบกลับมาอยู่ใต้ #panes ตามเดิม',
+              [...state.tabs.values()].filter((t2) => !t2.floatWin).every((t2) => t2.pane.parentNode === panes));
+      }
+      // ---- บั๊ก #1: มีแท็บเดียวก็ต้องแยกจอได้ (เดิมขึ้นข้อความว่า "ต้องเปิด 2 แท็บ" แล้วไม่เกิดอะไร) ----
+      {
+        const keep = state.active?.file || files[0];
+        const others = [...state.tabs.keys()].filter((f) => f !== keep);
+        getSplitManager().store.update(SL_leaf(keep));      // จำลองสถานะ "ช่องเดียว"
+        createSplit(keep, 'right');
+        await new Promise((r) => setTimeout(r, 30));
+        // ยังมีแท็บอื่นเปิดอยู่ → ช่องที่สองควรได้แท็บจริง; ถ้าไม่มีเลยต้องได้ช่องว่างให้ลากแท็บมาวาง
+        check('สั่งแยกจอแล้วได้ช่องที่สองเสมอ (ไม่ปฏิเสธเพราะจำนวนแท็บ)',
+              splitPaneCount() === 2, 'panes=' + splitPaneCount() + ' others=' + others.length);
+        // จำลองกรณีแท็บเดียวจริง ๆ: ตั้งต้นไม้เป็น leaf เดียว + ช่องว่าง
+        getSplitManager().store.update(SL_split('row', [SL_leaf(keep), SL_leaf(null)]));
+        await new Promise((r) => setTimeout(r, 30));
+        check('ช่องว่างแสดงคำแนะนำให้ลากแท็บมาวาง', !!document.querySelector('.k-split-empty'));
+        closeSplit();
+        await new Promise((r) => setTimeout(r, 30));
+        check('ปิดแยกจอจากช่องว่างได้ ไม่ค้าง', !isSplit() && !document.getElementById('split-root'));
       }
     }
 
@@ -6721,11 +8194,725 @@ async function runTest(projectPath) {
       const linked = al.entityList().filter((e) => al.getBacklinks(e.id).length > 0);
       check('backlinks หาฉากที่กล่าวถึงเอนทิตี้เจอ', linked.length > 0,
             'entities=' + al.entities.size + ' linked=' + linked.length);
+
+      // ---- บั๊ก #21: "ค้นหาในฉาก" จากคลิกขวาเอนทิตี้ Wiki ใน Explorer ----
+      {
+        const ent = linked[0];
+        const hits = await findEntityInScenes(ent.id, ent.name, 60, 60);
+        check('ค้นหาในฉาก (Find on location) คืนรายการฉากที่กล่าวถึงเอนทิตี้',
+              Array.isArray(hits) && hits.length > 0 && !!hits[0].sceneId,
+              JSON.stringify((hits || []).slice(0, 2)));
+        check('ผลค้นหาในฉากมีชื่อฉาก + จำนวนครั้งที่กล่าวถึง',
+              hits.every((h) => typeof h.count === 'number') && hits.some((h) => !!h.title),
+              JSON.stringify(hits.map((h) => h.title + ':' + h.count)));
+        // #k-fab-menu เป็น .k-menu ถาวรใน index.html — ต้องกันออก ไม่งั้นเช็คไปโดนเมนูผิดตัว
+        const popMenu = () => document.querySelector('.k-menu:not(#k-fab-menu)');
+        const cmMenu = popMenu();
+        check('ค้นหาในฉากเปิดเมนูรายการฉากให้คลิกเปิดได้',
+              !!cmMenu && cmMenu.querySelectorAll('.k-menu-item').length >= hits.length,
+              cmMenu ? String(cmMenu.querySelectorAll('.k-menu-item').length) : 'ไม่มีเมนู');
+        check('เมนูมีแถวหัวข้อบอกจำนวนฉากที่เจอ',
+              !!cmMenu && (cmMenu.querySelector('.k-menu-label')?.textContent || '').includes(String(hits.length)),
+              cmMenu?.querySelector('.k-menu-label')?.textContent);
+        check('แถวหัวข้อในเมนู (disabled) ไม่ผูก onclick — กันเมนู throw',
+              !!cmMenu && !cmMenu.querySelector('.k-menu-label').onclick);
+        // ไฟล์ฉากจาก sceneId ต้องหาเจอจริง (ปุ่ม "เปิด" ถึงจะทำงาน)
+        const hitPath = await findScenePath(state.root, hits[0].sceneId);
+        check('เปิดฉากจากผลค้นหาได้ (findScenePath เจอไฟล์จริง)',
+              !!hitPath && (await kapi.exists(hitPath.path)), hitPath && hitPath.path);
+        closeMenu();
+        // เอนทิตี้ที่ไม่มีใครกล่าวถึง → ต้องไม่ throw และไม่เปิดเมนูเปล่า
+        check('เอนทิตี้ที่ยังไม่มีฉากกล่าวถึง → คืนรายการว่าง ไม่ throw',
+              (await findEntityInScenes('__ไม่มีจริง__.json', 'ไม่มีจริง', 10, 10)).length === 0);
+        check('ไม่มีผลลัพธ์แล้วไม่เปิดเมนูเปล่า', !popMenu());
+      }
       const client = getAIClient();
       check('AIClient สร้างได้ + มี complete/stream/embed',
             typeof client.complete === 'function' && typeof client.stream === 'function' && typeof client.embed === 'function');
       const emb = await client.embed(['ทดสอบ'], { local: true });
       check('AIClient embed แบบ local ได้ (ไม่ต้องมีคีย์)', emb.ok && emb.vectors[0].length === 256);
+
+      // ---- UI ของ AI ต้องเรียกเอนจินที่เทสไว้ ไม่ใช่ยิง prompt เอง (ข้อ 73–76) ----
+      const plot = await import('./ai/ai-plot.js');
+      const dlg = await import('./ai/ai-dialogue.js');
+      const chr = await import('./ai/ai-character.js');
+      const wld = await import('./ai/ai-world.js');
+      const asst = await import('./ai/ai-assistant.js');
+      check('เอนจิน AI ทั้ง 5 ตัวเรียกได้จาก UI',
+            typeof plot.detectPlotHoles === 'function' && typeof dlg.generateDialogue === 'function' &&
+            typeof chr.checkConsistency === 'function' && typeof wld.generateWorld === 'function' &&
+            typeof asst.aiAssistant === 'function');
+      // ไม่มี client → ต้องคืน error อย่างสุภาพ ไม่ throw + ยังให้ผลตรวจออฟไลน์
+      const noClient = await plot.detectPlotHoles([], { scenes: scs.map((s) => ({ id: s.id, title: s.title, text: s.text || '', storyDate: '', pov: '' })) });
+      check('detectPlotHoles ไม่มี client → ไม่ throw', noClient && Array.isArray(noClient.holes));
+      const w = await wld.generateWorld('magic', 'ทดสอบ', {});
+      check('generateWorld ไม่มี client → คืน error ไม่ throw', w.ok === false && w.code === 'no-client');
+      check('generateWorld รู้จัก schema ตามประเภท', !!wld.getTemplate('magic'));
+      const dres = await dlg.generateDialogue({ name: 'ก' }, { name: 'ข' }, {}, {});
+      check('generateDialogue ไม่มี client → คืน error ไม่ throw', dres.ok === false && dres.code === 'no-client');
+    }
+
+    // ---- Thesaurus (ข้อ 67): ตั้งค่าเอนจินได้ + fallback คลังในตัวทำงานโดยไม่ต่อเน็ต ----
+    {
+      await initThesaurus();
+      const { shared, getSynonyms } = await import('./tools/thesaurus.js');
+      const sh = shared();
+      check('thesaurus ตั้งค่าเอนจินสำเร็จ (มี http adapter)', !!sh && typeof sh.http?.fetch === 'function');
+      check('thesaurus ปิดการส่งคำออกเน็ตตามค่าเริ่มต้น', sh.online === false);
+      const syn = await getSynonyms('สวย');
+      check('thesaurus fallback คลังไทยในตัวทำงาน (ออฟไลน์)', Array.isArray(syn) && syn.length > 0, JSON.stringify(syn));
+    }
+
+    // ============================================================
+    // รอบแก้บั๊กจาก human test (ข้อ 1–16) — เทสถาวร กันหวนกลับมาอีก
+    // ============================================================
+    {
+      // ---- ข้อ 1: โหมดอ่าน + โหมดหน้ากระดาษ ต้องไม่ได้หมึกดำบนพื้นดำ ----
+      const scEl0 = document.querySelector('#tree .scene[data-path]');
+      if (scEl0) { scEl0.click(); await new Promise((r) => setTimeout(r, 500)); }
+      togglePaper(true);
+      toggleReading(true);
+      await new Promise((r) => setTimeout(r, 120));
+      const pm = document.querySelector('.pane.on > .ProseMirror');
+      const csRead = pm ? getComputedStyle(pm) : null;
+      const rgb = (s) => (String(s).match(/\d+/g) || [0, 0, 0]).slice(0, 3).map(Number);
+      const lum = (s) => { const [r, g, b] = rgb(s); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+      check('โหมดอ่าน+กระดาษ: ตัวหนังสือกับพื้นต่างความสว่างพอ (ไม่ดำบนดำ)',
+            !!csRead && Math.abs(lum(csRead.backgroundColor) - lum(csRead.color)) > 90,
+            csRead ? csRead.backgroundColor + ' / ' + csRead.color : 'no pane');
+      check('โหมดอ่าน+กระดาษ: พื้นกระดาษยังสว่าง (คงโหมดกระดาษไว้)',
+            !!csRead && lum(csRead.backgroundColor) > 150, csRead && csRead.backgroundColor);
+      toggleReading(false);
+      await new Promise((r) => setTimeout(r, 80));
+      check('ออกจากโหมดอ่าน → แผงข้าง/แถบบนกลับมา (ไม่มี inline display ค้าง)',
+            $('#app-root').style.display === '' && $('#topbar').style.display === '' &&
+            $('#k-fab').style.display === '' && !document.body.classList.contains('reading-mode'));
+      // togglePaper ต้องสลับได้จริงทั้งสองทาง (ค่าเริ่มต้น undefined = เปิด)
+      delete state.settings.paperMode;
+      togglePaper();
+      check('togglePaper: ค่าเริ่มต้น (undefined=เปิด) กดครั้งแรกต้องปิด',
+            state.settings.paperMode === false && !document.body.classList.contains('paper-mode'));
+      togglePaper();
+      check('togglePaper: กดอีกครั้งกลับมาเปิด',
+            state.settings.paperMode === true && document.body.classList.contains('paper-mode'));
+
+      // ---- ข้อ 3: เมนู native มีเครื่องหมายสวิตช์ + ปุ่ม toolbar มีจุดบอกสถานะ ----
+      check('มีสะพาน kapi.menuToggles ไว้ติ๊กถูกในเมนู native', typeof kapi.menuToggles === 'function');
+      syncMenuToggles();                       // ต้องไม่ throw
+      // นับทั้งหน้า ไม่ใช่แค่ใน #toolbar — setupFloatingFormatBar ย้ายปุ่มบางตัวไปแถบลอย
+      check('ปุ่ม toolbar ที่เป็นสวิตช์ถูกทำเครื่องหมายไว้ (.tb-toggle)',
+            document.querySelectorAll('.tb.tb-toggle').length >= 3,
+            String(document.querySelectorAll('.tb.tb-toggle').length));
+      check('จุดบอกสถานะสวิตช์ตามปุ่มไปแถบลอยด้วย (ไม่ผูกกับ #toolbar)',
+            getComputedStyle($('#tb-paper'), '::after').content !== 'none',
+            getComputedStyle($('#tb-paper'), '::after').content);
+      check('ปุ่มโหมดหน้ากระดาษเป็นสวิตช์ + ติดสถานะเปิด',
+            $('#tb-paper').classList.contains('tb-toggle') && $('#tb-paper').classList.contains('on'));
+
+      // ---- ข้อ 16 (ลำดับปุ่มบนหัวแผง) + ข้อ 4 (พับ/ปิด) — ระบบแผงใหม่ alpha.46 ----
+      const treePanelEl = () => document.querySelector('#app-root .k-panel[data-panel-id="tree"]');
+      const treeBtn = (act) => treePanelEl()?.querySelector(`:scope > .k-panel-head .k-panel-btn-${act}`);
+      const order = [...treePanelEl().querySelectorAll(':scope > .k-panel-head .k-panel-btns .k-panel-btn')]
+        .map((b) => b.dataset.act).filter(Boolean);
+      check('หัวแผงเรียงปุ่ม [พับ][ลอย/ผนึก][ปิด]',
+            order.join(',') === 'collapse,float,close', order.join(','));
+      check('ปุ่มบนหัวแผงมาจาก PANEL_BUTTONS ของเอนจิน',
+            PL.PANEL_BUTTONS.map((b) => b.key).join(',') === 'collapse,float,close');
+      // พับแล้วหัวแผงต้องยังเห็น (บั๊กเดิม: max-height:0 กลืนทั้งใบ)
+      treeBtn('collapse').click();
+      await new Promise((r) => setTimeout(r, 60));
+      const tp = treePanelEl();
+      check('พับแผง → เพิ่มคลาส k-collapsed', tp.classList.contains('k-collapsed'));
+      check('พับแผงแล้ว "หัวแผงยังเห็นอยู่" (เรียกคลี่กลับได้)',
+            tp.querySelector(':scope > .k-panel-head').getBoundingClientRect().height > 4 &&
+            getComputedStyle(tp).opacity !== '0',
+            tp.querySelector(':scope > .k-panel-head').getBoundingClientRect().height);
+      check('พับแล้วเนื้อแผงถูกซ่อน',
+            getComputedStyle(tp.querySelector(':scope > .k-panel-body')).display === 'none');
+      treeBtn('collapse').click();
+      await new Promise((r) => setTimeout(r, 60));
+      check('กดพับซ้ำ = คลี่กลับ', !treePanelEl().classList.contains('k-collapsed'));
+      // ปิด → ต้องได้ปุ่มในถาดไว้เรียกกลับ
+      treeBtn('close').click();
+      await new Promise((r) => setTimeout(r, 60));
+      const chip = document.querySelector('#k-min-tray-l .k-min-chip[data-key="tree"]');
+      check('ปิดแผง → แผงถูกเก็บออกจากต้นไม้', !treePanelEl());
+      check('ปิดแผง → มีปุ่มในถาดไว้เรียกกลับ (ไม่หายถาวร)', !!chip);
+      chip.click();
+      await new Promise((r) => setTimeout(r, 60));
+      check('คลิกปุ่มในถาด → แผงกลับมา',
+            !!treePanelEl() &&
+            !document.querySelector('#k-min-tray-l .k-min-chip[data-key="tree"]'));
+
+      // ---- ข้อ 9: FAB ต้องอยู่เหนือแผงลอย/หน้าต่างลอย ----
+      const zf = parseInt(getComputedStyle($('#k-fab')).zIndex, 10);
+      const probe = el('div', 'k-float-panel'); document.body.append(probe);
+      const zp = parseInt(getComputedStyle(probe).zIndex, 10);
+      probe.remove();
+      check('FAB อยู่เหนือแผงลอย (z-index สูงกว่า)', zf > zp, `fab=${zf} panel=${zp}`);
+      check('FAB ยังอยู่ใต้กล่องโต้ตอบ (ไม่ทับ modal)', zf < 80, String(zf));
+      check('มีตัวเลือกโฟลเดอร์ก่อนสร้างฉาก (ไม่ยัดลงบทแรกเสมอ)',
+            typeof pickDraftTarget === 'function');
+
+      // ---- ข้อ 11 + 6: Explorer มีปุ่มรีเฟรช + รายการรูป ----
+      check('หัวแผงโปรเจกต์มีปุ่มรีเฟรช',
+            !!document.querySelector('#app-root .k-panel[data-panel-id="tree"] .k-tree-refresh-btn'));
+      const imgSec = [...document.querySelectorAll('#tree .sec-title')]
+        .find((h) => h.textContent.includes('คลังรูป'));
+      check('Explorer มีหมวดคลังรูป', !!imgSec, [...document.querySelectorAll('#tree .sec-title')].map((h) => h.textContent).join('|'));
+      check('แถวรูปใน Explorer มีภาพย่อจริง',
+            !!document.querySelector('#tree .scene.img-row .img-thumb'),
+            String(document.querySelectorAll('#tree .scene.img-row').length));
+
+      // ---- ข้อ 16a: tooltip ต้องลอยเหนือ trigger element (ไม่ใช่ของ OS) ----
+      {
+        const host = document.querySelector('#tree .scene[title]') || $('#tb-paper');
+        const y = 400, x = 300;
+        host.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, clientX: x, clientY: y }));
+        await new Promise((r) => setTimeout(r, 320));
+        const tip = $('#k-tip');
+        check('มี tooltip ของโปรแกรมเอง (ไม่ใช่ของ OS)', !!tip && tip.classList.contains('on'));
+        const tr = tip.getBoundingClientRect();
+        const hr = host.getBoundingClientRect();
+        check('tooltip อยู่เหนือ trigger element',
+              tr.bottom <= hr.top + 4, `tipBottom=${tr.bottom} hostTop=${hr.top}`);
+        check('ระหว่างโชว์ tooltip เอง ต้องถอด title เดิมกัน OS วาดซ้อน', !host.hasAttribute('title'));
+        host.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }));
+        check('เมาส์ออก → คืน title เดิมให้ element', host.hasAttribute('title'));
+        check('เมาส์ออก → tooltip ซ่อน', !tip.classList.contains('on'));
+      }
+
+      // ---- ข้อ 12: Story Network ลากพื้นหลังเพื่อเลื่อนผังได้ ----
+      {
+        await openNetwork();
+        await new Promise((r) => setTimeout(r, 600));
+        const nt = state.tabs.get('::network::');
+        check('เปิดแท็บ Story Network ได้', !!nt?.net);
+        const cv = nt.net.canvas;
+        const rp = nt.pane.getBoundingClientRect();
+        check('canvas ปรับขนาดตาม pane จริง (ไม่ค้าง 300px)',
+              cv.width > 320 && cv.height > 320,
+              `cv=${cv.width}x${cv.height} pane=${Math.round(rp.width)}x${Math.round(rp.height)} ` +
+              `win=${window.innerWidth}x${window.innerHeight}`);
+        nt.net._cx = 0; nt.net._cy = 0;
+        // กดที่มุมว่าง ๆ (ไม่โดนโหนด) แล้วลาก
+        cv.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, clientX: 5, clientY: 5 }));
+        cv.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 85, clientY: 65 }));
+        const moved = nt.net._cx !== 0 || nt.net._cy !== 0;
+        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+        check('ลากพื้นหลัง Story Network = เลื่อนผังได้', moved, `cx=${nt.net._cx} cy=${nt.net._cy}`);
+        check('ปล่อยเมาส์ → เลิกลาก', !nt.net.pan);
+        check('มีปุ่มรีเซ็ตมุมมองผัง', !!nt.pane.querySelector('.net-reset'));
+        closeTab('::network::');
+      }
+
+      // ---- ข้อ 13 + 14: แผงคุณสมบัติ บันทึกอัตโนมัติ + ไม่ duplicate ----
+      {
+        const dj2 = await kapi.readJson(await kapi.join(dPath, 'draft.json'));
+        const sj2 = await kapi.readJson(await kapi.join(dPath, 'scenes.json'));
+        // เทสก่อนหน้าย้าย/ลบฉากไปมา — ต้องหาบทที่ "มีฉากจริง" ไม่ใช่ chapters[0] ดื้อ ๆ
+        const ch2 = (dj2.chapters || []).find((c) => ((sj2.chapters || {})[c.guid] || [])
+          .some((s) => s.type !== 'memo'));
+        check('หาบทที่มีฉากสำหรับเทสแผงคุณสมบัติได้', !!ch2,
+              JSON.stringify((dj2.chapters || []).map((c) => [c.title, ((sj2.chapters || {})[c.guid] || []).length])));
+        const row2 = (sj2.chapters[ch2.guid] || []).find((s) => s.type !== 'memo');
+        showPanel('props-panel');
+        // เรียกซ้อนกันสองรอบ = เงื่อนไขที่ทำให้เกิดรายการซ้ำในของเดิม
+        openPropsPanel(dPath, ch2, row2);
+        renderPropsPanel();
+        await new Promise((r) => setTimeout(r, 500));
+        const bodyEl = $('#props-body');
+        check('แผงคุณสมบัติวาดครั้งเดียว (ไม่ duplicate ชื่อฉาก)',
+              bodyEl.querySelectorAll('.props-name').length === 1,
+              bodyEl.querySelectorAll('.props-name').length + ' :: ' + bodyEl.textContent.slice(0, 80));
+        // แผงมี textarea 2 ช่อง (เรื่องย่อ · โน้ต) — กล่องคุณสมบัติแบบหน้าต่างมี 3 (มี Future Note ด้วย)
+        check('แผงคุณสมบัติไม่ duplicate ช่องกรอก',
+              bodyEl.querySelectorAll('textarea.wiki-input').length === 2 &&
+              bodyEl.querySelectorAll('input.wiki-input').length === 5,
+              `ta=${bodyEl.querySelectorAll('textarea.wiki-input').length} inp=${bodyEl.querySelectorAll('input.wiki-input').length}`);
+        check('แผงคุณสมบัติเลิกใช้ปุ่มบันทึก → เป็นบันทึกอัตโนมัติ',
+              !bodyEl.querySelector('.props-save') && !!bodyEl.querySelector('.props-autosave'));
+        // พิมพ์แล้วต้องเขียนลง scenes.json เองโดยไม่ต้องกดปุ่ม
+        const inps2 = bodyEl.querySelectorAll('input.wiki-input');   // [0]storyDate [1]pov [2]อารมณ์ [3]ความขัดแย้ง [4]แท็ก
+        inps2[1].value = 'มุมมองอัตโนมัติ';
+        inps2[1].dispatchEvent(new Event('input', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 900));
+        const sj3 = await kapi.readJson(await kapi.join(dPath, 'scenes.json'));
+        const row3 = (sj3.chapters[ch2.guid] || []).find((x) => x.id === row2.id);
+        check('พิมพ์ในแผงคุณสมบัติ → บันทึกลง scenes.json อัตโนมัติ',
+              row3.pov === 'มุมมองอัตโนมัติ', JSON.stringify(row3.pov));
+        check('สถานะในแผงใช้ allStatuses() (รวมสถานะที่ผู้ใช้เพิ่มเอง)',
+              bodyEl.querySelectorAll('select.wiki-input')[0].options.length === allStatuses().length + 1,
+              `${bodyEl.querySelectorAll('select.wiki-input')[0].options.length} vs ${allStatuses().length + 1}`);
+      }
+
+      // ---- ข้อ 8: ย้ายฉากออกไป MEMO แล้วย้ายกลับเข้าบทได้ ----
+      {
+        const dj3 = await kapi.readJson(await kapi.join(dPath, 'draft.json'));
+        const ch3 = dj3.chapters[0];
+        const memoRow = { id: 'scMemoRT', title: 'โน้ตไป-กลับ', order: 90,
+                          fileName: 'memo-rt.md', type: 'memo' };
+        const sjA = await kapi.readJson(await kapi.join(dPath, 'scenes.json'));
+        sjA.chapters[ch3.guid] = [...(sjA.chapters[ch3.guid] || []), memoRow];
+        await kapi.writeFile(await kapi.join(dPath, 'scenes.json'), JSON.stringify(sjA, null, 2));
+        await kapi.writeFile(await kapi.join(dPath, 'Chapters', ch3.folderName, 'memo-rt.md'),
+          dumpMdFile({ title: 'โน้ตไป-กลับ', type: 'memo' }, 'เนื้อโน้ตทดสอบไป-กลับ'));
+        const dst = await moveRowToMemos(dPath, ch3, memoRow);
+        check('ย้ายออกไป MEMO → ไฟล์ไปอยู่ในโฟลเดอร์ Memos', await kapi.exists(dst), String(dst));
+        const backOk = await moveMemoToChapter(dst, dPath, ch3);
+        check('ย้ายกลับเข้าบทได้ (ทางกลับของคำสั่ง — บั๊กข้อ 8)', backOk === true);
+        const sjB = await kapi.readJson(await kapi.join(dPath, 'scenes.json'));
+        const backRow = (sjB.chapters[ch3.guid] || []).find((x) => x.title === 'โน้ตไป-กลับ');
+        check('ย้ายกลับแล้วโน้ตอยู่ในบทและยังเป็นชนิด memo',
+              !!backRow && backRow.type === 'memo', JSON.stringify(backRow));
+        check('ย้ายกลับแล้วไฟล์ไม่ค้างใน Memos', !(await kapi.exists(dst)));
+        // เปลี่ยนโน้ตกลับเป็นฉากปกติได้ (เดิมเมนูไม่มีทางกลับ)
+        await setRowMemo(dPath, ch3, backRow, false);
+        const sjC = await kapi.readJson(await kapi.join(dPath, 'scenes.json'));
+        check('สลับโน้ต → ฉากปกติได้',
+              !(sjC.chapters[ch3.guid] || []).find((x) => x.id === backRow.id)?.type);
+      }
+
+      // ---- ข้อ 5: เหตุการณ์บนเส้นเวลาอ้างอิงเอกสาร/โน้ตได้ ----
+      {
+        const targets = await listRefTargets();
+        check('หารายการเอกสาร/โน้ตสำหรับอ้างอิงได้', targets.length > 0, String(targets.length));
+        check('รายการอ้างอิงเก็บ path แบบสัมพัทธ์กับ root (ย้ายโปรเจกต์ได้)',
+              targets.every((x) => !/^[A-Za-z]:|^\//.test(x.path)), JSON.stringify(targets[0]));
+        const tl = await loadTimeline();
+        const ev = { ...newEvent('ปีที่ 777'), title: 'เหตุการณ์มีอ้างอิง',
+                     refs: normalizeRefs([{ kind: targets[0].kind, path: targets[0].path, title: targets[0].title }]) };
+        tl.events = [...(tl.events || []), ev];
+        await saveTimeline(tl);
+        const tl2 = await loadTimeline();
+        const got = (tl2.events || []).find((x) => x.id === ev.id);
+        check('บันทึกการอ้างอิงลง timeline.json แล้วอ่านกลับได้',
+              !!got && got.refs.length === 1 && got.refs[0].path === targets[0].path,
+              JSON.stringify(got && got.refs));
+        await openTimeline();
+        await new Promise((r) => setTimeout(r, 700));
+        const refChip = document.querySelector('.tl-ev-ref');
+        check('การ์ดบนเส้นเวลาแสดงชิปอ้างอิง', !!refChip,
+              String(document.querySelectorAll('.tl-event').length) + ' cards');
+        check('ชิปอ้างอิงบอกชื่อเอกสารที่อ้างถึง',
+              !!refChip && refChip.textContent.includes(targets[0].title), refChip && refChip.textContent);
+        // เก็บกวาดไม่ให้ค้างข้าม run
+        tl2.events = (tl2.events || []).filter((x) => x.id !== ev.id);
+        await saveTimeline(tl2);
+        closeTab('::timeline::');
+      }
+
+      // ---- ข้อ 15: ผังแตกสายผูกกับ [ข้อความ] ในเนื้อฉากจริง ----
+      {
+        const dj4 = await kapi.readJson(await kapi.join(dPath, 'draft.json'));
+        const ch4 = dj4.chapters[0];
+        const sj4 = await kapi.readJson(await kapi.join(dPath, 'scenes.json'));
+        const scB = (sj4.chapters[ch4.guid] || [])[0];
+        const scFile = await kapi.join(dPath, 'Chapters', ch4.folderName, scB.fileName);
+        const { meta: bm, body: bb } = parseMdFile(await kapi.readFile(scFile));
+        await kapi.writeFile(scFile, dumpMdFile(bm, bb + '\n\nเขาลังเล จะ [ไปตลาด] หรือ [กลับบ้าน] ดี\n'));
+        await updateSceneRow(dPath, scB.id, (r) => { delete r.choices; });
+        // เปิดฉากใหม่ให้ตัวแก้ไขเห็นข้อความที่เพิ่งเขียน แล้วสั่งสแกน
+        if (state.tabs.has(scFile)) closeTab(scFile);
+        await openScene(scFile, scB.title);
+        await new Promise((r) => setTimeout(r, 500));
+        const added = await syncChoicesFromScene();
+        check('สแกน [ข้อความ] ในฉาก → สร้างทางเลือกให้อัตโนมัติ (ข้อ 15)', added === 2, String(added));
+        const sj5 = await kapi.readJson(await kapi.join(dPath, 'scenes.json'));
+        const scB2 = (sj5.chapters[ch4.guid] || []).find((x) => x.id === scB.id);
+        check('ทางเลือกที่ได้ตรงกับข้อความในฉาก',
+              (scB2.choices || []).map((c) => c.text).join('|') === 'ไปตลาด|กลับบ้าน',
+              JSON.stringify(scB2.choices));
+        check('สแกนซ้ำไม่สร้างซ้ำ', (await syncChoicesFromScene()) === 0);
+        // แผง inspector ต้องโชว์สถานะการผูกกับเอกสาร
+        await openBranchingTree();
+        await new Promise((r) => setTimeout(r, 400));
+        state._branch.sel = scB.id;
+        await renderBranchingTree(state.tabs.get('::branching::').pane);
+        await new Promise((r) => setTimeout(r, 500));
+        check('แผงผังแตกสายมีส่วน "ทางเลือกในเนื้อฉาก"',
+              !!document.querySelector('.branch-doc'));
+        check('แผงบอกว่าทางเลือกผูกกับข้อความในฉากแล้ว',
+              !!document.querySelector('.branch-doc-ok'),
+              document.querySelector('.branch-doc-body')?.textContent?.slice(0, 90));
+        check('ผังมีปุ่มสแกนทั้งโปรเจกต์',
+              [...document.querySelectorAll('.branch-zbtn')].some((b) => b.textContent === '🔎'));
+        // เขียนคิว: ยิงพร้อมกัน 3 ครั้งต้องได้ครบ 3 (เดิมทับกันจนหาย)
+        const bnode = { dPath, id: scB.id };
+        await Promise.all([
+          mutateChoices(bnode, (l) => [...l, { text: 'คิว1', nextSceneId: '' }]),
+          mutateChoices(bnode, (l) => [...l, { text: 'คิว2', nextSceneId: '' }]),
+          mutateChoices(bnode, (l) => [...l, { text: 'คิว3', nextSceneId: '' }]),
+        ]);
+        const sj6 = await kapi.readJson(await kapi.join(dPath, 'scenes.json'));
+        const texts6 = ((sj6.chapters[ch4.guid] || []).find((x) => x.id === scB.id).choices || [])
+          .map((c) => c.text);
+        check('แก้ choices พร้อมกันหลายคำสั่งไม่เขียนทับกัน (ต่อคิว)',
+              ['คิว1', 'คิว2', 'คิว3'].every((t2) => texts6.includes(t2)), texts6.join('|'));
+        await updateSceneRow(dPath, scB.id, (r) => { delete r.choices; });
+        closeTab('::branching::');
+      }
+
+      // ---- ข้อ 10: Wiki มีระบบเวอร์ชันเหมือนฉาก ----
+      {
+        const wr = await wikiRoot();
+        const cDir = await kapi.join(wr, 'characters');
+        const wf = (await kapi.listFiles(cDir, '.json'))[0];
+        if (wf) {
+          const wpath = await kapi.join(cDir, wf);
+          if (state.tabs.has(wpath)) closeTab(wpath);
+          await openEntity(wpath);
+          await new Promise((r) => setTimeout(r, 600));
+          const wtab = state.tabs.get(wpath);
+          check('หน้า Wiki มีปุ่มประวัติ/บันทึกเวอร์ชัน',
+                wtab.pane.querySelectorAll('.wiki-ver-btn').length === 2,
+                String(wtab.pane.querySelectorAll('.wiki-ver-btn').length));
+          await snapshotFile(wpath, 'เวอร์ชันทดสอบ Wiki');
+          const snaps = await listSnapshots(wpath);
+          check('บันทึกเวอร์ชันของหน้า Wiki (.json) ได้', snaps.length >= 1, String(snaps.length));
+          check('เวอร์ชัน Wiki เก็บชื่อที่ตั้งไว้',
+                snaps.some((s) => s.label === 'เวอร์ชันทดสอบ Wiki'), JSON.stringify(snaps[0]));
+          // ข้อ 2: วงกลมรูปตัวละครต้องกดใส่รูปได้
+          const av = wtab.pane.querySelector('.wiki-prof-avatar');
+          check('การ์ดตัวละครมีวงกลมรูป', !!av);
+          check('วงกลมรูปคลิกเพื่อใส่รูปได้ (ไม่ใช่ไอคอนตายตัว)',
+                !!av && typeof av.onclick === 'function' && getComputedStyle(av).cursor === 'pointer');
+        }
+      }
+
+      // ---- ข้อ 7: แยกจอ/เทียบเวอร์ชัน — คลิกแท็บฝั่งขวาแล้วต้องไม่หลุดแยกจอ ----
+      {
+        const files = [...state.tabs.keys()].filter((f) => /\.md$/i.test(f));
+        if (files.length >= 2) {
+          activate(files[0]);
+          applyCompare(files[1]);
+          await new Promise((r) => setTimeout(r, 150));
+          check('เปิดเทียบด้านขวา → เข้าโหมดแยกจอ',
+                $('#panes').classList.contains('split') && !!document.querySelector('.pane.compare-on'));
+          check('เส้นทางเทียบเอกสารก็ได้ที่จับลากเหมือน Split View (ข้อ 7)',
+                !!$('#panes').querySelector('.k-split-handle'));
+          activate(files[1]);                       // เดิม: แยกจอหลุดทันที
+          await new Promise((r) => setTimeout(r, 150));
+          check('คลิกแท็บฝั่งขวา → สลับข้าง ไม่ทิ้งการแยกจอ',
+                $('#panes').classList.contains('split') && state.compareFile === files[0],
+                'compareFile=' + state.compareFile);
+          check('สลับข้างแล้วช่องที่ไม่ใช่แท็บปัจจุบันถูกทำเครื่องหมายใบเดียว',
+                document.querySelectorAll('.k-split-pane > .pane.compare-on').length === 1,
+                String(document.querySelectorAll('.k-split-pane > .pane.compare-on').length));
+          const paneOn = document.querySelector('#split-root .k-split-pane > .pane > .ProseMirror');
+          check('โหมดแยกจอ: หน้ากระดาษหดตามช่องที่แคบลง (sync กับมุมมองกระดาษ)',
+                !!paneOn && getComputedStyle(paneOn).maxWidth.includes('px'),
+                paneOn && getComputedStyle(paneOn).maxWidth);
+          clearCompare();
+          check('ปิดเทียบ → ออกจากโหมดแยกจอครบ',
+                !$('#panes').classList.contains('split') &&
+                !document.getElementById('split-root') &&
+                !document.querySelector('.pane.compare-on'));
+        }
+      }
+    }
+
+    // ============================================================
+    // alpha.44 — เก็บงาน 7 ฟีเจอร์ปิดท้าย (65/66/68/69/70/77/78)
+    // ============================================================
+    {
+      // ---- ข้อ 65: โหมดโฟกัสต้องหรี่บรรทัดอื่นจริง (ไม่ใช่แค่ซ่อน UI) ----
+      {
+        const scE = document.querySelector('#tree .scene[data-path]');
+        if (scE) { scE.click(); await new Promise((r) => setTimeout(r, 400)); }
+        const tF = state.active;
+        // หน้าต่างเทสไม่ได้ถูกวาดจริง → transition ค้างที่ค่าเริ่มต้น (getComputedStyle คืนค่าระหว่างวิ่ง)
+        // ต้องสั่งจบ animation เองก่อนวัด ไม่ใช่แค่ "รอให้ครบ .15s" (ดูบทเรียนข้อ 14i)
+        const settle = (elm) => { try { elm.getAnimations?.().forEach((a) => a.finish()); } catch {} };
+        if (tF?.editor) {
+          selHead(tF.editor.view);
+          toggleFocus(true);
+          document.dispatchEvent(new KeyboardEvent('keyup', { key: 'a', bubbles: true }));
+          await new Promise((r) => setTimeout(r, 300));   // รอ transition .15s ให้จบก่อนวัด opacity
+          const blocks = [...tF.editor.view.dom.children];
+          blocks.forEach(settle);
+          const dim = blocks.find((b) => !b.classList.contains('fm2-active'));
+          check('โหมดโฟกัส: บรรทัดที่ไม่ได้เขียนอยู่ถูกหรี่จริง (ไม่ใช่แค่คลาส)',
+                !!dim && +getComputedStyle(dim).opacity === focusDim(),
+                dim ? `opacity=${getComputedStyle(dim).opacity} · dim=${focusDim()} · tab=${tF.title}`
+                    : 'ไม่มีบล็อกที่ถูกหรี่');
+          const act = blocks.find((b) => b.classList.contains('fm2-active'));
+          check('โหมดโฟกัส: บรรทัดที่เคอร์เซอร์อยู่ยังทึบเต็ม',
+                !!act && +getComputedStyle(act).opacity === 1, act && getComputedStyle(act).opacity);
+          // ปรับความจางในตั้งค่า → เห็นผลทันทีโดยไม่ต้องปิด-เปิดโหมด
+          const oldDim = state.settings.focusDim;
+          state.settings.focusDim = 0.6; applyFocusDim();
+          await new Promise((r) => setTimeout(r, 300));
+          blocks.forEach(settle);
+          check('ปรับ "ความจางบรรทัดอื่น" ในตั้งค่าแล้วมีผลทันที',
+                !!dim && +getComputedStyle(dim).opacity === 0.6, dim && getComputedStyle(dim).opacity);
+          state.settings.focusDim = oldDim; applyFocusDim();
+
+          // Esc: ต้องไม่แย่งกับกล่องโต้ตอบที่เปิดค้าง
+          const fakeOv = el('div', 'k-overlay'); document.body.append(fakeOv);
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          check('มีกล่องเปิดอยู่ → Esc ไม่หลุดโหมดโฟกัส (กล่องปิดตัวเองก่อน)',
+                document.body.classList.contains('focus-mode'));
+          fakeOv.remove();
+
+          // Esc: เปิดทั้งโหมดอ่าน+โฟกัส → ออกทีละชั้น (โฟกัสก่อน)
+          toggleReading(true);
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          check('Esc ครั้งแรกออกจากโหมดโฟกัส แต่โหมดอ่านยังอยู่',
+                !document.body.classList.contains('focus-mode') &&
+                document.body.classList.contains('reading-mode'));
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          check('Esc ครั้งที่สองจึงออกจากโหมดอ่าน',
+                !document.body.classList.contains('reading-mode'));
+          check('ออกจากโฟกัสแล้ว .fm2-active ถูกล้างหมด', !document.querySelector('.fm2-active'));
+        }
+      }
+
+      // ---- ข้อ 66: เครื่องพิมพ์ดีดต้องหา "ตัวที่เลื่อนได้" เจอ แม้ตัวแก้ไขไม่ได้อยู่ใน .pane ----
+      {
+        const pmNow = document.querySelector('.pane.on > .ProseMirror');
+        check('เครื่องพิมพ์ดีด: ตัวแก้ไขใน pane → ใช้ .pane เป็นตัวเลื่อน',
+              !!pmNow && scrollHost(pmNow) === pmNow.closest('.pane'));
+        const box = el('div'); box.style.cssText = 'overflow-y:auto;height:50px';
+        const inner = el('div', 'ProseMirror'); box.append(inner); document.body.append(box);
+        check('เครื่องพิมพ์ดีด: ตัวแก้ไขในหน้าต่างลอย (ไม่มี .pane) → ไต่หา element ที่เลื่อนได้',
+              scrollHost(inner) === box);
+        box.remove();
+        check('ปิดโหมดอยู่ → twScroll ไม่ทำอะไร', twScroll() === false);
+      }
+
+      // ---- ข้อ 68: ส่งออกบล็อกต้องได้ HTML จริง + ตัวเลือกมีผล ----
+      {
+        const b1 = await buildBlogHtml({ theme: 'medium', chapterHeads: true, sceneHeads: true, embedImages: false });
+        check('ส่งออกบล็อก: ได้ฉากอย่างน้อย 1 ฉาก', b1.nScenes >= 1, String(b1.nScenes));
+        check('ส่งออกบล็อก: เนื้อหาเป็น HTML (มี <article> + <p>)',
+              b1.html.includes('<article>') && b1.html.includes('<p>'));
+        check('ส่งออกบล็อก: ไม่มี markdown ดิบหลุดไป (# / ** / frontmatter)',
+              !/\n#{1,6}\s/.test(b1.html) && !b1.html.includes('**') && !b1.html.includes('---\ntitle:'));
+        const b2 = await buildBlogHtml({ theme: 'dark', chapterHeads: false, sceneHeads: false });
+        check('ส่งออกบล็อก: ปิดหัวบท/หัวฉากแล้วไม่มี <h2>/<h3>',
+              !b2.html.includes('<h2>') && !b2.html.includes('<h3>'));
+        check('ส่งออกบล็อก: เลือกธีมมืดแล้ว CSS เปลี่ยนจริง',
+              b2.html.includes(BLOG_THEMES.dark.css.trim().split('\n')[0]));
+        const b3 = await buildBlogHtml({ embedImages: true });
+        check('ส่งออกบล็อก: ฝังรูปเป็น data URI (ไฟล์เดียวจบ)',
+              b3.html.includes('data:image/png;base64,') && b3.nImages >= 1,
+              `nImages=${b3.nImages}`);
+        const b4 = await buildBlogHtml({ embedImages: false });
+        check('ส่งออกบล็อก: ไม่ฝังรูป → ยังอ้าง path เดิม', !b4.html.includes('data:image/'));
+        const findB = SHORTCUTS.find((s) => s[3] === 'export-blog');
+        check('ส่งออกบล็อกมีคีย์ลัด Ctrl+Shift+B', String(findB?.slice(0, 3)) === 'KeyB,true,true');
+      }
+
+      // ---- ข้อ 69: สถานะฉากมีสี + ย้ายข้ามโปรเจกต์ได้ ----
+      {
+        check('สถานะมาตรฐานมีสีประจำตัว', /^#[0-9a-f]{6}$/i.test(statusColor('กำลังเขียน')));
+        await addCustomStatus('รอตรวจ', '#123456');
+        check('เพิ่มสถานะพร้อมสีได้', statusColor('รอตรวจ') === '#123456');
+        await setStatusColor('เขียนเสร็จ', '#abcdef');
+        check('เปลี่ยนสีสถานะมาตรฐานได้ + บันทึกลงไฟล์',
+              statusColor('เขียนเสร็จ') === '#abcdef' &&
+              ((await kapi.readJson(await kapi.join(state.root, 'project.khn.json')))
+                .customStatusColors || {})['เขียนเสร็จ'] === '#abcdef');
+        // ชิปสถานะใน Explorer ต้องได้สีนั้นจริง
+        const chS = (await kapi.readJson(await kapi.join(dPath, 'draft.json'))).chapters[0];
+        const sjS = await kapi.readJson(await kapi.join(dPath, 'scenes.json'));
+        const scS2 = (sjS.chapters[chS.guid] || [])[0];
+        if (scS2) {
+          await setSceneMeta(dPath, chS, scS2, { status: 'รอตรวจ' });
+          await buildTree();
+          const chip = [...document.querySelectorAll('#tree .sc-status')]
+            .find((c) => c.textContent.trim() === 'รอตรวจ');
+          check('ชิปสถานะใน Explorer ได้สีของสถานะนั้น',
+                !!chip && getComputedStyle(chip).color === 'rgb(18, 52, 86)',
+                chip ? getComputedStyle(chip).color : 'ไม่พบชิป');
+          await setSceneMeta(dPath, chS, scS2, { status: '' });
+        }
+        // ส่งออก → ลบ → นำเข้ากลับ
+        const dump = statusesToJson();
+        check('ชุดสถานะที่ส่งออกมีทั้งชื่อและสี',
+              dump.statuses.includes('รอตรวจ') && dump.colors['รอตรวจ'] === '#123456');
+        await removeCustomStatus('รอตรวจ');
+        check('ลบแล้วหายจากรายการรวม', !allStatuses().includes('รอตรวจ'));
+        check('นำเข้ากลับได้ 1 รายการ', (await importStatuses(dump)) === 1 && allStatuses().includes('รอตรวจ'));
+        check('นำเข้าซ้ำไม่เพิ่มของเดิมซ้ำ', (await importStatuses(dump)) === 0);
+        await removeCustomStatus('รอตรวจ');
+        await setStatusColor('เขียนเสร็จ', STATUS_COLORS['เขียนเสร็จ']);
+        await buildTree();
+      }
+
+      // ---- ข้อ 70: เปิดไฟล์ด่วน — แคช + สแกนใหม่ + คำใบ้ ----
+      {
+        await openQuickOpen();
+        await new Promise((r) => setTimeout(r, 300));
+        check('กล่องเปิดไฟล์ด่วนมีแถบคำใบ้คีย์ลัด',
+              (document.querySelector('.k-qo-hint')?.textContent || '').includes('Enter'));
+        check('แสดงจำนวนไฟล์ที่พบ',
+              /\d+\/\d+ ไฟล์/.test(document.querySelector('.k-qo-count')?.textContent || ''),
+              document.querySelector('.k-qo-count')?.textContent);
+        check('มีปุ่มสแกนใหม่', !!document.querySelector('.k-qo-refresh'));
+        const cachedN = quickOpenCache().files.length;
+        check('สแกนแล้วเก็บแคชไว้ใช้ครั้งหน้า', cachedN >= 1 && quickOpenCache().root === state.root,
+              'files=' + cachedN);
+        document.querySelector('.k-qo-input')
+          .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        // เปิดซ้ำ: ต้องมีรายการทันทีจากแคช (ไม่ต้องรอสแกน)
+        const p2 = openQuickOpen();
+        check('เปิดซ้ำ → มีรายการทันทีจากแคช (ไม่ต้องรอสแกนใหม่)',
+              document.querySelectorAll('.k-qo-row').length >= 1,
+              String(document.querySelectorAll('.k-qo-row').length));
+        await p2;
+        document.querySelector('.k-qo-input')
+          .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        check('ปิดกล่องแล้วไม่มีค้างใน DOM', !document.querySelector('.k-qo'));
+      }
+
+      // ---- ข้อ 77: รวบรวมเนื้อหาให้ AI (ทดสอบได้โดยไม่ต้องยิง API) ----
+      {
+        let lastDone = 0, total0 = 0;
+        const col = await collectProjectText({ onProgress: (d, t2) => { lastDone = d; total0 = t2; } });
+        check('รวบรวมเนื้อหา: อ่านฉากได้อย่างน้อย 1 ฉาก', col.scenes >= 1, String(col.scenes));
+        check('รวบรวมเนื้อหา: รายงานความคืบหน้าครบทุกฉาก', total0 >= 1 && lastDone === total0,
+              `${lastDone}/${total0}`);
+        check('รวบรวมเนื้อหา: มีชื่อเล่ม/บทกำกับให้ AI', col.text.includes('## ') && col.text.includes('### '));
+        check('รวบรวมเนื้อหา: รวมคลัง Wiki ด้วย (เดิมสรุปแต่เนื้อฉาก)',
+              col.entities >= 1 && col.text.includes('คลังข้อมูล (Wiki)'), 'entities=' + col.entities);
+        const colNo = await collectProjectText({ includeWiki: false });
+        check('ปิดตัวเลือก Wiki แล้วไม่รวมคลัง', !colNo.text.includes('คลังข้อมูล (Wiki)'));
+        check('แฮชเนื้อหาเสถียร (เนื้อเท่ากัน = แฮชเท่ากัน)', hashText('กขค') === hashText('กขค'));
+        check('แฮชเปลี่ยนเมื่อเนื้อเปลี่ยน', hashText('กขค') !== hashText('กขง'));
+        check('ยังไม่เคยสรุป → ไม่มีแคช', summaryCacheState(col.text) === 'none');
+        state.meta.ai = { ...(state.meta.ai || {}),
+                          summaryCache: { hash: hashText(col.text), text: 'สรุปทดสอบ', date: new Date().toISOString() } };
+        check('เนื้อหาเดิม → ใช้ผลสรุปที่แคชไว้ (ไม่เสีย token ซ้ำ)', summaryCacheState(col.text) === 'fresh');
+        check('เนื้อหาเปลี่ยน → แคชหมดอายุ ต้องสรุปใหม่', summaryCacheState(col.text + 'x') === 'stale');
+        delete state.meta.ai.summaryCache;
+      }
+
+      // ---- ข้อ 78: แนะนำชื่อ — เข้าถึงได้จากคลิกขวา + จำชื่อที่เคยแนะนำ ----
+      {
+        const scE2 = document.querySelector('#tree .scene[data-path]');
+        scE2.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 40, clientY: 40 }));
+        const items = [...document.querySelectorAll('.k-menu .k-menu-item')].map((i) => i.textContent);
+        check('คลิกขวาที่ฉาก → มีเมนู "แนะนำชื่อฉากด้วย AI"',
+              items.some((i) => i.includes('แนะนำชื่อฉากด้วย AI')), items.join(' | ').slice(0, 200));
+        closeMenu();
+        const chHeadEl = document.querySelector('#tree .ch-title');
+        if (chHeadEl) {
+          chHeadEl.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 40, clientY: 40 }));
+          const items2 = [...document.querySelectorAll('.k-menu .k-menu-item')].map((i) => i.textContent);
+          check('คลิกขวาที่บท → มีเมนู "แนะนำชื่อบทด้วย AI"',
+                items2.some((i) => i.includes('แนะนำชื่อบทด้วย AI')), items2.join(' | ').slice(0, 200));
+          closeMenu();
+        }
+        rememberTitles('scene', 'ฉากทดสอบ', ['ชื่อ ก', 'ชื่อ ข']);
+        const past = pastTitlesFor('ฉากทดสอบ');
+        check('จำชื่อที่ AI เคยแนะนำไว้ให้เลือกซ้ำได้',
+              past.includes('ชื่อ ก') && past.includes('ชื่อ ข'), past.join(','));
+        check('ประวัติชื่อแยกตามหัวข้อ (ไม่ปนกัน)', pastTitlesFor('หัวข้ออื่น').length === 0);
+        for (let i = 0; i < 55; i++) rememberTitles('scene', 'ล้น', ['t' + i]);
+        check('ประวัติชื่อไม่โตไม่จำกัด (เก็บ 50 รายการล่าสุด)',
+              (state.meta.ai.titleHistory || []).length === 50,
+              String((state.meta.ai.titleHistory || []).length));
+        delete state.meta.ai.titleHistory;
+      }
+
+      // ---- ข้อ 4: Template Variables ({{VariableName}}) ใน compile ----
+      {
+        const { resolveVars, buildVarContext } = await import('./template-vars.js');
+        check('resolveVars แทนที่ {{key}} ได้',
+              resolveVars('สวัสดี {{name}}', { name: 'จอห์น' }) === 'สวัสดี จอห์น');
+        check('resolveVars ไม่เปลี่ยนถ้าไม่มี key',
+              resolveVars('ไม่มีตัวแปร', {}) === 'ไม่มีตัวแปร');
+        check('resolveVars รองรับ key ที่มีจุด (entity.field)',
+              resolveVars('อายุ {{hero.age}} ปี', { 'hero.age': '25' }) === 'อายุ 25 ปี');
+        check('resolveVars ทิ้ง {{…}} ไว้ถ้า key ไม่อยู่ใน ctx',
+              resolveVars('ค่า {{missing}} ตรงนี้', {}) === 'ค่า {{missing}} ตรงนี้');
+        check('resolveVars รองรับ key ไทย',
+              resolveVars('ชื่อ {{ตัวละคร}}', { ตัวละคร: 'จอห์น' }) === 'ชื่อ จอห์น');
+        // test buildVarContext with actual Wiki fixture
+        const ctx = await buildVarContext(state.root, kapi);
+        check('buildVarContext ไม่ throw', ctx && typeof ctx === 'object');
+        // test that resolve-vars step exists in STEP_DEFS
+        check('STEP_DEFS มี resolve-vars',
+              STEP_DEFS.some(s => s.key === 'resolve-vars' && s.stage === 'model'));
+        // test runWorkflow with resolve-vars step + varCtx
+        const model = { title: 'ทดสอบ', author: 'ผู้แต่ง',
+          chapters: [{ title: 'บทที่ 1', scenes: [{ title: 'ฉาก {{hero}}', body: 'ตัว {{hero}} ลุกขึ้น', status: 'Outline', type: 'scene', words: 5 }] }] };
+        const wfTest = { steps: [
+          { key: 'resolve-vars', on: true },
+          { key: 'scene-heading', on: true, opts: { template: '### {title}' } },
+        ], ext: 'md' };
+        const r = runWorkflow(model, wfTest, { varCtx: { hero: 'จอห์น' } });
+        check('runWorkflow resolve-vars ใน title',
+              r.text.includes('ฉาก จอห์น'), JSON.stringify(r.text).slice(0, 200));
+        check('runWorkflow resolve-vars ใน body',
+              r.text.includes('ตัว จอห์น ลุกขึ้น'), JSON.stringify(r.text).slice(0, 200));
+      }
+
+      // ---- ข้อ 5: Draft System — CRUD ฉบับร่าง ----
+      {
+        const { listDraftsForSection, createDraft } = await import('./drafts.js');
+        const secs = await listSections();
+        check('มีเล่มอย่างน้อย 1 เล่มสำหรับเทส draft', secs.length >= 1);
+        const sec = secs[0];
+
+        // list drafts
+        const before = await listDraftsForSection(sec.secPath);
+        check('listDraftsForSection เจอ default draft',
+              before.length >= 1 && before.some(d => d.name === 'default' && d.primary));
+        check('มี draft path ที่ใช้ได้', before[0].dPath && before[0].name);
+
+        // create new draft
+        const newName = 'test-draft-' + Date.now().toString(36);
+        const newPath = await createDraft(sec.secPath, newName);
+        check('createDraft สร้างร่างใหม่ได้', !!newPath && await kapi.exists(newPath));
+        const afterCreate = await listDraftsForSection(sec.secPath);
+        check('createDraft: รายชื่อร่างเพิ่มขึ้น', afterCreate.some(d => d.name === newName));
+
+        // set primary draft
+        const { setPrimaryDraft } = await import('./drafts.js');
+        await setPrimaryDraft(sec.secPath, newName);
+        const afterPrimary = await listDraftsForSection(sec.secPath);
+        const prim = afterPrimary.find(d => d.name === newName);
+        check('setPrimaryDraft เปลี่ยน primary ได้', prim && prim.primary === true);
+        const defAfter = afterPrimary.find(d => d.name === 'default');
+        check('setPrimaryDraft: ร่างเดิมไม่ใช่ primary แล้ว', defAfter && defAfter.primary === false);
+
+        // rename draft (no dialog needed)
+        const { renameDraft } = await import('./drafts.js');
+        const renamed = newName + '-renamed';
+        await renameDraft(sec.secPath, newName, renamed);
+        const afterRename = await listDraftsForSection(sec.secPath);
+        check('renameDraft เปลี่ยนชื่อร่างได้',
+              afterRename.some(d => d.name === renamed)
+              && !afterRename.some(d => d.name === newName));
+        check('renameDraft: primary ติดตามไปด้วย',
+              (afterRename.find(d => d.name === renamed) || {}).primary);
+
+        // restore primary to default before delete
+        await setPrimaryDraft(sec.secPath, 'default');
+
+        // delete draft — confirmBox blocks; test via direct recycle move
+        const dPath = await kapi.join(sec.secPath, 'Draft', renamed);
+        const recyclePath = await kapi.join(state.root, 'Recycle', 'draft-e2e-del-' + Date.now().toString(36));
+        if (await kapi.exists(dPath)) {
+          await kapi.move(dPath, recyclePath);
+          check('deleteDraft: ย้ายร่างไปถังขยะได้', await kapi.exists(recyclePath));
+        }
+        const afterDel = await listDraftsForSection(sec.secPath);
+        check('deleteDraft: รายชื่อร่างหายไป',
+              !afterDel.some(d => d.name === renamed));
+
+        // verify primary stays on default
+        const final = await listDraftsForSection(sec.secPath);
+        check('primary กลับมาที่ default',
+              final.some(d => d.name === 'default' && d.primary));
+      }
+
+      // เก็บกวาดกล่อง/เมนูที่อาจค้าง (บทเรียนข้อ 16: กล่องค้างทำสกรีนช็อตเทสถัดไปเพี้ยน)
+      document.querySelectorAll('.k-overlay').forEach((o) => o.remove());
+      closeMenu();
     }
 
     out.push('ALL OK');

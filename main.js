@@ -24,6 +24,17 @@ const isMac = process.platform === 'darwin';
 const C = isMac ? '⌘' : 'Ctrl';
 const S = 'Shift';
 
+// ---- สถานะของรายการเมนูที่เป็น "สวิตช์" (ข้อ 3) ----
+// เมนู native แสดงเครื่องหมายถูกเองเมื่อ type:'checkbox'/'radio' + checked
+// renderer ส่งค่ามาที่ 'menu:toggles' ทุกครั้งที่สถานะเปลี่ยน แล้ว buildMenu() ใหม่
+const toggles = {
+  paperMode: true, readingMode: false, focusMode: false, typewriter: false,
+  lineNumbers: false, splitView: false, format: 'prose',
+  panels: { 'tree-panel': true, 'props-panel': true, 'outline-panel': true },
+};
+// ตัวช่วยสร้างรายการสวิตช์ — ผู้ใช้เห็นชัดว่ากดแล้วเปิด/ปิด ไม่ใช่คำสั่งครั้งเดียว
+const chk = (label, on, fn) => ({ label, type: 'checkbox', checked: !!on, click: fn });
+
 function buildMenu() {
   const recents = readRecent().map((p) => ({
     label: p, click: () => send('open-project-path', p),
@@ -42,7 +53,7 @@ function buildMenu() {
       { label: 'ส่งออกเป็น PDF…', click: () => send('export-pdf') },
       { label: 'ส่งออกฉบับร่างรวมเป็น .md…', click: () => send('export-draft') },
       { label: `ส่งออกด้วยเวิร์กโฟลว์… (${C}+${S}+E)`, click: () => send('compile') },
-      { label: 'ส่งออกเป็น HTML สำหรับบล็อก…', click: () => send('export-blog') },
+      { label: `ส่งออกเป็น HTML สำหรับบล็อก… (${C}+${S}+B)`, click: () => send('export-blog') },
       { label: 'ส่งออกทั้งโปรเจกต์เป็น .zip…', click: () => send('export-zip') },
       { label: 'ส่งออกทั้งโปรเจกต์เป็น .json…', click: () => send('export-json') },
       { type: 'separator' },
@@ -56,6 +67,7 @@ function buildMenu() {
       { label: 'จัดการแท็บสี (Visual Tags)…', click: () => send('visual-tags') },
       { type: 'separator' },
       { label: `ปิดแท็บ (${C}+W)`, click: () => send('close-tab') },
+      { label: `ปิดทุกแท็บ (${C}+${S}+W)`, click: () => send('close-all-tabs') },
       { role: 'quit', label: 'ออกจากโปรแกรม' },
     ] },
     { id: 'Edit', label: 'แก้ไข', submenu: [
@@ -69,14 +81,16 @@ function buildMenu() {
       { type: 'separator' },
       { label: 'โน้ตด่วน…', click: () => send('quick-note') },
       { label: 'ดูโน้ตทั้งหมด…', click: () => send('all-notes') },
-      { label: 'คอมเมนต์ในฉากนี้…', click: () => send('comments') },
+      { label: '💬 คอมเมนต์ในฉากนี้ (แผง)', click: () => send('comments') },
       { type: 'separator' },
       { label: 'ประวัติการตัดสินใจ…', click: () => send('player-history') },
     ] },
     { id: 'Format', label: 'รูปแบบ', submenu: [
       { label: 'โหมดเอกสาร', submenu: [
-        { label: '✅ นิยาย', click: () => send('set-format', 'prose') },
-        { label: '🎬 บทหนัง', click: () => send('set-format', 'screenplay') },
+        { label: '📖 นิยาย', type: 'radio', checked: toggles.format !== 'screenplay',
+          click: () => send('set-format', 'prose') },
+        { label: '🎬 บทหนัง', type: 'radio', checked: toggles.format === 'screenplay',
+          click: () => send('set-format', 'screenplay') },
         { type: 'separator' },
         { label: `สลับโหมด นิยาย ↔ บทหนัง (${C}+${S}+M)`, click: () => send('toggle-format') },
       ] },
@@ -105,45 +119,57 @@ function buildMenu() {
         { label: `ย่อ (${C}+-)`, click: () => send('zoom', -1) },
         { label: `รีเซ็ตซูม (${C}+${S}+0)`, click: () => send('zoom', 0) },
       ] },
-      { label: `โหมดหน้ากระดาษ (${C}+${S}+P)`, click: () => send('paper-mode') },
+      chk(`โหมดหน้ากระดาษ (${C}+${S}+P)`, toggles.paperMode, () => send('paper-mode')),
+      chk('แสดงเลขบรรทัด', toggles.lineNumbers, () => send('line-numbers')),
       { type: 'separator' },
       { label: 'แทรกรูป…', click: () => send('insert-image') },
     ] },
     { id: 'View', label: 'มุมมอง', submenu: [
       { label: 'แดชบอร์ด', click: () => send('dashboard') },
-      { label: 'จัดการเล่ม', click: () => send('books') },
+      { label: 'จัดการเล่มและฉบับร่าง (Books)', click: () => send('books') },
       { label: 'เส้นเวลา (Timeline)', click: () => send('timeline') },
       { label: 'แผนที่ (Maps)', click: () => send('maps') },
       { label: 'Story Network (แผนผังความสัมพันธ์)', click: () => send('network') },
       { label: 'Planner (กระดานวางแผน)', click: () => send('planner') },
       { label: 'Kanban (กระดานตามสถานะ)', click: () => send('kanban') },
       { label: 'แยกหน้าจอ (Split View)', submenu: [
-        { label: `แยกซ้าย-ขวา (${C}+${S}+\\)`, click: () => send('split-view', 'right') },
-        { label: 'แยกบน-ล่าง', click: () => send('split-view', 'down') },
-        { label: 'ยกเลิกแยกหน้าจอ', click: () => send('split-close') },
+        chk(`แยกซ้าย-ขวา (${C}+${S}+\\)`, toggles.splitView === 'right', () => send('split-view', 'right')),
+        chk('แยกบน-ล่าง', toggles.splitView === 'down', () => send('split-view', 'down')),
+        { label: 'ยกเลิกแยกหน้าจอ', enabled: !!toggles.splitView, click: () => send('split-close') },
       ] },
       { label: 'ศูนย์รวม (Centralize — backlinks/สถิติสด)', click: () => send('centralize') },
       { label: 'ผังเรื่องแตกสาย (Branch Tree)', click: () => send('branching') },
+      { label: 'สร้างทางเลือกจาก [ข้อความ] ในฉากนี้', click: () => send('branch-sync') },
       { label: 'ผังพื้นที่ (Floor Plan)', click: () => send('floorplan') },
-      { label: 'สมุดโน้ตด่วน', click: () => send('scratchpad') },
+      { label: 'สมุดโน้ตด่วน', click: () => send('toggle-panel', 'notes') },
       { type: 'separator' },
       { label: `ค้นหาไฟล์ด่วน… (${C}+${S}+O)`, click: () => send('quick-open') },
-      { label: `ค้นหาทั้งโปรเจกต์… (${C}+${S}+F)`, click: () => send('global-search') },
+      { label: `ค้นหาทั้งโปรเจกต์… (${C}+${S}+F)`, click: () => send('toggle-panel', 'search') },
       { type: 'separator' },
       { label: 'แผง', submenu: [
-        { label: 'โปรเจกต์ (Explorer)', click: () => send('show-panel', 'tree-panel') },
-        { label: 'คุณสมบัติ', click: () => send('show-panel', 'props-panel') },
-        { label: 'Navigation', click: () => send('show-panel', 'outline-panel') },
+        // id แผงเปลี่ยนเป็นชื่อสั้นของ Panel System (tree/outline/props) — ฝั่ง renderer มี alias ให้ชื่อเดิมด้วย
+        chk('โปรเจกต์ (Explorer)', toggles.panels['tree'], () => send('toggle-panel', 'tree')),
+        chk('Navigation', toggles.panels['outline'], () => send('toggle-panel', 'outline')),
+        chk('คุณสมบัติ', toggles.panels['props'], () => send('toggle-panel', 'props')),
+        chk('หน้าแรก', toggles.panels['home'], () => send('toggle-panel', 'home')),
+        chk('บันทึก (Log)', toggles.panels['log'], () => send('toggle-panel', 'log')),
+        chk('คอมเมนต์', toggles.panels['comments'], () => send('toggle-panel', 'comments')),
         { type: 'separator' },
-        { label: 'จัดการแผง (แสดง/ซ่อน)…', click: () => send('panel-system') },
+        { label: '📐 จัดการแผง (แสดง/ซ่อน)…', click: () => send('panel-system') },
         { label: 'รีเซ็ตการจัดวางแผงทั้งหมด', click: () => send('reset-panels') },
       ] },
       { type: 'separator' },
-      { label: `โหมดโฟกัส (${C}+${S}+D)`, click: () => send('focus-mode') },
-      { label: `โหมดเครื่องพิมพ์ดีด (${C}+${S}+T)`, click: () => send('typewriter') },
+      chk('โหมดอ่าน (เต็มจอ)', toggles.readingMode, () => send('reading-mode')),
+      chk(`โหมดโฟกัส (${C}+${S}+D)`, toggles.focusMode, () => send('focus-mode')),
+      chk(`โหมดเครื่องพิมพ์ดีด (${C}+${S}+T)`, toggles.typewriter, () => send('typewriter')),
       { type: 'separator' },
-      { role: 'zoomIn', label: `ซูมเข้า (${C}+=)` }, { role: 'zoomOut', label: `ซูมออก (${C}+-)` },
-      { role: 'resetZoom', label: `ขนาดปกติ (${C}+${S}+0)` },
+      // ห้ามใช้ role:'zoomIn'/'zoomOut'/'resetZoom' ของ Electron — เป็น zoom ระดับ webContents
+      // ทั้งหน้าต่าง จะซ้อนทับกับซูมหน้ากระดาษ (--page-scale) และขนาด UI (--ui-scale) จนเพี้ยน
+      { label: 'ขนาด UI (แถบเครื่องมือ/แผง/กล่อง)', submenu: [
+        { label: 'ขยาย UI', click: () => send('ui-scale', 1) },
+        { label: 'ย่อ UI', click: () => send('ui-scale', -1) },
+        { label: 'ขนาด UI ปกติ (100%)', click: () => send('ui-scale', 0) },
+      ] },
       { type: 'separator' },
       { role: 'togglefullscreen', label: 'เต็มจอ' },
       ...(TEST || process.env.KILLIAN_DEV ? [{ role: 'toggleDevTools' }] : []),
@@ -202,6 +228,9 @@ function createWindow() {
       { label: `ขีดเส้นใต้ (${C}+U)`, enabled: inEdit, click: () => send('fmt', 'underline') },
       { label: `ขีดฆ่า (${C}+${S}+X)`, enabled: inEdit, click: () => send('fmt', 'strike') },
       { label: `ล้างรูปแบบ (${C}+Space)`, enabled: inEdit, click: () => send('fmt', 'clear') },
+      { type: 'separator' },
+      { label: `เลิกทำ (${C}+Z)`, enabled: inEdit, click: () => send('editor-undo') },
+      { label: `ทำซ้ำ (${C}+Y)`, enabled: inEdit, click: () => send('editor-redo') },
       { type: 'separator' },
       { label: 'แทรกรูป…', enabled: inEdit, click: () => send('insert-image') },
       { label: `ค้นหา… (${C}+F)`, click: () => send('find') },
@@ -336,10 +365,26 @@ H('dialog:openImage', async () => {
     { name: 'รูปภาพ', extensions: ['png', 'jpg', 'jpeg', 'jfif', 'gif', 'webp', 'svg', 'avif', 'bmp', 'ico', 'tif', 'tiff', 'heic', 'heif', 'apng'] }] });
   return r.canceled ? null : r.filePaths[0];
 });
-H('dialog:saveAs', async (defName) => {
+// ฟิลเตอร์ตามนามสกุลของชื่อไฟล์ที่เสนอ — เดิมบังคับ Markdown ทุกกรณี (ส่งออก HTML/JSON แล้วได้ .md)
+const SAVE_FILTERS = {
+  md: { name: 'Markdown', extensions: ['md'] },
+  html: { name: 'HTML', extensions: ['html', 'htm'] },
+  json: { name: 'JSON', extensions: ['json'] },
+  txt: { name: 'ข้อความ', extensions: ['txt'] },
+  zip: { name: 'ZIP', extensions: ['zip'] },
+};
+H('dialog:saveAs', async (defName, kind) => {
+  const ext = String(defName || '').split('.').pop().toLowerCase();
+  const f = SAVE_FILTERS[kind] || SAVE_FILTERS[ext] || SAVE_FILTERS.md;
   const r = await dialog.showSaveDialog(win, { defaultPath: defName,
-    filters: [{ name: 'Markdown', extensions: ['md'] }] });
+    filters: [f, { name: 'ทุกไฟล์', extensions: ['*'] }] });
   return r.canceled ? null : r.filePath;
+});
+H('dialog:openFile', async (kind) => {
+  const f = SAVE_FILTERS[kind] || SAVE_FILTERS.json;
+  const r = await dialog.showOpenDialog(win, { properties: ['openFile'],
+    filters: [f, { name: 'ทุกไฟล์', extensions: ['*'] }] });
+  return r.canceled ? null : r.filePaths[0];
 });
 H('dialog:savePdf', async (defName) => {
   const r = await dialog.showSaveDialog(win, { defaultPath: defName,
@@ -357,6 +402,13 @@ H('win:minimize', () => win.minimize());
 H('win:maximize', () => (win.isMaximized() ? win.unmaximize() : win.maximize()));
 H('win:close', () => win.close());
 H('win:quitNow', () => { forceQuit = true; win.destroy(); app.quit(); });
+// renderer แจ้งสถานะสวิตช์ล่าสุด → สร้างเมนูใหม่ให้เครื่องหมายถูกตรงกับของจริง (ข้อ 3)
+H('menu:toggles', (patch) => {
+  if (!patch || typeof patch !== 'object') return false;
+  Object.assign(toggles, patch, { panels: { ...toggles.panels, ...(patch.panels || {}) } });
+  buildMenu();
+  return true;
+});
 ipcMain.handle('menu:popup', (e, label, x, y) => {
   const menu = Menu.getApplicationMenu();
   if (!menu) return;

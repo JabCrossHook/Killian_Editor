@@ -88,3 +88,69 @@ export async function openScratchpad() {
   activate(key);
   ta.focus();
 }
+
+export function renderNotesPanel(host) {
+  if (!host || host.dataset.ready === '1') return;
+  host.dataset.ready = '1';
+
+  let saved = '';
+  try { saved = localStorage.getItem('k2-scratchpad') || ''; } catch {}
+
+  const ta = el('textarea', 'scratch-area');
+  ta.value = saved;
+  ta.spellcheck = false;
+
+  let saveTimer = null;
+  ta.oninput = () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      try { localStorage.setItem('k2-scratchpad', ta.value); } catch {}
+    }, 3000);
+  };
+
+  const bar = el('div', 'scratch-bar');
+  const exportBtn = el('button', null, '📥 ส่งออก .md');
+  const memoBtn = el('button', null, '📋 ย้ายเข้า Memo');
+  const clearBtn = el('button', 'k-danger', '🗑 ล้าง');
+  const info = el('span', 'scratch-info');
+  bar.append(info, exportBtn, memoBtn, clearBtn);
+
+  exportBtn.onclick = async () => {
+    const dest = await kapi.saveAsDialog('scratchpad.md');
+    if (!dest) return;
+    await kapi.writeFile(dest, ta.value);
+    setStatus('ส่งออกแล้ว: ' + dest);
+  };
+  memoBtn.onclick = async () => {
+    if (!state.root) { setStatus('ยังไม่ได้เปิดโปรเจกต์'); return; }
+    if (!ta.value.trim()) { setStatus('ยังไม่มีข้อความให้ย้าย'); return; }
+    const { ask } = await import('./ui.js');
+    const { safeName, buildTree } = await import('./app.js');
+    const title = await ask('ชื่อโน้ต (Memo)', { value: ta.value.trim().slice(0, 40).split('\n')[0] });
+    if (!title) return;
+    const memoDir = await kapi.join(state.root, 'Memos');
+    await kapi.mkdir(memoDir);
+    const fname = safeName(title) + '-' + Date.now().toString(36) + '.md';
+    const { dumpMdFile } = await import('./md.js');
+    await kapi.writeFile(await kapi.join(memoDir, fname), dumpMdFile({ title, type: 'memo' }, ta.value));
+    setStatus('ย้ายเข้า Memo แล้ว: ' + title);
+    await buildTree();
+  };
+  clearBtn.onclick = () => {
+    ta.value = '';
+    try { localStorage.setItem('k2-scratchpad', ''); } catch {}
+    setStatus('ล้างสมุดโน้ตแล้ว');
+  };
+
+  const updateInfo = () => {
+    const lines = ta.value.split('\n').length;
+    const chars = ta.value.length;
+    const words = ta.value ? ta.value.trim().split(/\s+/).length : 0;
+    info.textContent = `${lines} บรรทัด · ${words} คำ · ${chars} อักขระ`;
+  };
+  ta.addEventListener('input', updateInfo);
+  updateInfo();
+
+  host.append(bar, ta);
+  ta.focus();
+}

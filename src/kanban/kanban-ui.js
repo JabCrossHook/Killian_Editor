@@ -1,7 +1,7 @@
 // kanban-ui.js — กระดาน Kanban แสดงฉากตามสถานะ · ลากการ์ดเปลี่ยนสถานะ (ข้อ 12)
 import { $, el, setStatus, state, SCENE_COLORS } from '../core.js';
 import { KanbanBoard, getKanbanData, addColumn as addCol, removeColumn as removeCol } from './kanban-core.js';
-import { allStatuses } from '../custom-status.js';
+import { allStatuses, statusColor } from '../custom-status.js';
 import { activate, closeTab, markDirty, saveProjectMeta } from '../app.js';
 import { chapterFolders, scenePath, syncIo } from '../project-scan.js';
 import { ask } from '../ui.js';
@@ -79,6 +79,9 @@ function renderKanban(b) {
     colEl.dataset.status = col.key;
 
     const colHead = el('div', 'kb-col-head');
+    // แถบสีหัวคอลัมน์ = สีประจำสถานะ (ตั้งได้ในกล่องจัดการสถานะฉาก)
+    const colHex = statusColor(col.key);
+    if (colHex) colHead.style.borderTop = '3px solid ' + colHex;
     const colTitle = el('span', 'kb-col-title');
     colTitle.textContent = (col.over ? '⚠ ' : '') + col.label + ' (' + col.count + ')';
     colHead.append(colTitle);

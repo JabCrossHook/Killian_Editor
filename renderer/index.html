@@ -15,11 +15,11 @@
   <span class="tb-menu" data-m="Help" data-i18n="menu.help">ช่วยเหลือ</span>
   <span class="tb-menu" data-m="AI" data-i18n="menu.ai">AI</span>
   <span id="tb-title"></span>
-  <span id="tb-dirty-dot" style="display:none" title="">💾</span>
+  <span id="tb-dirty-dot" style="display:none" title="" data-icon="save"></span>
   <span id="win-btns">
-    <span class="win-btn" id="win-min">─</span>
-    <span class="win-btn" id="win-max">□</span>
-    <span class="win-btn win-close" id="win-close">✕</span>
+    <span class="win-btn" id="win-min" data-icon="minus"></span>
+    <span class="win-btn" id="win-max" data-icon="maximize"></span>
+    <span class="win-btn win-close" id="win-close" data-icon="x"></span>
   </span>
 </div>
 <div id="topbar">
@@ -30,12 +30,20 @@
   <span id="elem-badge"></span>
   <button id="new-btn" data-i18n="app.newProject">สร้างโปรเจกต์ใหม่…</button>
   <button id="open-btn" data-i18n="app.openProject">เปิดโปรเจกต์…</button>
-  <button id="save-all-btn" title="บันทึกทั้งหมด (Ctrl+Shift+S)" style="display:none">💾</button>
-  <button id="home-btn" title="หน้าแรก">🏠</button>
+  <button id="save-all-btn" title="บันทึกทั้งหมด (Ctrl+Shift+S)" style="display:none" data-icon="save"></button>
+  <button id="home-btn" title="หน้าแรก" data-icon="home"></button>
 </div>
 <div id="toolbar">
-  <button id="tb-paper" class="tb" title="โหมดหน้ากระดาษ (กระดาษขาว · Ctrl+Shift+P)">📄</button>
+  <button id="tb-paper" class="tb tb-toggle" title="โหมดหน้ากระดาษ (กระดาษขาว · Ctrl+Shift+P)" data-icon="file"></button>
   <button id="tb-mode" title="สลับโหมดเอกสาร นิยาย ↔ บทหนัง (Ctrl+Shift+M)" style="display:none">📖 นิยาย ▾</button>
+  <select id="tb-sp-elem" class="tb" style="display:none">
+    <option value="action">บรรยาย</option>
+    <option value="scene">หัวฉาก</option>
+    <option value="character">ตัวละคร</option>
+    <option value="parenthetical">วงเล็บ</option>
+    <option value="dialogue">บทพูด</option>
+    <option value="transition">ทรานซิชัน</option>
+  </select>
   <span class="sep"></span>
   <select id="tb-style" class="tb">
     <option value="p" data-i18n="toolbar.normalText">ข้อความปกติ</option>
@@ -48,30 +56,37 @@
     <option value="quote" data-i18n="toolbar.quote">คำพูดยกมา</option>
   </select>
   <span class="sep"></span>
-  <button id="tb-bold" class="tb" title="ตัวหนา (Ctrl+B)"><b>B</b></button>
-  <button id="tb-italic" class="tb" title="ตัวเอียง (Ctrl+I)"><i>I</i></button>
-  <button id="tb-underline" class="tb" title="ขีดเส้นใต้ (Ctrl+U)"><u>U</u></button>
-  <button id="tb-strike" class="tb" title="ขีดฆ่า"><s>S</s></button>
+  <button id="tb-bold" class="tb" title="ตัวหนา (Ctrl+B)" data-icon="bold"></button>
+  <button id="tb-italic" class="tb" title="ตัวเอียง (Ctrl+I)" data-icon="italic"></button>
+  <button id="tb-underline" class="tb" title="ขีดเส้นใต้ (Ctrl+U)" data-icon="underline"></button>
+  <button id="tb-strike" class="tb" title="ขีดฆ่า" data-icon="strikethrough"></button>
   <span class="sep"></span>
-  <button id="tb-ul" class="tb" title="รายการหัวข้อย่อย">•≡</button>
-  <button id="tb-ol" class="tb" title="รายการตัวเลข">1≡</button>
-  <button id="tb-quote" class="tb" title="คำพูดยกมา">❝</button>
+  <button id="tb-ul" class="tb" title="รายการหัวข้อย่อย" data-icon="list-ul"></button>
+  <button id="tb-ol" class="tb" title="รายการตัวเลข" data-icon="list-ol"></button>
+  <button id="tb-quote" class="tb" title="คำพูดยกมา" data-icon="quote-left"></button>
   <span class="sep"></span>
-  <button id="tb-align-left" class="tb" title="ชิดซ้าย (Ctrl+Shift+L)">⬅</button>
-  <button id="tb-align-center" class="tb" title="กึ่งกลาง (Ctrl+Shift+K)">⬌</button>
-  <button id="tb-align-right" class="tb" title="ชิดขวา (Ctrl+Shift+R)">➡</button>
-  <button id="tb-align-justify" class="tb" title="เต็มบรรทัด (Ctrl+Shift+J)">☰</button>
+  <button id="tb-align-left" class="tb" title="ชิดซ้าย (Ctrl+Shift+L)" data-icon="align-left"></button>
+  <button id="tb-align-center" class="tb" title="กึ่งกลาง (Ctrl+Shift+K)" data-icon="align-center"></button>
+  <button id="tb-align-right" class="tb" title="ชิดขวา (Ctrl+Shift+R)" data-icon="align-right"></button>
+  <button id="tb-align-justify" class="tb" title="เต็มบรรทัด (Ctrl+Shift+J)" data-icon="align-justify"></button>
   <span class="sep"></span>
-  <button id="tb-img" class="tb" title="แทรกรูป">🖼</button>
-  <button id="tb-source" class="tb" title="ดู Markdown ดิบของฉากนี้">&lt;/&gt;</button>
-  <button id="tb-read" class="tb" title="โหมดอ่าน (เต็มจอ)">📖</button>
-  <button id="tb-gsearch" class="tb" title="ค้นหาทั้งโปรเจกต์ (Ctrl+Shift+F)">🔍</button>
-  <button id="tb-panels" class="tb" title="จัดการแผง">📐</button>
-  <button id="tb-split" class="tb" title="แยกหน้าจอ (Split View)">⊞</button>
-  <button id="tb-kanban" class="tb" title="Kanban ตามสถานะ">📋</button>
-  <button id="tb-ai" class="tb" title="AI ผู้ช่วยเขียน">✨</button>
-  <button id="tb-ai-chat" class="tb" title="แชทกับเรื่องของคุณ">💬</button>
-  <button id="tb-plug" class="tb" title="คำสั่งจากปลั๊กอิน" style="display:none">🧩</button>
+  <button id="tb-img" class="tb" title="แทรกรูป" data-icon="image-add"></button>
+  <button id="tb-source" class="tb" title="ดู Markdown ดิบของฉากนี้" data-icon="code-alt"></button>
+  <button id="tb-read" class="tb tb-toggle" title="โหมดอ่าน (เต็มจอ)" data-icon="book-open"></button>
+  <button id="tb-gsearch" class="tb" title="ค้นหาทั้งโปรเจกต์ (Ctrl+Shift+F)" data-icon="search"></button>
+  <button id="tb-note" class="tb" title="โน้ตด่วน — จดความคิดตอนนี้ไว้ก่อน" data-icon="note"></button>
+  <button id="tb-panels" class="tb" title="จัดการแผง" data-icon="layout"></button>
+  <button id="tb-split" class="tb tb-toggle" title="แยกหน้าจอ (Split View)" data-icon="dock-right"></button>
+  <button id="tb-close" class="tb" title="ปิดแท็บ (Ctrl+W)" data-icon="x"></button>
+  <button id="tb-close-all" class="tb" title="ปิดทุกแท็บ (Ctrl+Shift+W)" data-icon="reset"></button>
+  <button id="tb-focus" class="tb tb-toggle" title="โหมดโฟกัส (Ctrl+Shift+D)" data-icon="expand"></button>
+  <button id="tb-typewriter" class="tb tb-toggle" title="โหมดเครื่องพิมพ์ดีด (Ctrl+Shift+T)" data-icon="edit"></button>
+  <button id="tb-linenum" class="tb tb-toggle" title="แสดงเลขบรรทัด" data-icon="list-ol"></button>
+  <button id="tb-quickopen" class="tb" title="ค้นหาไฟล์ด่วน (Ctrl+Shift+O)" data-icon="search"></button>
+  <button id="tb-kanban" class="tb" title="Kanban ตามสถานะ" data-icon="grid"></button>
+  <button id="tb-ai" class="tb" title="AI ผู้ช่วยเขียน" data-icon="bot"></button>
+  <button id="tb-ai-chat" class="tb" title="แชทกับเรื่องของคุณ" data-icon="chat"></button>
+  <button id="tb-plug" class="tb" title="คำสั่งจากปลั๊กอิน" style="display:none" data-icon="extension"></button>
 </div>
 <div id="findbar">
   <input id="find-q" data-i18n-attr="placeholder" data-i18n="toolbar.findBar">
@@ -83,14 +98,16 @@
   <button id="find-repall" data-i18n="toolbar.replaceAll">ทั้งหมด</button>
   <button id="find-close">✕</button>
 </div>
-<div id="main">
-  <div id="sidebar">
+<!-- Panel System (Photoshop-style): ทุกแผงถูกวาดลง #app-root โดย panel-renderer -->
+<div id="app-root"></div>
+<!-- ที่พักของเนื้อแผง — panel-renderer "ย้าย" element เหล่านี้เข้า host (ห้ามสร้างใหม่: โค้ดทั้งโปรเจกต์อ้าง id) -->
+<div id="k-panel-src" hidden>
     <div id="tree-panel">
-      <div id="tree-head">📚 <span data-i18n="panel.project">โปรเจกต์</span></div>
+      <div id="tree-head"><span data-icon="book-content" data-icon-size="16"></span> <span data-i18n="panel.project">โปรเจกต์</span></div>
       <div id="filter-bar">
         <div id="filter-statuses"></div>
         <div id="filter-archive">
-          <button id="filter-archive-toggle" data-i18n-attr="title" data-i18n="panel.archiveToggle">📦 เก็บถาวร</button>
+          <button id="filter-archive-toggle" data-i18n-attr="title" data-i18n="panel.archiveToggle" data-icon="archive"> เก็บถาวร</button>
         </div>
         <div id="filter-tags"></div>
         <select id="filter-sort" data-i18n-attr="title" data-i18n="panel.sortBy">
@@ -105,7 +122,7 @@
       <div id="summary-bar"></div>
       <div id="tree"></div>
     </div>
-    <div id="props-panel" class="k-panel-off">
+    <div id="props-panel">
       <div id="props-head" data-i18n="panel.properties">คุณสมบัติ</div>
       <div id="props-body"><div class="dim" data-i18n="panel.selectScene">(เลือกฉากเพื่อดูคุณสมบัติ)</div></div>
     </div>
@@ -113,11 +130,15 @@
       <div id="outline-head" data-i18n="panel.navigation">NAVIGATION</div>
       <div id="outline"></div>
     </div>
-  </div>
-  <div id="content">
-    <div id="tabs"></div>
-    <div id="panes"></div>
-  </div>
+    <div id="content">
+      <div id="tabs"></div>
+      <div id="panes"></div>
+    </div>
+    <div id="log-panel"><pre id="log-body" class="k-logview"></pre></div>
+    <div id="search-panel"><div id="search-body"></div></div>
+    <div id="notes-panel"><div id="notes-body"></div></div>
+    <div id="home-panel"><div id="home-body"></div></div>
+    <div id="comments-panel"><div id="comments-body"></div></div>
 </div>
 <div id="statusbar"><span id="status" data-i18n="app.ready">พร้อม</span>
   <span id="status-center"></span>
@@ -127,25 +148,25 @@
     <span id="status-save"></span>
     <span id="status-scenes"></span>
     <div id="zoom-ctl" title="ซูมหน้ากระดาษ (Ctrl+ล้อเมาส์)">
-      <button id="zoom-out" title="ย่อ (Ctrl+-)">−</button>
+      <button id="zoom-out" title="ย่อ (Ctrl+-)" data-icon="minus"></button>
       <input type="range" id="zoom-slider" min="50" max="250" step="5" value="100">
-      <button id="zoom-in" title="ขยาย (Ctrl+=)">+</button>
+      <button id="zoom-in" title="ขยาย (Ctrl+=)" data-icon="plus"></button>
       <span id="zoom-label">100%</span>
-      <button id="zoom-reset" title="รีเซ็ต (Ctrl+Shift+0)">⟲</button>
+      <button id="zoom-reset" title="รีเซ็ต (Ctrl+Shift+0)" data-icon="reset"></button>
     </div>
   </div>
 </div>
 <!-- FAB -->
 <div id="k-fab" data-i18n-attr="title" data-i18n="panel.fab">
-  <span class="k-fab-icon">+</span>
+  <span class="k-fab-icon" data-icon="plus" data-icon-size="22"></span>
 </div>
 <div id="k-fab-menu" class="k-menu k-menu-off">
-  <div class="k-menu-item" data-action="scene">📄 <span data-i18n="panel.fabScene">สร้างฉาก</span></div>
-  <div class="k-menu-item" data-action="chapter">📁 <span data-i18n="panel.fabChapter">สร้างบท</span></div>
-  <div class="k-menu-item" data-action="character">👤 <span data-i18n="panel.fabCharacter">สร้างตัวละคร</span></div>
-  <div class="k-menu-item" data-action="location">📍 <span data-i18n="panel.fabLocation">สร้างสถานที่</span></div>
-  <div class="k-menu-item" data-action="note">📝 <span data-i18n="panel.fabNote">สร้างโน้ต</span></div>
-  <div class="k-menu-item" data-action="memo">📋 <span data-i18n="panel.fabMemo">สร้าง Memo</span></div>
+  <div class="k-menu-item" data-action="scene"><span data-icon="file" data-icon-size="16"></span> <span data-i18n="panel.fabScene">สร้างฉาก</span></div>
+  <div class="k-menu-item" data-action="chapter"><span data-icon="folder" data-icon-size="16"></span> <span data-i18n="panel.fabChapter">สร้างบท</span></div>
+  <div class="k-menu-item" data-action="character"><span data-icon="user" data-icon-size="16"></span> <span data-i18n="panel.fabCharacter">สร้างตัวละคร</span></div>
+  <div class="k-menu-item" data-action="location"><span data-icon="map" data-icon-size="16"></span> <span data-i18n="panel.fabLocation">สร้างสถานที่</span></div>
+  <div class="k-menu-item" data-action="note"><span data-icon="note" data-icon-size="16"></span> <span data-i18n="panel.fabNote">สร้างโน้ต</span></div>
+  <div class="k-menu-item" data-action="memo"><span data-icon="clipboard" data-icon-size="16"></span> <span data-i18n="panel.fabMemo">สร้าง Memo</span></div>
 </div>
 <script src="bundle.js"></script>
 </body>

@@ -20,14 +20,82 @@ export async function saveSessionNotes(notes) {
   try { localStorage.setItem(NOTES_KEY, JSON.stringify(notes)); } catch {}
 }
 
-export async function addSessionNote(text, sceneId, sceneTitle) {
+export async function addSessionNote(text, sceneId, sceneTitle, future = false) {
   const notes = [...getSessionNotes(), {
     id: Date.now().toString(36), text, sceneId, sceneTitle,
+    future: !!future, done: false,
     timestamp: new Date().toISOString(),
   }];
   await saveSessionNotes(notes);
-  setStatus('บันทึกโน้ตแล้ว');
+  setStatus(future ? 'บันทึกโน้ตไว้ทำภายหลังแล้ว' : 'บันทึกโน้ตแล้ว');
   return notes.length;
+}
+
+/** โน้ต "ไว้ทำภายหลัง" ที่ยังไม่ได้ทำ — แสดงบนหน้าเส้นเวลา (Future Notes, ข้อ 85) */
+export function getFutureNotes({ includeDone = false } = {}) {
+  return getSessionNotes().filter((n) => n.future && (includeDone || !n.done));
+}
+
+/** ติ๊กว่าทำแล้ว/ยังไม่ทำ */
+export async function setNoteDone(id, done = true) {
+  const notes = getSessionNotes().map((n) => (n.id === id ? { ...n, done: !!done } : n));
+  await saveSessionNotes(notes);
+  setStatus(done ? 'ทำโน้ตนี้แล้ว' : 'เอากลับมาเป็นค้างอยู่');
+  return notes;
+}
+
+/** ลบโน้ตทีละอัน */
+export async function removeSessionNote(id) {
+  await saveSessionNotes(getSessionNotes().filter((n) => n.id !== id));
+  setStatus('ลบโน้ตแล้ว');
+}
+
+/** โน้ตของฉากหนึ่ง — ใช้ตอนแสดงบนการ์ดฉากในเส้นเวลา */
+export function notesForScene(sceneId) {
+  if (!sceneId) return [];
+  return getSessionNotes().filter((n) => n.sceneId === sceneId);
+}
+
+/**
+ * แผง "Future Notes" แบบฝังได้ — ใช้บนหน้าเส้นเวลา
+ * @param {HTMLElement} host  กล่องที่จะวาดลงไป (ล้างของเดิมให้)
+ * @param {object} opts { onChanged, onOpenScene }
+ */
+export function renderFutureNotes(host, { onChanged = null, onOpenScene = null } = {}) {
+  host.innerHTML = '';
+  const pending = getFutureNotes();
+  const done = getSessionNotes().filter((n) => n.future && n.done);
+  host.append(el('div', 'fn-title', `📝 ไว้ทำภายหลัง (${pending.length})`));
+  if (!pending.length) {
+    host.append(el('div', 'dim', done.length
+      ? `✅ เคลียร์หมดแล้ว (ทำไปแล้ว ${done.length} รายการ)`
+      : 'ยังไม่มีโน้ตค้าง — กด 📝 บนแถบเครื่องมือแล้วติ๊ก "ไว้ทำภายหลัง"'));
+    return host;
+  }
+  const list = el('div', 'fn-list');
+  for (const n of [...pending].reverse()) {
+    const row = el('div', 'fn-row');
+    const chk = el('input', 'fn-chk'); chk.type = 'checkbox';
+    chk.title = 'ทำแล้ว';
+    chk.onclick = async (e) => { e.stopPropagation(); await setNoteDone(n.id, true); if (onChanged) onChanged(); };
+    const body = el('div', 'fn-body');
+    // ข้อความโน้ตมาจากผู้ใช้ → textContent เท่านั้น
+    body.append(el('div', 'fn-text', n.text));
+    let when = '';
+    try { when = new Date(n.timestamp).toLocaleDateString('th-TH'); } catch { when = ''; }
+    body.append(el('div', 'fn-meta', [n.sceneTitle && '📄 ' + n.sceneTitle, when].filter(Boolean).join(' · ')));
+    if (n.sceneId && onOpenScene) {
+      body.style.cursor = 'pointer';
+      body.onclick = () => onOpenScene(n.sceneId, n.sceneTitle);
+    }
+    const del = el('span', 'fn-del', '✕');
+    del.title = 'ลบโน้ตนี้';
+    del.onclick = async (e) => { e.stopPropagation(); await removeSessionNote(n.id); if (onChanged) onChanged(); };
+    row.append(chk, body, del);
+    list.append(row);
+  }
+  host.append(list);
+  return host;
 }
 
 // Quick note dialog
@@ -38,6 +106,12 @@ export async function quickNote(sceneId, sceneTitle) {
   const ta = el('textarea', 'k-dlg-input');
   ta.style.cssText = 'width:100%;min-height:100px;resize:vertical;font-family:inherit';
   box.append(ta);
+
+  // ติ๊กไว้ = ไปโผล่ในแผง "ไว้ทำภายหลัง" บนหน้าเส้นเวลา (Future Notes)
+  const futRow = el('label', 'fn-future-row');
+  const fut = el('input'); fut.type = 'checkbox'; fut.className = 'wiki-check';
+  futRow.append(fut, el('span', null, ' ไว้ทำภายหลัง (แสดงบนหน้าเส้นเวลา)'));
+  box.append(futRow);
 
   // Show recent notes
   // copy ก่อน reverse — getSessionNotes คืน reference ของ state.meta.sessionNotes
@@ -60,8 +134,12 @@ export async function quickNote(sceneId, sceneTitle) {
   saveB.onclick = async () => {
     const text = ta.value.trim();
     if (!text) { ov.remove(); return; }
-    await addSessionNote(text, sceneId, sceneTitle);
+    await addSessionNote(text, sceneId, sceneTitle, fut.checked);
     ov.remove();
+    // เส้นเวลาเปิดค้างอยู่ → อัปเดตแผง "ไว้ทำภายหลัง" ทันที
+    if (fut.checked) {
+      try { const { refreshOpenTimeline } = await import('./timeline-ui.js'); refreshOpenTimeline(); } catch {}
+    }
   };
   const closeB = el('button', null, 'ปิด');
   closeB.onclick = () => ov.remove();
@@ -87,10 +165,11 @@ export async function showAllNotes() {
       const row = el('div', 'k-menu-item');
       row.style.cssText = 'flex-direction:column;align-items:stretch;gap:2px';
       // ข้อความโน้ตมาจากผู้ใช้ → textContent เท่านั้น
-      const body = el('div', null, n.text.slice(0, 120));
+      const body = el('div', null, (n.future ? (n.done ? '✅ ' : '📌 ') : '') + n.text.slice(0, 120));
       body.style.fontSize = '12px';
       const sub = el('small', null,
-        `${n.sceneTitle || ''} · ${new Date(n.timestamp).toLocaleString('th-TH')}`);
+        [n.sceneTitle, new Date(n.timestamp).toLocaleString('th-TH'),
+         n.future ? (n.done ? 'ทำแล้ว' : 'ไว้ทำภายหลัง') : ''].filter(Boolean).join(' · '));
       sub.style.color = 'var(--dim)';
       row.append(body, sub);
       list.append(row);

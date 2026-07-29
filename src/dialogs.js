@@ -1,15 +1,18 @@
 // dialogs.js — กล่องโต้ตอบ: ตั้งค่าโปรเจกต์ · ประวัติเวอร์ชัน · changelog · ตัวดู log
-import { applySettings, applySpellcheck, applyZoomVars, closeTab, fmtTs, listSnapshots, openScene, refreshAllMentions, refreshAllSpell, saveProjectMeta, snapshotFile, tb } from './app.js';
+import { applySettings, applySpellcheck, applyUIScale, applyZoomVars, closeTab, fmtTs, listSnapshots, openScene, openSnapshotRight, refreshAllMentions, refreshAllSpell, saveProjectMeta, snapshotFile, tb } from './app.js';
 import { $, BASE_ED_FS, LOG_BUF, el, log, setStatus, state, i18n, loadLanguage, t, SHORTCUTS, SHORTCUT_LABELS, accelText, shortcutId } from './core.js';
 import { renderDashboard } from './dashboard.js';
 import { confirmBox } from './ui.js';
 import { parseMdFile } from './md.js';
 import { setAutoSync, isAutoSyncOn } from './auto-task/event-ui.js';
+import { applyFocusDim } from './focus-mode.js';
+import { iconHtml } from './icons.js';
 
 export function settingsDialog() {
   if (!state.root) { alert(t('errors.openProjectFirst')); return; }
   const s = state.settings, g = state.goals, m = state.meta;
   const origFont = parseInt(s.uiFontSize, 10) || 0;
+  const origFontFamily = s.fontFamily || '';
 
   const ov = el('div', 'k-overlay');
   const box = el('div', 'k-dialog k-settings');
@@ -32,15 +35,18 @@ export function settingsDialog() {
       <div class="k-row"><label>${t('settings.projectGoal')}</label><input type="number" id="st-proj" min="0"></div>
     </div>
     <div class="k-set-page" data-p="write">
+      <div class="k-row"><label>${t('settings.fontFamily')}<span class="k-hint">${t('settings.fontFamilyHint')}</span></label><select id="st-fontfamily" class="k-dlg-select" style="width:100%"></select></div>
       <div class="k-row"><label>${t('settings.fontSize')}<span class="k-hint">${t('settings.fontSizeHint')} (${BASE_ED_FS}px)</span></label><input type="number" id="st-font" min="-6" max="16" step="1"></div>
       <div class="k-row"><label>${t('settings.lineNumbers')}<span class="k-hint">${t('settings.lineNumbersHint')}</span></label><input type="checkbox" id="st-ln"></div>
       <div class="k-row"><label>${t('settings.spellCheck')}<span class="k-hint">${t('settings.spellCheckHint')}</span></label><input type="checkbox" id="st-spell"></div>
       <div class="k-row"><label>${t('settings.spellCheckDict')}<span class="k-hint">${t('settings.spellCheckDictHint')}</span></label><input type="checkbox" id="st-spelldict"></div>
       <div class="k-row"><label>${t('settings.autoMention')}<span class="k-hint">${t('settings.autoMentionHint')}</span></label><input type="checkbox" id="st-mention"></div>
       <div class="k-row"><label>${t('settings.recycleDays')}<span class="k-hint">${t('settings.recycleDaysHint')}</span></label><input type="number" id="st-recycle" min="0" max="3650"></div>
+      <div class="k-row"><label>${t('settings.focusDim')}<span class="k-hint">${t('settings.focusDimHint')}</span></label><input type="range" id="st-fmdim" min="0.05" max="0.8" step="0.05"><span id="st-fmdim-lbl" class="k-hint"></span></div>
+      <div class="k-row"><label>${t('settings.uiScale', 'ขนาด UI')}<span class="k-hint">${t('settings.uiScaleHint', 'ย่อ/ขยายแถบเครื่องมือ แผง แท็บ และกล่องโต้ตอบ (75–200%)')}</span></label><input type="range" id="st-uiscale" min="0.75" max="2" step="0.05"><span id="st-uiscale-lbl" class="k-hint"></span></div>
     </div>
     <div class="k-set-page" data-p="auto">
-      <div class="k-row"><label>⚡ ${t('settings.autoSync')}<span class="k-hint">${t('settings.autoSyncHint')}</span></label><input type="checkbox" id="st-autosync"></div>
+      <div class="k-row"><label>${iconHtml('cloud-lightning', 14)} ${t('settings.autoSync')}<span class="k-hint">${t('settings.autoSyncHint')}</span></label><input type="checkbox" id="st-autosync"></div>
     </div>
     <div class="k-set-page" data-p="lang">
       <div class="k-row"><label>${t('settings.languageSelect')}</label>
@@ -59,6 +65,38 @@ export function settingsDialog() {
   ov.appendChild(box); document.body.appendChild(ov);
 
   const q = (id) => box.querySelector(id);
+
+  // โหลดฟอนต์จาก Fonts/ ในโปรเจกต์ (async, โหลดทีหลังไม่บล็อก)
+  (async () => {
+    const fs = q('#st-fontfamily'); if (!fs) return;
+    const builtin = [
+      { name: 'Segoe UI (ค่าเริ่มต้น)', value: '' },
+      { name: 'Sarabun', value: 'Sarabun, sans-serif' },
+      { name: 'Noto Sans Thai', value: '"Noto Sans Thai", sans-serif' },
+      { name: 'Leelawadee UI', value: '"Leelawadee UI", sans-serif' },
+      { name: 'TH Sarabun New', value: '"TH Sarabun New", sans-serif' },
+      { name: 'Tahoma', value: 'Tahoma, sans-serif' },
+      { name: 'Georgia', value: 'Georgia, serif' },
+      { name: 'Courier New', value: '"Courier New", monospace' },
+    ];
+    try {
+      const fontDir = await kapi.join(state.root, 'Fonts');
+      if (await kapi.exists(fontDir)) {
+        const fontFiles = await kapi.listFiles(fontDir);
+        for (const f of fontFiles) {
+          const name = f.replace(/\.[^.]+$/, '');
+          builtin.push({ name: name + ' (โปรเจกต์)', value: '"' + name + '", sans-serif' });
+        }
+      }
+    } catch {}
+    for (const f of builtin) {
+      const opt = document.createElement('option');
+      opt.value = f.value;
+      opt.textContent = f.name;
+      if (f.value === (origFontFamily || '')) opt.selected = true;
+      fs.appendChild(opt);
+    }
+  })();
   q('#st-title').value = m.title || '';
   q('#st-author').value = m.author || '';
   q('#st-auto').value = s.autoSaveMinutes ?? 5;
@@ -72,6 +110,20 @@ export function settingsDialog() {
   q('#st-spelldict').checked = s.spellCheckDict !== false;
   q('#st-mention').checked = s.autoMention !== false;
   q('#st-recycle').value = s.recycleDays ?? 30;
+  // ความจางโหมดโฟกัส — เลื่อนแล้วเห็นผลทันทีถ้ากำลังเปิดโหมดอยู่ (ยกเลิก = คืนค่าเดิม)
+  const origDim = Number.isFinite(+s.focusDim) ? +s.focusDim : 0.3;
+  q('#st-fmdim').value = String(origDim);
+  q('#st-fmdim-lbl').textContent = String(origDim);
+  q('#st-fmdim').oninput = () => {
+    s.focusDim = parseFloat(q('#st-fmdim').value);
+    q('#st-fmdim-lbl').textContent = String(s.focusDim);
+    applyFocusDim();
+  };
+  // ขนาด UI — เลื่อนแล้วเห็นผลทันทีทั้งหน้าต่าง (ยกเลิก = คืนค่าเดิม)
+  const origUiScale = Number.isFinite(+s.uiScale) ? +s.uiScale : 1;
+  q('#st-uiscale').value = String(origUiScale);
+  q('#st-uiscale-lbl').textContent = Math.round(origUiScale * 100) + '%';
+  q('#st-uiscale').oninput = () => applyUIScale(parseFloat(q('#st-uiscale').value) || 1);
   q('#st-autosync').checked = isAutoSyncOn() || !!s.autoSync;
   // ---- ภาษา ----
   if (q('#st-lang')) q('#st-lang').value = i18n.lang || 'en';
@@ -137,6 +189,8 @@ export function settingsDialog() {
   const close = () => ov.remove();
   const cancel = () => {
     applyZoomVars(origFont);
+    applyUIScale(origUiScale);
+    s.focusDim = origDim; applyFocusDim();
     document.body.classList.toggle('k-ln', origLn);
     s.spellCheck = origSpell; s.autoMention = origMention;
     s.spellCheckDict = origSpellDict;
@@ -154,11 +208,15 @@ export function settingsDialog() {
     s.autoBackup = q('#st-backup').checked;
     s.maxBackups = Math.max(1, num('#st-maxbak', 10));
     s.uiFontSize = Math.max(-6, Math.min(16, parseInt(q('#st-font').value, 10) || 0));
+    s.fontFamily = q('#st-fontfamily')?.value || '';
     s.lineNumbers = q('#st-ln').checked;
     s.spellCheck = q('#st-spell').checked;
     s.spellCheckDict = q('#st-spelldict').checked;
     s.autoMention = q('#st-mention').checked;
     s.recycleDays = Math.max(0, num('#st-recycle', 30));
+    s.focusDim = Math.min(0.8, Math.max(0.05, parseFloat(q('#st-fmdim').value) || 0.3));
+    applyFocusDim();
+    s.uiScale = Math.min(2, Math.max(0.75, parseFloat(q('#st-uiscale').value) || 1));
     s.shortcuts = workKeys;
     // Auto-sync (เก็บลง settings ด้วย — ไม่งั้นเปิดโปรแกรมใหม่แล้วกลับไปปิด)
     s.autoSync = q('#st-autosync').checked;
@@ -191,9 +249,19 @@ export function settingsDialog() {
 
 export async function versionDialog(dPath, ch, sc) {
   const file = await kapi.join(dPath, 'Chapters', ch.folderName, sc.fileName);
+  return fileVersionDialog(file, sc.title);
+}
+
+/**
+ * ประวัติเวอร์ชันของ "ไฟล์ใดก็ได้" — เดิมผูกกับฉากอย่างเดียว
+ * ทำให้ Wiki (.json) ใช้ระบบเวอร์ชันเดียวกันได้ (ข้อ 10)
+ * onRestored: ให้ผู้เรียกโหลดหน้าที่เปิดค้างใหม่เอง (Wiki ต้องอ่าน JSON ใหม่ ไม่ใช่ openScene)
+ */
+export async function fileVersionDialog(file, titleText, { onRestored = null } = {}) {
+  const isJson = /\.json$/i.test(file);
   const ov = el('div', 'k-overlay');
   const box = el('div', 'k-dialog k-ver');
-  box.append(el('div', 'k-dlg-title', t('panel.versionHistoryTitle') + sc.title));
+  box.append(el('div', 'k-dlg-title', t('panel.versionHistoryTitle') + titleText));
   const body = el('div', 'k-ver-body');
   const listCol = el('div', 'k-ver-list');
   const prev = el('div', 'k-ver-prev'); prev.textContent = t('panel.chooseVersion');
@@ -216,8 +284,11 @@ export async function versionDialog(dPath, ch, sc) {
       it.append(meta);
       const acts = el('div', 'k-ver-acts');
       const bView = el('button', null, t('dialogs.view')); bView.onclick = async () => {
-        try { const c = await kapi.readFile(s.path); prev.textContent = parseMdFile(c).body || t('panel.emptyContent'); }
-        catch { prev.textContent = t('panel.unreadable'); }
+        try {
+          const c = await kapi.readFile(s.path);
+          // Wiki เก็บเป็น JSON — ไม่มี frontmatter ให้แยก จึงแสดงเนื้อดิบ
+          prev.textContent = (isJson ? c : parseMdFile(c).body) || t('panel.emptyContent');
+        } catch { prev.textContent = t('panel.unreadable'); }
         [...listCol.querySelectorAll('.k-ver-item')].forEach((x) => x.classList.remove('on'));
         it.classList.add('on');
       };
@@ -227,17 +298,21 @@ export async function versionDialog(dPath, ch, sc) {
         const c = await kapi.readFile(s.path);
         await kapi.writeFile(file, c);
         const openTab = state.tabs.get(file);
-        if (openTab) {                                     // ปิดแล้วเปิดใหม่ให้โหลดสด (รองรับทั้งนิยาย/บทหนัง)
+        if (onRestored) await onRestored(file, openTab);
+        else if (openTab) {                                // ปิดแล้วเปิดใหม่ให้โหลดสด (รองรับทั้งนิยาย/บทหนัง)
           openTab.dirty = false;
           const title = openTab.title;
           closeTab(file); openScene(file, title);
         }
         setStatus(t('status.versionRestored')); refresh();
       };
+      // เทียบกับฉากปัจจุบันแบบแยกจอจริง (ฉากซ้าย · เวอร์ชันเก่าขวา) — ข้อ 7
+      const bSplit = el('button', null, '⇋ เทียบด้านขวา'); bSplit.title = 'เปิดเวอร์ชันนี้คู่กับไฟล์ปัจจุบัน';
+      bSplit.onclick = async () => { ov.remove(); await openSnapshotRight(file, s); };
       const bDel = el('button', 'k-danger-btn', t('dialogs.delete')); bDel.onclick = async () => {
         if (await confirmBox(t('panel.confirmDelete'))) { await kapi.remove(s.path); refresh(); }
       };
-      acts.append(bView, bRes, bDel); it.append(acts); listCol.append(it);
+      acts.append(bView, bSplit, bRes, bDel); it.append(acts); listCol.append(it);
     }
   }
   refresh();
@@ -273,7 +348,8 @@ export async function showLog() {
   await load();
   const btns = el('div', 'k-dlg-btns');
   const refresh = el('button', null, '↻ ' + t('dialogs.refresh')); refresh.onclick = load;
-  const reveal = el('button', null, '📁 ' + t('dialogs.openFolder')); reveal.onclick = () => kapi.logReveal && kapi.logReveal();
+  const reveal = el('button');
+  reveal.innerHTML = iconHtml('folder', 14) + ' ' + t('dialogs.openFolder'); reveal.onclick = () => kapi.logReveal && kapi.logReveal();
   const copy = el('button', null, '📋 ' + t('dialogs.copy'));
   copy.onclick = () => { navigator.clipboard.writeText(body.textContent).then(() => setStatus(t('status.logCopied'))); };
   const ok = el('button', 'k-ok', t('dialogs.close')); ok.onclick = () => ov.remove();

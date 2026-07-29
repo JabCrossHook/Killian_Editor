@@ -16,11 +16,13 @@ contextBridge.exposeInMainWorld('kapi', {
   relative: call('path:relative'), toFileURL: call('path:toFileURL'),
   openProjectDialog: call('dialog:openProject'), openImageDialog: call('dialog:openImage'),
   saveAsDialog: call('dialog:saveAs'), savePdfDialog: call('dialog:savePdf'),
+  openFileDialog: call('dialog:openFile'),   // เลือกไฟล์เดียว (นำเข้าสถานะฉาก ฯลฯ)
   print: call('win:print'), printToPdf: call('win:printToPdf'),
   pushRecent: call('recent:push'), listRecent: call('recent:list'),
   testShot: call('test:shot'), revealInOS: call('shell:reveal'),
   winMin: call('win:minimize'), winMax: call('win:maximize'), winClose: call('win:close'),
   quitNow: call('win:quitNow'), menuPopup: call('menu:popup'),
+  menuToggles: call('menu:toggles'),        // แจ้งสถานะสวิตช์ให้เมนู native ติ๊กถูกให้ตรง
   httpFetch: call('http:fetch'),
   // สตรีมทีละบรรทัด — main ส่งกลับทาง channel เฉพาะคำขอ แล้วถอด listener เมื่อจบ
   httpStream: (url, options, onLine) => {

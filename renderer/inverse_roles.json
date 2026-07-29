@@ -1,5 +1,13 @@
 {
   "note": "ใช้เดาความสัมพันธ์ฝั่งตรงข้ามอัตโนมัติ เพิ่ม/แก้ได้ตามใจ (คู่ไหนไม่มีจะใช้บทบาทเดิม)",
+  "categories": {
+    "พ่อ": "family", "แม่": "family", "ลูก": "family", "พี่": "family", "น้อง": "family",
+    "ปู่": "family", "ย่า": "family", "ตา": "family", "ยาย": "family", "หลาน": "family",
+    "สามี": "romantic", "ภรรยา": "romantic", "แฟน": "romantic", "คนรัก": "romantic",
+    "ศัตรู": "enemy", "คู่อริ": "enemy", "คู่แข่ง": "rival",
+    "เพื่อน": "ally", "สหาย": "ally",
+    "อาจารย์": "mentor", "ครู": "mentor", "ศิษย์": "mentor"
+  },
   "pairs": [
     [
       "พ่อ",

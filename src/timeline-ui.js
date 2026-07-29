@@ -1,7 +1,15 @@
 // timeline-ui.js — เส้นเวลา (UI): เปิด/วาดเส้นเวลา (การ์ด·Gantt)
-import { activate, closeTab, eventDialog, loadTimeline, openScene, saveTimeline, sceneEventsFromProject } from './app.js';
+import { activate, closeTab, eventDialog, loadTimeline, openRef, openScene, saveTimeline, sceneEventsFromProject } from './app.js';
 import { $, el, state } from './core.js';
 import { findClashes, ganttBar, ganttData, ganttTicks, groupByTrack, mergeTimeline, newEvent, sortEvents, trackNames } from './timeline.js';
+import { renderFutureNotes, notesForScene } from './session-notes.js';
+import { findScenePath } from './project-scan.js';
+
+/** วาดเส้นเวลาใหม่ถ้าแท็บเปิดอยู่ (เรียกหลังเพิ่มโน้ต "ไว้ทำภายหลัง") */
+export function refreshOpenTimeline() {
+  const t = state.tabs.get('::timeline::');
+  if (t) renderTimeline(t.pane);
+}
 
 export async function openTimeline() {
   const key = '::timeline::';
@@ -39,6 +47,17 @@ export async function renderTimeline(pane) {
   const hint = el('span', 'tl-hint', 'ฉากที่ตั้ง "เวลาในเรื่อง" จะขึ้นบนเส้นเวลาอัตโนมัติ');
   head.append(hint);
   wrap.append(head);
+
+  // ---- Future Notes (ข้อ 85): โน้ต "ไว้ทำภายหลัง" ค้างอยู่บนหน้าเส้นเวลา ----
+  const fn = el('div', 'tl-future');
+  renderFutureNotes(fn, {
+    onChanged: () => renderTimeline(pane),
+    onOpenScene: async (sceneId, title) => {
+      const hit = await findScenePath(state.root, sceneId);
+      if (hit && (await kapi.exists(hit.path))) openScene(hit.path, hit.title || title);
+    },
+  });
+  wrap.append(fn);
 
   const data = await loadTimeline();
   const sceneEvs = await sceneEventsFromProject();
@@ -105,8 +124,10 @@ export async function renderTimeline(pane) {
                         + (clashIds.has(r.id) ? ' tl-clash' : ''));
         bar.style.left = left + '%'; bar.style.width = width + '%';
         bar.style.background = r.color || tr.color;
-        bar.append(el('span', 'gantt-bar-label', (r.kind === 'scene' ? '📄 ' : '') + r.title));
-        bar.title = `${r.title} · ${r.when}${r.whenEnd ? ' → ' + r.whenEnd : ''}`;
+        bar.append(el('span', 'gantt-bar-label',
+          (r.kind === 'scene' ? '📄 ' : '') + r.title + ((r.refs || []).length ? ' 🔗' : '')));
+        bar.title = [`${r.title} · ${r.when}${r.whenEnd ? ' → ' + r.whenEnd : ''}`,
+          ...(r.refs || []).map((x) => '🔗 ' + x.title)].join('\n');
         bar.onclick = () => onEventClick(r);
         track.append(bar);
       }
@@ -138,6 +159,26 @@ export async function renderTimeline(pane) {
       const title = el('div', 'tl-ev-title', (it.kind === 'scene' ? '📄 ' : '') + it.title);
       card.append(when, title);
       if (it.desc) card.append(el('div', 'tl-ev-desc', it.desc));
+      // ---- เอกสาร/โน้ตที่เหตุการณ์นี้อ้างอิง (ข้อ 5) — คลิกชิปเพื่อเปิดไฟล์นั้น ----
+      if ((it.refs || []).length) {
+        const rw = el('div', 'tl-ev-refs');
+        for (const r of it.refs) {
+          const chip = el('span', 'tl-ev-ref', (r.kind === 'memo' ? '📝 ' : '📄 ') + r.title);
+          chip.title = 'เปิด: ' + r.path;
+          chip.onclick = (e) => { e.stopPropagation(); openRef(r); };   // กันไปโดนคลิกของการ์ด
+          rw.append(chip);
+        }
+        card.append(rw);
+      }
+      // โน้ตที่ผูกกับฉากนี้ (ข้อ 85) — id ฉากบนเส้นเวลาเป็น 'sc:<dPath>:<id>'
+      if (it.kind === 'scene') {
+        const notes = notesForScene(String(it.id || '').split(':').pop());
+        if (notes.length) {
+          const b = el('div', 'tl-ev-notes', '📝 ' + notes.length + ' โน้ต');
+          b.title = notes.map((n) => '• ' + n.text).join('\n');
+          card.append(b);
+        }
+      }
       card.classList.add('tl-clickable');
       card.onclick = () => onEventClick(it);
       if (it.kind === 'scene') card.title = 'คลิกเปิดฉากนี้';

@@ -127,6 +127,10 @@ export class PanelManager {
   }
   /** Close a panel (✕) — removes it from the tree and from floating windows. */
   hidePanel(id) {
+    // บั๊ก #19: แผงหลัก (docs) ปิดไม่ได้ — ถ้าหลุดออกจากต้นไม้ root จะกลายเป็น null
+    // แล้วรอบเปิดโปรแกรมถัดไปจะรีเซ็ตเป็นเลย์เอาต์ตั้งต้น = "แผงทั้งชุดโผล่มาเอง"
+    const def = this.registry.get(id);
+    if (def && def.closable === false) return false;
     let changed = false;
     if (this.isFloating(id)) {
       this.store.setFloats(this.floats.filter((f) => f.panel.id !== id));
@@ -249,7 +253,8 @@ export class PanelManager {
     this.store.root = r;
     this.store.floats = this.store.floats.filter((f) => this.registry.has(f.panel.id));
     this.store.save();
-  }
+    this.store._emit();                            // บั๊ก #19: เดิมเขียน root ตรง ๆ ไม่ผ่าน update()
+  }                                                //   → onChange ไม่ยิง UI ค้างกับต้นไม้เก่า
   _target(id) {                                    // เป้าหมายการผนึก: ที่ระบุ → ไม่งั้น panel ตัวแรก
     if (id && PL.hasPanel(this.root, id)) return id;
     return PL.panelIds(this.root)[0];

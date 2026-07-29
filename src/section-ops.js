@@ -33,6 +33,8 @@ export async function listSections() {
 
 export async function sectionStats(secPath) {
   let chapters = 0, scenes = 0, words = 0, drafts = 0;
+  const sf = await kapi.join(secPath, 'section.json');
+  let meta = {}; try { meta = await kapi.readJson(sf); } catch {}
   const draftRoot = await kapi.join(secPath, 'Draft');
   if (await kapi.exists(draftRoot)) {
     for (const dn of await kapi.listDirs(draftRoot)) {
@@ -52,7 +54,8 @@ export async function sectionStats(secPath) {
       }
     }
   }
-  return { chapters, scenes, words, drafts };
+  return { chapters, scenes, words, drafts,
+           primaryDraft: (meta.primaryDraft || 'default') };
 }
 
 export async function saveSectionMeta(sf, patch) {

@@ -219,6 +219,115 @@ export function createProjectCard(project) {
   
   // คลิกที่การ์ด = เปิด
   card.addEventListener('click', () => openBtn.click());
-  
+
   return card;
+}
+
+export async function renderHomePanel(host) {
+  if (!host || host.dataset.ready === '1') return;
+  host.dataset.ready = '1';
+  const wrap = el('div', 'home-wrap');
+  const head = el('div', 'home-head');
+  head.append(el('h2', 'home-title', 'Killian 2'));
+  const actions = el('div', 'home-actions');
+  const newBtn = el('button', 'k-ok', '+ สร้างโปรเจกต์ใหม่');
+  const openBtn = el('button', null, '📂 เปิด');
+  actions.append(newBtn, openBtn);
+  const list = el('div', 'home-panel-list');
+  list.id = 'home-grid';
+  wrap.append(head, actions, list);
+  host.append(wrap);
+
+  newBtn.onclick = () => {
+    const { newProject } = import('./app.js');
+    newProject();
+  };
+  openBtn.onclick = async () => {
+    const projectPath = await kapi.openProjectDialog?.();
+    if (projectPath) { const { loadProject } = await import('./app.js'); await loadProject(projectPath); }
+  };
+
+  await loadPanelProjects(list);
+  return wrap;
+}
+
+async function loadPanelProjects(grid) {
+  grid.innerHTML = '';
+  try {
+    const recent = await kapi.listRecent().catch(() => []);
+    const tasks = recent.map(async (root) => {
+      try {
+        const metaFile = await kapi.join(root, 'project.khn.json');
+        if (!(await kapi.exists(metaFile))) return null;
+        const meta = await kapi.readJson(metaFile);
+        let totalScenes = 0, totalChapters = 0, totalWords = 0;
+        let lastModified = meta.created || '';
+        const entries = await kapi.listDirs(root).catch(() => []);
+        for (const secName of entries) {
+          const secPath = await kapi.join(root, secName);
+          const secJson = await kapi.join(secPath, 'section.json');
+          if (!(await kapi.exists(secJson))) continue;
+          const draftRoot = await kapi.join(secPath, 'Draft');
+          if (!(await kapi.exists(draftRoot))) continue;
+          const draftDirs = await kapi.listDirs(draftRoot).catch(() => []);
+          for (const dn of draftDirs) {
+            const dPath = await kapi.join(draftRoot, dn);
+            const draftFile = await kapi.join(dPath, 'draft.json');
+            if (!(await kapi.exists(draftFile))) continue;
+            const draft = await kapi.readJson(draftFile).catch(() => ({}));
+            const chapters = draft.chapters || [];
+            totalChapters += chapters.length;
+            const scenesFile = await kapi.join(dPath, 'scenes.json');
+            if (await kapi.exists(scenesFile)) {
+              const scData = await kapi.readJson(scenesFile).catch(() => ({}));
+              const scChapters = scData.chapters || {};
+              for (const ch of chapters) {
+                const scenes = scChapters[ch.guid] || [];
+                totalScenes += scenes.filter((s) => s.type !== 'memo').length;
+                for (const sc of scenes) {
+                  if (sc.type === 'memo') continue;
+                  totalWords += sc.wordCount || 0;
+                  if (sc.modified && sc.modified > lastModified) lastModified = sc.modified;
+                }
+              }
+            }
+          }
+        }
+        const modDate = lastModified ? new Date(lastModified) : null;
+        const dateStr = modDate ? modDate.toLocaleDateString('th-TH', {
+          year: 'numeric', month: 'short', day: 'numeric',
+          hour: '2-digit', minute: '2-digit'
+        }) : '—';
+        return { root, title: meta.title || root.replace(/^.*[\\/]/, ''),
+                 author: meta.author || '', cover: meta.cover || '',
+                 totalScenes, totalChapters, totalWords, dateStr,
+                 settings: meta.settings || {}, goals: meta.goals || {} };
+      } catch (e) { return null; }
+    });
+    let projects = (await Promise.all(tasks)).filter(Boolean);
+    if (projects.length === 0) {
+      grid.append(el('div', 'home-empty', el('p', null, 'ยังไม่มีโปรเจกต์')));
+      return;
+    }
+    projects.sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0));
+    for (const p of projects) {
+      const item = el('div', 'home-panel-item');
+      const info = el('div', 'home-panel-info');
+      info.append(el('span', 'home-panel-name', p.title));
+      info.append(el('span', 'home-panel-detail', `${p.totalScenes} ฉาก · ${p.totalWords.toLocaleString()} คำ · ${p.dateStr}`));
+      const openB = el('button', 'k-ok', 'เปิด');
+      openB.onclick = async (e) => {
+        e.stopPropagation();
+        await kapi.pushRecent(p.root).catch(() => {});
+        const { loadProject } = await import('./app.js');
+        await loadProject(p.root);
+      };
+      item.append(info, openB);
+      item.addEventListener('click', () => openB.click());
+      grid.append(item);
+    }
+  } catch (e) {
+    log('error', 'home-panel: โหลดล้มเหลว', e);
+    grid.append(el('div', 'dim', 'เกิดข้อผิดพลาด'));
+  }
 }

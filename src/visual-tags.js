@@ -33,18 +33,66 @@ export async function removeVisualTag(name) {
   return true;
 }
 
+/** หาแท็กภาพจากชื่อ — คืน null ถ้าแท็กนี้ยังไม่ได้ตั้งสี/ไอคอน */
+export function visualTagFor(name) {
+  return getVisualTags().find((v) => v.name === name) || null;
+}
+
+/** รูปทรงของชิป → border-radius (circle=กลม · square=เหลี่ยม · tag=ป้ายห้อย) */
+export function tagRadius(shape) {
+  if (shape === 'circle') return '999px';
+  if (shape === 'square') return '3px';
+  return '3px 999px 999px 3px';
+}
+
+/**
+ * ทาสี/ไอคอน/รูปทรงให้ element ที่มีอยู่แล้ว — ใช้ได้กับชิปทุกที่
+ * (Explorer, แถบตัวกรอง, ตารางฉาก) โดยไม่ต้องเปลี่ยนโครง DOM ของที่นั้น
+ * @returns {boolean} true ถ้าแท็กนี้มีการตั้งค่าภาพไว้
+ */
+export function applyVisualTagStyle(node, name, { withIcon = true } = {}) {
+  const vt = visualTagFor(name);
+  if (!vt || !node) return false;
+  node.style.background = vt.color + '22';
+  node.style.border = '1px solid ' + vt.color + '55';
+  node.style.color = vt.color;
+  node.style.borderRadius = tagRadius(vt.shape);
+  if (withIcon && vt.icon && !node.textContent.startsWith(vt.icon)) {
+    node.textContent = vt.icon + ' ' + node.textContent;
+  }
+  node.title = (node.title ? node.title + '\n' : '') + `แท็ก: ${vt.name} (${vt.shape || 'tag'})`;
+  return true;
+}
+
+/** ชิปเดี่ยว — ใช้ตอนอยากได้ element ใหม่ (เช่นในต้นไม้ explorer) */
+export function visualTagChip(name, { count = 0, onClick = null } = {}) {
+  const vt = visualTagFor(name);
+  const chip = el('span', 'vt-chip' + (vt ? '' : ' vt-chip-plain'));
+  chip.textContent = (vt ? '' : '#') + name + (count ? ' (' + count + ')' : '');
+  if (vt) applyVisualTagStyle(chip, name);
+  if (onClick) { chip.style.cursor = 'pointer'; chip.onclick = onClick; }
+  return chip;
+}
+
 // Render visual tag chips for Explorer / Planner
 export function renderVisualTagChips(tags, onClick) {
-  const visualTags = getVisualTags();
   const wrap = el('span', 'vt-chips');
   for (const t of (tags || [])) {
-    const vt = visualTags.find((v) => v.name === t);
-    if (!vt) continue;
-    const chip = el('span', 'vt-chip');
-    chip.textContent = vt.icon + ' ' + vt.name;
-    chip.style.cssText = `background:${vt.color}22;border:1px solid ${vt.color}55;color:${vt.color};border-radius:${vt.shape === 'circle' ? '999px' : vt.shape === 'square' ? '4px' : '999px'};padding:2px 8px;font-size:10.5px;margin:0 2px;cursor:pointer;white-space:nowrap`;
-    if (onClick) chip.onclick = () => onClick(t);
-    wrap.append(chip);
+    if (!visualTagFor(t)) continue;
+    wrap.append(visualTagChip(t, { onClick: onClick ? () => onClick(t) : null }));
+  }
+  return wrap;
+}
+
+/**
+ * ชิปแท็กทั้งหมดของฉาก/เอนทิตี้ — แท็กที่ตั้งสีไว้ได้ชิปสี · ที่เหลือได้ #ข้อความธรรมดา
+ * ใช้ใน Explorer เพื่อไม่ให้แท็กที่ยังไม่ได้ตั้งสีหายไปเฉย ๆ
+ */
+export function renderAllTagChips(tags, onClick) {
+  const wrap = el('span', 'vt-chips');
+  for (const t of (tags || [])) {
+    if (!t) continue;
+    wrap.append(visualTagChip(t, { onClick: onClick ? () => onClick(t) : null }));
   }
   return wrap;
 }

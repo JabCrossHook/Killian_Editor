@@ -52,6 +52,17 @@ function refreshAll() {
   }
 }
 
+// ความจางของบรรทัดที่ไม่ได้เขียนอยู่ — ผู้ใช้ปรับได้ในตั้งค่า → การเขียน (settings.focusDim)
+export function focusDim() {
+  const v = Number(state.settings?.focusDim);
+  return Number.isFinite(v) ? Math.min(0.8, Math.max(0.05, v)) : 0.3;
+}
+
+// ตั้งค่าความจางใหม่ระหว่างเปิดโหมดอยู่ (ตัวเลื่อนในกล่องตั้งค่าเรียกตัวนี้เพื่อดูผลทันที)
+export function applyFocusDim() {
+  document.documentElement.style.setProperty('--fm2-dim', String(focusDim()));
+}
+
 export function toggleFocusMode2(on) {
   const want = on === undefined ? !_fmActive : !!on;
   _fmActive = want;
@@ -65,12 +76,13 @@ export function toggleFocusMode2(on) {
         body.fm2 .ProseMirror > h3, body.fm2 .ProseMirror > h4, body.fm2 .ProseMirror > h5,
         body.fm2 .ProseMirror > h6, body.fm2 .ProseMirror > ul, body.fm2 .ProseMirror > ol,
         body.fm2 .ProseMirror > blockquote, body.fm2 .ProseMirror > .sp-block {
-          opacity:.3; transition:opacity .15s;
+          opacity:var(--fm2-dim,.3); transition:opacity .15s;
         }
         body.fm2 .ProseMirror .fm2-active { opacity:1 !important; }
       `;
       document.head.append(_fmStyle);
     }
+    applyFocusDim();
     document.body.classList.add('fm2');
   } else {
     document.body.classList.remove('fm2');

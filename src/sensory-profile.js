@@ -1,0 +1,57 @@
+// sensory-profile.js — บรรยากาศรับรู้ของสถานที่ (sight/sound/smell/touch/taste)
+// แสดงเป็นหัวข้อเพิ่มในหน้า Wiki หมวด "สถานที่" เท่านั้น · เก็บใน entity.sensoryProfile
+import { el } from './core.js';
+
+const SENSORY_FIELDS = [
+  { key: 'sight', label: '👁 สิ่งที่เห็น', icon: 'image', hint: 'เช่น แสงสลัวลอดหน้าต่างบานเกล็ด' },
+  { key: 'sound', label: '👂 สิ่งที่ได้ยิน', icon: 'chat', hint: 'เช่น เสียงน้ำหยดจากเพดาน' },
+  { key: 'smell', label: '👃 กลิ่น', icon: 'note', hint: 'เช่น กลิ่นกระดาษเก่ากับฝุ่น' },
+  { key: 'touch', label: '🖐 สัมผัส', icon: 'edit', hint: 'เช่น พื้นไม้เย็นและหยาบ' },
+  { key: 'taste', label: '👅 รสชาติ', icon: 'star', hint: 'เช่น รสฝุ่นติดปลายลิ้น' },
+];
+
+// เอนทิตี้นี้ควรมีบรรยากาศรับรู้ไหม (เฉพาะหมวดสถานที่)
+export function isSensoryEntity(entity) {
+  return !!entity && entity.entityTypeKey === 'locations';
+}
+
+// สร้าง sensoryProfile เปล่าให้สถานที่ (เรียกตอนเปิด/สร้างเอนทิตี้)
+export function ensureSensory(entity) {
+  if (isSensoryEntity(entity) && !entity.sensoryProfile) entity.sensoryProfile = {};
+  return entity;
+}
+
+// กรอกเฉพาะช่องที่มีข้อความ — ใช้ทั้งใน UI และเทส
+export function sensoryFilled(entity) {
+  const p = (entity && entity.sensoryProfile) || {};
+  return SENSORY_FIELDS.filter((f) => (p[f.key] || '').trim()).map((f) => f.key);
+}
+
+// แสดงผลในหน้า wiki entity (wrap = .wiki-wrap) — เรียกซ้ำได้ ไม่สร้างช่องซ้ำ
+export function renderSensoryProfile(wrap, entity, onDirty) {
+  if (!wrap || !isSensoryEntity(entity)) return null;
+  let sec = wrap.querySelector('.wiki-sensory');
+  if (!sec) {
+    sec = el('div', 'wiki-sensory');
+    sec.style.cssText = 'margin-top:20px;padding-top:16px;border-top:1px solid var(--border)';
+    sec.append(el('div', 'wiki-sub', '🌐 บรรยากาศรับรู้'));
+    wrap.append(sec);
+  }
+  // ลบช่องเก่าแล้ววาดใหม่ (render ถูกเรียกหลายครั้ง)
+  sec.querySelectorAll('.wiki-sensory-row').forEach((r) => r.remove());
+  const prof = (entity.sensoryProfile = entity.sensoryProfile || {});
+  for (const f of SENSORY_FIELDS) {
+    const r = el('div', 'wiki-row wiki-sensory-row');
+    r.dataset.sense = f.key;
+    r.append(el('label', null, f.label));
+    const inp = el('input', 'wiki-input');
+    inp.value = prof[f.key] || '';
+    inp.placeholder = f.hint;
+    inp.addEventListener('input', () => { prof[f.key] = inp.value; if (onDirty) onDirty(); });
+    r.append(inp);
+    sec.append(r);
+  }
+  return sec;
+}
+
+export { SENSORY_FIELDS };

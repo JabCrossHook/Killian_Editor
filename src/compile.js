@@ -9,6 +9,8 @@
 // model = { title, author, chapters: [ { title, scenes: [ {title, body, synopsis, status, type, words} ] } ] }
 // ไฟล์นี้ "บริสุทธิ์" (ไม่แตะ DOM/ไฟล์) เพื่อให้เทสตรงๆ ได้
 
+import { resolveVars } from './template-vars.js';
+
 export const PAGE_BREAK = '<!-- ขึ้นหน้าใหม่ -->';
 
 export const STEP_DEFS = [
@@ -22,6 +24,7 @@ export const STEP_DEFS = [
   { key: 'strip-comments', stage: 'model', label: 'ตัดคอมเมนต์ %%…%% และ <!-- … -->' },
   { key: 'strip-mentions', stage: 'model', label: 'แปลงลิงก์วิกิ [[ชื่อ]] เป็นข้อความธรรมดา' },
   { key: 'strip-markdown', stage: 'model', label: 'ตัดสัญลักษณ์ Markdown (ข้อความล้วน)' },
+  { key: 'resolve-vars', stage: 'model', label: 'แก้ไขตัวแปร {{ชื่อ}} จาก Wiki' },
   // ---- ช่วงประกอบ ----
   { key: 'cover', stage: 'render', label: 'หน้าปก (ชื่อเรื่อง / ผู้เขียน / จำนวนคำ)',
     opts: { author: '' }, fields: [{ k: 'author', label: 'ผู้เขียน (ว่าง = ใช้จากโปรเจกต์)', type: 'text' }] },
@@ -168,8 +171,11 @@ ${mdToHtmlBody(md)}
 export const escapeHtml = esc;
 
 // ---------------- ไปป์ไลน์ ----------------
-const fill = (tpl, n, title) => String(tpl == null ? '' : tpl)
-  .replace(/\{n\}/g, n).replace(/\{title\}/g, title);
+const fill = (tpl, n, title, ctx = {}) => {
+  let s = String(tpl == null ? '' : tpl)
+    .replace(/\{n\}/g, n).replace(/\{title\}/g, title);
+  return resolveVars(s, ctx);
+};
 
 function modelStats(model) {
   let sc = 0, w = 0;
@@ -177,7 +183,7 @@ function modelStats(model) {
   return { chapters: model.chapters.length, scenes: sc, words: w };
 }
 
-export function runWorkflow(model0, workflow, { allowJs = true } = {}) {
+export function runWorkflow(model0, workflow, { allowJs = true, varCtx = {} } = {}) {
   const warn = [];
   // สำเนาลึกแบบพอเพียง — ไม่แก้ของเดิม
   const model = { title: model0.title, author: model0.author || '',
@@ -221,6 +227,12 @@ export function runWorkflow(model0, workflow, { allowJs = true } = {}) {
       case 'strip-markdown':
         for (const c of model.chapters) for (const s of c.scenes) s.body = stripMarkdown(s.body || '');
         break;
+      case 'resolve-vars':
+        for (const c of model.chapters) for (const s of c.scenes) {
+          s.body = resolveVars(s.body || '', varCtx);
+          s.title = resolveVars(s.title || '', varCtx);
+        }
+        break;
       default: break;
     }
   }
@@ -243,13 +255,13 @@ export function runWorkflow(model0, workflow, { allowJs = true } = {}) {
     cn++;
     if (has('page-break') && cn > 1) out.push(PAGE_BREAK, '');
     if (has('chapter-heading'))
-      out.push(fill(opt('chapter-heading', 'template', '## {title}'), cn, ch.title || ''), '');
+      out.push(fill(opt('chapter-heading', 'template', '## {title}'), cn, ch.title || '', varCtx), '');
     let sn = 0;
     for (const s of ch.scenes) {
       sn++;
       if (has('scene-separator') && sn > 1 && sep.trim()) out.push(sep, '');
       if (has('scene-heading'))
-        out.push(fill(opt('scene-heading', 'template', '### {title}'), sn, s.title || ''), '');
+        out.push(fill(opt('scene-heading', 'template', '### {title}'), sn, s.title || '', varCtx), '');
       if (has('scene-meta'))
         out.push(`_[${s.status || 'ไม่ระบุสถานะ'} · ${(s.words || 0).toLocaleString()} คำ]_`, '');
       const b = String(s.body || '').trim();

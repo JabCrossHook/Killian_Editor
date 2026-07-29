@@ -1,6 +1,6 @@
 // thesaurus-ui.js — UI สำหรับ Thesaurus: คลิกขวาคำ → คำพ้อง/คำตรงข้าม (ข้อ 67)
 // แยกจาก src/thesaurus.js เดิม (ซึ่งเป็น UI ของ K1 เก่า — ไฟล์นี้เป็น UI ใหม่สำหรับ tools/thesaurus.js)
-import { el, setStatus } from '../core.js';
+import { el, setStatus, state } from '../core.js';
 import { getSynonyms, getAntonyms, shared } from '../tools/thesaurus.js';
 
 // แสดง popup คำพ้อง/คำตรงข้าม
@@ -73,10 +73,16 @@ export async function showThesaurusPopup(word, x, y) {
 }
 
 // ตั้งค่า engine ด้วย kapi (เรียกตอนเปิดโปรเจกต์)
+// ระวัง 3 จุดที่เคยพัง: (1) ลืม import state (2) loadExtra เรียก io.join แบบ sync แต่ kapi.join เป็น async
+// (3) เอนจินต้องการ http.fetch แต่ kapi มีชื่อ httpFetch + ต้องเปิด online เองจาก settings
 export async function initThesaurus() {
   const { loadExtra, configure } = await import('../tools/thesaurus.js');
-  try {
-    const extra = await loadExtra(kapi, state.root);
-    configure({ http: kapi, extra });
-  } catch {}
+  const { syncIo } = await import('../project-scan.js');
+  let extra = null;
+  try { extra = await loadExtra(syncIo(), state.root); } catch { extra = null; }
+  configure({
+    http: { fetch: (url, opts) => kapi.httpFetch(url, opts) },
+    online: !!(state.settings && state.settings.thesaurus),     // ส่งคำออกเน็ต = ต้องเปิดเองในตั้งค่า
+    extra,
+  });
 }

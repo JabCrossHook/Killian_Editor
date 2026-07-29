@@ -4,6 +4,33 @@ import Fuse from 'fuse.js';
 
 const SKIP_DIRS = ['Snapshots', 'Backups', 'Recycle', 'node_modules', '.git'];
 
+// แคชรายชื่อไฟล์ต่อโปรเจกต์ — เปิดกล่องครั้งที่ 2 เป็นต้นไปมีรายการให้พิมพ์ทันที
+// แล้วสแกนซ้ำในพื้นหลังเพื่อเก็บไฟล์ที่เพิ่งสร้าง (เดิมสแกนครั้งเดียวจนกว่าจะรีโหลดโปรแกรม)
+let _cacheRoot = null;
+let _cacheFiles = [];
+
+export function quickOpenCache() { return { root: _cacheRoot, files: _cacheFiles }; }
+export function clearQuickOpenCache() { _cacheRoot = null; _cacheFiles = []; }
+
+async function scanProject(root) {
+  const out = [];
+  const rootLen = root.length;
+  const scan = async (dir) => {
+    for (const f of await kapi.listFiles(dir, '').catch(() => [])) {
+      const fp = await kapi.join(dir, f);
+      // kapi.relative เป็น IPC (async) — เดิมเรียกแบบ sync เลยได้ Promise มาโชว์เป็น [object Promise]
+      const rel = fp.slice(rootLen).replace(/^[\\/]/, '').replace(/\\/g, '/');
+      out.push({ path: fp, name: f, rel, ext: (f.split('.').pop() || '').toLowerCase() });
+    }
+    for (const d of await kapi.listDirs(dir).catch(() => [])) {
+      if (SKIP_DIRS.includes(d)) continue;
+      await scan(await kapi.join(dir, d));
+    }
+  };
+  await scan(root);
+  return out;
+}
+
 export function openQuickOpen() {
   if (!state.root) { setStatus('ยังไม่ได้เปิดโปรเจกต์'); return null; }
 
@@ -13,35 +40,44 @@ export function openQuickOpen() {
   const input = el('input', 'k-qo-input');
   input.placeholder = 'พิมพ์ชื่อไฟล์…';
   const list = el('div', 'k-qo-list');
-  box.append(input, list);
+  // แถบคำใบ้ท้ายกล่อง (ผู้ใช้ไม่รู้ว่ากดอะไรได้บ้าง) + ปุ่มสแกนใหม่
+  const foot = el('div', 'k-qo-foot');
+  foot.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:11px;opacity:.75;border-top:1px solid var(--border)';
+  const hint = el('span', 'k-qo-hint', '↑↓ เลือก · Enter เปิด · Esc ปิด · Ctrl+R สแกนใหม่');
+  const count = el('span', 'k-qo-count');
+  count.style.cssText = 'margin-left:auto';
+  const reBtn = el('button', 'k-qo-refresh', '🔄');
+  reBtn.title = 'สแกนไฟล์ใหม่';
+  reBtn.style.cssText = 'border:none;background:none;cursor:pointer;font-size:13px';
+  foot.append(hint, count, reBtn);
+  box.append(input, list, foot);
   ov.append(box);
   document.body.append(ov);
 
-  const allFiles = [];
-  let fuse = null;
+  let allFiles = (_cacheRoot === state.root) ? _cacheFiles.slice() : [];
+  let fuse = allFiles.length ? mkFuse(allFiles) : null;
   let selectedIdx = 0;
   let results = [];
+  let scanning = false;
 
-  const ready = (async () => {
+  function mkFuse(files) { return new Fuse(files, { keys: ['name', 'rel'], threshold: 0.4, distance: 100 }); }
+
+  async function rescan() {
+    if (scanning) return;
+    scanning = true;
+    count.textContent = 'กำลังสแกน…';
     try {
-      const rootLen = state.root.length;
-      const scan = async (dir) => {
-        for (const f of await kapi.listFiles(dir, '').catch(() => [])) {
-          const fp = await kapi.join(dir, f);
-          // kapi.relative เป็น IPC (async) — เดิมเรียกแบบ sync เลยได้ Promise มาโชว์เป็น [object Promise]
-          const rel = fp.slice(rootLen).replace(/^[\\/]/, '').replace(/\\/g, '/');
-          allFiles.push({ path: fp, name: f, rel, ext: (f.split('.').pop() || '').toLowerCase() });
-        }
-        for (const d of await kapi.listDirs(dir).catch(() => [])) {
-          if (SKIP_DIRS.includes(d)) continue;
-          await scan(await kapi.join(dir, d));
-        }
-      };
-      await scan(state.root);
-      fuse = new Fuse(allFiles, { keys: ['name', 'rel'], threshold: 0.4, distance: 100 });
+      const files = await scanProject(state.root);
+      _cacheRoot = state.root; _cacheFiles = files;
+      allFiles = files.slice();
+      fuse = mkFuse(allFiles);
       doFilter();
     } catch (e) { log('warn', 'quick-open: scan failed', e); }
-  })();
+    finally { scanning = false; }
+  }
+
+  if (allFiles.length) doFilter();          // มีแคช → เห็นรายการทันที
+  const ready = rescan();                   // แล้วอัปเดตพื้นหลังเสมอ (จับไฟล์ที่เพิ่งสร้าง)
 
   function doFilter() {
     const q = input.value.trim();
@@ -57,6 +93,7 @@ export function openQuickOpen() {
       row.onclick = () => openFile(f);
       list.append(row);
     });
+    count.textContent = `${results.length}/${allFiles.length} ไฟล์`;
     highlight(selectedIdx);
   }
 
@@ -74,12 +111,14 @@ export function openQuickOpen() {
     else kapi.revealInOS(f.path);
   }
 
+  reBtn.onclick = () => { rescan(); input.focus(); };
   input.oninput = doFilter;
   input.onkeydown = (e) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); selectedIdx = Math.min(selectedIdx + 1, results.length - 1); highlight(selectedIdx); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); selectedIdx = Math.max(selectedIdx - 1, 0); highlight(selectedIdx); }
     else if (e.key === 'Enter') { e.preventDefault(); if (results[selectedIdx]) openFile(results[selectedIdx]); }
     else if (e.key === 'Escape') { e.preventDefault(); ov.remove(); }
+    else if (e.code === 'KeyR' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); rescan(); }
   };
   ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
   input.focus();

@@ -1,6 +1,6 @@
 // core.js — รากฐานที่ทุกโมดูลใช้ร่วม: DOM helpers, state, smart, log, constants, i18n, shortcuts
 // กฎ: ที่นี่มีเฉพาะสิ่งที่ "แชร์ข้ามไฟล์และไม่ reassign" เท่านั้น
-//     ตัวแปร let ที่ reassign (pageZoom, autosaveTimer, floatBar, …) อยู่กับฟังก์ชันที่แก้มันในไฟล์ของมันเอง
+//     ตัวแปร let ที่ reassign (pageScale, autosaveTimer, floatBar, …) อยู่กับฟังก์ชันที่แก้มันในไฟล์ของมันเอง
 import { SmartType } from './smart.js';
 
 // ---- DOM helpers ----
@@ -53,16 +53,20 @@ export function setStatus(s) { $('#status').textContent = s; }
 // ---- ค่าตั้งต้น settings/goals (โครงเดียวกับ v1 — เก็บครบใน project.khn.json) ----
 export const DEFAULT_SETTINGS = {
   autoSaveMinutes: 5, maxBackups: 10, autoBackup: true, lineNumbers: false,
-  uiFontSize: 0, spellCheck: true, spellCheckDict: true, autoMention: true, recycleDays: 30,
+  uiFontSize: 0, uiScale: 1, spellCheck: true, spellCheckDict: true, autoMention: true, recycleDays: 30,
   paperMode: true, shortcuts: {}, fontFamily: '', language: 'th',   // ไทยเป็นค่าเริ่มต้น (ไทย 100%)
   autoSync: false,                 // auto-task: อัปเดตชื่อเอนทิตี้ทุกไฟล์อัตโนมัติ (ข้อ 88)
   // ค้นคำพ้องอังกฤษผ่าน datamuse.com — ปิดไว้ก่อน (ส่งคำที่เลือกออกอินเทอร์เน็ต)
   thesaurus: false,
+  focusDim: 0.3,                   // ความจางของบรรทัดอื่นในโหมดโฟกัส (0.05–0.8)
 };
 export const DEFAULT_GOALS = { dailyWords: 500, projectWords: 50000 };
 export const BASE_ED_FS = 15.5; // px — ขนาดฟอนต์ตัวแก้ไขพื้นฐาน (ตรงกับ .ProseMirror ใน style.css)
 export const BASE_SP_FS = 14.5; // px — ขนาดฟอนต์บทหนังพื้นฐาน (ตรงกับ .sp ใน style.css)
-export const ZOOM_MIN = 0.5, ZOOM_MAX = 2.5;
+// ซูมหน้ากระดาษ = ย่อ/ขยาย "ทั้งหน้า" ด้วย CSS zoom (ฟอนต์+ระยะขอบ+ความกว้าง ไปพร้อมกัน)
+export const SCALE_MIN = 0.5, SCALE_MAX = 2.5;
+// ขนาด UI (แถบเครื่องมือ/แผง/กล่อง) — คนละตัวกับซูมหน้ากระดาษ
+export const UI_SCALE_MIN = 0.75, UI_SCALE_MAX = 2.0;
 
 // ---- ค่าคงที่ที่หลายโมดูลใช้ร่วม (pure — ไม่มี dependency) ----
 export const SCENE_STATUSES = ['โครงร่าง', 'กำลังเขียน', 'เขียนเสร็จ', 'ตรวจแล้ว', 'เก็บถาวร'];
@@ -70,8 +74,17 @@ export const SCENE_COLORS = [
   ['แดง', '#d9575e'], ['ส้ม', '#d97757'], ['เหลือง', '#d9b757'],
   ['เขียว', '#6fae6f'], ['ฟ้า', '#5f9fd9'], ['ม่วง', '#a97fd0'],
 ];
+// สีประจำสถานะมาตรฐาน (สถานะที่ผู้ใช้เพิ่มเองเก็บสีไว้ที่ meta.customStatusColors — ดู custom-status.js)
+export const STATUS_COLORS = {
+  'โครงร่าง': '#8a8f98', 'กำลังเขียน': '#d97757', 'เขียนเสร็จ': '#5f9fd9',
+  'ตรวจแล้ว': '#6fae6f', 'เก็บถาวร': '#a97fd0',
+};
+export const DEFAULT_STATUS_COLOR = '#8a8f98';
 export const BUILTIN_CATS = ['characters', 'locations', 'items', 'lore'];
-export const CAT_ICON = { characters: '👤', locations: '📍', items: '🎒', lore: '📜' };
+export const CAT_ICON = { characters: 'user', locations: 'map', items: 'briefcase', lore: 'bookmark' };
+// ประเภทความสัมพันธ์ (ครอบครัว/คนรัก/ศัตรู…) — โมดูลบริสุทธิ์ ส่งต่อจาก relationship-types.js
+// เพื่อให้ feature module ดึงจาก core.js ที่เดียวเหมือนค่าคงที่ตัวอื่น
+export { REL_TYPES, REL_COLOR, REL_ICON, REL_LABEL, categorizeRole, categorizeWith } from './relationship-types.js';
 
 // ---- ระบบภาษา (i18n) ----
 export const i18n = { lang: 'en', strings: {}, fallback: null, available: ['en'] };
@@ -104,19 +117,20 @@ const BUILTIN_EN = {
       "autoSaveMinutes": "Auto Save every (minutes)", "autoSaveHint": "0 = disable auto save",
       "autoBackup": "Auto-backup versions on save", "maxBackups": "Max auto backups",
       "maxBackupsHint": "Named versions are not deleted", "dailyGoal": "Daily word goal",
-      "projectGoal": "Project word goal", "fontSize": "Editor font size",
-      "fontSizeHint": "Adjust from default size", "lineNumbers": "Show line numbers",
+      "projectGoal": "Project word goal",       "fontSize": "Editor font size",
+      "fontSizeHint": "Adjust from default size", "uiScale": "UI size", "uiScaleHint": "Scale toolbar, panels, tabs and dialogs (75-200%)", "fontFamily": "Font Family", "fontFamilyHint": "Select a font for the editor",
+      "lineNumbers": "Show line numbers",
       "lineNumbersHint": "Count by paragraph/block", "spellCheck": "Spell check",
       "spellCheckHint": "Underline misspelled words", "spellCheckDict": "Spell check with dictionary (Thai+English)",
       "spellCheckDictHint": "Offline word list", "autoMention": "Auto-detect Wiki names",
       "autoMentionHint": "Highlight names from Wiki", "recycleDays": "Auto-empty trash older than (days)",
-      "recycleDaysHint": "0 = never", "autoSync": "Auto-sync",
+      "recycleDaysHint": "0 = never", "focusDim": "Dim level of other lines (Focus Mode)", "focusDimHint": "0.05 = very dim - 0.8 = barely dim", "autoSync": "Auto-sync",
       "autoSyncHint": "Update entity names in all files", "languageSelect": "Interface Language",
       "downloadLanguage": "Download additional language...", "shortcutsHint": "Click Edit then press new key combo"
     },
     "errors": { "noProject": "No project open", "noFile": "File not found", "saveFailed": "Save failed", "loadFailed": "Load failed", "aiNoKey": "Please set AI API key", "aiFailed": "AI request failed", "openProjectFirst": "Open a project first", "notKillianProject": "This folder is not a Killian project", "needScene": "Open a scene first", "moveCrossDraft": "Moving across drafts not supported", "requiresCtrl": "Ctrl/⌘ required", "pressShortcut": "Press shortcut..." },
-    "status": { "ready": "Ready", "saving": "Saving...", "saved": "Saved", "loading": "Loading...", "searching": "Searching...", "settingsSaved": "Settings saved", "zoom": "Zoom", "zoomReset": "Zoom reset to 100%", "copied": "Markdown copied", "movedScene": "Moved scene to", "typewriterOn": "Typewriter: ON", "typewriterOff": "Typewriter: OFF", "focusOn": "Focus mode: ON", "focusOff": "Focus mode: OFF", "paperOn": "Paper mode: ON", "paperOff": "Paper mode: OFF", "dirtyClose": "tabs with unsaved changes", "saveAllAndClose": "Save all and close", "closeWithoutSaving": "Close without saving" },
-    "shortcuts": { "save": "Save", "saveAll": "Save All", "saveAs": "Save As...", "newProject": "New Project", "openProject": "Open Project", "print": "Print", "closeTab": "Close Tab", "find": "Find", "settings": "Settings", "undo": "Undo", "redo": "Redo", "bold": "Bold", "italic": "Italic", "underline": "Underline", "strikethrough": "Strikethrough", "heading1": "Heading 1", "heading2": "Heading 2", "heading3": "Heading 3", "bodyText": "Body Text", "bulletList": "Bullet List", "numberedList": "Numbered List", "clearFormatting": "Clear Formatting", "alignLeft": "Align Left", "alignCenter": "Align Center", "alignRight": "Align Right", "justify": "Justify", "toggleFormat": "Toggle Mode", "paperMode": "Paper Mode", "globalSearch": "Search Project", "focusMode": "Focus Mode", "quickOpen": "Quick Open", "typewriter": "Typewriter Mode", "compile": "Compile", "splitView": "Split View", "kanban": "Kanban Board" }
+    "status": { "ready": "Ready", "saving": "Saving...", "saved": "Saved", "loading": "Loading...", "searching": "Searching...", "settingsSaved": "Settings saved", "zoom": "Zoom", "zoomReset": "Zoom reset to 100%", "uiScale": "UI size", "copied": "Markdown copied", "movedScene": "Moved scene to", "typewriterOn": "Typewriter: ON", "typewriterOff": "Typewriter: OFF", "focusOn": "Focus mode: ON", "focusOff": "Focus mode: OFF", "paperOn": "Paper mode: ON", "paperOff": "Paper mode: OFF", "dirtyClose": "tabs with unsaved changes", "saveAllAndClose": "Save all and close", "closeWithoutSaving": "Close without saving" },
+    "shortcuts": { "save": "Save", "saveAll": "Save All", "saveAs": "Save As...", "newProject": "New Project", "openProject": "Open Project", "print": "Print", "closeTab": "Close Tab", "find": "Find", "settings": "Settings", "undo": "Undo", "redo": "Redo", "bold": "Bold", "italic": "Italic", "underline": "Underline", "strikethrough": "Strikethrough", "heading1": "Heading 1", "heading2": "Heading 2", "heading3": "Heading 3", "bodyText": "Body Text", "bulletList": "Bullet List", "numberedList": "Numbered List", "clearFormatting": "Clear Formatting", "alignLeft": "Align Left", "alignCenter": "Align Center", "alignRight": "Align Right", "justify": "Justify", "toggleFormat": "Toggle Mode", "paperMode": "Paper Mode", "globalSearch": "Search Project", "focusMode": "Focus Mode", "quickOpen": "Quick Open", "typewriter": "Typewriter Mode", "compile": "Compile", "splitView": "Split View", "kanban": "Kanban Board", "exportBlog": "Export as Blog HTML" }
   }
 };
 
@@ -217,6 +231,7 @@ export const SHORTCUTS = [
   ['KeyO', true, false, 'open-project'],
   ['KeyP', true, false, 'print'],
   ['KeyW', true, false, 'close-tab'],
+  ['KeyW', true, true, 'close-all-tabs'],
   ['KeyF', true, false, 'find'],
   ['Comma', true, false, 'settings'],
   ['KeyE', true, true, 'compile'],
@@ -244,6 +259,7 @@ export const SHORTCUTS = [
   ['KeyD', true, true, 'focus-mode'],
   ['KeyO', true, true, 'quick-open'],
   ['KeyT', true, true, 'typewriter'],
+  ['KeyB', true, true, 'export-blog'],
   ['Backslash', true, true, 'split-view'],
   ['KeyK', true, false, 'kanban'],
 ];
@@ -264,6 +280,8 @@ export const SHORTCUT_LABELS = {
   'fmt:align:right': 'shortcuts.alignRight', 'fmt:align:justify': 'shortcuts.justify',
   'compile': 'shortcuts.compile', 'save-all': 'shortcuts.saveAll',
   'split-view': 'shortcuts.splitView', 'kanban': 'shortcuts.kanban',
+  'export-blog': 'shortcuts.exportBlog', 'close-all-tabs': 'shortcuts.closeAllTabs',
+  'line-numbers': 'shortcuts.lineNumbers',
 };
 
 const isMac = (() => { try { return navigator.platform.toLowerCase().includes('mac'); } catch { return false; } })();

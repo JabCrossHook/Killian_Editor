@@ -1,7 +1,9 @@
 node_modules/
+.claude/
 dist/
 tmp/
 *.log
 .git/
 .DS_Store
 Thumbs.db
+K2WIN/

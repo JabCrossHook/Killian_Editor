@@ -44,14 +44,17 @@ export function sortEvents(events) {
 // รวมเหตุการณ์จาก events เอง + ฉากที่มี storyDate ให้เป็นชุดเดียว (normalize รูปแบบ)
 // sceneEvents = [{ id, title, when, track, file, kind:'scene', color? }]
 export function mergeTimeline(events, sceneEvents) {
+  // ต้องคัดลอก "ทุก field ที่ UI ใช้" — เคยลืม whenEnd มาแล้ว (Gantt กลายเป็นจุดหมด)
+  // refs = เอกสาร/โน้ตที่เหตุการณ์นี้อ้างอิงถึง (ข้อ 5)
   const evs = (events || []).map((e) => ({
     id: e.id, title: e.title || '', when: e.when || '', whenEnd: e.whenEnd || '', track: e.track || '',
     sort: e.sort, order: e.order || 0, color: e.color || '', tags: e.tags || [],
+    refs: Array.isArray(e.refs) ? e.refs : [],
     desc: e.desc || '', kind: 'event', file: null,
   }));
   const scs = (sceneEvents || []).map((s) => ({
     id: s.id, title: s.title || '', when: s.when || '', whenEnd: '', track: s.track || '',
-    sort: undefined, order: 0, color: s.color || '', tags: [], desc: s.synopsis || '',
+    sort: undefined, order: 0, color: s.color || '', tags: [], refs: [], desc: s.synopsis || '',
     kind: 'scene', file: s.file || null,
   }));
   return sortEvents([...evs, ...scs]);
@@ -79,7 +82,25 @@ export function trackNames(events, sceneEvents) {
 
 export function newEvent(when = '') {
   return { id: 'ev-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-           title: '', when, track: '', sort: undefined, order: 0, color: '', tags: [], desc: '' };
+           title: '', when, track: '', sort: undefined, order: 0, color: '', tags: [],
+           refs: [], desc: '' };
+}
+
+// ---- การอ้างอิงของเหตุการณ์ (ข้อ 5) ----
+// ref = { kind:'scene'|'memo', path, title } · path เก็บแบบสัมพัทธ์กับ root เพื่อให้ย้ายโปรเจกต์ได้
+export function normalizeRefs(refs) {
+  if (!Array.isArray(refs)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const r of refs) {
+    if (!r || !r.path) continue;
+    const path = String(r.path).replace(/\\/g, '/');
+    if (seen.has(path)) continue;                 // อ้างซ้ำไฟล์เดิม = เก็บอันเดียว
+    seen.add(path);
+    out.push({ kind: r.kind === 'memo' ? 'memo' : 'scene', path,
+               title: r.title || path.split('/').pop() });
+  }
+  return out;
 }
 
 // ตรวจเหตุการณ์ที่ "เวลาชนกัน" (when เดียวกันใน track เดียวกัน) — คืนกลุ่มที่ชน

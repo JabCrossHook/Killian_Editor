@@ -56,6 +56,12 @@ export async function sceneProps(dPath, ch, sc) {
   const iNote = mk('โน้ต', row.note, 'textarea');
   const iFuture = mk('Future Note (หมายเหตุนักเขียน)', row.futureNote || '', 'textarea');
   iFuture.placeholder = 'โน้ตสำหรับนักเขียน — แสดงเฉพาะที่นี่และ Planner ไม่แสดงในฉากปกติ';
+  // ป้ายเล่าเรื่อง (Narrative Markers) — ฉากนี้อยู่นอกลำดับเวลาหลัก
+  const iFb = mkCheck('⏪ ย้อนอดีต (Flashback)', row.isFlashback);
+  const iFf = mkCheck('⏩ ล่วงหน้า (Flashforward)', row.isFlashforward);
+  // เลือกได้อย่างละหนึ่ง — ติ๊กตัวหนึ่งแล้วอีกตัวหลุดเอง
+  iFb.addEventListener('change', () => { if (iFb.checked) iFf.checked = false; });
+  iFf.addEventListener('change', () => { if (iFf.checked) iFb.checked = false; });
 
   const btns = el('div', 'k-dlg-btns');
   const cB = el('button', null, 'ยกเลิก');
@@ -68,6 +74,8 @@ export async function sceneProps(dPath, ch, sc) {
     row.emotion = iEmotion.value; row.conflict = iConflict.value;
     row.color = iColor.value; row.flag = iFlag.checked; row.note = iNote.value;
     row.futureNote = iFuture.value;
+    if (iFb.checked && iFf.checked) iFf.checked = false;   // กันติ๊กพร้อมกัน (เผื่อถูกตั้งค่าจากโค้ด/เทส)
+    row.isFlashback = iFb.checked; row.isFlashforward = iFf.checked;
     row.tags = iTags.value.split(',').map((x) => x.trim()).filter(Boolean);
     await kapi.writeFile(sf, JSON.stringify(d, null, 2));
     const file = await kapi.join(dPath, 'Chapters', ch.folderName, row.fileName);
@@ -75,6 +83,9 @@ export async function sceneProps(dPath, ch, sc) {
       const { meta, body } = parseMdFile(await kapi.readFile(file));
       meta.pov = row.pov; meta.tags = row.tags;
       meta.emotion = row.emotion; meta.conflict = row.conflict; meta.note = row.note;
+      // frontmatter เป็นข้อความล้วน (โครง v1) → เขียนเฉพาะตอนติ๊ก ไม่งั้นลบทิ้ง (กันบรรทัด false รกทุกไฟล์)
+      if (row.isFlashback) meta.isFlashback = true; else delete meta.isFlashback;
+      if (row.isFlashforward) meta.isFlashforward = true; else delete meta.isFlashforward;
       await kapi.writeFile(file, dumpMdFile(meta, body));
     } catch {}
     await buildTree();                 // สี/สถานะที่เพิ่งตั้งเห็นผลใน tree ทันที

@@ -240,6 +240,20 @@ check('cache: อยู่ข้ามรอบ (localStorage)', new TH.Thesauru
   const migrated = CM.fromScenesJson(old);
   check('cmt: ย้ายคอมเมนต์เก่าจาก scenes.json', migrated.sc1.length === 1 && migrated.sc1[0].text === 'เก่า' && !('sc2' in migrated));
 
+  // ── บั๊ก #25: md.js ต้องตัดบล็อกคอมเมนต์ออกจากเนื้อ ไม่งั้นโผล่ในตัวแก้ไข/ส่งออก/นับคำ ──
+  const MD = build('md.js', '_md.cjs');
+  const withCm = MD.dumpMdFile({ title: 'ท', format: 'prose' }, 'เนื้อฉาก **หนา**') +
+                 '\n\n<!-- k2-comments\n[{"id":"a","text":"หมายเหตุ","replies":[],"anchor":null}]\n-->\n';
+  const pm = MD.parseMdFile(withCm);
+  check('md: parseMdFile ตัดบล็อกคอมเมนต์ทิ้ง', pm.body === 'เนื้อฉาก **หนา**', JSON.stringify(pm.body));
+  check('md: frontmatter ยังอ่านได้ครบตอนมีคอมเมนต์', pm.meta.title === 'ท' && pm.meta.format === 'prose');
+  check('md: ไฟล์ที่ไม่มีคอมเมนต์ยังพาร์สเหมือนเดิม',
+        MD.parseMdFile(MD.dumpMdFile({ title: 'ท' }, 'เนื้อ')).body === 'เนื้อ');
+  check('md: นับคำไม่รวมข้อความในคอมเมนต์', MD.countWords(pm.body) === MD.countWords('เนื้อฉาก **หนา**'));
+  // dump→parse ที่มีคอมเมนต์ท้ายไฟล์ ต้อง round-trip ได้ (บันทึกซ้ำแล้วเนื้อไม่เพี้ยน)
+  check('md: mergeComments → parseMdFile → เนื้อเท่าเดิม',
+        MD.parseMdFile(CM.mergeComments(MD.dumpMdFile({ title: 'ท' }, 'เนื้อฉาก'), list)).body === 'เนื้อฉาก');
+
   console.log(`\ntools: ${pass} ผ่าน, ${fail} ล้มเหลว`);
   console.log(fail === 0 ? 'ALL OK' : 'HAS FAILURES');
   process.exit(fail === 0 ? 0 : 1);

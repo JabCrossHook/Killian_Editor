@@ -1,6 +1,7 @@
 // คลังรูปภาพแบบ v1 — โฟลเดอร์ Images/ + images.json [{file, caption}]
 import { ask, confirmBox } from './ui.js';
 import { imageLightbox } from './wiki.js';
+import { iconHtml } from './icons.js';
 
 async function readIndex(root) {
   const f = await kapi.join(root, 'Images', 'images.json');
@@ -72,7 +73,7 @@ export class Gallery {
         if (row) { row.caption = cap.value; await writeIndex(this.root, cur); }
       });
       const del = document.createElement('span'); del.className = 'row-add wiki-img-x';
-      del.textContent = '✕'; del.title = 'ลบรูป (ย้ายไปถังขยะ)';
+      del.innerHTML = iconHtml('x', 14); del.title = 'ลบรูป (ย้ายไปถังขยะ)';
       del.onclick = async () => {
         if (!(await confirmBox(`ลบรูป “${it.file}” ? (ย้ายไปถังขยะ)`))) return;
         await kapi.move(await kapi.join(this.root, 'Images', it.file),

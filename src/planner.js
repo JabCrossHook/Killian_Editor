@@ -7,6 +7,7 @@
 // → วาดใหม่ได้เสมอ ทำให้ undo/redo/ตัวกรอง ไม่เพี้ยน
 
 import { fabric } from 'fabric';
+import { visualTagFor } from './visual-tags.js';
 
 const el = (tag, cls, html) => {
   const e = document.createElement(tag);
@@ -360,11 +361,21 @@ export class PlannerBoard {
       }));
     }
 
+    // แท็ก: ที่ตั้งสี/ไอคอนไว้ (Visual Tags ข้อ 84) ได้จุดสี+ไอคอน · ที่เหลือเป็น #ข้อความจาง
     if (n.tags && n.tags.length) {
-      kids.push(new fabric.Text('#' + n.tags.slice(0, 3).join(' #'), {
-        left: 10, top: H - 30, fontSize: 9, fill: 'rgba(255,255,255,0.4)',
-        fontFamily: '"Segoe UI", sans-serif', originX: 'left', originY: 'top',
-      }));
+      let tx = 10;
+      for (const t of n.tags.slice(0, 3)) {
+        const vt = visualTagFor(t);
+        const label = vt ? (vt.icon || '●') + ' ' + t : '#' + t;
+        const txt = new fabric.Text(label, {
+          left: tx, top: H - 30, fontSize: 9,
+          fill: vt ? vt.color : 'rgba(255,255,255,0.4)',
+          fontFamily: '"Segoe UI", sans-serif', originX: 'left', originY: 'top',
+        });
+        kids.push(txt);
+        tx += (txt.width || 30) + 6;
+        if (tx > W - 20) break;                 // ล้นการ์ดแล้ว — ตัดที่เหลือทิ้ง
+      }
     }
 
     if (n.file) {

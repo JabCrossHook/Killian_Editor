@@ -192,6 +192,80 @@ check('ปิดแผงสุดท้าย → root ว่าง (null)', pm
 pm3.showPanel('a');
 check('เปิดใหม่หลังปิดหมด → กลับมาได้', pm3.root && pm3.root.id === 'a');
 
+// ══ บั๊ก #16: สัดส่วนที่ผู้ใช้ปรับเองต้องไม่ถูกล้างตอนเปิด/ปิดแผง ══
+{
+  const sum = (a) => a.reduce((x, y) => x + y, 0);
+  // -- helper บริสุทธิ์ --
+  check('#16 normalizeSizes ทำผลรวมเป็น 1 โดยคงอัตราส่วน',
+        Math.abs(sum(PL.normalizeSizes([2, 3])) - 1) < 1e-6 &&
+        Math.abs(PL.normalizeSizes([2, 3])[0] - 0.4) < 1e-3, JSON.stringify(PL.normalizeSizes([2, 3])));
+  check('#16 normalizeSizes ผลรวม 0 → แบ่งเท่ากัน', PL.normalizeSizes([0, 0]).join() === '0.5,0.5');
+  const ins = PL.insertSize([0.35, 0.65], 2);
+  check('#16 insertSize คงอัตราส่วนเดิมของลูกเก่า',
+        ins.length === 3 && Math.abs(ins[0] / ins[1] - 0.35 / 0.65) < 1e-3, JSON.stringify(ins));
+  check('#16 insertSize ให้ลูกใหม่ = ส่วนเฉลี่ย 1/(n+1)',
+        Math.abs(ins[2] - 1 / 3) < 1e-3 && Math.abs(sum(ins) - 1) < 1e-3, JSON.stringify(ins));
+  const insFixed = PL.insertSize([0, 1, 0], 3);      // toolbar/เนื้อหา/statusbar (0 = ขนาดคงที่)
+  check('#16 insertSize ไม่ปลุกลูกที่ขนาดเป็น 0 ให้ยืด',
+        insFixed[0] === 0 && insFixed[2] === 0, JSON.stringify(insFixed));
+  check('#16 keepSizes เก็บอัตราส่วนของลูกที่เหลือ',
+        PL.keepSizes([0.2, 0.3, 0.5], [0, 2]).map((v) => +v.toFixed(3)).join() === '0.286,0.714',
+        JSON.stringify(PL.keepSizes([0.2, 0.3, 0.5], [0, 2])));
+
+  // -- 16a: เปิดแผงเพิ่มแล้วสัดส่วนเดิมต้องคงอยู่ --
+  let d = PL.dock('row', [PL.panel('tree'), PL.panel('docs')], [0.4, 0.6]);
+  d = PL.dockPanel(d, 'docs', 'right', PL.panel('props'));
+  check('#16a เปิดแผงเพิ่ม → อัตราส่วน tree:docs เดิมยังอยู่ (ไม่กลาย 33/33/33)',
+        Math.abs(d.sizes[0] / d.sizes[1] - 0.4 / 0.6) < 1e-3, JSON.stringify(d.sizes));
+  check('#16a แผงใหม่ได้ส่วนเฉลี่ย + ผลรวมยังเป็น 1',
+        Math.abs(d.sizes[2] - 1 / 3) < 1e-3 && Math.abs(sum(d.sizes) - 1) < 1e-3, JSON.stringify(d.sizes));
+
+  // -- 16b: ปิดแผงใน dock ชั้นใน ต้องไม่แตะสัดส่วนของ dock ชั้นนอก --
+  const inner = PL.dock('col', [PL.panel('tree'), PL.panel('outline')], [0.7, 0.3]);
+  let outer = PL.dock('col', [PL.panel('toolbar'),
+                              PL.dock('row', [inner, PL.panel('docs')], [0.25, 0.75]),
+                              PL.panel('statusbar')], [0, 1, 0]);
+  const afterOuter = PL.removePanel(outer, 'outline');
+  check('#16b ปิดแผงชั้นใน → dock ชั้นนอกยังเป็น [0,1,0] (ไม่โดน reset)',
+        afterOuter.sizes.join() === '0,1,0', JSON.stringify(afterOuter.sizes));
+  const rowNode = afterOuter.children[1];
+  check('#16b dock กลางที่จำนวนลูกไม่เปลี่ยน → สัดส่วน 0.25/0.75 ยังอยู่',
+        rowNode.sizes.join() === '0.25,0.75', JSON.stringify(rowNode.sizes));
+
+  // -- ปิดแผงใน dock ที่จำนวนลูกเปลี่ยนจริง → แบ่งส่วนที่หายให้ตัวที่เหลือตามอัตราเดิม --
+  const three = PL.dock('row', [PL.panel('a'), PL.panel('b'), PL.panel('c')], [0.2, 0.3, 0.5]);
+  const two = PL.removePanel(three, 'b');
+  check('#16 ปิดแผง → ตัวที่เหลือคงอัตราส่วนกันเอง (0.2:0.5)',
+        Math.abs(two.sizes[0] / two.sizes[1] - 0.2 / 0.5) < 1e-3 && Math.abs(sum(two.sizes) - 1) < 1e-3,
+        JSON.stringify(two.sizes));
+
+  // -- ปรับสัดส่วน → เปิดแผง → ปิดแผง → ต้องกลับมาใกล้ค่าที่ปรับไว้ --
+  let live = PL.dock('row', [PL.panel('tree'), PL.panel('docs')], [0.4, 0.6]);
+  live = PL.resizeDock(live, live.id, 0, 0.28);
+  const ratioBefore = live.sizes[0] / live.sizes[1];
+  live = PL.dockPanel(live, 'docs', 'right', PL.panel('props'));
+  live = PL.removePanel(live, 'props');
+  check('#16 ปรับสัดส่วน → เปิดแผง → ปิดแผง → สัดส่วนเดิมกลับมา',
+        Math.abs(live.sizes[0] / live.sizes[1] - ratioBefore) < 1e-2,
+        JSON.stringify(live.sizes) + ' vs ' + ratioBefore.toFixed(3));
+}
+
+// ══ บั๊ก #19: แผงที่ปิดไม่ได้ (docs) ต้องหลุดออกจากต้นไม้ไม่ได้ ══
+{
+  const { pm: pmG } = mkMgr();
+  pmG.registerPanel('docs', { title: 'เอกสาร', closable: false, floatable: false });
+  pmG.registerPanel('tree', { title: 'โปรเจกต์' });
+  pmG.showPanel('docs');
+  pmG.showPanel('tree');
+  check('#19 hidePanel แผงที่ closable:false → ปฏิเสธ', pmG.hidePanel('docs') === false);
+  check('#19 แผงเอกสารยังอยู่ในต้นไม้ (root ไม่กลายเป็น null)',
+        pmG.isDocked('docs') && pmG.root !== null);
+  pmG.hidePanel('tree');
+  check('#19 แผงที่ปิดได้ยังปิดได้ตามปกติ', !pmG.isOpen('tree') && pmG.isDocked('docs'));
+  check('#19 togglePanel แผงที่ปิดไม่ได้ → ไม่ทำอะไร',
+        pmG.togglePanel('docs') === false && pmG.isDocked('docs'));
+}
+
 console.log(`\npanel: ${pass} ผ่าน, ${fail} ล้มเหลว`);
 console.log(fail === 0 ? 'ALL OK' : 'HAS FAILURES');
 process.exit(fail === 0 ? 0 : 1);

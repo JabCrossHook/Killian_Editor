@@ -1,5 +1,6 @@
-﻿// typewriter.js â€” à¸šà¸£à¸£à¸—à¸±à¸”à¸—à¸µà¹ˆà¸à¸³à¸¥à¸±à¸‡à¹€à¸‚à¸µà¸¢à¸™à¸­à¸¢à¸¹à¹ˆà¸à¸¶à¹ˆà¸‡à¸à¸¥à¸²à¸‡à¸«à¸™à¹‰à¸²à¸ˆà¸­à¹€à¸ªà¸¡à¸­ (Ctrl+Shift+T)
-// à¸£à¸°à¸§à¸±à¸‡: selection.anchorNode à¸¡à¸±à¸à¹€à¸›à¹‡à¸™ Text node à¸‹à¸¶à¹ˆà¸‡ "à¹„à¸¡à¹ˆà¸¡à¸µ" .closest() â†’ à¸•à¹‰à¸­à¸‡à¸‚à¸¶à¹‰à¸™ parentElement à¸à¹ˆà¸­à¸™
+// typewriter.js — บรรทัดที่กำลังเขียนอยู่กึ่งกลางหน้าจอเสมอ (Ctrl+Shift+T)
+// ระวัง: selection.anchorNode มักเป็น Text node ซึ่ง "ไม่มี" .closest() → ต้องขึ้น parentElement ก่อน
+//        (cursorBlock() ใน focus-mode.js จัดการให้แล้ว — อิง view.domAtPos ของ ProseMirror ก่อน)
 import { cursorBlock } from './focus-mode.js';
 
 let _twActive = false;
@@ -21,17 +22,31 @@ export function toggleTypewriter(on) {
   return _twActive;
 }
 
-// à¹€à¸¥à¸·à¹ˆà¸­à¸™à¹ƒà¸«à¹‰à¸šà¸£à¸£à¸—à¸±à¸”à¸—à¸µà¹ˆà¸¡à¸µ cursor à¸­à¸¢à¸¹à¹ˆà¸à¸¥à¸²à¸‡ pane â€” à¸„à¸·à¸™ true à¹€à¸¡à¸·à¹ˆà¸­à¸«à¸²à¸šà¸£à¸£à¸—à¸±à¸”à¹€à¸ˆà¸­à¹à¸¥à¸°à¹€à¸¥à¸·à¹ˆà¸­à¸™à¸ˆà¸£à¸´à¸‡
+// หา "ตัวที่เลื่อนได้จริง" ของตัวแก้ไข — ปกติคือ .pane
+// แต่ถ้าตัวแก้ไขอยู่ในหน้าต่างลอย (float-win) จะไม่มี .pane เลย → ไต่ขึ้นไปหา element ที่ overflow เลื่อนได้
+export function scrollHost(pm) {
+  const pane = pm.closest('.pane');
+  if (pane) return pane;
+  let n = pm.parentElement;
+  while (n && n !== document.body) {
+    const ov = getComputedStyle(n).overflowY;
+    if (ov === 'auto' || ov === 'scroll' || ov === 'overlay') return n;
+    n = n.parentElement;
+  }
+  return null;
+}
+
+// เลื่อนให้บรรทัดที่มี cursor อยู่กลางกรอบ — คืน true เมื่อหาบรรทัดเจอและเลื่อนจริง
 export function twScroll() {
   if (!_twActive) return false;
   const cur = cursorBlock();          // ใช้ตัวเดียวกับโหมดโฟกัส (อิง ProseMirror ก่อน)
   if (!cur) return false;
   const { pm, blk } = cur;
-  const pane = pm.closest('.pane');
-  if (!pane) return false;
-  const pr = pane.getBoundingClientRect();
+  const host = scrollHost(pm);
+  if (!host) return false;
+  const pr = host.getBoundingClientRect();
   const br = blk.getBoundingClientRect();
-  const target = pane.scrollTop + (br.top - pr.top) - pr.height / 2 + br.height / 2;
-  pane.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+  const target = host.scrollTop + (br.top - pr.top) - pr.height / 2 + br.height / 2;
+  host.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
   return true;
 }

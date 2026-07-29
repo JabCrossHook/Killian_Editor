@@ -1,13 +1,13 @@
 {
   "name": "killian2",
-  "version": "2.0.0-alpha.40",
+  "version": "2.0.0-alpha.48",
   "description": "โปรแกรมเขียนนิยาย/บทหนัง — Electron + ProseMirror",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "build": "node build.js",
     "test": "node test/md.test.js",
-    "test:unit": "node test/search-engine.test.cjs && node test/panel.test.cjs && node test/split.test.cjs && node test/kanban.test.cjs && node test/world-story.test.cjs && node test/auto-task.test.cjs && node test/ai-core.test.cjs && node test/ai-features.test.cjs && node test/tools.test.cjs",
+    "test:unit": "node test/search-engine.test.cjs && node test/panel.test.cjs && node test/split.test.cjs && node test/branch.test.cjs && node test/timeline.test.cjs && node test/kanban.test.cjs && node test/world-story.test.cjs && node test/auto-task.test.cjs && node test/ai-core.test.cjs && node test/ai-features.test.cjs && node test/tools.test.cjs && node test/relationship.test.cjs",
     "dist": "node build.js && electron-builder --win portable",
     "dist:dir": "node build.js && electron-builder --win dir"
   },
