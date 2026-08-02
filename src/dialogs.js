@@ -48,7 +48,7 @@ export function settingsDialog(openTab) {
       <div class="k-set-tab" data-p="lang">${t('settings.language')}</div>
       <div class="k-set-tab" data-p="keys">${t('settings.shortcuts')}</div>
     </div>
-    <div class="k-set-page on" data-p="gen">
+    <div class="k-set-page k-set-2col on" data-p="gen">
       <div class="k-row"><label>${t('settings.projectName')}</label><input type="text" id="st-title"></div>
       <div class="k-row"><label>${t('settings.author')}</label><input type="text" id="st-author"></div>
       <div class="k-row"><label>${t('settings.autoSaveMinutes')}<span class="k-hint">${t('settings.autoSaveHint')}</span></label><input type="number" id="st-auto" min="0" max="120"></div>
@@ -57,7 +57,7 @@ export function settingsDialog(openTab) {
       <div class="k-row"><label>${t('settings.dailyGoal')}</label><input type="number" id="st-daily" min="0"></div>
       <div class="k-row"><label>${t('settings.projectGoal')}</label><input type="number" id="st-proj" min="0"></div>
     </div>
-    <div class="k-set-page" data-p="write">
+    <div class="k-set-page k-set-2col" data-p="write">
       <div class="k-row"><label>${t('settings.fontFamily')}<span class="k-hint">${t('settings.fontFamilyHint')}</span></label><select id="st-fontfamily" class="k-dlg-select" style="width:100%"></select></div>
       <div class="k-row"><label>${t('settings.spFontFamily')}<span class="k-hint">${t('settings.spFontFamilyHint')}</span></label><select id="st-spfontfamily" class="k-dlg-select" style="width:100%"></select></div>
       <div class="k-row"><label>ขนาดฟอนต์นิยาย (pt)<span class="k-hint">มาตรฐานต้นฉบับ = 12pt (Courier Final Draft)</span></label><input type="number" id="st-edpt" class="k-narrow" min="6" max="48" step="0.5"></div>
@@ -75,7 +75,7 @@ export function settingsDialog(openTab) {
     <div class="k-set-page" data-p="auto">
       <div class="k-row"><label>${iconHtml('cloud-lightning', 14)} ${t('settings.autoSync')}<span class="k-hint">${t('settings.autoSyncHint')}</span></label><input type="checkbox" id="st-autosync"></div>
     </div>
-    <div class="k-set-page" data-p="setup">
+    <div class="k-set-page k-set-2col" data-p="setup">
       <div class="k-hint" style="margin-bottom:10px">[98] ข้อมูลบนหน้าปกบท/ต้นฉบับ — ใช้ตอนพิมพ์และส่งออก</div>
       <div class="k-set-sub">ผู้เขียน</div>
       <div class="k-row"><label>อีเมลผู้เขียน</label><input type="text" id="st-email"></div>
@@ -93,10 +93,10 @@ export function settingsDialog(openTab) {
       <div class="k-set-sub">ลิขสิทธิ์</div>
       <div class="k-row"><label>Copyright by</label><input type="text" id="st-copyright"></div>
     </div>
-    <div class="k-set-page" data-p="page">
+    <div class="k-set-page k-set-2col" data-p="page">
       <div class="k-hint" style="margin-bottom:10px">[85] ขนาดกระดาษและระยะขอบ — ใช้ร่วมกันทั้งโหมดนิยายและโหมดบทภาพยนตร์</div>
       <div class="k-row"><label>ขนาดกระดาษ</label><select id="st-paper" class="k-dlg-select"></select></div>
-      <div class="k-row" id="st-paper-custom"><label>กว้าง × สูง (นิ้ว)</label>
+      <div class="k-row k-full" id="st-paper-custom"><label>กว้าง × สูง (นิ้ว)</label>
         <span><input type="number" id="st-paper-w" class="k-narrow" min="3" max="30" step="0.01">
         × <input type="number" id="st-paper-h" class="k-narrow" min="3" max="40" step="0.01"></span></div>
       <div class="k-set-sub">ระยะขอบ (นิ้ว)</div>
@@ -106,7 +106,7 @@ export function settingsDialog(openTab) {
         <div class="k-row"><label>ซ้าย (Left)</label><input type="number" id="st-mg-left" class="k-narrow" min="0" max="5" step="0.05"></div>
         <div class="k-row"><label>ขวา (Right)</label><input type="number" id="st-mg-right" class="k-narrow" min="0" max="5" step="0.05"></div>
       </div>
-      <div class="k-hint" id="st-page-info" style="margin-top:8px"></div>
+      <div class="k-hint k-full" id="st-page-info" style="margin-top:8px"></div>
       <div class="k-set-sub">[84] กฎการตัดหน้า (widow / orphan)</div>
       <div class="k-set-grid2">
         <div class="k-row"><label>บรรยาย: เหลือท้ายหน้าอย่างน้อย</label><input type="number" id="st-pb-ab" class="k-narrow" min="0" max="20"></div>
@@ -123,7 +123,7 @@ export function settingsDialog(openTab) {
       <div class="k-row"><label>ทวนชื่อตัวละคร (cont'd)</label><input type="text" id="st-str-contd"></div>
       <div class="k-row"><label>หัวข้อ Scene / Time (หน้ารายชื่อ)</label>
         <span><input type="text" id="st-str-scene" style="width:46%"> <input type="text" id="st-str-time" style="width:46%"></span></div>
-      <div style="margin-top:12px; text-align:right"><button id="st-page-reset" class="k-reset-btn">↺ คืนค่าเริ่มต้น</button></div>
+      <div class="k-full" style="margin-top:12px; text-align:right"><button id="st-page-reset" class="k-reset-btn">↺ คืนค่าเริ่มต้น</button></div>
     </div>
     <div class="k-set-page" data-p="spfmt">
       <div class="k-hint" style="margin-bottom:10px">[81][82][83] ระยะเยื้อง (วัดจากขอบกระดาษ) · ความกว้าง · ระยะเว้นบรรทัด (10 = 1 บรรทัด) · ตัวอักษรบนจอ / ตอนพิมพ์</div>
@@ -178,7 +178,9 @@ export function settingsDialog(openTab) {
     const fs = q('#st-fontfamily'); if (!fs) return;
     const spFs = q('#st-spfontfamily');
     const builtin = [
-      { name: 'Segoe UI (ค่าเริ่มต้น)', value: '' },
+      { name: 'ค่าเริ่มต้น (Courier Prime 12pt)', value: '' },
+      { name: 'Courier Prime (ฝังมากับโปรแกรม)', value: DEFAULT_SCRIPT_FONT },
+      { name: 'Segoe UI', value: '"Segoe UI", system-ui, sans-serif' },
       { name: 'Sarabun', value: 'Sarabun, sans-serif' },
       { name: 'Noto Sans Thai', value: '"Noto Sans Thai", sans-serif' },
       { name: 'Leelawadee UI', value: '"Leelawadee UI", sans-serif' },
@@ -209,7 +211,7 @@ export function settingsDialog(openTab) {
         const opt = document.createElement('option');
         opt.value = f.value;
         // ฟอนต์บทหนังค่าว่าง = Courier New ตามมาตรฐานบท (ไม่ใช่ Segoe UI แบบนิยาย)
-        opt.textContent = f.value === '' ? 'Courier New (ค่าเริ่มต้นบทหนัง)' : f.name;
+        opt.textContent = f.value === '' ? 'ค่าเริ่มต้นบทหนัง (Courier Prime 12pt)' : f.name;
         if (f.value === (origSpFontFamily || '')) opt.selected = true;
         spFs.appendChild(opt);
       }

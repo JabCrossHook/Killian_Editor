@@ -11,7 +11,8 @@
 import { el } from '../core.js';
 import { iconHtml, hasIcon } from '../icons.js';
 import * as PL from './panel-layout.js';
-import { makePanelDraggable, makeTabDraggable, makeFloatDraggable, createDropOverlay } from './panel-drag.js';
+import { makePanelDraggable, makeTabDraggable, makeFloatDraggable, createDropOverlay,
+         clampFloat, FLOAT_MIN_W, FLOAT_MIN_H } from './panel-drag.js';
 
 export { createDropOverlay };
 
@@ -187,7 +188,7 @@ function buildHead(node, pm, opts, md, floating) {
         }
         const host = e.target.closest('.k-panel');
         const r = host ? host.getBoundingClientRect() : { left: 90, top: 90, width: 320, height: 300 };
-        pm.floatPanel(node.id, { x: r.left, y: r.top, w: Math.max(220, r.width), h: Math.max(160, r.height) });
+        pm.floatPanel(node.id, clampFloat({ x: r.left, y: r.top, w: r.width, h: r.height }));
       }
     };
     btns.appendChild(btn);
@@ -218,10 +219,12 @@ export function renderFloatPanel(f, pm, opts, container) {
   const md = metaOf(opts, p.id);
   const pop = el('div', 'k-float-panel');
   pop.dataset.panelId = p.id;
-  pop.style.left = (f.x ?? 80) + 'px';
-  pop.style.top = (f.y ?? 80) + 'px';
-  pop.style.width = (f.w ?? 360) + 'px';
-  pop.style.height = (f.h ?? 260) + 'px';
+  // 0.56a #7: เลย์เอาต์ที่บันทึกไว้อาจอยู่นอกจอ (ย่อหน้าต่าง/ย้ายจอ) → หนีบทุกครั้งที่วาด
+  const box = clampFloat({ x: f.x ?? 80, y: f.y ?? 80, w: f.w ?? 360, h: f.h ?? 260 });
+  pop.style.left = box.x + 'px';
+  pop.style.top = box.y + 'px';
+  pop.style.width = box.w + 'px';
+  pop.style.height = box.h + 'px';
   if (p.collapsed) pop.classList.add('k-collapsed');
 
   const head = buildHead(p, pm, opts, md, true);
@@ -229,7 +232,7 @@ export function renderFloatPanel(f, pm, opts, container) {
   pop.appendChild(buildBody(p, opts));
 
   const grip = el('div', 'k-panel-resize');
-  makeResizable(pop, grip, (w, h) => pm.moveFloat(p.id, { w, h }));
+  makeResizable(pop, grip, (w, h, x, y) => pm.moveFloat(p.id, { w, h, x, y }));
   pop.appendChild(grip);
 
   makeFloatDraggable(head, pop, p.id, pm, { host: opts.host });
@@ -279,19 +282,27 @@ export function createResizeHandle(dockId, index, dir, pm) {
 }
 
 // ปรับขนาดแผงลอยด้วยมุมขวาล่าง (สดตอนลาก → commit ตอนปล่อย)
+// 0.56a #7: เดิมลากเกินขอบจอได้ไม่จำกัด → แผงหลุดจอแล้วเรียกกลับไม่ได้เลย
+// ตอนนี้หนีบทั้งตอนลากและตอนปล่อย ให้แผงอยู่ในจอและใหญ่พอจับได้เสมอ
 export function makeResizable(box, grip, onEnd) {
   grip.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
     e.preventDefault(); e.stopPropagation();
     const w0 = box.offsetWidth, h0 = box.offsetHeight, x0 = e.clientX, y0 = e.clientY;
     const move = (ev) => {
-      box.style.width = Math.max(200, w0 + ev.clientX - x0) + 'px';
-      box.style.height = Math.max(120, h0 + ev.clientY - y0) + 'px';
+      const c = clampFloat({ x: box.offsetLeft, y: box.offsetTop,
+                             w: w0 + ev.clientX - x0, h: h0 + ev.clientY - y0 });
+      box.style.width = Math.max(FLOAT_MIN_W, Math.min(c.w, window.innerWidth - box.offsetLeft)) + 'px';
+      box.style.height = Math.max(FLOAT_MIN_H, Math.min(c.h, window.innerHeight - box.offsetTop)) + 'px';
     };
     const up = () => {
       document.removeEventListener('mousemove', move);
       document.removeEventListener('mouseup', up);
-      onEnd(box.offsetWidth, box.offsetHeight);
+      const c = clampFloat({ x: box.offsetLeft, y: box.offsetTop,
+                             w: box.offsetWidth, h: box.offsetHeight });
+      box.style.left = c.x + 'px'; box.style.top = c.y + 'px';
+      box.style.width = c.w + 'px'; box.style.height = c.h + 'px';
+      onEnd(c.w, c.h, c.x, c.y);
     };
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', up);

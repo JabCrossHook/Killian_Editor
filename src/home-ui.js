@@ -228,9 +228,9 @@ export function createProjectCard(project, onOpen) {
 export async function showHomeDialog() {
   const ov = el('div', 'k-overlay');
   ov.style.zIndex = '90';
-  const box = el('div', 'k-dialog k-wide');
-  box.style.maxWidth = '1100px';
-  box.style.minWidth = '720px';
+  // 0.56a #1: กล่องหน้าแรกต้อง "ขนาดเท่าเดิมเสมอ" ไม่ว่าจะมุมมองการ์ดหรือรายการ
+  // (เดิมกล่องหดตามเนื้อใน → สลับมุมมองทีกล่องกระตุกทั้งใบ · แบบ DaVinci Resolve คือกรอบนิ่ง เนื้อในเลื่อน)
+  const box = el('div', 'k-dialog k-home-dlg');
   const head = el('div', 'home-head');
   head.append(el('h2', 'home-title', 'Killian 2'));
   const actions = el('div', 'home-actions');
@@ -240,7 +240,9 @@ export async function showHomeDialog() {
   viewBtn.title = 'สลับมุมมอง (การ์ด / รายการ)';
   actions.append(newBtn, openBtn, viewBtn);
   const grid = el('div', 'home-grid');
-  box.append(head, actions, grid);
+  const scroll = el('div', 'home-dlg-scroll');   // กรอบคงที่ · เลื่อนเฉพาะรายการข้างใน
+  scroll.append(grid);
+  box.append(head, actions, scroll);
   ov.append(box);
   document.body.append(ov);
   ov.onclick = (e) => { if (e.target === ov) ov.remove(); };

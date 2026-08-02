@@ -1,4 +1,18 @@
 /* Killian 2 — ธีม Claude dark (โทนอุ่น) */
+
+/* ---------- ฟอนต์บทภาพยนตร์ (ฝังมากับโปรแกรม — ไม่ต้องลงเครื่อง) ----------
+   Courier Prime (SIL Open Font License 1.1 · ดู renderer/assets/fonts/OFL.txt)
+   เป็นฟอนต์มาตรฐานบทภาพยนตร์ที่ใช้แทน "Courier Final Draft" ได้ทุกประการ
+   ไทยไม่มีในฟอนต์นี้ → ตกไป TH Sarabun New / Sarabun ตามลำดับใน font stack */
+@font-face { font-family:"Courier Prime"; font-weight:400; font-style:normal; font-display:swap;
+  src:url("assets/fonts/CourierPrime-Regular.ttf") format("truetype"); }
+@font-face { font-family:"Courier Prime"; font-weight:700; font-style:normal; font-display:swap;
+  src:url("assets/fonts/CourierPrime-Bold.ttf") format("truetype"); }
+@font-face { font-family:"Courier Prime"; font-weight:400; font-style:italic; font-display:swap;
+  src:url("assets/fonts/CourierPrime-Italic.ttf") format("truetype"); }
+@font-face { font-family:"Courier Prime"; font-weight:700; font-style:italic; font-display:swap;
+  src:url("assets/fonts/CourierPrime-BoldItalic.ttf") format("truetype"); }
+
 :root {
   --bg:#262624; --side:#1f1e1c; --bar:#30302d; --border:#3f3e3a;
   --fg:#e8e6df; --bright:#faf9f5; --dim:#98958b;
@@ -104,9 +118,14 @@ button:hover { background:#3a3936; }
 .k-panel.k-collapsed { flex:0 0 auto !important; }
 .k-panel.k-collapsed > .k-panel-body { display:none; }
 /* แผงลอย */
+/* 0.56a #6: แผงลอยที่ทับแถบหัวหน้าต่างเคยลากไม่ได้ — #titlebar เป็น -webkit-app-region:drag
+   ซึ่ง OS คิดจาก "กรอบของ element" ไม่สนลำดับการซ้อน → ต้องเจาะ no-drag ให้แผงลอยเอง */
 .k-float-panel { position:fixed; z-index:66; display:flex; flex-direction:column;
   background:var(--side); border:1px solid var(--border); border-radius:9px;
-  box-shadow:0 10px 34px rgba(0,0,0,.5); overflow:hidden; }
+  box-shadow:0 10px 34px rgba(0,0,0,.5); overflow:hidden;
+  -webkit-app-region:no-drag; }
+.k-float-panel * { -webkit-app-region:no-drag; }
+.k-drop-zone, .k-drag-ghost { -webkit-app-region:no-drag; }
 .k-float-panel > .k-panel-body { flex:1; min-height:0; overflow:auto; padding:8px; }
 .k-float-panel.k-collapsed { height:auto !important; }
 .k-float-panel.k-collapsed > .k-panel-body, .k-float-panel.k-collapsed > .k-panel-resize { display:none; }
@@ -337,7 +356,8 @@ body.printing #tabs, body.printing #statusbar { visibility:hidden; }
 .k-saveall-path { color:var(--dim); font-size:calc(11px * var(--ui-scale, 1)); direction:rtl;
   text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* ---- ฟอร์มตั้งค่าโปรเจกต์ ---- */
-.k-dialog.k-settings { width:680px; max-width:92vw; height:82vh; min-height:420px;
+/* 0.56a #4: กล่องตั้งค่าแน่นเกินไปหลังเพิ่มแท็บหน้ากระดาษ/รูปแบบบท → ขยายออกข้าง */
+.k-dialog.k-settings { width:1040px; max-width:94vw; height:84vh; min-height:460px;
   display:flex; flex-direction:column; overflow:hidden; }
 .k-set-tabs { display:flex; gap:6px; margin-bottom:14px; border-bottom:1px solid var(--border); }
 .k-set-tab { padding:7px 14px; cursor:pointer; color:var(--dim); border-bottom:2px solid transparent;
@@ -682,7 +702,7 @@ body.printing #tabs, body.printing #statusbar { visibility:hidden; }
   border:1px solid var(--border); border-radius:4px;
   padding:var(--mg-top) var(--mg-right) 40vh var(--mg-left);
   margin:24px auto 40vh; box-shadow:0 2px 18px rgba(0,0,0,.28); }
-.sp { font-family:var(--sp-font, "Courier Final Draft", "Courier Prime", "Courier New", "TH Sarabun New", monospace);
+.sp { font-family:var(--sp-font, "Courier Prime", "Courier Final Draft", "Courier New", "TH Sarabun New", "Sarabun", monospace);
   font-size:var(--sp-fs, 16px);
   line-height:1.5; margin:0 0 2px; min-height:1.5em; white-space:pre-wrap; }
 /* [81][82][83] ระยะเยื้อง/ความกว้าง/ระยะเว้นบรรทัด/ตัวพิมพ์ ของแต่ละ element
@@ -1410,7 +1430,7 @@ body.reading-mode.paper-mode .pane.on > .workspace > .ProseMirror .sp { color:va
 /* ====== Font Family (ข้อ 27) ====== */
 /* ฟอนต์เนื้อเรื่อง — ค่าเริ่มต้นคือ Courier Final Draft 12pt ทุกภาษา (ทั้งนิยายและบทหนัง)
    ผู้ใช้เปลี่ยนฟอนต์/ขนาดได้ที่ ตั้งค่า → การเขียน (--ed-font / --ed-fs ถูกตั้งจาก app.js) */
-.ProseMirror { font-family:var(--ed-font, "Courier Final Draft", "Courier Prime", "Courier New", "TH Sarabun New", monospace); }
+.ProseMirror { font-family:var(--ed-font, "Courier Prime", "Courier Final Draft", "Courier New", "TH Sarabun New", "Sarabun", monospace); }
 
 /* ====== Screenplay Print CSS @page (ข้อ 30) ====== */
 /* @page (ขนาดกระดาษ+ระยะขอบตอนพิมพ์) ถูกสร้างจาก sp-format.js → <style id="k-sp-format">
@@ -1429,7 +1449,7 @@ body.reading-mode.paper-mode .pane.on > .workspace > .ProseMirror .sp { color:va
   .pane > .workspace > .ProseMirror { width:auto !important; padding:0 !important;
     margin:0 !important; border:0 !important; box-shadow:none !important; background:#fff !important; }
   .pane .sp { background:#fff; color:#000;
-    font-family:var(--sp-font, "Courier Final Draft", "Courier Prime", "Courier New", "TH Sarabun New", monospace);
+    font-family:var(--sp-font, "Courier Prime", "Courier Final Draft", "Courier New", "TH Sarabun New", "Sarabun", monospace);
     font-size:var(--sp-fs, 12pt); }
 }
 
@@ -1886,7 +1906,7 @@ button, select { padding:calc(4px * var(--uis)) calc(10px * var(--uis)); border-
 /* --- กล่องโต้ตอบ --- */
 .k-dialog { padding:calc(18px * var(--uis)) calc(20px * var(--uis));
   min-width:calc(340px * var(--uis)); border-radius:calc(12px * var(--uis)); }
-.k-dialog.k-settings { width:calc(680px * var(--uis)); }
+.k-dialog.k-settings { width:calc(1040px * var(--uis)); max-width:94vw; }
 /* กล่องรุ่นกว้างพิเศษ — ต้องเขียนคู่กันตรงนี้ ไม่งั้น .k-dialog ด้านบนไป override min-width ของมัน
    (.k-ai-settings ความจำเพาะเท่ากันแต่อยู่ก่อน → เดิมหด 420px เหลือ 340px) */
 .k-dialog.k-wide { min-width:calc(640px * var(--uis)); }
@@ -1991,7 +2011,7 @@ button, select { padding:calc(4px * var(--uis)) calc(10px * var(--uis)); border-
   padding:var(--mg-top) var(--mg-right) calc(var(--mg-bottom) + 20vh) var(--mg-left);
   background:var(--side); color:var(--fg);
   border:1px solid var(--border); border-radius:2px; box-shadow:0 4px 26px rgba(0,0,0,.45);
-  font-family:var(--sp-font, "Courier Final Draft", "Courier Prime", "Courier New", "TH Sarabun New", monospace);
+  font-family:var(--sp-font, "Courier Prime", "Courier Final Draft", "Courier New", "TH Sarabun New", "Sarabun", monospace);
   font-size:var(--sp-fs, 16px); line-height:1.5;
   /* คอลัมน์ที่รายละเอียดตัวละครเริ่ม (1 tab จากชื่อ) — บรรทัดที่ขึ้นใหม่ต้องชิดคอลัมน์นี้ */
   --roster-tab:2.5in;
@@ -2050,3 +2070,47 @@ body.paper-mode .roster-page { background:var(--paper); color:var(--paper-ink); 
 .home-card-body { flex:1; min-height:0; overflow:hidden; }
 .home-card-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .home-grid.list .home-card-body { overflow:hidden; }
+
+/* 0.56a #4: กล่องตั้งค่ากว้างขึ้นแล้ว → หน้าที่มีแถวเยอะจัดเป็น 2 คอลัมน์ ไม่ให้ดูโล่ง/แน่น
+   หัวข้อย่อย · คำอธิบาย · ตาราง · กลุ่ม grid ซ้อน ให้กินเต็มความกว้าง */
+.k-set-page.k-set-2col.on { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr));
+  gap:0 34px; align-content:start; }
+.k-set-page.k-set-2col.on > .k-hint,
+.k-set-page.k-set-2col.on > .k-set-sub,
+.k-set-page.k-set-2col.on > .k-set-grid2,
+.k-set-page.k-set-2col.on > .k-full { grid-column:1 / -1; }
+@media (max-width:1000px){ .k-set-page.k-set-2col.on { grid-template-columns:1fr; } }
+
+/* 0.56a #1: กล่องหน้าแรกขนาดคงที่ (แบบ DaVinci Resolve — กรอบนิ่ง เนื้อในเลื่อน)
+   ความกว้างคิดจากขนาดการ์ด 4 คอลัมน์พอดี → เปลี่ยน --home-thumb แล้วกล่องยังพอดีเสมอ */
+.k-dialog.k-home-dlg {
+  width:calc(var(--home-thumb, 190px) * 4 + 18px * 3 + 64px);
+  max-width:94vw; height:78vh; min-height:420px;
+  display:flex; flex-direction:column; overflow:hidden; }
+.k-home-dlg .home-dlg-scroll { flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; padding-right:4px; }
+.k-home-dlg .home-head { flex:0 0 auto; }
+.k-home-dlg .home-actions { flex:0 0 auto; }
+/* มุมมองรายการต้องไม่ทำให้กล่องเปลี่ยนขนาด — สูงเท่ากันทุกแถว เลื่อนในกรอบเดิม */
+.k-home-dlg .home-grid { align-content:start; }
+
+/* ====== 0.56a #8: โหมดอ่าน / โหมดโฟกัส = หน้ากระดาษเต็มจอจริง ======
+   กฎเดิมไล่ซ่อนแผงทีละใบ แต่ยังเหลือ "กล่องเปล่า" ที่เกิดจาก dock/กลุ่มแท็บที่ยังกินพื้นที่อยู่
+   วิธีที่ชัวร์กว่า: ยกแผงเอกสารออกมาปูเต็มหน้าต่างไปเลย → ไม่มีอะไรโผล่ข้าง ๆ ได้อีก */
+body.reading-mode .k-panel[data-panel-id="docs"],
+body.focus-mode   .k-panel[data-panel-id="docs"] {
+  position:fixed !important; inset:0 !important;
+  width:auto !important; height:auto !important;
+  margin:0 !important; border:0 !important; z-index:58;
+}
+body.reading-mode #app-root, body.focus-mode #app-root { overflow:hidden; }
+/* แถบบอกทางออก — ลอยบนสุด จางลงเมื่อไม่ได้ชี้เมาส์ ไม่บังเนื้อหา */
+#k-mode-hint { position:fixed; top:0; left:0; right:0; z-index:70; display:none;
+  padding:6px 14px; text-align:center; pointer-events:none;
+  background:linear-gradient(180deg, rgba(25,24,22,.92), rgba(25,24,22,0));
+  color:var(--dim); font-size:calc(12px * var(--ui-scale, 1)); letter-spacing:.3px;
+  -webkit-app-region:no-drag; opacity:.55; transition:opacity .2s; }
+body.reading-mode #k-mode-hint, body.focus-mode #k-mode-hint { display:block; }
+#k-mode-hint:hover, body.k-hint-show #k-mode-hint { opacity:1; }
+#k-mode-hint b { color:var(--bright); font-weight:600; }
+#k-mode-hint kbd { background:var(--bar); border:1px solid var(--border); border-radius:4px;
+  padding:1px 7px; color:var(--bright); font-family:inherit; font-size:.95em; }

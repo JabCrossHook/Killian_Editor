@@ -136,13 +136,36 @@ function ensureDocsVisible() {
   try { pm.store.update(PL.activatePanel(pm.store.root, 'docs')); } finally { _fixingDocs = false; }
 }
 
+// 0.56a #3: วาดต้นไม้ใหม่ = ย้าย #content/#tree ออกจาก DOM แล้วใส่กลับ → ตำแหน่งเลื่อนถูกล้างเป็น 0
+// ผู้ใช้เลื่อนหน้ากระดาษอยู่ดี ๆ พอขยับแผงทีก็เด้งกลับซ้ายบนทุกครั้ง
+// → จำตำแหน่งเลื่อนของทุกกล่องที่เลื่อนได้ก่อนวาด แล้วคืนหลังวาด (ทั้งทันทีและหลัง layout รอบถัดไป)
+const SCROLLABLES = '.pane, #tree, #outline, #props-body, .k-panel-body, .k-tab-content, .home-dlg-scroll';
+function captureScroll() {
+  const out = [];
+  for (const e of document.querySelectorAll(SCROLLABLES)) {
+    if (e.scrollTop || e.scrollLeft) out.push([e, e.scrollTop, e.scrollLeft]);
+  }
+  return out;
+}
+function restoreScroll(saved) {
+  const put = () => { for (const [e, top, left] of saved) {
+    if (!e.isConnected) continue;
+    if (top && e.scrollTop !== top) e.scrollTop = top;
+    if (left && e.scrollLeft !== left) e.scrollLeft = left;
+  } };
+  put();
+  requestAnimationFrame(put);        // เผื่อ layout ยังไม่เสร็จตอนใส่กลับ (scrollHeight ยังเป็น 0)
+}
+
 export function renderPanels(force) {
   if (!pm) return;
   ensureDocsVisible();
   const sig = JSON.stringify({ r: pm.store.root, f: pm.store.floats });
   if (!force && sig === lastSig) return;
   lastSig = sig;
+  const saved = captureScroll();
   renderPanelLayout(host(), pm, renderOpts());
+  restoreScroll(saved);
   // เนื้อแผงที่ไม่ได้ถูกวาง → เก็บกลับที่พัก (ต้องอยู่ใน DOM เสมอ ไม่งั้น $('#props-body') คืน null)
   const h = host(), holder = srcHolder();
   for (const [, node] of adopted) if (!h.contains(node)) holder.appendChild(node);

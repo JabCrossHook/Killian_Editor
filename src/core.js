@@ -134,8 +134,10 @@ export const ptToPx = (pt) => +(((parseFloat(pt) || 12) * PT_PX).toFixed(2));
 export const BASE_ED_FS = ptToPx(12); // 16px = 12pt (ตรงกับ .ProseMirror ใน style.css)
 export const BASE_SP_FS = ptToPx(12); // 16px = 12pt (ตรงกับ .sp ใน style.css)
 // ฟอนต์มาตรฐานของเนื้อเรื่อง — Courier Final Draft ทุกภาษา (มี fallback ให้เครื่องที่ยังไม่ลงฟอนต์)
+// Courier Prime มาก่อน — ฝังมากับโปรแกรมแล้ว (renderer/assets/fonts) จึงได้หน้าตาเดียวกันทุกเครื่อง
+// "Courier Final Draft" ไว้ให้เครื่องที่ลงฟอนต์นั้นเองใช้ · ไทยตกไป TH Sarabun New/Sarabun
 export const DEFAULT_SCRIPT_FONT =
-  '"Courier Final Draft", "Courier Prime", "Courier New", "TH Sarabun New", monospace';
+  '"Courier Prime", "Courier Final Draft", "Courier New", "TH Sarabun New", "Sarabun", monospace';
 // ซูมหน้ากระดาษ = ย่อ/ขยาย "ทั้งหน้า" ด้วย CSS zoom (ฟอนต์+ระยะขอบ+ความกว้าง ไปพร้อมกัน)
 export const SCALE_MIN = 0.5, SCALE_MAX = 2.5;
 // ขนาด UI (แถบเครื่องมือ/แผง/กล่อง) — คนละตัวกับซูมหน้ากระดาษ

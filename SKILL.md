@@ -86,7 +86,7 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
 
 ## E2E test workflow (สำคัญ — ทำทุกครั้งก่อนเชื่อว่าแก้สำเร็จ)
 
-Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **1,020 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
+Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **1,052 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
 
 **Unit test โมดูลบริสุทธิ์ (alpha.39, รันเร็ว ไม่ต้องเปิด electron):**
 ```bash
@@ -213,6 +213,21 @@ grep -E "FAIL|STOP" /tmp/k2result.txt | head -3
 35. **ซูมยึดกึ่งกลาง** — เก็บ *สัดส่วน* ของจุดกึ่งกลาง (ไม่ใช่พิกเซล) ก่อนซูม แล้วคืนใน `requestAnimationFrame`
    เรียกซูมสองครั้งติดกันจะได้ค่ากลางทาง → เทสต้อง `await` ระหว่างการกดซูมแต่ละครั้ง
 
+36. **วาดต้นไม้แผงใหม่ = ย้าย element ออก-เข้า DOM → `scrollTop/scrollLeft` ถูกล้างเป็น 0**
+   ผู้ใช้เลื่อนหน้ากระดาษอยู่ พอขยับแผงทีเดียวก็เด้งกลับซ้ายบนทุกครั้ง
+   **แก้: จำตำแหน่งเลื่อนของทุกกล่องที่เลื่อนได้ก่อนวาด แล้วคืนทั้งทันทีและใน `requestAnimationFrame` ถัดไป**
+   (คืนทันทีอย่างเดียวไม่พอ — ตอนเพิ่งใส่กลับ `scrollHeight` ยังเป็น 0 การเซ็ตจึงไม่ติด)
+37. **`-webkit-app-region:drag` คิดจาก "กรอบของ element" ไม่สน z-index** — แผงลอยที่ทับ `#titlebar`
+   จะถูก OS กลืนเมาส์ไปทั้งหมด กดลากไม่ได้เลย → ต้องเจาะ `no-drag` ให้แผงลอย **และลูกทุกตัว** (`.k-float-panel *`)
+38. **`mouseup` นอกหน้าต่าง/บนพื้นที่ drag ให้ `clientX/Y = 0`** → แผงเด้งไปมุมซ้ายบน
+   **แก้: จำพิกัดล่าสุดที่ mousemove ให้ค่าจริง แล้วใช้แทนเมื่อ mouseup ได้ 0,0**
+39. **แผงลอยหลุดจอ = เรียกกลับไม่ได้ถาวร** (ไม่มี UI ไหนชี้ไปหามันได้) → `clampFloat()` ต้องเรียก
+   **ทุกครั้งที่ render** ไม่ใช่แค่ตอนลาก เพราะเลย์เอาต์ที่บันทึกไว้ตอนจอใหญ่จะนอกจอทันทีเมื่อย่อหน้าต่าง
+40. **ซ่อนแผงทีละใบไม่พอสำหรับ "เต็มจอ"** — ยังเหลือ dock/กลุ่มแท็บที่กินพื้นที่เป็นกล่องเปล่า
+   **ที่ชัวร์คือยกแผงเอกสารออกมา `position:fixed; inset:0`** แล้วไม่ต้องสนใจว่ามีอะไรอยู่ข้างหลัง
+41. **ฟอนต์ฝังในแอป**: วางที่ `renderer/assets/fonts/` + `@font-face` ใน style.css (path สัมพัทธ์กับ css)
+   electron-builder เก็บให้อยู่แล้วผ่าน `"renderer/**"` · เทสด้วย `await document.fonts.load(...)` แล้วค่อย `check()`
+
 ---
 
 ## Build recipes (app ไม่ต้องมี node_modules ตอน runtime — main/preload ใช้แค่ electron+fs/path/url, bundle.js มี prosemirror ครบ)
@@ -287,7 +302,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ---
 
-## เวอร์ชัน (ล่าสุด alpha.56 · e2e 1,020 + unit 805)
+## เวอร์ชัน (ล่าสุด alpha.56a · e2e 1,052 + unit 805)
 
 .13–.22 (v1→v2 พื้นฐาน): snapshot, line numbers, spellcheck ไทย+Chromium, ปุ่มลัดตั้งเอง, mac build, บทหนัง Ctrl+arrow, relationship sync, floating format bar, sidebar resize, SmartType Final Draft, wiki gallery/lightbox, explorer search+tags, panel docking, tree float+snap
 .24 batch 8 (drag-move explorer, panel snap, split compare, version tracking, scene lock, screenplay Final Draft look, screenplay images, wiki links) · .25–.27 **Planner board** (fabric.js) · .28 **floating windows** · .29 memo-in-chapter + scoped search
@@ -405,6 +420,16 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
     `centerPage()` เป็นมุมมองเริ่มต้น · โหมดอ่าน/โฟกัสซ่อน **ทุกโหนดที่ไม่อยู่ในสาย docs** ·
     แผงลอย snap ขอบ (`snapToEdges`) · Kanban เป็น toggle · `ALWAYS_ON_TB` · หน้าแรก 4 คอลัมน์ขนาดนิ่ง ·
     `entitySearchBlob()` ค้นถึงเนื้อในไฟล์เอนทิตี้
+
+.56a **รอบเก็บบั๊ก human test 8 ข้อ + ฝังฟอนต์**
+  **ฟอนต์ Courier Prime ฝังมากับโปรแกรม** `renderer/assets/fonts/*.ttf` (SIL OFL · 4 น้ำหนัก) +
+    `@font-face` ต้น style.css → **ไม่ต้องลงฟอนต์ในเครื่อง** · `DEFAULT_SCRIPT_FONT` เอา Courier Prime ขึ้นก่อน
+  **กล่องหน้าแรกขนาดคงที่** `.k-home-dlg` (กว้าง = `--home-thumb×4`) + `.home-dlg-scroll` — กรอบนิ่ง เนื้อในเลื่อน
+  **กล่องตั้งค่า 680→1040px + 2 คอลัมน์** (`.k-set-2col` · `.k-full` = กินเต็มแถว)
+  **`captureScroll()/restoreScroll()`** ใน `renderPanels` — วาดต้นไม้ใหม่แล้วหน้ากระดาษไม่เด้งกลับซ้ายบน
+  **`clampFloat()`** ใน panel-drag — หนีบตำแหน่ง+ขนาดแผงลอยให้อยู่ในจอ (ใช้ทุกครั้งที่วาด ไม่ใช่แค่ตอนลาก)
+  **`-webkit-app-region:no-drag` บน `.k-float-panel *`** — ทับแถบหัวหน้าต่างแล้วยังลากได้
+  **โหมดอ่าน/โฟกัส = แผงเอกสาร `position:fixed; inset:0`** + `#k-mode-hint` "กด Esc เพื่อออก"
 
 **ยังเหลือ**: `search-engine.js` ยังเป็น orphan — Global Search (`global-search.js`) ยังสแกนไฟล์ตรง ๆ ไม่ได้ใช้ inverted index (ควรสลับมาใช้เพื่อความเร็ว) · multiple-drafts-per-book UI (โครงรองรับแล้ว), screenplay align persistence, Campaign/D&D mode, electron-builder + code signing, .icns/.ico icon, native arm64 build. Top เคยบอก paper/indent "อาจต้องปรับปรุง ไว้ก่อน"
 

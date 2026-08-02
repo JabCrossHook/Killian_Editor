@@ -71,7 +71,7 @@ import { openCentralizeUI, markCentralizeStale, onCentralizeShown, resetCentrali
 // ---- Part 1+2 integrations ----
 import { openKanban, resetKanban, renderKanbanPanel } from './kanban/kanban-ui.js';
 import * as PL from './panels/panel-layout.js';
-import { inGroupHandle, snapToEdges } from './panels/panel-drag.js';
+import { inGroupHandle, snapToEdges, clampFloat, FLOAT_MIN_W, FLOAT_MIN_H } from './panels/panel-drag.js';
 import { initPanelSystem, getPanelManager, togglePanelDialog, showPanel, hidePanel, togglePanel,
          resetPanels, panelMenuItems, panelToggleState, addPanelButton, renderPanels,
          isPanelOpen, resetPanelSystem, PANEL_DEFS, panelId, setPanelShowHook,
@@ -1881,10 +1881,28 @@ export function pinDialog(pin, maps, curMapId, canDelete = false) {
 }
 
 // ---------------- โหมดโฟกัส ----------------
+// 0.56a #8: แถบบอกทางออกด้านบนของโหมดอ่าน/โฟกัส (เต็มจอแล้วผู้ใช้ไม่รู้จะออกยังไง)
+function modeHint() {
+  let h = document.getElementById('k-mode-hint');
+  if (!h) { h = el('div'); h.id = 'k-mode-hint'; document.body.appendChild(h); }
+  return h;
+}
+export function syncModeHint() {
+  const reading = document.body.classList.contains('reading-mode');
+  const focus = document.body.classList.contains('focus-mode');
+  const h = modeHint();
+  if (!reading && !focus) { h.textContent = ''; return; }
+  const name = reading && focus ? 'โหมดอ่าน + โฟกัส' : reading ? 'โหมดอ่าน' : 'โหมดโฟกัส';
+  h.innerHTML = '';
+  h.append(el('b', null, name), document.createTextNode(' — กด '));
+  h.append(el('kbd', null, 'Esc'), document.createTextNode(' เพื่อออก'));
+}
+
 function toggleFocus(on) {
   const v = on ?? !document.body.classList.contains('focus-mode');
   document.body.classList.toggle('focus-mode', v);
   toggleFocusMode2(v);          // หรี่บรรทัดอื่นไปพร้อมกัน (โมดูล focus-mode.js)
+  syncModeHint();
   syncMenuToggles();
   refreshToolbar();
   setStatus(v ? 'โหมดโฟกัส — Esc หรือ Ctrl+Shift+D เพื่อออก' : 'ออกจากโหมดโฟกัส');
@@ -1957,6 +1975,7 @@ function toggleReading(on) {
     };
     document.addEventListener('keydown', _readEsc);
   }
+  syncModeHint();
   syncMenuToggles();
   syncFloatBarVisible();
   setStatus(v ? 'โหมดอ่าน — กด Esc หรือคลิก 📖 เพื่อออก' : 'ออกจากโหมดอ่าน');
@@ -6251,14 +6270,17 @@ async function runTest(projectPath) {
       const gr = grip.getBoundingClientRect();
       grip.dispatchEvent(new MouseEvent('mousedown', { clientX: gr.left + 4, clientY: gr.top + 4, button: 0, bubbles: true }));
       document.dispatchEvent(new MouseEvent('mousemove', { clientX: gr.left + 94, clientY: gr.top + 74, bubbles: true }));
-      check('#5 ลากที่จับ → แผงลอยกว้าง/สูงขึ้นทันที',
-            pop.offsetWidth > w0 + 60 && pop.offsetHeight > h0 + 50,
-            `${w0}x${h0} → ${pop.offsetWidth}x${pop.offsetHeight}`);
+      // 0.56a #7: ขนาดถูกหนีบไม่ให้เกินจอแล้ว → สูงเพิ่มได้เท่าที่ยังอยู่ในจอเท่านั้น
+      check('#5 ลากที่จับ → แผงลอยกว้าง/สูงขึ้นทันที (เท่าที่ยังอยู่ในจอ)',
+            pop.offsetWidth > w0 + 60 && pop.offsetHeight >= h0 &&
+            pop.offsetTop + pop.offsetHeight <= window.innerHeight + 1,
+            `${w0}x${h0} → ${pop.offsetWidth}x${pop.offsetHeight} (จอสูง ${window.innerHeight})`);
       document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
       await new Promise((r) => setTimeout(r, 40));
       const fl = PMG.floats.find((f) => f.panel.id === 'tree');
-      check('#5 ปล่อยเมาส์ → ขนาดใหม่ถูกบันทึกลง store', !!fl && fl.w > w0 + 60 && fl.h > h0 + 50,
-            JSON.stringify(fl && { w: fl.w, h: fl.h }) + ` was ${w0}x${h0}`);
+      check('#5 ปล่อยเมาส์ → ขนาดใหม่ถูกบันทึกลง store (หนีบให้อยู่ในจอแล้ว)',
+            !!fl && fl.w > w0 + 60 && fl.h >= h0 && fl.h <= window.innerHeight,
+            JSON.stringify(fl && { w: fl.w, h: fl.h }) + ` was ${w0}x${h0} จอ ${window.innerHeight}`);
       pBtn('tree', 'float').click();                    // ผนึกกลับ
       await new Promise((r) => setTimeout(r, 40));
     }
@@ -10126,6 +10148,180 @@ async function runTest(projectPath) {
         state.settings.spStrings = null;
         applySettings();
         check('[85] คืนระยะขอบมาตรฐานแล้ว', rootVar('--mg-left') === '1.5in');
+      }
+    }
+
+    // ══════════ 0.56a — รอบแก้ 8 ข้อจาก human test ══════════
+    {
+      resetPanels(); await new Promise((r) => setTimeout(r, 60));
+      const rootVar2 = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+      // ---- #2 ฟอนต์ Courier Prime ฝังมากับโปรแกรม (ไม่ต้องลงเครื่อง) ----
+      check('#2 ฟอนต์เริ่มต้นชี้ไป Courier Prime เป็นตัวแรก',
+            /^\s*"Courier Prime"/.test(rootVar2('--sp-font')) && /^\s*"Courier Prime"/.test(rootVar2('--ed-font')),
+            rootVar2('--sp-font'));
+      try { await document.fonts.load('16px "Courier Prime"'); } catch {}
+      check('#2 โหลดไฟล์ฟอนต์ที่ฝังมาได้จริง (@font-face)',
+            document.fonts.check('16px "Courier Prime"'), 'fonts.status=' + document.fonts.status);
+      try { await document.fonts.load('bold 16px "Courier Prime"'); } catch {}
+      check('#2 มีน้ำหนักตัวหนาของฟอนต์ด้วย', document.fonts.check('bold 16px "Courier Prime"'));
+
+      // ---- #4 กล่องตั้งค่ากว้างขึ้น + จัด 2 คอลัมน์ ----
+      settingsDialog('page');
+      await new Promise((r) => setTimeout(r, 80));
+      {
+        const dlg = document.querySelector('.k-dialog.k-settings');
+        const w = dlg.getBoundingClientRect().width;
+        check('#4 กล่องตั้งค่ากว้างขึ้นจากเดิม (>900px หรือเต็ม 94vw)',
+              w > 900 || w >= innerWidth * 0.9, String(Math.round(w)));
+        const cols = getComputedStyle(dlg.querySelector('.k-set-page.k-set-2col.on'))
+          .gridTemplateColumns.split(' ').filter(Boolean).length;
+        check('#4 หน้าตั้งค่าที่มีแถวเยอะจัดเป็น 2 คอลัมน์', cols === 2, String(cols));
+        check('#4 หัวข้อย่อย/คำอธิบายยังกินเต็มความกว้าง',
+              getComputedStyle(dlg.querySelector('.k-set-page.on .k-set-sub')).gridColumnStart === '1');
+        dlg.querySelector('.k-cancel').click();
+        await new Promise((r) => setTimeout(r, 60));
+      }
+
+      // ---- #1 กล่องหน้าแรกขนาดคงที่เมื่อสลับการ์ด ↔ รายการ ----
+      {
+        const ovH = await showHomeDialog();
+        await new Promise((r) => setTimeout(r, 250));
+        const dlg = ovH.querySelector('.k-dialog');
+        const grid = ovH.querySelector('.home-grid');
+        check('#1 กล่องหน้าแรกมีกรอบเลื่อนแยก (กรอบนิ่ง เนื้อในเลื่อน)',
+              !!ovH.querySelector('.home-dlg-scroll') && dlg.classList.contains('k-home-dlg'));
+        const r1 = dlg.getBoundingClientRect();
+        const viewBtn = [...ovH.querySelectorAll('.home-actions button')].find((b) => /📋|📱/.test(b.textContent));
+        check('#1 มีปุ่มสลับมุมมอง', !!viewBtn);
+        viewBtn.click(); await new Promise((r) => setTimeout(r, 120));
+        const r2 = dlg.getBoundingClientRect();
+        check('#1 สลับเป็นรายการแล้วกล่องขนาดเท่าเดิม',
+              Math.abs(r1.width - r2.width) < 1 && Math.abs(r1.height - r2.height) < 1,
+              `${Math.round(r1.width)}x${Math.round(r1.height)} → ${Math.round(r2.width)}x${Math.round(r2.height)}`);
+        viewBtn.click(); await new Promise((r) => setTimeout(r, 120));
+        const r3 = dlg.getBoundingClientRect();
+        check('#1 สลับกลับเป็นการ์ดแล้วยังขนาดเดิม',
+              Math.abs(r1.width - r3.width) < 1 && Math.abs(r1.height - r3.height) < 1,
+              `${Math.round(r1.height)} → ${Math.round(r3.height)}`);
+        check('#1 ความกว้างกล่องพอดี 4 คอลัมน์', r1.width > 4 * 190, String(Math.round(r1.width)));
+        ovH.remove();
+        await new Promise((r) => setTimeout(r, 60));
+      }
+
+      // ---- #3 ขยับแผงแล้วตำแหน่งเลื่อนของหน้ากระดาษต้องไม่รีเซ็ต ----
+      {
+        const anySc = document.querySelector('#tree .scene:not(.add-row)');
+        if (anySc) { anySc.click(); await new Promise((r) => setTimeout(r, 350)); }
+        const tScroll = state.active;
+        const pane = tScroll && tScroll.pane;
+        if (pane) {
+          // ทำให้มีอะไรให้เลื่อนจริง ๆ ก่อน
+          if (tScroll.editor) {
+            tScroll.editor.setMarkdown(Array.from({ length: 120 }, (_, i) => 'บรรทัดทดสอบเลื่อน ' + i).join('\n\n'));
+            await new Promise((r) => setTimeout(r, 150));
+          }
+          pane.scrollTop = 240;
+          await new Promise((r) => setTimeout(r, 60));
+          const before = pane.scrollTop;
+          check('#3 เลื่อนหน้ากระดาษลงมาได้จริงก่อนทดสอบ', before > 100, String(before));
+          renderPanels(true);                       // จำลอง "ขยับแผง" (วาดต้นไม้ใหม่ทั้งชุด)
+          await new Promise((r) => setTimeout(r, 120));
+          check('#3 วาดแผงใหม่แล้วหน้ากระดาษไม่เด้งกลับซ้ายบน',
+                Math.abs(pane.scrollTop - before) < 8, `${before} → ${pane.scrollTop}`);
+          // ลากที่จับปรับสัดส่วนจริง ๆ ก็ต้องไม่รีเซ็ต
+          const h = document.querySelector('#app-root .k-resize-handle');
+          if (h) {
+            const hr = h.getBoundingClientRect();
+            h.dispatchEvent(new MouseEvent('mousedown', { clientX: hr.left + 2, clientY: hr.top + 20, button: 0, bubbles: true }));
+            document.dispatchEvent(new MouseEvent('mousemove', { clientX: hr.left + 60, clientY: hr.top + 20, bubbles: true }));
+            document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+            await new Promise((r) => setTimeout(r, 150));
+            check('#3 ลากปรับสัดส่วนแผงแล้วตำแหน่งเลื่อนยังอยู่ที่เดิม',
+                  Math.abs(pane.scrollTop - before) < 8, `${before} → ${pane.scrollTop}`);
+          }
+          if (tScroll.editor) { tScroll.dirty = false; }
+        }
+        resetPanels(); await new Promise((r) => setTimeout(r, 60));
+      }
+
+      // ---- #5 + #7 แผงลอยต้องอยู่ในจอเสมอ ----
+      {
+        check('#5 clampFloat: ปล่อยนอกจอทางซ้าย → ยังเห็นหัวแผง',
+              clampFloat({ x: -900, y: 50, w: 320, h: 300 }, 1500, 950).x >= 90 - 320);
+        check('#5 clampFloat: ปล่อยเลยขอบขวา → ไม่หลุดจอ',
+              clampFloat({ x: 5000, y: 50, w: 320, h: 300 }, 1500, 950).x <= 1500 - 90);
+        check('#5 clampFloat: y ติดลบ → ดันกลับเข้าจอ',
+              clampFloat({ x: 100, y: -400, w: 320, h: 300 }, 1500, 950).y === 0);
+        check('#7 clampFloat: ขยายเกินจอ → หนีบไม่ให้เกินขนาดจอ',
+              clampFloat({ x: 10, y: 10, w: 99999, h: 99999 }, 1500, 950).w === 1500);
+        check('#7 clampFloat: ย่อจนเล็กเกินจับ → คงขนาดต่ำสุด',
+              clampFloat({ x: 10, y: 10, w: 5, h: 5 }, 1500, 950).w === FLOAT_MIN_W &&
+              clampFloat({ x: 10, y: 10, w: 5, h: 5 }, 1500, 950).h === FLOAT_MIN_H);
+        // ของจริง: ลอยแผงไปนอกจอแล้ววาดใหม่ ต้องถูกดึงกลับ
+        getPanelManager().floatPanel('props', { x: 100, y: 100, w: 320, h: 260 });
+        await new Promise((r) => setTimeout(r, 60));
+        getPanelManager().moveFloat('props', { x: -5000, y: -5000, w: 320, h: 260 });
+        renderPanels(true);
+        await new Promise((r) => setTimeout(r, 80));
+        const popEl = document.querySelector('.k-float-panel[data-panel-id="props"]');
+        check('#7 แผงลอยที่ตำแหน่งนอกจอถูกดึงกลับมาให้เห็นตอนวาด',
+              !!popEl && popEl.getBoundingClientRect().right > 40 && popEl.getBoundingClientRect().bottom > 10,
+              popEl && JSON.stringify(popEl.getBoundingClientRect()));
+        // #6 ต้องเจาะ no-drag ไม่งั้นทับแถบหัวหน้าต่างแล้วลากไม่ได้
+        check('#6 แผงลอยตั้ง -webkit-app-region:no-drag (ทับแถบหัวหน้าต่างแล้วยังลากได้)',
+              getComputedStyle(popEl).webkitAppRegion === 'no-drag',
+              getComputedStyle(popEl).webkitAppRegion);
+        check('#6 หัวแผงลอยก็ no-drag ด้วย',
+              getComputedStyle(popEl.querySelector('.k-panel-head')).webkitAppRegion === 'no-drag');
+        // ลากหัวแผงลอยแล้วปล่อยด้วย mouseup ที่ให้พิกัด 0,0 (เคสของบั๊ก #5)
+        const head5 = popEl.querySelector('.k-panel-head');
+        const hr5 = head5.getBoundingClientRect();
+        head5.dispatchEvent(new MouseEvent('mousedown', { clientX: hr5.left + 40, clientY: hr5.top + 8, button: 0, bubbles: true }));
+        document.dispatchEvent(new MouseEvent('mousemove', { clientX: 620, clientY: 400, bubbles: true }));
+        document.dispatchEvent(new MouseEvent('mouseup', { clientX: 0, clientY: 0, bubbles: true }));
+        await new Promise((r) => setTimeout(r, 100));
+        const fl5 = getPanelManager().floats.find((f) => f.panel.id === 'props');
+        check('#5 ปล่อยเมาส์ที่ให้พิกัด 0,0 → แผงไม่กระโดดไปมุมซ้ายบน',
+              !!fl5 && (fl5.x > 40 || fl5.y > 40), JSON.stringify(fl5 && { x: fl5.x, y: fl5.y }));
+        hidePanel('props');
+        resetPanels(); await new Promise((r) => setTimeout(r, 60));
+      }
+
+      // ---- #8 โหมดอ่าน/โฟกัส = หน้ากระดาษเต็มจอ + แถบบอกทางออก ----
+      {
+        showPanel('props'); await new Promise((r) => setTimeout(r, 60));
+        toggleReading(true); await new Promise((r) => setTimeout(r, 150));
+        const docsEl = document.querySelector('#app-root .k-panel[data-panel-id="docs"]');
+        const dr = docsEl.getBoundingClientRect();
+        check('#8 โหมดอ่าน: แผงเอกสารปูเต็มหน้าต่าง (ไม่เหลือกล่องเปล่าข้าง ๆ)',
+              getComputedStyle(docsEl).position === 'fixed' &&
+              dr.width >= innerWidth - 1 && dr.height >= innerHeight - 1,
+              `${Math.round(dr.width)}x${Math.round(dr.height)} vs ${innerWidth}x${innerHeight}`);
+        check('#8 โหมดอ่าน: ไม่มีแผงอื่นเหลือพื้นที่บนจอเลย',
+              [...document.querySelectorAll('#app-root .k-panel')]
+                .filter((e) => e !== docsEl)
+                .every((e) => getComputedStyle(e).display === 'none' || e.getBoundingClientRect().width < 1));
+        const hint = document.getElementById('k-mode-hint');
+        check('#8 มีแถบบอกทางออกด้านบน', !!hint && getComputedStyle(hint).display !== 'none');
+        check('#8 แถบบอกว่า "กด Esc เพื่อออก"',
+              hint.textContent.includes('Esc') && hint.textContent.includes('ออก'), hint.textContent);
+        check('#8 แถบบอกทางออกไม่บังการคลิก (pointer-events:none)',
+              getComputedStyle(hint).pointerEvents === 'none');
+        toggleReading(false); await new Promise((r) => setTimeout(r, 150));
+        check('#8 ออกโหมดอ่านแล้วแถบบอกทางออกหายไป',
+              getComputedStyle(document.getElementById('k-mode-hint')).display === 'none');
+        check('#8 ออกแล้วแผงเอกสารกลับเข้าเลย์เอาต์ปกติ',
+              getComputedStyle(document.querySelector('#app-root .k-panel[data-panel-id="docs"]')).position !== 'fixed');
+        toggleFocus(true); await new Promise((r) => setTimeout(r, 150));
+        const dr2 = document.querySelector('#app-root .k-panel[data-panel-id="docs"]').getBoundingClientRect();
+        check('#8 โหมดโฟกัส: แผงเอกสารปูเต็มหน้าต่างเช่นกัน',
+              dr2.width >= innerWidth - 1 && dr2.height >= innerHeight - 1,
+              `${Math.round(dr2.width)}x${Math.round(dr2.height)}`);
+        check('#8 โหมดโฟกัสมีแถบบอกทางออกด้วย',
+              document.getElementById('k-mode-hint').textContent.includes('Esc'));
+        toggleFocus(false); await new Promise((r) => setTimeout(r, 150));
+        resetPanels(); await new Promise((r) => setTimeout(r, 60));
       }
     }
 

@@ -15453,7 +15453,7 @@
       ptToPx = (pt) => +((parseFloat(pt) || 12) * PT_PX).toFixed(2);
       BASE_ED_FS = ptToPx(12);
       BASE_SP_FS = ptToPx(12);
-      DEFAULT_SCRIPT_FONT = '"Courier Final Draft", "Courier Prime", "Courier New", "TH Sarabun New", monospace';
+      DEFAULT_SCRIPT_FONT = '"Courier Prime", "Courier Final Draft", "Courier New", "TH Sarabun New", "Sarabun", monospace';
       SCALE_MIN = 0.5;
       SCALE_MAX = 2.5;
       UI_SCALE_MIN = 0.75;
@@ -46042,6 +46042,14 @@ ${mdToHtmlBody(md)}
   });
 
   // src/panels/panel-drag.js
+  function clampFloat(box, vw, vh) {
+    const W = vw || window.innerWidth, H = vh || window.innerHeight;
+    const w = Math.max(FLOAT_MIN_W, Math.min(Math.round(box.w ?? 320), W));
+    const h = Math.max(FLOAT_MIN_H, Math.min(Math.round(box.h ?? 300), H));
+    const x = Math.round(Math.min(Math.max(box.x ?? 80, KEEP_VISIBLE - w), W - KEEP_VISIBLE));
+    const y = Math.round(Math.min(Math.max(box.y ?? 80, 0), H - 28));
+    return { x, y, w, h };
+  }
   function createDropOverlay() {
     if (_ov && _ov.el.isConnected) return _ov;
     const box = document.createElement("div");
@@ -46108,7 +46116,12 @@ ${mdToHtmlBody(md)}
     let moved = false, ghost = null;
     const ov = createDropOverlay();
     let hit = null;
+    let lastX = sx, lastY = sy;
     const move = (ev) => {
+      if (ev.clientX || ev.clientY) {
+        lastX = ev.clientX;
+        lastY = ev.clientY;
+      }
       if (!moved) {
         if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < DRAG_MIN) return;
         moved = true;
@@ -46136,19 +46149,21 @@ ${mdToHtmlBody(md)}
       if (ghost) ghost.remove();
       document.body.classList.remove("k-panel-dragging");
       if (!moved) return;
-      if (ctx.onReorder && ctx.onReorder(ev.clientX, ev.clientY)) return;
+      const ux = ev.clientX || ev.clientY ? ev.clientX : lastX;
+      const uy = ev.clientX || ev.clientY ? ev.clientY : lastY;
+      if (ctx.onReorder && ctx.onReorder(ux, uy)) return;
       if (!ctx.floatOnly && hit) {
         if (hit.targetId === panelId2) return;
         pm2.dockPanel(panelId2, hit.zone, hit.targetId);
         return;
       }
       if (!hit) {
-        pm2.floatPanel(panelId2, {
-          x: Math.max(0, ev.clientX - 60),
-          y: Math.max(0, ev.clientY - 12),
+        pm2.floatPanel(panelId2, clampFloat({
+          x: ux - 60,
+          y: uy - 12,
           w: ctx.floatW || 320,
           h: ctx.floatH || 300
-        });
+        }));
       }
     };
     document.addEventListener("mousemove", move);
@@ -46270,20 +46285,31 @@ ${mdToHtmlBody(md)}
           pm2.dockPanel(panelId2, hit.zone, hit.targetId);
           return;
         }
-        pm2.moveFloat(panelId2, { x: popup.offsetLeft, y: popup.offsetTop });
+        const c = clampFloat({
+          x: popup.offsetLeft,
+          y: popup.offsetTop,
+          w: popup.offsetWidth,
+          h: popup.offsetHeight
+        });
+        popup.style.left = c.x + "px";
+        popup.style.top = c.y + "px";
+        pm2.moveFloat(panelId2, { x: c.x, y: c.y });
       };
       document.addEventListener("mousemove", move);
       document.addEventListener("mouseup", up);
       e.preventDefault();
     });
   }
-  var DRAG_MIN, GROUP_ZONE, SNAP_PX, _ov;
+  var DRAG_MIN, GROUP_ZONE, SNAP_PX, FLOAT_MIN_W, FLOAT_MIN_H, KEEP_VISIBLE, _ov;
   var init_panel_drag = __esm({
     "src/panels/panel-drag.js"() {
       init_panel_layout();
       DRAG_MIN = 8;
       GROUP_ZONE = 0.2;
       SNAP_PX = 10;
+      FLOAT_MIN_W = 200;
+      FLOAT_MIN_H = 120;
+      KEEP_VISIBLE = 90;
       _ov = null;
     }
   });
@@ -46453,7 +46479,7 @@ ${mdToHtmlBody(md)}
           }
           const host2 = e.target.closest(".k-panel");
           const r = host2 ? host2.getBoundingClientRect() : { left: 90, top: 90, width: 320, height: 300 };
-          pm2.floatPanel(node.id, { x: r.left, y: r.top, w: Math.max(220, r.width), h: Math.max(160, r.height) });
+          pm2.floatPanel(node.id, clampFloat({ x: r.left, y: r.top, w: r.width, h: r.height }));
         }
       };
       btns.appendChild(btn);
@@ -46480,16 +46506,17 @@ ${mdToHtmlBody(md)}
     const md = metaOf(opts, p.id);
     const pop = el("div", "k-float-panel");
     pop.dataset.panelId = p.id;
-    pop.style.left = (f.x ?? 80) + "px";
-    pop.style.top = (f.y ?? 80) + "px";
-    pop.style.width = (f.w ?? 360) + "px";
-    pop.style.height = (f.h ?? 260) + "px";
+    const box = clampFloat({ x: f.x ?? 80, y: f.y ?? 80, w: f.w ?? 360, h: f.h ?? 260 });
+    pop.style.left = box.x + "px";
+    pop.style.top = box.y + "px";
+    pop.style.width = box.w + "px";
+    pop.style.height = box.h + "px";
     if (p.collapsed) pop.classList.add("k-collapsed");
     const head = buildHead(p, pm2, opts, md, true);
     pop.appendChild(head);
     pop.appendChild(buildBody(p, opts));
     const grip = el("div", "k-panel-resize");
-    makeResizable(pop, grip, (w, h) => pm2.moveFloat(p.id, { w, h }));
+    makeResizable(pop, grip, (w, h, x, y) => pm2.moveFloat(p.id, { w, h, x, y }));
     pop.appendChild(grip);
     makeFloatDraggable(head, pop, p.id, pm2, { host: opts.host });
     pop.addEventListener("mousedown", () => {
@@ -46542,13 +46569,29 @@ ${mdToHtmlBody(md)}
       e.stopPropagation();
       const w0 = box.offsetWidth, h0 = box.offsetHeight, x0 = e.clientX, y0 = e.clientY;
       const move = (ev) => {
-        box.style.width = Math.max(200, w0 + ev.clientX - x0) + "px";
-        box.style.height = Math.max(120, h0 + ev.clientY - y0) + "px";
+        const c = clampFloat({
+          x: box.offsetLeft,
+          y: box.offsetTop,
+          w: w0 + ev.clientX - x0,
+          h: h0 + ev.clientY - y0
+        });
+        box.style.width = Math.max(FLOAT_MIN_W, Math.min(c.w, window.innerWidth - box.offsetLeft)) + "px";
+        box.style.height = Math.max(FLOAT_MIN_H, Math.min(c.h, window.innerHeight - box.offsetTop)) + "px";
       };
       const up = () => {
         document.removeEventListener("mousemove", move);
         document.removeEventListener("mouseup", up);
-        onEnd(box.offsetWidth, box.offsetHeight);
+        const c = clampFloat({
+          x: box.offsetLeft,
+          y: box.offsetTop,
+          w: box.offsetWidth,
+          h: box.offsetHeight
+        });
+        box.style.left = c.x + "px";
+        box.style.top = c.y + "px";
+        box.style.width = c.w + "px";
+        box.style.height = c.h + "px";
+        onEnd(c.w, c.h, c.x, c.y);
       };
       document.addEventListener("mousemove", move);
       document.addEventListener("mouseup", up);
@@ -46689,13 +46732,33 @@ ${mdToHtmlBody(md)}
       _fixingDocs = false;
     }
   }
+  function captureScroll() {
+    const out = [];
+    for (const e of document.querySelectorAll(SCROLLABLES)) {
+      if (e.scrollTop || e.scrollLeft) out.push([e, e.scrollTop, e.scrollLeft]);
+    }
+    return out;
+  }
+  function restoreScroll(saved) {
+    const put = () => {
+      for (const [e, top, left] of saved) {
+        if (!e.isConnected) continue;
+        if (top && e.scrollTop !== top) e.scrollTop = top;
+        if (left && e.scrollLeft !== left) e.scrollLeft = left;
+      }
+    };
+    put();
+    requestAnimationFrame(put);
+  }
   function renderPanels(force) {
     if (!pm) return;
     ensureDocsVisible();
     const sig = JSON.stringify({ r: pm.store.root, f: pm.store.floats });
     if (!force && sig === lastSig) return;
     lastSig = sig;
+    const saved = captureScroll();
     renderPanelLayout(host(), pm, renderOpts());
+    restoreScroll(saved);
     const h = host(), holder = srcHolder();
     for (const [, node] of adopted) if (!h.contains(node)) holder.appendChild(node);
     if (_onLayoutChange) _onLayoutChange();
@@ -46905,7 +46968,7 @@ ${mdToHtmlBody(md)}
     } catch {
     }
   }
-  var HOST_ID, SRC_ID, ALIAS, panelId, PANEL_DEFS, pm, started, lastSig, adopted, extras, meta, _fixingDocs, _onLayoutChange, lastSide, onShowHook, HOME_KEY, homes;
+  var HOST_ID, SRC_ID, ALIAS, panelId, PANEL_DEFS, pm, started, lastSig, adopted, extras, meta, _fixingDocs, SCROLLABLES, _onLayoutChange, lastSide, onShowHook, HOME_KEY, homes;
   var init_panel_ui = __esm({
     "src/panels/panel-ui.js"() {
       init_core();
@@ -46951,6 +47014,7 @@ ${mdToHtmlBody(md)}
       extras = /* @__PURE__ */ new Map();
       meta = /* @__PURE__ */ new Map();
       _fixingDocs = false;
+      SCROLLABLES = ".pane, #tree, #outline, #props-body, .k-panel-body, .k-tab-content, .home-dlg-scroll";
       _onLayoutChange = null;
       lastSide = /* @__PURE__ */ new Map();
       onShowHook = null;
@@ -47307,7 +47371,7 @@ ${mdToHtmlBody(md)}
       <div class="k-set-tab" data-p="lang">${t("settings.language")}</div>
       <div class="k-set-tab" data-p="keys">${t("settings.shortcuts")}</div>
     </div>
-    <div class="k-set-page on" data-p="gen">
+    <div class="k-set-page k-set-2col on" data-p="gen">
       <div class="k-row"><label>${t("settings.projectName")}</label><input type="text" id="st-title"></div>
       <div class="k-row"><label>${t("settings.author")}</label><input type="text" id="st-author"></div>
       <div class="k-row"><label>${t("settings.autoSaveMinutes")}<span class="k-hint">${t("settings.autoSaveHint")}</span></label><input type="number" id="st-auto" min="0" max="120"></div>
@@ -47316,7 +47380,7 @@ ${mdToHtmlBody(md)}
       <div class="k-row"><label>${t("settings.dailyGoal")}</label><input type="number" id="st-daily" min="0"></div>
       <div class="k-row"><label>${t("settings.projectGoal")}</label><input type="number" id="st-proj" min="0"></div>
     </div>
-    <div class="k-set-page" data-p="write">
+    <div class="k-set-page k-set-2col" data-p="write">
       <div class="k-row"><label>${t("settings.fontFamily")}<span class="k-hint">${t("settings.fontFamilyHint")}</span></label><select id="st-fontfamily" class="k-dlg-select" style="width:100%"></select></div>
       <div class="k-row"><label>${t("settings.spFontFamily")}<span class="k-hint">${t("settings.spFontFamilyHint")}</span></label><select id="st-spfontfamily" class="k-dlg-select" style="width:100%"></select></div>
       <div class="k-row"><label>\u0E02\u0E19\u0E32\u0E14\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E19\u0E34\u0E22\u0E32\u0E22 (pt)<span class="k-hint">\u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19\u0E15\u0E49\u0E19\u0E09\u0E1A\u0E31\u0E1A = 12pt (Courier Final Draft)</span></label><input type="number" id="st-edpt" class="k-narrow" min="6" max="48" step="0.5"></div>
@@ -47334,7 +47398,7 @@ ${mdToHtmlBody(md)}
     <div class="k-set-page" data-p="auto">
       <div class="k-row"><label>${iconHtml("cloud-lightning", 14)} ${t("settings.autoSync")}<span class="k-hint">${t("settings.autoSyncHint")}</span></label><input type="checkbox" id="st-autosync"></div>
     </div>
-    <div class="k-set-page" data-p="setup">
+    <div class="k-set-page k-set-2col" data-p="setup">
       <div class="k-hint" style="margin-bottom:10px">[98] \u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E1A\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E1B\u0E01\u0E1A\u0E17/\u0E15\u0E49\u0E19\u0E09\u0E1A\u0E31\u0E1A \u2014 \u0E43\u0E0A\u0E49\u0E15\u0E2D\u0E19\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E41\u0E25\u0E30\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01</div>
       <div class="k-set-sub">\u0E1C\u0E39\u0E49\u0E40\u0E02\u0E35\u0E22\u0E19</div>
       <div class="k-row"><label>\u0E2D\u0E35\u0E40\u0E21\u0E25\u0E1C\u0E39\u0E49\u0E40\u0E02\u0E35\u0E22\u0E19</label><input type="text" id="st-email"></div>
@@ -47352,10 +47416,10 @@ ${mdToHtmlBody(md)}
       <div class="k-set-sub">\u0E25\u0E34\u0E02\u0E2A\u0E34\u0E17\u0E18\u0E34\u0E4C</div>
       <div class="k-row"><label>Copyright by</label><input type="text" id="st-copyright"></div>
     </div>
-    <div class="k-set-page" data-p="page">
+    <div class="k-set-page k-set-2col" data-p="page">
       <div class="k-hint" style="margin-bottom:10px">[85] \u0E02\u0E19\u0E32\u0E14\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E41\u0E25\u0E30\u0E23\u0E30\u0E22\u0E30\u0E02\u0E2D\u0E1A \u2014 \u0E43\u0E0A\u0E49\u0E23\u0E48\u0E27\u0E21\u0E01\u0E31\u0E19\u0E17\u0E31\u0E49\u0E07\u0E42\u0E2B\u0E21\u0E14\u0E19\u0E34\u0E22\u0E32\u0E22\u0E41\u0E25\u0E30\u0E42\u0E2B\u0E21\u0E14\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C</div>
       <div class="k-row"><label>\u0E02\u0E19\u0E32\u0E14\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29</label><select id="st-paper" class="k-dlg-select"></select></div>
-      <div class="k-row" id="st-paper-custom"><label>\u0E01\u0E27\u0E49\u0E32\u0E07 \xD7 \u0E2A\u0E39\u0E07 (\u0E19\u0E34\u0E49\u0E27)</label>
+      <div class="k-row k-full" id="st-paper-custom"><label>\u0E01\u0E27\u0E49\u0E32\u0E07 \xD7 \u0E2A\u0E39\u0E07 (\u0E19\u0E34\u0E49\u0E27)</label>
         <span><input type="number" id="st-paper-w" class="k-narrow" min="3" max="30" step="0.01">
         \xD7 <input type="number" id="st-paper-h" class="k-narrow" min="3" max="40" step="0.01"></span></div>
       <div class="k-set-sub">\u0E23\u0E30\u0E22\u0E30\u0E02\u0E2D\u0E1A (\u0E19\u0E34\u0E49\u0E27)</div>
@@ -47365,7 +47429,7 @@ ${mdToHtmlBody(md)}
         <div class="k-row"><label>\u0E0B\u0E49\u0E32\u0E22 (Left)</label><input type="number" id="st-mg-left" class="k-narrow" min="0" max="5" step="0.05"></div>
         <div class="k-row"><label>\u0E02\u0E27\u0E32 (Right)</label><input type="number" id="st-mg-right" class="k-narrow" min="0" max="5" step="0.05"></div>
       </div>
-      <div class="k-hint" id="st-page-info" style="margin-top:8px"></div>
+      <div class="k-hint k-full" id="st-page-info" style="margin-top:8px"></div>
       <div class="k-set-sub">[84] \u0E01\u0E0E\u0E01\u0E32\u0E23\u0E15\u0E31\u0E14\u0E2B\u0E19\u0E49\u0E32 (widow / orphan)</div>
       <div class="k-set-grid2">
         <div class="k-row"><label>\u0E1A\u0E23\u0E23\u0E22\u0E32\u0E22: \u0E40\u0E2B\u0E25\u0E37\u0E2D\u0E17\u0E49\u0E32\u0E22\u0E2B\u0E19\u0E49\u0E32\u0E2D\u0E22\u0E48\u0E32\u0E07\u0E19\u0E49\u0E2D\u0E22</label><input type="number" id="st-pb-ab" class="k-narrow" min="0" max="20"></div>
@@ -47382,7 +47446,7 @@ ${mdToHtmlBody(md)}
       <div class="k-row"><label>\u0E17\u0E27\u0E19\u0E0A\u0E37\u0E48\u0E2D\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23 (cont'd)</label><input type="text" id="st-str-contd"></div>
       <div class="k-row"><label>\u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D Scene / Time (\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D)</label>
         <span><input type="text" id="st-str-scene" style="width:46%"> <input type="text" id="st-str-time" style="width:46%"></span></div>
-      <div style="margin-top:12px; text-align:right"><button id="st-page-reset" class="k-reset-btn">\u21BA \u0E04\u0E37\u0E19\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19</button></div>
+      <div class="k-full" style="margin-top:12px; text-align:right"><button id="st-page-reset" class="k-reset-btn">\u21BA \u0E04\u0E37\u0E19\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19</button></div>
     </div>
     <div class="k-set-page" data-p="spfmt">
       <div class="k-hint" style="margin-bottom:10px">[81][82][83] \u0E23\u0E30\u0E22\u0E30\u0E40\u0E22\u0E37\u0E49\u0E2D\u0E07 (\u0E27\u0E31\u0E14\u0E08\u0E32\u0E01\u0E02\u0E2D\u0E1A\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29) \xB7 \u0E04\u0E27\u0E32\u0E21\u0E01\u0E27\u0E49\u0E32\u0E07 \xB7 \u0E23\u0E30\u0E22\u0E30\u0E40\u0E27\u0E49\u0E19\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14 (10 = 1 \u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14) \xB7 \u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23\u0E1A\u0E19\u0E08\u0E2D / \u0E15\u0E2D\u0E19\u0E1E\u0E34\u0E21\u0E1E\u0E4C</div>
@@ -47434,7 +47498,9 @@ ${mdToHtmlBody(md)}
       if (!fs) return;
       const spFs = q("#st-spfontfamily");
       const builtin = [
-        { name: "Segoe UI (\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19)", value: "" },
+        { name: "\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19 (Courier Prime 12pt)", value: "" },
+        { name: "Courier Prime (\u0E1D\u0E31\u0E07\u0E21\u0E32\u0E01\u0E31\u0E1A\u0E42\u0E1B\u0E23\u0E41\u0E01\u0E23\u0E21)", value: DEFAULT_SCRIPT_FONT },
+        { name: "Segoe UI", value: '"Segoe UI", system-ui, sans-serif' },
         { name: "Sarabun", value: "Sarabun, sans-serif" },
         { name: "Noto Sans Thai", value: '"Noto Sans Thai", sans-serif' },
         { name: "Leelawadee UI", value: '"Leelawadee UI", sans-serif' },
@@ -47465,7 +47531,7 @@ ${mdToHtmlBody(md)}
         for (const f of builtin) {
           const opt = document.createElement("option");
           opt.value = f.value;
-          opt.textContent = f.value === "" ? "Courier New (\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07)" : f.name;
+          opt.textContent = f.value === "" ? "\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07 (Courier Prime 12pt)" : f.name;
           if (f.value === (origSpFontFamily || "")) opt.selected = true;
           spFs.appendChild(opt);
         }
@@ -50178,9 +50244,7 @@ ${mdToHtmlBody(md)}
   async function showHomeDialog() {
     const ov = el("div", "k-overlay");
     ov.style.zIndex = "90";
-    const box = el("div", "k-dialog k-wide");
-    box.style.maxWidth = "1100px";
-    box.style.minWidth = "720px";
+    const box = el("div", "k-dialog k-home-dlg");
     const head = el("div", "home-head");
     head.append(el("h2", "home-title", "Killian 2"));
     const actions = el("div", "home-actions");
@@ -50190,7 +50254,9 @@ ${mdToHtmlBody(md)}
     viewBtn.title = "\u0E2A\u0E25\u0E31\u0E1A\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07 (\u0E01\u0E32\u0E23\u0E4C\u0E14 / \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23)";
     actions.append(newBtn, openBtn, viewBtn);
     const grid = el("div", "home-grid");
-    box.append(head, actions, grid);
+    const scroll = el("div", "home-dlg-scroll");
+    scroll.append(grid);
+    box.append(head, actions, scroll);
     ov.append(box);
     document.body.append(ov);
     ov.onclick = (e) => {
@@ -63544,6 +63610,7 @@ ${sc.body || ""}
     spFormatSettings: () => spFormatSettings,
     spellChecker: () => spellChecker,
     syncMenuToggles: () => syncMenuToggles,
+    syncModeHint: () => syncModeHint,
     tb: () => tb,
     uniqueSceneFileName: () => uniqueSceneFileName,
     updateSceneRow: () => updateSceneRow,
@@ -65737,10 +65804,33 @@ ${sc.body || ""}
       iLabel.focus();
     });
   }
+  function modeHint() {
+    let h = document.getElementById("k-mode-hint");
+    if (!h) {
+      h = el("div");
+      h.id = "k-mode-hint";
+      document.body.appendChild(h);
+    }
+    return h;
+  }
+  function syncModeHint() {
+    const reading = document.body.classList.contains("reading-mode");
+    const focus = document.body.classList.contains("focus-mode");
+    const h = modeHint();
+    if (!reading && !focus) {
+      h.textContent = "";
+      return;
+    }
+    const name = reading && focus ? "\u0E42\u0E2B\u0E21\u0E14\u0E2D\u0E48\u0E32\u0E19 + \u0E42\u0E1F\u0E01\u0E31\u0E2A" : reading ? "\u0E42\u0E2B\u0E21\u0E14\u0E2D\u0E48\u0E32\u0E19" : "\u0E42\u0E2B\u0E21\u0E14\u0E42\u0E1F\u0E01\u0E31\u0E2A";
+    h.innerHTML = "";
+    h.append(el("b", null, name), document.createTextNode(" \u2014 \u0E01\u0E14 "));
+    h.append(el("kbd", null, "Esc"), document.createTextNode(" \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E2D\u0E2D\u0E01"));
+  }
   function toggleFocus(on) {
     const v = on ?? !document.body.classList.contains("focus-mode");
     document.body.classList.toggle("focus-mode", v);
     toggleFocusMode2(v);
+    syncModeHint();
     syncMenuToggles();
     refreshToolbar();
     setStatus(v ? "\u0E42\u0E2B\u0E21\u0E14\u0E42\u0E1F\u0E01\u0E31\u0E2A \u2014 Esc \u0E2B\u0E23\u0E37\u0E2D Ctrl+Shift+D \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E2D\u0E2D\u0E01" : "\u0E2D\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E42\u0E2B\u0E21\u0E14\u0E42\u0E1F\u0E01\u0E31\u0E2A");
@@ -65808,6 +65898,7 @@ ${sc.body || ""}
       };
       document.addEventListener("keydown", _readEsc);
     }
+    syncModeHint();
     syncMenuToggles();
     syncFloatBarVisible();
     setStatus(v ? "\u0E42\u0E2B\u0E21\u0E14\u0E2D\u0E48\u0E32\u0E19 \u2014 \u0E01\u0E14 Esc \u0E2B\u0E23\u0E37\u0E2D\u0E04\u0E25\u0E34\u0E01 \u{1F4D6} \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E2D\u0E2D\u0E01" : "\u0E2D\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E42\u0E2B\u0E21\u0E14\u0E2D\u0E48\u0E32\u0E19");
@@ -70420,17 +70511,17 @@ ${sc.body || ""}
         grip2.dispatchEvent(new MouseEvent("mousedown", { clientX: gr.left + 4, clientY: gr.top + 4, button: 0, bubbles: true }));
         document.dispatchEvent(new MouseEvent("mousemove", { clientX: gr.left + 94, clientY: gr.top + 74, bubbles: true }));
         check2(
-          "#5 \u0E25\u0E32\u0E01\u0E17\u0E35\u0E48\u0E08\u0E31\u0E1A \u2192 \u0E41\u0E1C\u0E07\u0E25\u0E2D\u0E22\u0E01\u0E27\u0E49\u0E32\u0E07/\u0E2A\u0E39\u0E07\u0E02\u0E36\u0E49\u0E19\u0E17\u0E31\u0E19\u0E17\u0E35",
-          pop.offsetWidth > w0 + 60 && pop.offsetHeight > h02 + 50,
-          `${w0}x${h02} \u2192 ${pop.offsetWidth}x${pop.offsetHeight}`
+          "#5 \u0E25\u0E32\u0E01\u0E17\u0E35\u0E48\u0E08\u0E31\u0E1A \u2192 \u0E41\u0E1C\u0E07\u0E25\u0E2D\u0E22\u0E01\u0E27\u0E49\u0E32\u0E07/\u0E2A\u0E39\u0E07\u0E02\u0E36\u0E49\u0E19\u0E17\u0E31\u0E19\u0E17\u0E35 (\u0E40\u0E17\u0E48\u0E32\u0E17\u0E35\u0E48\u0E22\u0E31\u0E07\u0E2D\u0E22\u0E39\u0E48\u0E43\u0E19\u0E08\u0E2D)",
+          pop.offsetWidth > w0 + 60 && pop.offsetHeight >= h02 && pop.offsetTop + pop.offsetHeight <= window.innerHeight + 1,
+          `${w0}x${h02} \u2192 ${pop.offsetWidth}x${pop.offsetHeight} (\u0E08\u0E2D\u0E2A\u0E39\u0E07 ${window.innerHeight})`
         );
         document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
         await new Promise((r) => setTimeout(r, 40));
         const fl = PMG.floats.find((f) => f.panel.id === "tree");
         check2(
-          "#5 \u0E1B\u0E25\u0E48\u0E2D\u0E22\u0E40\u0E21\u0E32\u0E2A\u0E4C \u2192 \u0E02\u0E19\u0E32\u0E14\u0E43\u0E2B\u0E21\u0E48\u0E16\u0E39\u0E01\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E25\u0E07 store",
-          !!fl && fl.w > w0 + 60 && fl.h > h02 + 50,
-          JSON.stringify(fl && { w: fl.w, h: fl.h }) + ` was ${w0}x${h02}`
+          "#5 \u0E1B\u0E25\u0E48\u0E2D\u0E22\u0E40\u0E21\u0E32\u0E2A\u0E4C \u2192 \u0E02\u0E19\u0E32\u0E14\u0E43\u0E2B\u0E21\u0E48\u0E16\u0E39\u0E01\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E25\u0E07 store (\u0E2B\u0E19\u0E35\u0E1A\u0E43\u0E2B\u0E49\u0E2D\u0E22\u0E39\u0E48\u0E43\u0E19\u0E08\u0E2D\u0E41\u0E25\u0E49\u0E27)",
+          !!fl && fl.w > w0 + 60 && fl.h >= h02 && fl.h <= window.innerHeight,
+          JSON.stringify(fl && { w: fl.w, h: fl.h }) + ` was ${w0}x${h02} \u0E08\u0E2D ${window.innerHeight}`
         );
         pBtn("tree", "float").click();
         await new Promise((r) => setTimeout(r, 40));
@@ -74897,6 +74988,236 @@ ${sc.body || ""}
           state.settings.spStrings = null;
           applySettings();
           check2("[85] \u0E04\u0E37\u0E19\u0E23\u0E30\u0E22\u0E30\u0E02\u0E2D\u0E1A\u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19\u0E41\u0E25\u0E49\u0E27", rootVar("--mg-left") === "1.5in");
+        }
+      }
+      {
+        resetPanels();
+        await new Promise((r) => setTimeout(r, 60));
+        const rootVar2 = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+        check2(
+          "#2 \u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19\u0E0A\u0E35\u0E49\u0E44\u0E1B Courier Prime \u0E40\u0E1B\u0E47\u0E19\u0E15\u0E31\u0E27\u0E41\u0E23\u0E01",
+          /^\s*"Courier Prime"/.test(rootVar2("--sp-font")) && /^\s*"Courier Prime"/.test(rootVar2("--ed-font")),
+          rootVar2("--sp-font")
+        );
+        try {
+          await document.fonts.load('16px "Courier Prime"');
+        } catch {
+        }
+        check2(
+          "#2 \u0E42\u0E2B\u0E25\u0E14\u0E44\u0E1F\u0E25\u0E4C\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E17\u0E35\u0E48\u0E1D\u0E31\u0E07\u0E21\u0E32\u0E44\u0E14\u0E49\u0E08\u0E23\u0E34\u0E07 (@font-face)",
+          document.fonts.check('16px "Courier Prime"'),
+          "fonts.status=" + document.fonts.status
+        );
+        try {
+          await document.fonts.load('bold 16px "Courier Prime"');
+        } catch {
+        }
+        check2("#2 \u0E21\u0E35\u0E19\u0E49\u0E33\u0E2B\u0E19\u0E31\u0E01\u0E15\u0E31\u0E27\u0E2B\u0E19\u0E32\u0E02\u0E2D\u0E07\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E14\u0E49\u0E27\u0E22", document.fonts.check('bold 16px "Courier Prime"'));
+        settingsDialog("page");
+        await new Promise((r) => setTimeout(r, 80));
+        {
+          const dlg = document.querySelector(".k-dialog.k-settings");
+          const w = dlg.getBoundingClientRect().width;
+          check2(
+            "#4 \u0E01\u0E25\u0E48\u0E2D\u0E07\u0E15\u0E31\u0E49\u0E07\u0E04\u0E48\u0E32\u0E01\u0E27\u0E49\u0E32\u0E07\u0E02\u0E36\u0E49\u0E19\u0E08\u0E32\u0E01\u0E40\u0E14\u0E34\u0E21 (>900px \u0E2B\u0E23\u0E37\u0E2D\u0E40\u0E15\u0E47\u0E21 94vw)",
+            w > 900 || w >= innerWidth * 0.9,
+            String(Math.round(w))
+          );
+          const cols = getComputedStyle(dlg.querySelector(".k-set-page.k-set-2col.on")).gridTemplateColumns.split(" ").filter(Boolean).length;
+          check2("#4 \u0E2B\u0E19\u0E49\u0E32\u0E15\u0E31\u0E49\u0E07\u0E04\u0E48\u0E32\u0E17\u0E35\u0E48\u0E21\u0E35\u0E41\u0E16\u0E27\u0E40\u0E22\u0E2D\u0E30\u0E08\u0E31\u0E14\u0E40\u0E1B\u0E47\u0E19 2 \u0E04\u0E2D\u0E25\u0E31\u0E21\u0E19\u0E4C", cols === 2, String(cols));
+          check2(
+            "#4 \u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D\u0E22\u0E48\u0E2D\u0E22/\u0E04\u0E33\u0E2D\u0E18\u0E34\u0E1A\u0E32\u0E22\u0E22\u0E31\u0E07\u0E01\u0E34\u0E19\u0E40\u0E15\u0E47\u0E21\u0E04\u0E27\u0E32\u0E21\u0E01\u0E27\u0E49\u0E32\u0E07",
+            getComputedStyle(dlg.querySelector(".k-set-page.on .k-set-sub")).gridColumnStart === "1"
+          );
+          dlg.querySelector(".k-cancel").click();
+          await new Promise((r) => setTimeout(r, 60));
+        }
+        {
+          const ovH = await showHomeDialog();
+          await new Promise((r) => setTimeout(r, 250));
+          const dlg = ovH.querySelector(".k-dialog");
+          const grid = ovH.querySelector(".home-grid");
+          check2(
+            "#1 \u0E01\u0E25\u0E48\u0E2D\u0E07\u0E2B\u0E19\u0E49\u0E32\u0E41\u0E23\u0E01\u0E21\u0E35\u0E01\u0E23\u0E2D\u0E1A\u0E40\u0E25\u0E37\u0E48\u0E2D\u0E19\u0E41\u0E22\u0E01 (\u0E01\u0E23\u0E2D\u0E1A\u0E19\u0E34\u0E48\u0E07 \u0E40\u0E19\u0E37\u0E49\u0E2D\u0E43\u0E19\u0E40\u0E25\u0E37\u0E48\u0E2D\u0E19)",
+            !!ovH.querySelector(".home-dlg-scroll") && dlg.classList.contains("k-home-dlg")
+          );
+          const r1 = dlg.getBoundingClientRect();
+          const viewBtn = [...ovH.querySelectorAll(".home-actions button")].find((b) => /📋|📱/.test(b.textContent));
+          check2("#1 \u0E21\u0E35\u0E1B\u0E38\u0E48\u0E21\u0E2A\u0E25\u0E31\u0E1A\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07", !!viewBtn);
+          viewBtn.click();
+          await new Promise((r) => setTimeout(r, 120));
+          const r2 = dlg.getBoundingClientRect();
+          check2(
+            "#1 \u0E2A\u0E25\u0E31\u0E1A\u0E40\u0E1B\u0E47\u0E19\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E41\u0E25\u0E49\u0E27\u0E01\u0E25\u0E48\u0E2D\u0E07\u0E02\u0E19\u0E32\u0E14\u0E40\u0E17\u0E48\u0E32\u0E40\u0E14\u0E34\u0E21",
+            Math.abs(r1.width - r2.width) < 1 && Math.abs(r1.height - r2.height) < 1,
+            `${Math.round(r1.width)}x${Math.round(r1.height)} \u2192 ${Math.round(r2.width)}x${Math.round(r2.height)}`
+          );
+          viewBtn.click();
+          await new Promise((r) => setTimeout(r, 120));
+          const r3 = dlg.getBoundingClientRect();
+          check2(
+            "#1 \u0E2A\u0E25\u0E31\u0E1A\u0E01\u0E25\u0E31\u0E1A\u0E40\u0E1B\u0E47\u0E19\u0E01\u0E32\u0E23\u0E4C\u0E14\u0E41\u0E25\u0E49\u0E27\u0E22\u0E31\u0E07\u0E02\u0E19\u0E32\u0E14\u0E40\u0E14\u0E34\u0E21",
+            Math.abs(r1.width - r3.width) < 1 && Math.abs(r1.height - r3.height) < 1,
+            `${Math.round(r1.height)} \u2192 ${Math.round(r3.height)}`
+          );
+          check2("#1 \u0E04\u0E27\u0E32\u0E21\u0E01\u0E27\u0E49\u0E32\u0E07\u0E01\u0E25\u0E48\u0E2D\u0E07\u0E1E\u0E2D\u0E14\u0E35 4 \u0E04\u0E2D\u0E25\u0E31\u0E21\u0E19\u0E4C", r1.width > 4 * 190, String(Math.round(r1.width)));
+          ovH.remove();
+          await new Promise((r) => setTimeout(r, 60));
+        }
+        {
+          const anySc = document.querySelector("#tree .scene:not(.add-row)");
+          if (anySc) {
+            anySc.click();
+            await new Promise((r) => setTimeout(r, 350));
+          }
+          const tScroll = state.active;
+          const pane = tScroll && tScroll.pane;
+          if (pane) {
+            if (tScroll.editor) {
+              tScroll.editor.setMarkdown(Array.from({ length: 120 }, (_, i2) => "\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E17\u0E14\u0E2A\u0E2D\u0E1A\u0E40\u0E25\u0E37\u0E48\u0E2D\u0E19 " + i2).join("\n\n"));
+              await new Promise((r) => setTimeout(r, 150));
+            }
+            pane.scrollTop = 240;
+            await new Promise((r) => setTimeout(r, 60));
+            const before = pane.scrollTop;
+            check2("#3 \u0E40\u0E25\u0E37\u0E48\u0E2D\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E25\u0E07\u0E21\u0E32\u0E44\u0E14\u0E49\u0E08\u0E23\u0E34\u0E07\u0E01\u0E48\u0E2D\u0E19\u0E17\u0E14\u0E2A\u0E2D\u0E1A", before > 100, String(before));
+            renderPanels(true);
+            await new Promise((r) => setTimeout(r, 120));
+            check2(
+              "#3 \u0E27\u0E32\u0E14\u0E41\u0E1C\u0E07\u0E43\u0E2B\u0E21\u0E48\u0E41\u0E25\u0E49\u0E27\u0E2B\u0E19\u0E49\u0E32\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E44\u0E21\u0E48\u0E40\u0E14\u0E49\u0E07\u0E01\u0E25\u0E31\u0E1A\u0E0B\u0E49\u0E32\u0E22\u0E1A\u0E19",
+              Math.abs(pane.scrollTop - before) < 8,
+              `${before} \u2192 ${pane.scrollTop}`
+            );
+            const h = document.querySelector("#app-root .k-resize-handle");
+            if (h) {
+              const hr = h.getBoundingClientRect();
+              h.dispatchEvent(new MouseEvent("mousedown", { clientX: hr.left + 2, clientY: hr.top + 20, button: 0, bubbles: true }));
+              document.dispatchEvent(new MouseEvent("mousemove", { clientX: hr.left + 60, clientY: hr.top + 20, bubbles: true }));
+              document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+              await new Promise((r) => setTimeout(r, 150));
+              check2(
+                "#3 \u0E25\u0E32\u0E01\u0E1B\u0E23\u0E31\u0E1A\u0E2A\u0E31\u0E14\u0E2A\u0E48\u0E27\u0E19\u0E41\u0E1C\u0E07\u0E41\u0E25\u0E49\u0E27\u0E15\u0E33\u0E41\u0E2B\u0E19\u0E48\u0E07\u0E40\u0E25\u0E37\u0E48\u0E2D\u0E19\u0E22\u0E31\u0E07\u0E2D\u0E22\u0E39\u0E48\u0E17\u0E35\u0E48\u0E40\u0E14\u0E34\u0E21",
+                Math.abs(pane.scrollTop - before) < 8,
+                `${before} \u2192 ${pane.scrollTop}`
+              );
+            }
+            if (tScroll.editor) {
+              tScroll.dirty = false;
+            }
+          }
+          resetPanels();
+          await new Promise((r) => setTimeout(r, 60));
+        }
+        {
+          check2(
+            "#5 clampFloat: \u0E1B\u0E25\u0E48\u0E2D\u0E22\u0E19\u0E2D\u0E01\u0E08\u0E2D\u0E17\u0E32\u0E07\u0E0B\u0E49\u0E32\u0E22 \u2192 \u0E22\u0E31\u0E07\u0E40\u0E2B\u0E47\u0E19\u0E2B\u0E31\u0E27\u0E41\u0E1C\u0E07",
+            clampFloat({ x: -900, y: 50, w: 320, h: 300 }, 1500, 950).x >= 90 - 320
+          );
+          check2(
+            "#5 clampFloat: \u0E1B\u0E25\u0E48\u0E2D\u0E22\u0E40\u0E25\u0E22\u0E02\u0E2D\u0E1A\u0E02\u0E27\u0E32 \u2192 \u0E44\u0E21\u0E48\u0E2B\u0E25\u0E38\u0E14\u0E08\u0E2D",
+            clampFloat({ x: 5e3, y: 50, w: 320, h: 300 }, 1500, 950).x <= 1500 - 90
+          );
+          check2(
+            "#5 clampFloat: y \u0E15\u0E34\u0E14\u0E25\u0E1A \u2192 \u0E14\u0E31\u0E19\u0E01\u0E25\u0E31\u0E1A\u0E40\u0E02\u0E49\u0E32\u0E08\u0E2D",
+            clampFloat({ x: 100, y: -400, w: 320, h: 300 }, 1500, 950).y === 0
+          );
+          check2(
+            "#7 clampFloat: \u0E02\u0E22\u0E32\u0E22\u0E40\u0E01\u0E34\u0E19\u0E08\u0E2D \u2192 \u0E2B\u0E19\u0E35\u0E1A\u0E44\u0E21\u0E48\u0E43\u0E2B\u0E49\u0E40\u0E01\u0E34\u0E19\u0E02\u0E19\u0E32\u0E14\u0E08\u0E2D",
+            clampFloat({ x: 10, y: 10, w: 99999, h: 99999 }, 1500, 950).w === 1500
+          );
+          check2(
+            "#7 clampFloat: \u0E22\u0E48\u0E2D\u0E08\u0E19\u0E40\u0E25\u0E47\u0E01\u0E40\u0E01\u0E34\u0E19\u0E08\u0E31\u0E1A \u2192 \u0E04\u0E07\u0E02\u0E19\u0E32\u0E14\u0E15\u0E48\u0E33\u0E2A\u0E38\u0E14",
+            clampFloat({ x: 10, y: 10, w: 5, h: 5 }, 1500, 950).w === FLOAT_MIN_W && clampFloat({ x: 10, y: 10, w: 5, h: 5 }, 1500, 950).h === FLOAT_MIN_H
+          );
+          getPanelManager().floatPanel("props", { x: 100, y: 100, w: 320, h: 260 });
+          await new Promise((r) => setTimeout(r, 60));
+          getPanelManager().moveFloat("props", { x: -5e3, y: -5e3, w: 320, h: 260 });
+          renderPanels(true);
+          await new Promise((r) => setTimeout(r, 80));
+          const popEl = document.querySelector('.k-float-panel[data-panel-id="props"]');
+          check2(
+            "#7 \u0E41\u0E1C\u0E07\u0E25\u0E2D\u0E22\u0E17\u0E35\u0E48\u0E15\u0E33\u0E41\u0E2B\u0E19\u0E48\u0E07\u0E19\u0E2D\u0E01\u0E08\u0E2D\u0E16\u0E39\u0E01\u0E14\u0E36\u0E07\u0E01\u0E25\u0E31\u0E1A\u0E21\u0E32\u0E43\u0E2B\u0E49\u0E40\u0E2B\u0E47\u0E19\u0E15\u0E2D\u0E19\u0E27\u0E32\u0E14",
+            !!popEl && popEl.getBoundingClientRect().right > 40 && popEl.getBoundingClientRect().bottom > 10,
+            popEl && JSON.stringify(popEl.getBoundingClientRect())
+          );
+          check2(
+            "#6 \u0E41\u0E1C\u0E07\u0E25\u0E2D\u0E22\u0E15\u0E31\u0E49\u0E07 -webkit-app-region:no-drag (\u0E17\u0E31\u0E1A\u0E41\u0E16\u0E1A\u0E2B\u0E31\u0E27\u0E2B\u0E19\u0E49\u0E32\u0E15\u0E48\u0E32\u0E07\u0E41\u0E25\u0E49\u0E27\u0E22\u0E31\u0E07\u0E25\u0E32\u0E01\u0E44\u0E14\u0E49)",
+            getComputedStyle(popEl).webkitAppRegion === "no-drag",
+            getComputedStyle(popEl).webkitAppRegion
+          );
+          check2(
+            "#6 \u0E2B\u0E31\u0E27\u0E41\u0E1C\u0E07\u0E25\u0E2D\u0E22\u0E01\u0E47 no-drag \u0E14\u0E49\u0E27\u0E22",
+            getComputedStyle(popEl.querySelector(".k-panel-head")).webkitAppRegion === "no-drag"
+          );
+          const head5 = popEl.querySelector(".k-panel-head");
+          const hr5 = head5.getBoundingClientRect();
+          head5.dispatchEvent(new MouseEvent("mousedown", { clientX: hr5.left + 40, clientY: hr5.top + 8, button: 0, bubbles: true }));
+          document.dispatchEvent(new MouseEvent("mousemove", { clientX: 620, clientY: 400, bubbles: true }));
+          document.dispatchEvent(new MouseEvent("mouseup", { clientX: 0, clientY: 0, bubbles: true }));
+          await new Promise((r) => setTimeout(r, 100));
+          const fl5 = getPanelManager().floats.find((f) => f.panel.id === "props");
+          check2(
+            "#5 \u0E1B\u0E25\u0E48\u0E2D\u0E22\u0E40\u0E21\u0E32\u0E2A\u0E4C\u0E17\u0E35\u0E48\u0E43\u0E2B\u0E49\u0E1E\u0E34\u0E01\u0E31\u0E14 0,0 \u2192 \u0E41\u0E1C\u0E07\u0E44\u0E21\u0E48\u0E01\u0E23\u0E30\u0E42\u0E14\u0E14\u0E44\u0E1B\u0E21\u0E38\u0E21\u0E0B\u0E49\u0E32\u0E22\u0E1A\u0E19",
+            !!fl5 && (fl5.x > 40 || fl5.y > 40),
+            JSON.stringify(fl5 && { x: fl5.x, y: fl5.y })
+          );
+          hidePanel("props");
+          resetPanels();
+          await new Promise((r) => setTimeout(r, 60));
+        }
+        {
+          showPanel("props");
+          await new Promise((r) => setTimeout(r, 60));
+          toggleReading(true);
+          await new Promise((r) => setTimeout(r, 150));
+          const docsEl = document.querySelector('#app-root .k-panel[data-panel-id="docs"]');
+          const dr = docsEl.getBoundingClientRect();
+          check2(
+            "#8 \u0E42\u0E2B\u0E21\u0E14\u0E2D\u0E48\u0E32\u0E19: \u0E41\u0E1C\u0E07\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E1B\u0E39\u0E40\u0E15\u0E47\u0E21\u0E2B\u0E19\u0E49\u0E32\u0E15\u0E48\u0E32\u0E07 (\u0E44\u0E21\u0E48\u0E40\u0E2B\u0E25\u0E37\u0E2D\u0E01\u0E25\u0E48\u0E2D\u0E07\u0E40\u0E1B\u0E25\u0E48\u0E32\u0E02\u0E49\u0E32\u0E07 \u0E46)",
+            getComputedStyle(docsEl).position === "fixed" && dr.width >= innerWidth - 1 && dr.height >= innerHeight - 1,
+            `${Math.round(dr.width)}x${Math.round(dr.height)} vs ${innerWidth}x${innerHeight}`
+          );
+          check2(
+            "#8 \u0E42\u0E2B\u0E21\u0E14\u0E2D\u0E48\u0E32\u0E19: \u0E44\u0E21\u0E48\u0E21\u0E35\u0E41\u0E1C\u0E07\u0E2D\u0E37\u0E48\u0E19\u0E40\u0E2B\u0E25\u0E37\u0E2D\u0E1E\u0E37\u0E49\u0E19\u0E17\u0E35\u0E48\u0E1A\u0E19\u0E08\u0E2D\u0E40\u0E25\u0E22",
+            [...document.querySelectorAll("#app-root .k-panel")].filter((e) => e !== docsEl).every((e) => getComputedStyle(e).display === "none" || e.getBoundingClientRect().width < 1)
+          );
+          const hint = document.getElementById("k-mode-hint");
+          check2("#8 \u0E21\u0E35\u0E41\u0E16\u0E1A\u0E1A\u0E2D\u0E01\u0E17\u0E32\u0E07\u0E2D\u0E2D\u0E01\u0E14\u0E49\u0E32\u0E19\u0E1A\u0E19", !!hint && getComputedStyle(hint).display !== "none");
+          check2(
+            '#8 \u0E41\u0E16\u0E1A\u0E1A\u0E2D\u0E01\u0E27\u0E48\u0E32 "\u0E01\u0E14 Esc \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E2D\u0E2D\u0E01"',
+            hint.textContent.includes("Esc") && hint.textContent.includes("\u0E2D\u0E2D\u0E01"),
+            hint.textContent
+          );
+          check2(
+            "#8 \u0E41\u0E16\u0E1A\u0E1A\u0E2D\u0E01\u0E17\u0E32\u0E07\u0E2D\u0E2D\u0E01\u0E44\u0E21\u0E48\u0E1A\u0E31\u0E07\u0E01\u0E32\u0E23\u0E04\u0E25\u0E34\u0E01 (pointer-events:none)",
+            getComputedStyle(hint).pointerEvents === "none"
+          );
+          toggleReading(false);
+          await new Promise((r) => setTimeout(r, 150));
+          check2(
+            "#8 \u0E2D\u0E2D\u0E01\u0E42\u0E2B\u0E21\u0E14\u0E2D\u0E48\u0E32\u0E19\u0E41\u0E25\u0E49\u0E27\u0E41\u0E16\u0E1A\u0E1A\u0E2D\u0E01\u0E17\u0E32\u0E07\u0E2D\u0E2D\u0E01\u0E2B\u0E32\u0E22\u0E44\u0E1B",
+            getComputedStyle(document.getElementById("k-mode-hint")).display === "none"
+          );
+          check2(
+            "#8 \u0E2D\u0E2D\u0E01\u0E41\u0E25\u0E49\u0E27\u0E41\u0E1C\u0E07\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E01\u0E25\u0E31\u0E1A\u0E40\u0E02\u0E49\u0E32\u0E40\u0E25\u0E22\u0E4C\u0E40\u0E2D\u0E32\u0E15\u0E4C\u0E1B\u0E01\u0E15\u0E34",
+            getComputedStyle(document.querySelector('#app-root .k-panel[data-panel-id="docs"]')).position !== "fixed"
+          );
+          toggleFocus(true);
+          await new Promise((r) => setTimeout(r, 150));
+          const dr2 = document.querySelector('#app-root .k-panel[data-panel-id="docs"]').getBoundingClientRect();
+          check2(
+            "#8 \u0E42\u0E2B\u0E21\u0E14\u0E42\u0E1F\u0E01\u0E31\u0E2A: \u0E41\u0E1C\u0E07\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E1B\u0E39\u0E40\u0E15\u0E47\u0E21\u0E2B\u0E19\u0E49\u0E32\u0E15\u0E48\u0E32\u0E07\u0E40\u0E0A\u0E48\u0E19\u0E01\u0E31\u0E19",
+            dr2.width >= innerWidth - 1 && dr2.height >= innerHeight - 1,
+            `${Math.round(dr2.width)}x${Math.round(dr2.height)}`
+          );
+          check2(
+            "#8 \u0E42\u0E2B\u0E21\u0E14\u0E42\u0E1F\u0E01\u0E31\u0E2A\u0E21\u0E35\u0E41\u0E16\u0E1A\u0E1A\u0E2D\u0E01\u0E17\u0E32\u0E07\u0E2D\u0E2D\u0E01\u0E14\u0E49\u0E27\u0E22",
+            document.getElementById("k-mode-hint").textContent.includes("Esc")
+          );
+          toggleFocus(false);
+          await new Promise((r) => setTimeout(r, 150));
+          resetPanels();
+          await new Promise((r) => setTimeout(r, 60));
         }
       }
       out.push("ALL OK");

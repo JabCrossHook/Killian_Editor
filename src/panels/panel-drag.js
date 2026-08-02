@@ -11,6 +11,19 @@ const DRAG_MIN = 8;
 export const GROUP_ZONE = 0.2;
 // บั๊ก #9: แผงลอยชนขอบแผงลอยอื่น/ขอบหน้าต่าง แล้ว "ดูด" ให้ชิดพอดี
 const SNAP_PX = 10;
+// 0.56a #5 + #7: แผงลอยต้องอยู่ในจอเสมอ — ต้องเห็นหัวแผงพอที่จะจับลากกลับได้
+// (เดิมลากหลุดขอบ/ขยายเกินจอแล้วแผงหายถาวร เรียกกลับไม่ได้)
+export const FLOAT_MIN_W = 200, FLOAT_MIN_H = 120;
+const KEEP_VISIBLE = 90;                 // px ของแผงที่ต้องโผล่ในจอเสมอ
+/** หนีบกล่องแผงลอยให้อยู่ในจอ + ขนาดไม่เล็กเกินจับ */
+export function clampFloat(box, vw, vh) {
+  const W = vw || window.innerWidth, H = vh || window.innerHeight;
+  const w = Math.max(FLOAT_MIN_W, Math.min(Math.round(box.w ?? 320), W));
+  const h = Math.max(FLOAT_MIN_H, Math.min(Math.round(box.h ?? 300), H));
+  const x = Math.round(Math.min(Math.max(box.x ?? 80, KEEP_VISIBLE - w), W - KEEP_VISIBLE));
+  const y = Math.round(Math.min(Math.max(box.y ?? 80, 0), H - 28));   // หัวแผงต้องไม่หลุดขอบล่าง/บน
+  return { x, y, w, h };
+}
 
 // ───────── overlay บอกโซนที่จะปล่อย ─────────
 let _ov = null;
@@ -83,7 +96,11 @@ function startPanelDrag(e, panelId, pm, ctx = {}) {
   const ov = createDropOverlay();
   let hit = null;
 
+  // 0.56a #5: mouseup ที่เกิดนอกหน้าต่าง/บนแถบหัวหน้าต่าง อาจให้ clientX/Y = 0
+  // → แผงเด้งไปมุมซ้ายบนทั้งที่ผู้ใช้ปล่อยตรงกลางจอ · จำพิกัดล่าสุดที่ "ขยับจริง" ไว้ใช้แทน
+  let lastX = sx, lastY = sy;
   const move = (ev) => {
+    if (ev.clientX || ev.clientY) { lastX = ev.clientX; lastY = ev.clientY; }
     if (!moved) {
       if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < DRAG_MIN) return;
       moved = true;
@@ -110,17 +127,19 @@ function startPanelDrag(e, panelId, pm, ctx = {}) {
     if (ghost) ghost.remove();
     document.body.classList.remove('k-panel-dragging');
     if (!moved) return;                              // คลิกเฉย ๆ → ปล่อยให้ onclick ทำงาน
+    const ux = (ev.clientX || ev.clientY) ? ev.clientX : lastX;   // กัน mouseup ที่ให้พิกัด 0,0
+    const uy = (ev.clientX || ev.clientY) ? ev.clientY : lastY;
     // จัดลำดับแท็บภายในกลุ่มเดิม (ถ้า caller รองรับ) มาก่อน
-    if (ctx.onReorder && ctx.onReorder(ev.clientX, ev.clientY)) return;
+    if (ctx.onReorder && ctx.onReorder(ux, uy)) return;
     if (!ctx.floatOnly && hit) {
       if (hit.targetId === panelId) return;
       pm.dockPanel(panelId, hit.zone, hit.targetId);
       return;
     }
-    // ปล่อยนอกทุกแผง (หรือ floatOnly ที่ไม่มี hit) → ลอยอิสระตรงตำแหน่งเมาส์
+    // ปล่อยนอกทุกแผง (หรือ floatOnly ที่ไม่มี hit) → ลอยอิสระตรงตำแหน่งเมาส์ (หนีบให้อยู่ในจอ)
     if (!hit) {
-      pm.floatPanel(panelId, { x: Math.max(0, ev.clientX - 60), y: Math.max(0, ev.clientY - 12),
-                               w: ctx.floatW || 320, h: ctx.floatH || 300 });
+      pm.floatPanel(panelId, clampFloat({ x: ux - 60, y: uy - 12,
+                                          w: ctx.floatW || 320, h: ctx.floatH || 300 }));
     }
     // floatOnly && hit → no-op (ไม่ group, ไม่ float)
   };
@@ -235,7 +254,11 @@ export function makeFloatDraggable(header, popup, panelId, pm, ctx = {}) {
       popup.classList.remove('k-float-snapped');
       if (!moved) return;
       if (hit) { pm.dockPanel(panelId, hit.zone, hit.targetId); return; }
-      pm.moveFloat(panelId, { x: popup.offsetLeft, y: popup.offsetTop });
+      // 0.56a #7: ลากหลุดขอบจอแล้วเรียกกลับไม่ได้ → หนีบตำแหน่งให้ยังเห็นหัวแผงเสมอ
+      const c = clampFloat({ x: popup.offsetLeft, y: popup.offsetTop,
+                             w: popup.offsetWidth, h: popup.offsetHeight });
+      popup.style.left = c.x + 'px'; popup.style.top = c.y + 'px';
+      pm.moveFloat(panelId, { x: c.x, y: c.y });
     };
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', up);
