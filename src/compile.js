@@ -28,6 +28,8 @@ export const STEP_DEFS = [
   // ---- ช่วงประกอบ ----
   { key: 'cover', stage: 'render', label: 'หน้าปก (ชื่อเรื่อง / ผู้เขียน / จำนวนคำ)',
     opts: { author: '' }, fields: [{ k: 'author', label: 'ผู้เขียน (ว่าง = ใช้จากโปรเจกต์)', type: 'text' }] },
+  // [97] หน้ารายชื่อตัวละคร (Cast of Characters) ประจำเล่ม — ปิดได้ที่นี่ หรือที่สวิตช์ในหน้ารายชื่อเอง
+  { key: 'roster', stage: 'render', label: 'หน้ารายชื่อตัวละคร (Cast of Characters)' },
   { key: 'chapter-heading', stage: 'render', label: 'หัวบท',
     opts: { template: '## {title}' },
     fields: [{ k: 'template', label: 'รูปแบบ — ใช้ {n} {title} ได้', type: 'text' }] },
@@ -186,7 +188,7 @@ function modelStats(model) {
 export function runWorkflow(model0, workflow, { allowJs = true, varCtx = {} } = {}) {
   const warn = [];
   // สำเนาลึกแบบพอเพียง — ไม่แก้ของเดิม
-  const model = { title: model0.title, author: model0.author || '',
+  const model = { title: model0.title, author: model0.author || '', roster: model0.roster || '',
     chapters: (model0.chapters || []).map((c) => ({ ...c, scenes: (c.scenes || []).map((s) => ({ ...s })) })) };
   const steps = (workflow.steps || []).filter((s) => s.on !== false);
   const at = (stage) => steps.filter((s) => (stepDef(s.key) || {}).stage === stage);
@@ -248,6 +250,11 @@ export function runWorkflow(model0, workflow, { allowJs = true, varCtx = {} } = 
     if (has('page-break')) out.push(PAGE_BREAK, '');
   } else {
     out.push('# ' + model.title, '');
+  }
+  // [97] หน้ารายชื่อตัวละคร — วางก่อนเนื้อเรื่อง แล้วขึ้นหน้าใหม่
+  if (has('roster') && String(model.roster || '').trim()) {
+    out.push(String(model.roster).trim(), '');
+    if (has('page-break')) out.push(PAGE_BREAK, '');
   }
   const sep = String(opt('scene-separator', 'text', '* * *'));
   let cn = 0;

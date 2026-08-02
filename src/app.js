@@ -2140,8 +2140,18 @@ const propsFlush_C = { fn: null };
 // กติกา: แถวที่เป็นโน้ต (type: memo) จะ "ไม่" ถูกรวม — เขียนโน้ตคาไว้ในบทได้โดยไม่ปนต้นฉบับ
 // อ่านฉบับร่างทั้งชุดจากดิสก์ → โครงสร้างกลาง (ใช้ทั้งส่งออกแบบเดิมและเวิร์กโฟลว์)
 // ชนิด memo ยังคงอยู่ในโมเดล — ให้ขั้นตอน "ตัดโน้ต" เป็นคนคัดออก (ค่าเริ่มต้นเปิดไว้ทุกพรีเซ็ต)
+/** [97] ข้อความหน้ารายชื่อตัวละครของ "เล่ม" ที่ฉบับร่างนี้อยู่ (ว่าง = ปิดสวิตช์ใส่ตอนส่งออก) */
+export async function rosterTextForDraft(dPath) {
+  try {
+    const secPath = String(dPath || '').replace(/[\\/]Draft[\\/][^\\/]+[\\/]?$/, '');
+    if (!secPath || secPath === String(dPath)) return '';
+    return await rosterTextFor(secPath);
+  } catch { return ''; }
+}
+
 async function buildDraftModel(dPath, title) {
   const model = { title: title || state.title, author: (state.meta && state.meta.author) || '',
+                  roster: await rosterTextForDraft(dPath),
                   chapters: [] };
   const chapters = ((await kapi.readJson(await kapi.join(dPath, 'draft.json'))).chapters || [])
     .sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -2167,6 +2177,7 @@ async function buildDraftModel(dPath, title) {
 async function compileDraftText(dPath, title) {
   const model = await buildDraftModel(dPath, title);
   const out = ['# ' + model.title, ''];
+  if (String(model.roster || '').trim()) out.push(model.roster.trim(), '');   // [97] หน้ารายชื่อตัวละคร
   for (const ch of model.chapters) {
     out.push('## ' + ch.title, '');
     for (const sc of ch.scenes) { if (sc.type === 'memo') continue; out.push(sc.body, ''); }
@@ -10000,6 +10011,37 @@ async function runTest(projectPath) {
         check('[97] แปลงเป็นข้อความ: ชื่อตามด้วย ":" แล้ว tab',
               rTxt.includes('Donald Bradleyson:\tนักสืบวัย 40'), rTxt.slice(0, 160));
         check('[97] แปลงเป็นข้อความ: หัวเรื่องจัดกลาง', rTxt.split('\n')[0].startsWith(' '));
+        // ---- [97] ต้องโผล่ตอนส่งออก และปิดได้ ----
+        {
+          const drafts = await listDrafts();
+          const d0 = drafts.find((d) => String(d.dPath).startsWith(secPath)) || drafts[0];
+          check('[97] หาฉบับร่างของเล่มนี้เจอ (ไว้ทดสอบการส่งออก)', !!d0, JSON.stringify(drafts.map((d) => d.label)));
+          check('[97] rosterTextForDraft ถอดชื่อเล่มจาก path ของฉบับร่างได้',
+                (await rosterTextForDraft(d0.dPath)).includes('Donald Bradleyson'),
+                (await rosterTextForDraft(d0.dPath)).slice(0, 60));
+          const exp1 = await compileDraftText(d0.dPath);
+          check('[97] ส่งออกฉบับร่างรวม → มีหน้ารายชื่อตัวละครนำหน้าเนื้อเรื่อง',
+                exp1.includes('Cast of Characters') && exp1.includes('Donald Bradleyson'),
+                exp1.slice(0, 120));
+          // ปิดสวิตช์ "ใส่ตอนพิมพ์/ส่งออก" แล้วต้องหายไป
+          rTab.roster.includeInExport = false;
+          await saveRosterTab(rTab);
+          const exp2 = await compileDraftText(d0.dPath);
+          check('[97] ปิดสวิตช์ "ใส่ตอนพิมพ์/ส่งออก" → ไม่มีหน้ารายชื่อในไฟล์ที่ส่งออก',
+                !exp2.includes('Cast of Characters'));
+          check('[97] ปิดแล้วเนื้อเรื่องยังส่งออกครบเหมือนเดิม', exp2.includes('# ') && exp2.length > 20);
+          rTab.roster.includeInExport = true;
+          await saveRosterTab(rTab);
+          // เวิร์กโฟลว์ส่งออกมีขั้นตอนให้ติ๊กเอา/ไม่เอา
+          check('[97] เวิร์กโฟลว์ส่งออกมีขั้นตอน "หน้ารายชื่อตัวละคร"', !!stepDef('roster'));
+          const wfOn = { steps: [{ key: 'roster', on: true }, { key: 'chapter-heading', on: true }] };
+          const wfOff = { steps: [{ key: 'chapter-heading', on: true }] };
+          const mdl = { title: 'ท', chapters: [], roster: 'Cast of Characters\n\nA: b' };
+          check('[97] เปิดขั้นตอนในเวิร์กโฟลว์ → หน้ารายชื่อออกมาด้วย',
+                runWorkflow(mdl, wfOn).text.includes('Cast of Characters'));
+          check('[97] ไม่เปิดขั้นตอน → ไม่มีหน้ารายชื่อ',
+                !runWorkflow(mdl, wfOff).text.includes('Cast of Characters'));
+        }
         // ดึงจาก Wiki
         [...rTab.pane.querySelectorAll('.roster-bar button')].find((b) => b.textContent.includes('Wiki')).click();
         await new Promise((r) => setTimeout(r, 250));

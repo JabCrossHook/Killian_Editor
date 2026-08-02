@@ -43947,6 +43947,7 @@ ${mdToHtmlBody(md)}
     const model = {
       title: model0.title,
       author: model0.author || "",
+      roster: model0.roster || "",
       chapters: (model0.chapters || []).map((c) => ({ ...c, scenes: (c.scenes || []).map((s) => ({ ...s })) }))
     };
     const steps = (workflow.steps || []).filter((s) => s.on !== false);
@@ -44006,6 +44007,10 @@ ${mdToHtmlBody(md)}
       if (has("page-break")) out.push(PAGE_BREAK, "");
     } else {
       out.push("# " + model.title, "");
+    }
+    if (has("roster") && String(model.roster || "").trim()) {
+      out.push(String(model.roster).trim(), "");
+      if (has("page-break")) out.push(PAGE_BREAK, "");
     }
     const sep = String(opt("scene-separator", "text", "* * *"));
     let cn = 0;
@@ -44094,6 +44099,8 @@ ${mdToHtmlBody(md)}
           opts: { author: "" },
           fields: [{ k: "author", label: "\u0E1C\u0E39\u0E49\u0E40\u0E02\u0E35\u0E22\u0E19 (\u0E27\u0E48\u0E32\u0E07 = \u0E43\u0E0A\u0E49\u0E08\u0E32\u0E01\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C)", type: "text" }]
         },
+        // [97] หน้ารายชื่อตัวละคร (Cast of Characters) ประจำเล่ม — ปิดได้ที่นี่ หรือที่สวิตช์ในหน้ารายชื่อเอง
+        { key: "roster", stage: "render", label: "\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23 (Cast of Characters)" },
         {
           key: "chapter-heading",
           stage: "render",
@@ -63443,6 +63450,12 @@ ${sc.body || ""}
       strings: st.spStrings
     };
   }
+  async function rosterTextFor(secPath) {
+    const r = await loadRoster(secPath);
+    if (r.includeInExport === false) return "";
+    if (!r.characters.length && !r.scene && !r.time) return "";
+    return rosterToText(r, mergeSpFormat(spFormatFromSettings()));
+  }
   var ROSTER_PREFIX, rosterKey, isRosterTab;
   var init_roster_ui = __esm({
     "src/roster-ui.js"() {
@@ -63518,6 +63531,7 @@ ${sc.body || ""}
     renderOpenFeaturePanels: () => renderOpenFeaturePanels,
     resolveImg: () => resolveImg,
     revertTab: () => revertTab,
+    rosterTextForDraft: () => rosterTextForDraft,
     safeName: () => safeName,
     saveMaps: () => saveMaps,
     saveProjectMeta: () => saveProjectMeta,
@@ -66032,10 +66046,20 @@ ${sc.body || ""}
       return commit(true);
     };
   }
+  async function rosterTextForDraft(dPath) {
+    try {
+      const secPath = String(dPath || "").replace(/[\\/]Draft[\\/][^\\/]+[\\/]?$/, "");
+      if (!secPath || secPath === String(dPath)) return "";
+      return await rosterTextFor(secPath);
+    } catch {
+      return "";
+    }
+  }
   async function buildDraftModel(dPath, title) {
     const model = {
       title: title || state.title,
       author: state.meta && state.meta.author || "",
+      roster: await rosterTextForDraft(dPath),
       chapters: []
     };
     const chapters = ((await kapi.readJson(await kapi.join(dPath, "draft.json"))).chapters || []).sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -66068,6 +66092,7 @@ ${sc.body || ""}
   async function compileDraftText(dPath, title) {
     const model = await buildDraftModel(dPath, title);
     const out = ["# " + model.title, ""];
+    if (String(model.roster || "").trim()) out.push(model.roster.trim(), "");
     for (const ch of model.chapters) {
       out.push("## " + ch.title, "");
       for (const sc of ch.scenes) {
@@ -74705,6 +74730,44 @@ ${sc.body || ""}
             rTxt.slice(0, 160)
           );
           check2("[97] \u0E41\u0E1B\u0E25\u0E07\u0E40\u0E1B\u0E47\u0E19\u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21: \u0E2B\u0E31\u0E27\u0E40\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E14\u0E01\u0E25\u0E32\u0E07", rTxt.split("\n")[0].startsWith(" "));
+          {
+            const drafts = await listDrafts();
+            const d0 = drafts.find((d) => String(d.dPath).startsWith(secPath)) || drafts[0];
+            check2("[97] \u0E2B\u0E32\u0E09\u0E1A\u0E31\u0E1A\u0E23\u0E48\u0E32\u0E07\u0E02\u0E2D\u0E07\u0E40\u0E25\u0E48\u0E21\u0E19\u0E35\u0E49\u0E40\u0E08\u0E2D (\u0E44\u0E27\u0E49\u0E17\u0E14\u0E2A\u0E2D\u0E1A\u0E01\u0E32\u0E23\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01)", !!d0, JSON.stringify(drafts.map((d) => d.label)));
+            check2(
+              "[97] rosterTextForDraft \u0E16\u0E2D\u0E14\u0E0A\u0E37\u0E48\u0E2D\u0E40\u0E25\u0E48\u0E21\u0E08\u0E32\u0E01 path \u0E02\u0E2D\u0E07\u0E09\u0E1A\u0E31\u0E1A\u0E23\u0E48\u0E32\u0E07\u0E44\u0E14\u0E49",
+              (await rosterTextForDraft(d0.dPath)).includes("Donald Bradleyson"),
+              (await rosterTextForDraft(d0.dPath)).slice(0, 60)
+            );
+            const exp1 = await compileDraftText(d0.dPath);
+            check2(
+              "[97] \u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01\u0E09\u0E1A\u0E31\u0E1A\u0E23\u0E48\u0E32\u0E07\u0E23\u0E27\u0E21 \u2192 \u0E21\u0E35\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E19\u0E33\u0E2B\u0E19\u0E49\u0E32\u0E40\u0E19\u0E37\u0E49\u0E2D\u0E40\u0E23\u0E37\u0E48\u0E2D\u0E07",
+              exp1.includes("Cast of Characters") && exp1.includes("Donald Bradleyson"),
+              exp1.slice(0, 120)
+            );
+            rTab.roster.includeInExport = false;
+            await saveRosterTab(rTab);
+            const exp2 = await compileDraftText(d0.dPath);
+            check2(
+              '[97] \u0E1B\u0E34\u0E14\u0E2A\u0E27\u0E34\u0E15\u0E0A\u0E4C "\u0E43\u0E2A\u0E48\u0E15\u0E2D\u0E19\u0E1E\u0E34\u0E21\u0E1E\u0E4C/\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01" \u2192 \u0E44\u0E21\u0E48\u0E21\u0E35\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E43\u0E19\u0E44\u0E1F\u0E25\u0E4C\u0E17\u0E35\u0E48\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01',
+              !exp2.includes("Cast of Characters")
+            );
+            check2("[97] \u0E1B\u0E34\u0E14\u0E41\u0E25\u0E49\u0E27\u0E40\u0E19\u0E37\u0E49\u0E2D\u0E40\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E22\u0E31\u0E07\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01\u0E04\u0E23\u0E1A\u0E40\u0E2B\u0E21\u0E37\u0E2D\u0E19\u0E40\u0E14\u0E34\u0E21", exp2.includes("# ") && exp2.length > 20);
+            rTab.roster.includeInExport = true;
+            await saveRosterTab(rTab);
+            check2('[97] \u0E40\u0E27\u0E34\u0E23\u0E4C\u0E01\u0E42\u0E1F\u0E25\u0E27\u0E4C\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01\u0E21\u0E35\u0E02\u0E31\u0E49\u0E19\u0E15\u0E2D\u0E19 "\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23"', !!stepDef("roster"));
+            const wfOn = { steps: [{ key: "roster", on: true }, { key: "chapter-heading", on: true }] };
+            const wfOff = { steps: [{ key: "chapter-heading", on: true }] };
+            const mdl = { title: "\u0E17", chapters: [], roster: "Cast of Characters\n\nA: b" };
+            check2(
+              "[97] \u0E40\u0E1B\u0E34\u0E14\u0E02\u0E31\u0E49\u0E19\u0E15\u0E2D\u0E19\u0E43\u0E19\u0E40\u0E27\u0E34\u0E23\u0E4C\u0E01\u0E42\u0E1F\u0E25\u0E27\u0E4C \u2192 \u0E2B\u0E19\u0E49\u0E32\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E2D\u0E2D\u0E01\u0E21\u0E32\u0E14\u0E49\u0E27\u0E22",
+              runWorkflow(mdl, wfOn).text.includes("Cast of Characters")
+            );
+            check2(
+              "[97] \u0E44\u0E21\u0E48\u0E40\u0E1B\u0E34\u0E14\u0E02\u0E31\u0E49\u0E19\u0E15\u0E2D\u0E19 \u2192 \u0E44\u0E21\u0E48\u0E21\u0E35\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D",
+              !runWorkflow(mdl, wfOff).text.includes("Cast of Characters")
+            );
+          }
           [...rTab.pane.querySelectorAll(".roster-bar button")].find((b) => b.textContent.includes("Wiki")).click();
           await new Promise((r) => setTimeout(r, 250));
           check2(
