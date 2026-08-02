@@ -1,7 +1,7 @@
 {
   "name": "killian2",
-  "version": "2.0.0-alpha.48",
-  "description": "โปรแกรมเขียนนิยาย/บทหนัง — Electron + ProseMirror",
+  "version": "2.0.0-alpha.55",
+  "description": "à¹‚à¸›à¸£à¹à¸à¸£à¸¡à¹€à¸‚à¸µà¸¢à¸™à¸™à¸´à¸¢à¸²à¸¢/à¸šà¸—à¸«à¸™à¸±à¸‡ â€” Electron + ProseMirror",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -65,3 +65,4 @@
     }
   }
 }
+

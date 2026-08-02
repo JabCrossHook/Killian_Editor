@@ -14248,7 +14248,8 @@
     choose: () => choose,
     closeMenu: () => closeMenu,
     confirmBox: () => confirmBox,
-    popupMenu: () => popupMenu
+    popupMenu: () => popupMenu,
+    saveAllDialog: () => saveAllDialog
   });
   function ask(title, { placeholder = "", value = "", okLabel = "\u0E15\u0E01\u0E25\u0E07" } = {}) {
     return new Promise((resolve) => {
@@ -14378,6 +14379,84 @@
       ov.onclick = (e) => {
         if (e.target === ov) done(null);
       };
+    });
+  }
+  function saveAllDialog(files, {
+    title = "",
+    saveLabel = "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14",
+    discardLabel = "\u0E44\u0E21\u0E48\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01",
+    cancelLabel = "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01"
+  } = {}) {
+    return new Promise((resolve) => {
+      const ov = document.createElement("div");
+      ov.className = "k-overlay";
+      const box = document.createElement("div");
+      box.className = "k-dialog k-saveall";
+      const head = document.createElement("div");
+      head.className = "k-dlg-title";
+      head.textContent = title || `\u0E21\u0E35 ${files.length} \u0E44\u0E1F\u0E25\u0E4C\u0E17\u0E35\u0E48\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01`;
+      const list = document.createElement("div");
+      list.className = "k-saveall-list";
+      const boxes = [];
+      for (const f of files) {
+        const row = document.createElement("label");
+        row.className = "k-saveall-row";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = true;
+        cb.dataset.key = f.key;
+        const txt = document.createElement("div");
+        txt.className = "k-saveall-txt";
+        const nm = document.createElement("div");
+        nm.className = "k-saveall-name";
+        nm.textContent = f.title || f.key;
+        const pt = document.createElement("div");
+        pt.className = "k-saveall-path";
+        pt.textContent = f.file || "";
+        pt.title = f.file || "";
+        txt.append(nm, pt);
+        row.append(cb, txt);
+        list.append(row);
+        boxes.push(cb);
+      }
+      const btns = document.createElement("div");
+      btns.className = "k-dlg-btns";
+      const bSave = document.createElement("button");
+      bSave.className = "k-ok";
+      const bDiscard = document.createElement("button");
+      bDiscard.className = "k-ok k-danger";
+      bDiscard.textContent = discardLabel;
+      const bCancel = document.createElement("button");
+      bCancel.className = "k-cancel";
+      bCancel.textContent = cancelLabel;
+      btns.append(bSave, bDiscard, bCancel);
+      const sel = () => boxes.filter((c) => c.checked).map((c) => c.dataset.key);
+      const sync = () => {
+        const n = sel().length;
+        bSave.textContent = n === boxes.length ? saveLabel : `\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E17\u0E35\u0E48\u0E40\u0E25\u0E37\u0E2D\u0E01 (${n})`;
+        bSave.disabled = n === 0;
+      };
+      boxes.forEach((c) => {
+        c.onchange = sync;
+      });
+      sync();
+      box.append(head, list, btns);
+      ov.appendChild(box);
+      document.body.appendChild(ov);
+      const done = (action) => {
+        ov.remove();
+        resolve({ action, keys: action === "save" ? sel() : [] });
+      };
+      bSave.onclick = () => done("save");
+      bDiscard.onclick = () => done("discard");
+      bCancel.onclick = () => done(null);
+      ov.onclick = (e) => {
+        if (e.target === ov) done(null);
+      };
+      box.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") done(null);
+      });
+      bSave.focus();
     });
   }
   var curMenu;
@@ -14705,6 +14784,7 @@
     CAT_ICON: () => CAT_ICON,
     DEFAULT_GOALS: () => DEFAULT_GOALS,
     DEFAULT_SETTINGS: () => DEFAULT_SETTINGS,
+    DEFAULT_SP_CYCLE: () => DEFAULT_SP_CYCLE,
     DEFAULT_STATUS_COLOR: () => DEFAULT_STATUS_COLOR,
     LOG_BUF: () => LOG_BUF,
     REL_COLOR: () => REL_COLOR,
@@ -14871,7 +14951,7 @@
     const sc = formatShortcut(code2, ctrl, shift2);
     return label + " (" + sc + ")";
   }
-  var $, el, state, smart, LOG_BUF, LOG_MAX, DEFAULT_SETTINGS, DEFAULT_GOALS, BASE_ED_FS, BASE_SP_FS, SCALE_MIN, SCALE_MAX, UI_SCALE_MIN, UI_SCALE_MAX, SCENE_STATUSES, SCENE_COLORS, STATUS_COLORS, DEFAULT_STATUS_COLOR, BUILTIN_CATS, CAT_ICON, i18n, langHooks, BUILTIN_EN, SHORTCUTS, shortcutId, SHORTCUT_LABELS, isMac, accelText;
+  var $, el, state, smart, LOG_BUF, LOG_MAX, DEFAULT_SETTINGS, DEFAULT_GOALS, DEFAULT_SP_CYCLE, BASE_ED_FS, BASE_SP_FS, SCALE_MIN, SCALE_MAX, UI_SCALE_MIN, UI_SCALE_MAX, SCENE_STATUSES, SCENE_COLORS, STATUS_COLORS, DEFAULT_STATUS_COLOR, BUILTIN_CATS, CAT_ICON, i18n, langHooks, BUILTIN_EN, SHORTCUTS, shortcutId, SHORTCUT_LABELS, isMac, accelText;
   var init_core = __esm({
     "src/core.js"() {
       init_smart();
@@ -14922,14 +15002,39 @@
         fontFamily: "",
         language: "th",
         // ไทยเป็นค่าเริ่มต้น (ไทย 100%)
+        spFontFamily: "",
+        // ฟอนต์บทหนัง (บั๊ก #2) — ว่าง = Courier New ตามมาตรฐานบท
         autoSync: false,
         // auto-task: อัปเดตชื่อเอนทิตี้ทุกไฟล์อัตโนมัติ (ข้อ 88)
         // ค้นคำพ้องอังกฤษผ่าน datamuse.com — ปิดไว้ก่อน (ส่งคำที่เลือกออกอินเทอร์เน็ต)
         thesaurus: false,
-        focusDim: 0.3
+        focusDim: 0.3,
         // ความจางของบรรทัดอื่นในโหมดโฟกัส (0.05–0.8)
+        spCycle: null,
+        // ตารางควบคุม Tab/Enter/Shift+Tab ในบทหนัง (null=ใช้ค่าเริ่มต้น)
+        spAutoCapitalize: true,
+        // [93] ขึ้นต้นประโยคด้วยตัวใหญ่ในบทหนังอัตโนมัติ
+        spAutoCorrectI: true
+        // [93] แก้ i เป็น I เมื่ออยู่เดี่ยว ๆ
       };
       DEFAULT_GOALS = { dailyWords: 500, projectWords: 5e4 };
+      DEFAULT_SP_CYCLE = {
+        scene: { enter: "action", tab: "action", shiftTab: "transition" },
+        action: { enter: "scene", tab: "character", shiftTab: "scene" },
+        character: { enter: "dialogue", tab: "parenthetical", shiftTab: "action" },
+        parenthetical: { enter: "dialogue", tab: "dialogue", shiftTab: "character" },
+        dialogue: { enter: "character", tab: "parenthetical", shiftTab: "parenthetical" },
+        transition: { enter: "scene", tab: "scene", shiftTab: "dialogue" },
+        shot: { enter: "action", tab: "action", shiftTab: "scene" },
+        "act-break": { enter: "action", tab: "action", shiftTab: "transition" },
+        note: { enter: "action", tab: "action", shiftTab: "scene" },
+        summary: { enter: "action", tab: "action", shiftTab: "scene" },
+        outline1: { enter: "outline2", tab: "action", shiftTab: "scene" },
+        outline2: { enter: "outline3", tab: "action", shiftTab: "scene" },
+        outline3: { enter: "action", tab: "action", shiftTab: "scene" },
+        image: { enter: "action", tab: "action", shiftTab: "scene" },
+        raw: { enter: "action", tab: "action", shiftTab: "scene" }
+      };
       BASE_ED_FS = 15.5;
       BASE_SP_FS = 14.5;
       SCALE_MIN = 0.5;
@@ -15015,6 +15120,8 @@
             "uiScaleHint": "Scale toolbar, panels, tabs and dialogs (75-200%)",
             "fontFamily": "Font Family",
             "fontFamilyHint": "Select a font for the editor",
+            "spFontFamily": "Screenplay Font",
+            "spFontFamilyHint": "Font used only in screenplay mode (default: Courier New)",
             "lineNumbers": "Show line numbers",
             "lineNumbersHint": "Count by paragraph/block",
             "spellCheck": "Spell check",
@@ -15035,7 +15142,7 @@
           },
           "errors": { "noProject": "No project open", "noFile": "File not found", "saveFailed": "Save failed", "loadFailed": "Load failed", "aiNoKey": "Please set AI API key", "aiFailed": "AI request failed", "openProjectFirst": "Open a project first", "notKillianProject": "This folder is not a Killian project", "needScene": "Open a scene first", "moveCrossDraft": "Moving across drafts not supported", "requiresCtrl": "Ctrl/\u2318 required", "pressShortcut": "Press shortcut..." },
           "status": { "ready": "Ready", "saving": "Saving...", "saved": "Saved", "loading": "Loading...", "searching": "Searching...", "settingsSaved": "Settings saved", "zoom": "Zoom", "zoomReset": "Zoom reset to 100%", "uiScale": "UI size", "copied": "Markdown copied", "movedScene": "Moved scene to", "typewriterOn": "Typewriter: ON", "typewriterOff": "Typewriter: OFF", "focusOn": "Focus mode: ON", "focusOff": "Focus mode: OFF", "paperOn": "Paper mode: ON", "paperOff": "Paper mode: OFF", "dirtyClose": "tabs with unsaved changes", "saveAllAndClose": "Save all and close", "closeWithoutSaving": "Close without saving" },
-          "shortcuts": { "save": "Save", "saveAll": "Save All", "saveAs": "Save As...", "newProject": "New Project", "openProject": "Open Project", "print": "Print", "closeTab": "Close Tab", "find": "Find", "settings": "Settings", "undo": "Undo", "redo": "Redo", "bold": "Bold", "italic": "Italic", "underline": "Underline", "strikethrough": "Strikethrough", "heading1": "Heading 1", "heading2": "Heading 2", "heading3": "Heading 3", "bodyText": "Body Text", "bulletList": "Bullet List", "numberedList": "Numbered List", "clearFormatting": "Clear Formatting", "alignLeft": "Align Left", "alignCenter": "Align Center", "alignRight": "Align Right", "justify": "Justify", "toggleFormat": "Toggle Mode", "paperMode": "Paper Mode", "globalSearch": "Search Project", "focusMode": "Focus Mode", "quickOpen": "Quick Open", "typewriter": "Typewriter Mode", "compile": "Compile", "splitView": "Split View", "kanban": "Kanban Board", "exportBlog": "Export as Blog HTML" }
+          "shortcuts": { "save": "Save", "saveAll": "Save All", "saveAs": "Save As...", "newProject": "New Project", "openProject": "Open Project", "print": "Print", "closeTab": "Close Tab", "find": "Find", "settings": "Settings", "undo": "Undo", "redo": "Redo", "bold": "Bold", "italic": "Italic", "underline": "Underline", "strikethrough": "Strikethrough", "heading1": "Heading 1", "heading2": "Heading 2", "heading3": "Heading 3", "bodyText": "Body Text", "bulletList": "Bullet List", "numberedList": "Numbered List", "clearFormatting": "Clear Formatting", "alignLeft": "Align Left", "alignCenter": "Align Center", "alignRight": "Align Right", "justify": "Justify", "toggleFormat": "Toggle Mode", "paperMode": "Paper Mode", "globalSearch": "Search Project", "focusMode": "Focus Mode", "quickOpen": "Quick Open", "typewriter": "Typewriter Mode", "compile": "Compile", "splitView": "Split View", "kanban": "Kanban Board", "exportBlog": "Export as Blog HTML", "gallery": "Gallery", "spScene": "SP: Scene", "spAction": "SP: Action", "spCharacter": "SP: Character", "spParenthetical": "SP: Parenthetical", "spDialogue": "SP: Dialogue", "spTransition": "SP: Transition", "spShot": "SP: Shot", "spActBreak": "SP: Act Break", "spNote": "SP: Note", "selectScene": "Select Scene", "nbsp": "Non-Breaking Space" }
         }
       };
       SHORTCUTS = [
@@ -15076,7 +15183,19 @@
         ["KeyT", true, true, "typewriter"],
         ["KeyB", true, true, "export-blog"],
         ["Backslash", true, true, "split-view"],
-        ["KeyK", true, false, "kanban"]
+        ["KeyK", true, false, "kanban"],
+        ["KeyG", true, true, "gallery"],
+        // [95] Per-element shortcuts — Ctrl+4..9 (Ctrl+1/2/3 จัดการใน handleCommand)
+        ["Digit4", true, false, "sp-element", "parenthetical"],
+        ["Digit5", true, false, "sp-element", "dialogue"],
+        ["Digit6", true, false, "sp-element", "transition"],
+        ["Digit7", true, false, "sp-element", "shot"],
+        ["Digit8", true, false, "sp-element", "act-break"],
+        ["Digit9", true, false, "sp-element", "note"],
+        // [79] เลือกทั้งฉาก
+        ["KeyA", true, true, "select-scene"],
+        // [77] Non-breaking space
+        ["Space", true, true, "nbsp"]
       ];
       shortcutId = (s) => s.slice(3).join(":");
       SHORTCUT_LABELS = {
@@ -15117,7 +15236,16 @@
         "kanban": "shortcuts.kanban",
         "export-blog": "shortcuts.exportBlog",
         "close-all-tabs": "shortcuts.closeAllTabs",
-        "line-numbers": "shortcuts.lineNumbers"
+        "line-numbers": "shortcuts.lineNumbers",
+        "gallery": "shortcuts.gallery",
+        "sp-element:parenthetical": "shortcuts.spParenthetical",
+        "sp-element:dialogue": "shortcuts.spDialogue",
+        "sp-element:transition": "shortcuts.spTransition",
+        "sp-element:shot": "shortcuts.spShot",
+        "sp-element:act-break": "shortcuts.spActBreak",
+        "sp-element:note": "shortcuts.spNote",
+        "select-scene": "shortcuts.selectScene",
+        "nbsp": "shortcuts.nbsp"
       };
       isMac = (() => {
         try {
@@ -16265,6 +16393,8 @@
     const s = line.trim();
     if (s === "") return ["blank", ""];
     if (IMG_RE.test(s)) return ["image", s];
+    if (s.startsWith("$shot ")) return ["shot", s.slice(6).trim()];
+    if (s.startsWith("$act ")) return ["act-break", s.slice(5).trim()];
     if (RAW_PREFIX.test(s)) return ["raw", line];
     if (s.startsWith("((") && s.endsWith("))")) return ["note", s.slice(2, -2).trim()];
     if (s.startsWith("### ")) return ["outline3", s.slice(4).trim()];
@@ -16309,6 +16439,14 @@
       case "note":
         s = "((" + text + "))";
         break;
+      case "shot":
+        s = "$shot " + text;
+        break;
+      // [50]
+      case "act-break":
+        s = "$act " + text;
+        break;
+      // [50]
       case "parenthetical":
         s = text.startsWith("(") && text.endsWith(")") ? text : "(" + text + ")";
         break;
@@ -16355,6 +16493,10 @@
         parenthetical: { th: "\u0E27\u0E07\u0E40\u0E25\u0E47\u0E1A", prefix: "(" },
         dialogue: { th: "\u0E1A\u0E17\u0E1E\u0E39\u0E14", prefix: "" },
         transition: { th: "\u0E17\u0E23\u0E32\u0E19\u0E0B\u0E34\u0E0A\u0E31\u0E19", prefix: ">" },
+        shot: { th: "\u0E0A\u0E47\u0E2D\u0E15", prefix: "$shot " },
+        // [50] 9-element system
+        "act-break": { th: "\u0E15\u0E2D\u0E19", prefix: "$act " },
+        // [50]
         summary: { th: "\u0E2A\u0E23\u0E38\u0E1B", prefix: "= " },
         outline1: { th: "\u0E42\u0E04\u0E23\u0E07 1", prefix: "# " },
         outline2: { th: "\u0E42\u0E04\u0E23\u0E07 2", prefix: "## " },
@@ -16365,7 +16507,7 @@
         raw: { th: "\u0E2D\u0E37\u0E48\u0E19 \u0E46", prefix: "" }
         // element ที่ v2 ยังไม่ทำ UI — คงบรรทัดเดิมเป๊ะ
       };
-      TAB_CYCLE = ["action", "scene", "character", "parenthetical", "dialogue", "transition"];
+      TAB_CYCLE = ["action", "scene", "character", "parenthetical", "dialogue", "transition", "shot", "act-break", "note"];
       NEXT_ELEM = {
         scene: "action",
         action: "action",
@@ -16373,6 +16515,8 @@
         parenthetical: "dialogue",
         dialogue: "action",
         transition: "scene",
+        shot: "action",
+        "act-break": "action",
         summary: "action",
         outline1: "outline2",
         outline2: "outline3",
@@ -16384,7 +16528,7 @@
       IMG_RE = /^!\[([^\]\n]*)\]\(([^)\n]+)\)\s*$/;
       SCENE_RE = /^\s*(int\.?|ext\.?|est\.?|i\/e|int\.?\/ext\.?|ฉาก)[\s.:]/i;
       TRANS_RE = /(cut to:|dissolve to:|smash cut to:|match cut to:|fade out\.?|fade to black\.?|to:)\s*$/i;
-      RAW_PREFIX = /^\$(shot|cast|act|seq|endact)\b/i;
+      RAW_PREFIX = /^\$(cast|seq|endact)\b/i;
       TIMES = [
         "DAY",
         "NIGHT",
@@ -16462,6 +16606,7 @@
       init_dist8();
       init_dist9();
       init_fountain();
+      init_core();
       import_md2 = __toESM(require_md());
       init_editor();
       init_fountain();
@@ -16564,9 +16709,8 @@
               plugins: [
                 ...getNames ? [mentionPlugin(getNames)] : [],
                 keymap({
-                  Tab: () => true,
-                  // สงวนให้ SmartType — ไม่สลับ element ด้วย Tab อีกต่อไป
-                  "Shift-Tab": () => true,
+                  Tab: () => self2._tabCycle("tab"),
+                  "Shift-Tab": () => self2._tabCycle("shiftTab"),
                   "Mod-ArrowDown": () => {
                     self2.cycle(1);
                     return true;
@@ -16587,7 +16731,32 @@
               ]
             }),
             handleKeyDown(view, ev) {
+              if (ev.key === "(" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+                const el3 = self2.curElement();
+                if (el3 === "character" || el3 === "dialogue") {
+                  ev.preventDefault();
+                  const { node, pos } = self2.curBlock();
+                  const from2 = view.state.selection.from;
+                  let tr2 = view.state.tr;
+                  tr2 = tr2.setNodeMarkup(pos, null, { el: "parenthetical", align: node.attrs.align || null });
+                  tr2 = tr2.insertText("()", from2);
+                  tr2 = tr2.setSelection(TextSelection.create(tr2.doc, from2 + 1));
+                  view.dispatch(tr2);
+                  if (self2.onElement) self2.onElement("parenthetical");
+                  return true;
+                }
+              }
+              if (ev.code === "Space" && (ev.ctrlKey || ev.metaKey) && ev.shiftKey) {
+                ev.preventDefault();
+                view.dispatch(view.state.tr.insertText("\xA0"));
+                return true;
+              }
               return onKeyDown ? onKeyDown(ev) : false;
+            },
+            // [93] Auto-capitalize: ขึ้นต้นประโยคด้วยตัวใหญ่ + i→I
+            handleTextInput(view, from2, to, text) {
+              if (text.length > 20) return false;
+              return self2._handleAutoText(view, from2, to, text);
             },
             handleDOMEvents: {
               // Ctrl/Cmd+คลิก หรือคลิกกลาง บนชื่อ Wiki → เปิดหน้า Wiki (เหมือนโหมดนิยาย)
@@ -16611,7 +16780,10 @@
             dispatchTransaction(tr2) {
               const st = self2.view.state.apply(tr2);
               self2.view.updateState(st);
-              if (tr2.docChanged && self2.onChange) self2.onChange();
+              if (tr2.docChanged) {
+                if (self2.onChange) self2.onChange();
+                self2._autoDetect();
+              }
               if (self2.onElement) self2.onElement(self2.curElement());
             }
           });
@@ -16664,10 +16836,66 @@
           const next = TAB_CYCLE[(i2 === -1 ? 0 : i2 + dir + TAB_CYCLE.length) % TAB_CYCLE.length];
           this.setElement(next);
         }
+        // [95] Per-element switch — Ctrl+1..9
+        switchTo(el3) {
+          this.setElement(el3);
+        }
+        // [51] Tab/Shift-Tab cycle ตาม spCycle
+        _tabCycle(dir) {
+          const cur = this.curElement();
+          const spCycle = state.settings?.spCycle || DEFAULT_SP_CYCLE;
+          const cfg = spCycle[cur];
+          if (!cfg) return true;
+          const nextEl = cfg[dir];
+          if (nextEl) this.setElement(nextEl);
+          return true;
+        }
+        // [52] Auto-detect INT./EXT. — ตรวจหลังพิมพ์ทุกครั้ง
+        _autoDetect() {
+          const el3 = this.curElement();
+          if (el3 === "scene") return;
+          const text = this.curBlock().node.textContent.trim();
+          if (/^(int\.|ext\.|int\/ext\.|i\/e\.|est\.|ฉาก)\s/i.test(text)) {
+            const { node, pos } = this.curBlock();
+            this.view.dispatch(this.view.state.tr.setNodeMarkup(pos, null, {
+              el: "scene",
+              align: node.attrs.align || null
+            }));
+            if (this.onElement) this.onElement("scene");
+          }
+        }
+        // [79] เลือกทั้งฉาก (ทุกบรรทัดระหว่างหัวฉาก) + กดซ้ำ = select all
+        selectScene() {
+          const v = this.view;
+          const curPos = v.state.selection.$from.before(1);
+          let start = curPos + 1, end = v.state.doc.content.size;
+          let lastScene = 0;
+          v.state.doc.forEach((node, pos) => {
+            if (pos > curPos) return false;
+            if (node.type.name === "sp" && node.attrs.el === "scene") lastScene = pos;
+          });
+          if (lastScene > 0) start = lastScene + 1;
+          v.state.doc.forEach((node, pos) => {
+            if (pos <= curPos) return;
+            if (node.type.name === "sp" && node.attrs.el === "scene") {
+              end = pos;
+              return false;
+            }
+          });
+          const sel = v.state.selection;
+          if (sel.from === start && sel.to === end && start > 1 && end !== v.state.doc.content.size) {
+            const firstPos = v.state.doc.firstChild ? 2 : 0;
+            start = firstPos;
+            end = v.state.doc.content.size;
+          }
+          v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, start, end)));
+          v.focus();
+        }
         enter() {
           const v = this.view;
           const cur = this.curElement();
-          const nextEl = NEXT_ELEM[cur] || "action";
+          const spCycle = state.settings?.spCycle || DEFAULT_SP_CYCLE;
+          const nextEl = spCycle[cur]?.enter || NEXT_ELEM[cur] || "action";
           const sp = spSchema.nodes.sp.create({ el: nextEl });
           const { $from } = v.state.selection;
           const insertAt = $from.after(1);
@@ -16717,6 +16945,35 @@
           const node = spSchema.nodes.spimage.create({ src, alt, md, resolved: this.resolveSrc(src) });
           this.view.dispatch(this.view.state.tr.replaceSelectionWith(node).scrollIntoView());
           this.view.focus();
+        }
+        // [93] Auto-capitalize sentences + i→I ในบทหนัง
+        _handleAutoText(view, from2, to, text) {
+          const s = state.settings;
+          if (!s.spAutoCapitalize && !s.spAutoCorrectI) return false;
+          let modified = text;
+          if (s.spAutoCapitalize) {
+            const $from = view.state.doc.resolve(from2);
+            if ($from.parentOffset === 0) {
+              modified = modified.replace(/^[a-z]/, (c) => c.toUpperCase());
+            } else if ($from.parentOffset >= 2) {
+              const before = $from.parent.textBetween($from.parentOffset - 2, $from.parentOffset);
+              if (/[.!?]\s$/.test(before)) {
+                modified = modified.replace(/^[a-z]/, (c) => c.toUpperCase());
+              }
+            }
+          }
+          if (s.spAutoCorrectI && modified.length <= 2) {
+            const $from = view.state.doc.resolve(from2);
+            const solo = $from.parentOffset === 0 || $from.parent.textBetween($from.parentOffset - 1, $from.parentOffset).endsWith(" ");
+            if (solo && /^i$/i.test(modified.trim())) {
+              modified = "I" + modified.slice(1);
+            }
+          }
+          if (modified !== text) {
+            view.dispatch(view.state.tr.insertText(modified, from2, to));
+            return true;
+          }
+          return false;
         }
         getText() {
           return this.view.state.doc.textBetween(0, this.view.state.doc.content.size, "\n");
@@ -44755,39 +45012,1371 @@ ${mdToHtmlBody(md)}
     }
   });
 
+  // src/panels/panel-layout.js
+  function panel(id, title = "") {
+    return { type: "panel", id, title };
+  }
+  function tabs(children, active = 0, id = nid("t")) {
+    return { type: "tabs", id, children, active };
+  }
+  function dock(dir, children, sizes, id = nid("d")) {
+    return { type: "dock", id, dir, children, sizes: sizes || evenSizes(children.length) };
+  }
+  function evenSizes(n) {
+    return Array.from({ length: n }, () => +(1 / n).toFixed(4));
+  }
+  function normalizeSizes(sizes) {
+    const s = (sizes || []).map((v) => isFinite(v) && v > 0 ? v : 0);
+    if (!s.length) return [];
+    const sum = s.reduce((a, b) => a + b, 0);
+    if (sum <= 0) return evenSizes(s.length);
+    return s.map((v) => +(v / sum).toFixed(4));
+  }
+  function insertSize(sizes, at) {
+    const prev = (sizes || []).map((v) => isFinite(v) && v > 0 ? v : 0);
+    const n = prev.length;
+    if (!n) return [1];
+    const sum = prev.reduce((a, b) => a + b, 0);
+    const share = 1 / (n + 1);
+    const out = sum > 0 ? prev.map((v) => +(v * (1 - share) / sum).toFixed(4)) : prev.slice();
+    out.splice(Math.max(0, Math.min(at | 0, n)), 0, +share.toFixed(4));
+    return out;
+  }
+  function keepSizes(sizes, keep) {
+    const prev = sizes || [];
+    const fallback = prev.length ? 1 / prev.length : 1;
+    return normalizeSizes(keep.map((i2) => isFinite(prev[i2]) ? prev[i2] : fallback));
+  }
+  function snapZone(px, py, rect, edge = 0.25) {
+    const { x, y, w, h } = rect;
+    if (px < x || px > x + w || py < y || py > y + h) return null;
+    const rx = (px - x) / w, ry = (py - y) / h;
+    const dl = rx, dr = 1 - rx, dt = ry, db = 1 - ry;
+    const min = Math.min(dl, dr, dt, db);
+    if (min > edge) return "center";
+    if (min === dl) return "left";
+    if (min === dr) return "right";
+    if (min === dt) return "top";
+    return "bottom";
+  }
+  function walk(node, fn, parent = null) {
+    fn(node, parent);
+    if (node.children) for (const c of node.children) walk(c, fn, node);
+  }
+  function findPanel(node, id) {
+    let found2 = null;
+    walk(node, (n) => {
+      if (n.type === "panel" && n.id === id) found2 = n;
+    });
+    return found2;
+  }
+  function locate(root, id) {
+    let res = null;
+    walk(root, (n) => {
+      if (n.children) {
+        const i2 = n.children.findIndex((c) => c.type === "panel" ? c.id === id : c.id === id);
+        if (i2 >= 0) res = { parent: n, index: i2 };
+      }
+    });
+    return res;
+  }
+  function dockPanel(root, targetId, side, newPanel) {
+    root = clone(root);
+    if (side === "center") return addAsTab(root, targetId, newPanel);
+    const wantRow = side === "left" || side === "right";
+    const before = side === "left" || side === "top";
+    const loc = locate(root, targetId);
+    const targetNode = loc ? loc.parent.children[loc.index] : root;
+    const makeDock = (existing) => {
+      const kids = before ? [panelize(newPanel), existing] : [existing, panelize(newPanel)];
+      return dock(wantRow ? "row" : "col", kids);
+    };
+    if (!loc) return makeDock(root);
+    const parent = loc.parent;
+    if (parent.type === "dock" && parent.dir === (wantRow ? "row" : "col")) {
+      const at = before ? loc.index : loc.index + 1;
+      const cur = parent.sizes && parent.sizes.length === parent.children.length ? parent.sizes : evenSizes(parent.children.length);
+      parent.children.splice(at, 0, panelize(newPanel));
+      parent.sizes = insertSize(cur, at);
+    } else {
+      parent.children[loc.index] = makeDock(parent.children[loc.index]);
+    }
+    return root;
+  }
+  function panelize(p) {
+    return p.type ? p : panel(p.id, p.title);
+  }
+  function addAsTab(root, targetId, newPanel) {
+    root = clone(root);
+    const np = panelize(newPanel);
+    const loc = locate(root, targetId);
+    if (!loc) {
+      if (root.type === "tabs") {
+        root.children.push(np);
+        root.active = root.children.length - 1;
+        return root;
+      }
+      return tabs([root, np], 1);
+    }
+    if (loc.parent.type === "tabs") {
+      loc.parent.children.push(np);
+      loc.parent.active = loc.parent.children.length - 1;
+      return root;
+    }
+    const cur = loc.parent.children[loc.index];
+    if (cur.type === "tabs") {
+      cur.children.push(np);
+      cur.active = cur.children.length - 1;
+    } else loc.parent.children[loc.index] = tabs([cur, np], 1);
+    return root;
+  }
+  function activatePanel(root, panelId2) {
+    root = clone(root);
+    walk(root, (n) => {
+      if (n.type !== "tabs") return;
+      const i2 = n.children.findIndex((c) => c.id === panelId2);
+      if (i2 >= 0) n.active = i2;
+    });
+    return root;
+  }
+  function moveTab(root, tabsId, from2, to) {
+    root = clone(root);
+    let grp = null;
+    walk(root, (n) => {
+      if (n.id === tabsId && n.type === "tabs") grp = n;
+    });
+    if (!grp) return root;
+    const [m] = grp.children.splice(from2, 1);
+    grp.children.splice(to, 0, m);
+    grp.active = to;
+    return root;
+  }
+  function splitTab(root, panelId2, side = "right") {
+    root = clone(root);
+    const p = findPanel(root, panelId2);
+    if (!p) return { root, detached: null };
+    const detached = { ...p };
+    root = removePanel(root, panelId2);
+    if (side) root = root ? dockPanel(root, rootFirstPanelId(root), side, detached) : panelize(detached);
+    return { root, detached };
+  }
+  function groupPanels(root, ids) {
+    let out = clone(root);
+    if (!Array.isArray(ids) || ids.length < 2) return out;
+    const [target, ...rest] = ids;
+    if (!findPanel(out, target)) return out;
+    for (const id of rest) {
+      if (id === target) continue;
+      const p = findPanel(out, id);
+      if (!p) continue;
+      const detached = { ...p };
+      out = removePanel(out, id);
+      if (!findPanel(out, target)) return out;
+      out = addAsTab(out, target, detached);
+    }
+    return out;
+  }
+  function collapsePanel(root, id, on) {
+    root = clone(root);
+    const p = findPanel(root, id);
+    if (p) p.collapsed = on === void 0 ? !p.collapsed : !!on;
+    return root;
+  }
+  function isCollapsed(root, id) {
+    const p = findPanel(root, id);
+    return !!(p && p.collapsed);
+  }
+  function detachPanel(root, id) {
+    const p = findPanel(root, id);
+    if (!p) return { root: clone(root), detached: null };
+    return { root: removePanel(root, id), detached: { ...p, collapsed: false } };
+  }
+  function removePanel(root, id) {
+    if (!root) return null;
+    if (root.type === "panel") return root.id === id ? null : clone(root);
+    root = clone(root);
+    const prune = (node) => {
+      if (!node.children) return node;
+      const before = node.children;
+      const kids = [], keep = [];
+      for (let i2 = 0; i2 < before.length; i2++) {
+        const c = before[i2];
+        if (c.type === "panel" && c.id === id) continue;
+        const pc = prune(c);
+        if (pc.children && pc.children.length === 0) continue;
+        kids.push(pc);
+        keep.push(i2);
+      }
+      node.children = kids;
+      if (node.type === "tabs") {
+        if (node.active >= node.children.length) node.active = Math.max(0, node.children.length - 1);
+      }
+      if (node.type === "dock") {
+        node.sizes = kids.length === before.length && node.sizes && node.sizes.length === kids.length ? node.sizes : keepSizes(node.sizes, keep);
+      }
+      return node;
+    };
+    root = prune(root);
+    return collapse(root);
+  }
+  function collapse(node) {
+    if (!node.children) return node;
+    node.children = node.children.map(collapse);
+    if ((node.type === "dock" || node.type === "tabs") && node.children.length === 1) return node.children[0];
+    return node;
+  }
+  function rootFirstPanelId(root) {
+    let id = null;
+    walk(root, (n) => {
+      if (id === null && n.type === "panel") id = n.id;
+    });
+    return id;
+  }
+  function resizeDock(root, dockId, index, ratio) {
+    root = clone(root);
+    let d = null;
+    walk(root, (n) => {
+      if (n.id === dockId && n.type === "dock") d = n;
+    });
+    if (!d || index < 0 || index >= d.sizes.length - 1) return root;
+    const pair = d.sizes[index] + d.sizes[index + 1];
+    ratio = Math.max(0.05, Math.min(0.95, ratio));
+    d.sizes[index] = +(pair * ratio).toFixed(4);
+    d.sizes[index + 1] = +(pair * (1 - ratio)).toFixed(4);
+    return root;
+  }
+  function makeFloat(p, x = 80, y = 80, w = 360, h = 260) {
+    return { id: nid("f"), panel: panelize(p), x, y, w, h };
+  }
+  function panelIds(root) {
+    const ids = [];
+    walk(root, (n) => {
+      if (n.type === "panel") ids.push(n.id);
+    });
+    return ids;
+  }
+  function hasPanel(root, id) {
+    return !!(root && findPanel(root, id));
+  }
+  function tabGroupOf(root, panelId2) {
+    let grp = null;
+    walk(root, (n) => {
+      if (n.type === "tabs" && n.children.some((c) => c.id === panelId2)) grp = n;
+    });
+    return grp;
+  }
+  function clone(o) {
+    return JSON.parse(JSON.stringify(o));
+  }
+  var _uid, nid, PANEL_BUTTONS;
+  var init_panel_layout = __esm({
+    "src/panels/panel-layout.js"() {
+      _uid = 0;
+      nid = (p = "n") => `${p}${Date.now().toString(36)}${(_uid++).toString(36)}`;
+      PANEL_BUTTONS = [
+        { key: "collapse", icon: "\u25BE", title: "\u0E22\u0E48\u0E2D/\u0E02\u0E22\u0E32\u0E22", action: "collapsePanel" },
+        { key: "float", icon: "\u29C9", title: "\u0E25\u0E2D\u0E22/\u0E1C\u0E19\u0E36\u0E01", action: "toggleFloat" },
+        { key: "close", icon: "\u2715", title: "\u0E1B\u0E34\u0E14\u0E41\u0E1C\u0E07", action: "hidePanel" }
+      ];
+    }
+  });
+
+  // src/panels/panel-store.js
+  function defaultStorage() {
+    if (typeof localStorage !== "undefined") return localStorage;
+    const mem = /* @__PURE__ */ new Map();
+    return { getItem: (k) => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: (k) => mem.delete(k) };
+  }
+  function serializeLayout(state2) {
+    return JSON.stringify({ version: LAYOUT_VERSION, root: state2.root ?? null, floats: state2.floats ?? [] });
+  }
+  function deserializeLayout(str2) {
+    if (!str2) return null;
+    let data;
+    try {
+      data = JSON.parse(str2);
+    } catch {
+      return null;
+    }
+    data = migrate(data);
+    if (!data || data.version !== LAYOUT_VERSION) return null;
+    return { root: data.root ?? null, floats: data.floats ?? [] };
+  }
+  function migrate(data) {
+    if (!data || typeof data !== "object") return null;
+    if (data.version == null) {
+      data = { version: 1, root: data.root ?? data, floats: [] };
+    }
+    return data;
+  }
+  function pick(o, keys2) {
+    const out = {};
+    for (const k of keys2) if (o[k] !== void 0) out[k] = o[k];
+    return out;
+  }
+  var LAYOUT_VERSION, KEY, PanelStore, PanelManager;
+  var init_panel_store = __esm({
+    "src/panels/panel-store.js"() {
+      init_panel_layout();
+      LAYOUT_VERSION = 1;
+      KEY = "k2-panel-layout";
+      PanelStore = class {
+        constructor(storage = defaultStorage(), key = KEY) {
+          this.storage = storage;
+          this.key = key;
+          this.root = null;
+          this.floats = [];
+          this.listeners = /* @__PURE__ */ new Set();
+        }
+        load() {
+          const parsed = deserializeLayout(this.storage.getItem(this.key));
+          if (parsed) {
+            this.root = parsed.root;
+            this.floats = parsed.floats;
+          }
+          return !!parsed;
+        }
+        save() {
+          this.storage.setItem(this.key, serializeLayout({ root: this.root, floats: this.floats }));
+        }
+        reset() {
+          this.root = null;
+          this.floats = [];
+          this.storage.removeItem(this.key);
+          this._emit();
+        }
+        // อัปเดต layout (ผ่านฟังก์ชันจาก panel-layout) แล้วบันทึก + แจ้ง listener อัตโนมัติ
+        update(nextRoot) {
+          this.root = nextRoot;
+          this.save();
+          this._emit();
+        }
+        setFloats(floats) {
+          this.floats = floats;
+          this.save();
+          this._emit();
+        }
+        onChange(fn) {
+          this.listeners.add(fn);
+          return () => this.listeners.delete(fn);
+        }
+        _emit() {
+          for (const fn of this.listeners) fn(this.root, this.floats);
+        }
+      };
+      PanelManager = class {
+        constructor({ storage, key, store } = {}) {
+          this.store = store || new PanelStore(storage, key);
+          this.registry = /* @__PURE__ */ new Map();
+        }
+        get root() {
+          return this.store.root;
+        }
+        get floats() {
+          return this.store.floats;
+        }
+        layout() {
+          return { root: this.store.root, floats: this.store.floats };
+        }
+        // ---- registry ----
+        /** Register a panel definition. Must be called before load() so unknown ids can be pruned. */
+        registerPanel(id, opts = {}) {
+          const def = {
+            id,
+            title: opts.title || id,
+            icon: opts.icon || "",
+            render: opts.render || null,
+            closable: opts.closable !== false,
+            floatable: opts.floatable !== false,
+            defaultSide: opts.defaultSide || "left",
+            defaultSize: opts.defaultSize || null
+          };
+          this.registry.set(id, def);
+          return def;
+        }
+        unregisterPanel(id) {
+          this.hidePanel(id);
+          return this.registry.delete(id);
+        }
+        getPanel(id) {
+          return this.registry.get(id) || null;
+        }
+        registered() {
+          return [...this.registry.keys()];
+        }
+        // ---- สถานะ ----
+        isDocked(id) {
+          return !!(this.root && hasPanel(this.root, id));
+        }
+        isFloating(id) {
+          return this.floats.some((f) => f.panel.id === id);
+        }
+        isOpen(id) {
+          return this.isDocked(id) || this.isFloating(id);
+        }
+        openIds() {
+          return [...this.root ? panelIds(this.root) : [], ...this.floats.map((f) => f.panel.id)];
+        }
+        _node(id) {
+          const d = this.registry.get(id);
+          return { type: "panel", id, title: d ? d.title : id };
+        }
+        // ---- แสดง/ซ่อน ----
+        /** Show a panel: docks it on first use, otherwise brings it to front (tab + un-collapse). */
+        showPanel(id, opts = {}) {
+          const def = this.registry.get(id);
+          if (!def) return false;
+          if (this.isFloating(id)) {
+            this._toFront(id);
+            return true;
+          }
+          if (this.isDocked(id)) {
+            this.store.update(collapsePanel(activatePanel(this.root, id), id, false));
+            return true;
+          }
+          if (!this.root) {
+            this.store.update(this._node(id));
+            return true;
+          }
+          const side = opts.side || def.defaultSide || "left";
+          const target = this._target(opts.targetId);
+          this.store.update(dockPanel(this.root, target, side, this._node(id)));
+          return true;
+        }
+        /** Close a panel (✕) — removes it from the tree and from floating windows. */
+        hidePanel(id) {
+          const def = this.registry.get(id);
+          if (def && def.closable === false) return false;
+          let changed = false;
+          if (this.isFloating(id)) {
+            this.store.setFloats(this.floats.filter((f) => f.panel.id !== id));
+            changed = true;
+          }
+          if (this.isDocked(id)) {
+            this.store.update(removePanel(this.root, id));
+            changed = true;
+          }
+          return changed;
+        }
+        togglePanel(id, opts) {
+          return this.isOpen(id) ? this.hidePanel(id) : this.showPanel(id, opts);
+        }
+        // ---- ผนึก / ลอย ----
+        /** Dock a panel to `side` of `targetId` (moves it if it is floating or docked elsewhere). */
+        dockPanel(id, side = "left", targetId) {
+          let node = null;
+          const fl = this.floats.find((f) => f.panel.id === id);
+          if (fl) {
+            node = fl.panel;
+            this.store.setFloats(this.floats.filter((f) => f !== fl));
+          }
+          if (!node && this.isDocked(id)) {
+            const d = detachPanel(this.root, id);
+            node = d.detached;
+            this.store.update(d.root);
+          }
+          if (!node) node = this._node(id);
+          if (!this.root) {
+            this.store.update({ type: "panel", id: node.id, title: node.title });
+            return true;
+          }
+          this.store.update(dockPanel(this.root, this._target(targetId), side, node));
+          return true;
+        }
+        /** Pop a panel out into a floating window (⧉). */
+        floatPanel(id, box = {}) {
+          const def = this.registry.get(id);
+          if (def && def.floatable === false) return false;
+          if (this.isFloating(id)) {
+            this._toFront(id);
+            return true;
+          }
+          let node = this._node(id);
+          if (this.isDocked(id)) {
+            const d = detachPanel(this.root, id);
+            node = d.detached || node;
+            this.store.update(d.root);
+          }
+          const f = makeFloat(node, box.x ?? 80, box.y ?? 80, box.w ?? 360, box.h ?? 260);
+          this.store.setFloats([...this.floats, f]);
+          return true;
+        }
+        toggleFloat(id, box) {
+          return this.isFloating(id) ? this.dockPanel(id, box && box.side) : this.floatPanel(id, box);
+        }
+        /** Move/resize a floating window (drag + resize handle). */
+        moveFloat(id, box = {}) {
+          const next = this.floats.map((f) => f.panel.id === id ? { ...f, ...pick(box, ["x", "y", "w", "h"]) } : f);
+          this.store.setFloats(next);
+          return true;
+        }
+        _toFront(id) {
+          const f = this.floats.find((x) => x.panel.id === id);
+          if (!f) return;
+          this.store.setFloats([...this.floats.filter((x) => x !== f), f]);
+        }
+        // ---- แท็บ / กลุ่ม ----
+        /** Merge panels into a single tab group, anchored at ids[0]. */
+        groupPanels(ids) {
+          if (!Array.isArray(ids) || ids.length < 2) return false;
+          for (const id of ids) if (this.isFloating(id)) this.dockPanel(id, "center", ids[0]);
+          if (!this.root) return false;
+          this.store.update(groupPanels(this.root, ids.filter((id) => this.isDocked(id))));
+          return true;
+        }
+        /** Pull a panel out of its tab group and dock it to `side` (null → float it). */
+        ungroupPanel(id, side = "right") {
+          if (!this.isDocked(id)) return false;
+          if (!side) return this.floatPanel(id);
+          this.store.update(splitTab(this.root, id, side).root);
+          return true;
+        }
+        activatePanel(id) {
+          if (!this.isDocked(id)) return false;
+          this.store.update(activatePanel(this.root, id));
+          return true;
+        }
+        moveTab(tabsId, from2, to) {
+          if (!this.root) return false;
+          this.store.update(moveTab(this.root, tabsId, from2, to));
+          return true;
+        }
+        // ---- ย่อ / ปรับขนาด ----
+        /** Collapse (▾) — pass `on` to force, omit to toggle. */
+        collapsePanel(id, on) {
+          if (this.isFloating(id)) {
+            const next = this.floats.map((f) => f.panel.id === id ? { ...f, panel: { ...f.panel, collapsed: on === void 0 ? !f.panel.collapsed : !!on } } : f);
+            this.store.setFloats(next);
+            return true;
+          }
+          if (!this.isDocked(id)) return false;
+          this.store.update(collapsePanel(this.root, id, on));
+          return true;
+        }
+        isCollapsed(id) {
+          const f = this.floats.find((x) => x.panel.id === id);
+          if (f) return !!f.panel.collapsed;
+          return !!(this.root && isCollapsed(this.root, id));
+        }
+        resize(dockId, index, ratio) {
+          if (!this.root) return false;
+          this.store.update(resizeDock(this.root, dockId, index, ratio));
+          return true;
+        }
+        // ---- persist ----
+        save() {
+          this.store.save();
+        }
+        /** Load the saved layout, dropping panels that are no longer registered. */
+        load() {
+          const ok = this.store.load();
+          if (ok && this.registry.size) this._prune();
+          return ok;
+        }
+        reset() {
+          this.store.reset();
+        }
+        onChange(fn) {
+          return this.store.onChange(fn);
+        }
+        _prune() {
+          let r = this.store.root;
+          if (r) {
+            for (const id of panelIds(r)) if (!this.registry.has(id)) r = removePanel(r, id);
+          }
+          this.store.root = r;
+          this.store.floats = this.store.floats.filter((f) => this.registry.has(f.panel.id));
+          this.store.save();
+          this.store._emit();
+        }
+        //   → onChange ไม่ยิง UI ค้างกับต้นไม้เก่า
+        _target(id) {
+          if (id && hasPanel(this.root, id)) return id;
+          return panelIds(this.root)[0];
+        }
+      };
+    }
+  });
+
+  // src/panels/panel-drag.js
+  function createDropOverlay() {
+    if (_ov && _ov.el.isConnected) return _ov;
+    const box = document.createElement("div");
+    box.className = "k-drop-zone";
+    box.style.display = "none";
+    document.body.appendChild(box);
+    _ov = {
+      el: box,
+      show(rect, zone) {
+        box.dataset.zone = zone || "";
+        box.style.left = Math.round(rect.x) + "px";
+        box.style.top = Math.round(rect.y) + "px";
+        box.style.width = Math.round(rect.w) + "px";
+        box.style.height = Math.round(rect.h) + "px";
+        box.style.display = "block";
+      },
+      hide() {
+        box.style.display = "none";
+      },
+      destroy() {
+        box.remove();
+        _ov = null;
+      }
+    };
+    return _ov;
+  }
+  function zoneRect(rect, zone) {
+    const { x, y, w, h } = rect;
+    switch (zone) {
+      case "left":
+        return { x, y, w: w / 2, h };
+      case "right":
+        return { x: x + w / 2, y, w: w / 2, h };
+      case "top":
+        return { x, y, w, h: h / 2 };
+      case "bottom":
+        return { x, y: y + h / 2, w, h: h / 2 };
+      default:
+        return { x, y, w, h };
+    }
+  }
+  function detectSnapTarget(mx, my, host2, excludeId) {
+    if (!host2) return null;
+    let best = null;
+    for (const e of host2.querySelectorAll(".k-panel[data-panel-id]")) {
+      if (e.dataset.panelId === excludeId) continue;
+      if (e.closest(".k-float-panel")) continue;
+      if (e.offsetParent === null) continue;
+      const r = e.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
+      const rect = { x: r.left, y: r.top, w: r.width, h: r.height };
+      const zone = snapZone(mx, my, rect);
+      if (!zone) continue;
+      const area = r.width * r.height;
+      if (!best || area < best.area) best = { targetId: e.dataset.panelId, zone, rect, area };
+    }
+    return best;
+  }
+  function startPanelDrag(e, panelId2, pm2, ctx = {}) {
+    if (e.button !== 0) return;
+    const host2 = ctx.host || document.getElementById("app-root") || document.body;
+    const sx = e.clientX, sy = e.clientY;
+    let moved = false, ghost = null;
+    const ov = createDropOverlay();
+    let hit = null;
+    const move = (ev) => {
+      if (!moved) {
+        if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < DRAG_MIN) return;
+        moved = true;
+        document.body.classList.add("k-panel-dragging");
+        ghost = document.createElement("div");
+        ghost.className = "k-drag-ghost";
+        ghost.textContent = ctx.ghostLabel || panelId2;
+        document.body.appendChild(ghost);
+      }
+      if (ghost) {
+        ghost.style.left = ev.clientX + 12 + "px";
+        ghost.style.top = ev.clientY + 14 + "px";
+      }
+      if (!ctx.floatOnly) {
+        hit = detectSnapTarget(ev.clientX, ev.clientY, host2, panelId2);
+        if (hit) ov.show(zoneRect(hit.rect, hit.zone), hit.zone);
+        else ov.hide();
+      }
+    };
+    const up = (ev) => {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      ov.hide();
+      if (ghost) ghost.remove();
+      document.body.classList.remove("k-panel-dragging");
+      if (!moved) return;
+      if (ctx.onReorder && ctx.onReorder(ev.clientX, ev.clientY)) return;
+      if (!ctx.floatOnly && hit) {
+        if (hit.targetId === panelId2) return;
+        pm2.dockPanel(panelId2, hit.zone, hit.targetId);
+        return;
+      }
+      if (!hit) {
+        pm2.floatPanel(panelId2, {
+          x: Math.max(0, ev.clientX - 60),
+          y: Math.max(0, ev.clientY - 12),
+          w: ctx.floatW || 320,
+          h: ctx.floatH || 300
+        });
+      }
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+    e.preventDefault();
+  }
+  function makePanelDraggable(header, panelId2, pm2, ctx = {}) {
+    header.addEventListener("mousedown", (e) => {
+      if (e.target.closest(".k-panel-btn") || e.target.closest(".k-panel-ctrls")) return;
+      const onTitle = !!e.target.closest(".k-panel-head-title");
+      startPanelDrag(e, panelId2, pm2, { ...ctx, floatOnly: onTitle });
+    });
+  }
+  function makeTabDraggable(tab, panelId2, tabsId, index, pm2, ctx = {}) {
+    tab.addEventListener("mousedown", (e) => {
+      if (e.target.closest(".k-panel-btn")) return;
+      const bar = tab.parentNode;
+      startPanelDrag(e, panelId2, pm2, {
+        ...ctx,
+        ghostLabel: ctx.ghostLabel || tab.textContent.trim(),
+        onReorder: (mx, my) => {
+          if (!bar) return false;
+          const r = bar.getBoundingClientRect();
+          if (mx < r.left || mx > r.right || my < r.top || my > r.bottom) return false;
+          const sibs = [...bar.querySelectorAll(".k-tab")];
+          let to = sibs.length - 1;
+          for (let i2 = 0; i2 < sibs.length; i2++) {
+            const sr = sibs[i2].getBoundingClientRect();
+            const mid = bar.classList.contains("k-vertical") ? sr.top + sr.height / 2 : sr.left + sr.width / 2;
+            const p = bar.classList.contains("k-vertical") ? my : mx;
+            if (p < mid) {
+              to = i2;
+              break;
+            }
+          }
+          if (to !== index) pm2.moveTab(tabsId, index, to);
+          return true;
+        }
+      });
+    });
+  }
+  function makeFloatDraggable(header, popup, panelId2, pm2, ctx = {}) {
+    header.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      if (e.target.closest(".k-panel-btn")) return;
+      const host2 = ctx.host || document.getElementById("app-root") || document.body;
+      const sx = e.clientX, sy = e.clientY;
+      const x0 = popup.offsetLeft, y0 = popup.offsetTop;
+      const ov = createDropOverlay();
+      let hit = null, moved = false;
+      const move = (ev) => {
+        if (!moved && Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < DRAG_MIN) return;
+        moved = true;
+        popup.style.left = x0 + ev.clientX - sx + "px";
+        popup.style.top = y0 + ev.clientY - sy + "px";
+        hit = detectSnapTarget(ev.clientX, ev.clientY, host2, panelId2);
+        if (hit && hit.zone === "center") ov.show(zoneRect(hit.rect, hit.zone), hit.zone);
+        else {
+          hit = null;
+          ov.hide();
+        }
+      };
+      const up = () => {
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+        ov.hide();
+        if (!moved) return;
+        if (hit) {
+          pm2.dockPanel(panelId2, hit.zone, hit.targetId);
+          return;
+        }
+        pm2.moveFloat(panelId2, { x: popup.offsetLeft, y: popup.offsetTop });
+      };
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
+      e.preventDefault();
+    });
+  }
+  var DRAG_MIN, _ov;
+  var init_panel_drag = __esm({
+    "src/panels/panel-drag.js"() {
+      init_panel_layout();
+      DRAG_MIN = 8;
+      _ov = null;
+    }
+  });
+
+  // src/panels/panel-renderer.js
+  function renderPanelLayout(container, pm2, opts = {}) {
+    if (!container) return;
+    container.innerHTML = "";
+    const root = pm2.store.root;
+    if (root) {
+      const tree = renderNode(root, pm2, opts, 0);
+      if (tree) {
+        tree.classList.add("k-panel-root");
+        container.appendChild(tree);
+      }
+    }
+    for (const f of pm2.store.floats || []) renderFloatPanel(f, pm2, opts, container);
+    markDocsChain(container);
+    return container;
+  }
+  function renderNode(node, pm2, opts, depth) {
+    if (!node) return null;
+    switch (node.type) {
+      case "dock":
+        return renderDock(node, pm2, opts, depth);
+      case "tabs":
+        return renderTabs(node, pm2, opts, depth);
+      case "panel":
+        return renderPanel(node, pm2, opts, depth);
+      default:
+        return null;
+    }
+  }
+  function metaOf(opts, id) {
+    const m = opts.meta;
+    const v = m && (typeof m.get === "function" ? m.get(id) : m[id]);
+    return v || {};
+  }
+  function isFixed(node, opts) {
+    return node && node.type === "panel" && !!metaOf(opts, node.id).fixed;
+  }
+  function renderDock(node, pm2, opts, depth) {
+    const box = el("div", "k-dock");
+    box.dataset.dockId = node.id;
+    box.dataset.dir = node.dir === "row" ? "row" : "col";
+    const kids = node.children || [];
+    const growSum = kids.reduce((a, k, i2) => a + (isFixed(k, opts) ? 0 : node.sizes?.[i2] ?? 1), 0) || 1;
+    for (let i2 = 0; i2 < kids.length; i2++) {
+      const childEl = renderNode(kids[i2], pm2, opts, depth + 1);
+      if (!childEl) continue;
+      if (isFixed(kids[i2], opts)) {
+        childEl.style.flex = "0 0 auto";
+      } else {
+        childEl.style.flexGrow = String((node.sizes?.[i2] ?? 1) / growSum);
+        childEl.style.flexShrink = "1";
+        childEl.style.flexBasis = "0%";
+      }
+      box.appendChild(childEl);
+      const next = kids[i2 + 1];
+      if (next && !isFixed(kids[i2], opts) && !isFixed(next, opts)) {
+        box.appendChild(createResizeHandle(node.id, i2, node.dir, pm2));
+      }
+    }
+    return box;
+  }
+  function renderTabs(node, pm2, opts, depth) {
+    const box = el("div", "k-tab-group");
+    box.dataset.tabsId = node.id;
+    const strip = !!node.collapsed;
+    if (strip) box.classList.add("icon-strip");
+    const bar = el("div", "k-tab-bar" + (strip ? " k-vertical" : ""));
+    const kids = node.children || [];
+    const active = Math.max(0, Math.min(node.active | 0, kids.length - 1));
+    for (let i2 = 0; i2 < kids.length; i2++) {
+      const child = kids[i2];
+      const md = metaOf(opts, child.id);
+      const tab = el("div", "k-tab" + (i2 === active ? " active" : ""));
+      tab.dataset.index = String(i2);
+      tab.dataset.panelId = child.id;
+      tab.appendChild(iconSpan(md.icon, "k-tab-icon"));
+      tab.appendChild(el("span", "k-tab-title", md.title || child.title || child.id));
+      tab.title = md.title || child.title || child.id;
+      tab.onclick = () => {
+        if (strip) {
+          toggleStrip(node.id, pm2, false);
+          pm2.activatePanel(child.id);
+          return;
+        }
+        pm2.activatePanel(child.id);
+      };
+      makeTabDraggable(tab, child.id, node.id, i2, pm2, { host: opts.host });
+      bar.appendChild(tab);
+    }
+    const strBtn = el("span", "k-panel-btn k-strip-btn", strip ? "\xBB" : "\xAB");
+    strBtn.title = strip ? "\u0E04\u0E25\u0E35\u0E48\u0E01\u0E25\u0E38\u0E48\u0E21\u0E41\u0E17\u0E47\u0E1A" : "\u0E22\u0E48\u0E2D\u0E40\u0E1B\u0E47\u0E19\u0E41\u0E16\u0E1A\u0E44\u0E2D\u0E04\u0E2D\u0E19";
+    strBtn.onclick = (e) => {
+      e.stopPropagation();
+      toggleStrip(node.id, pm2, !strip);
+    };
+    bar.appendChild(strBtn);
+    box.appendChild(bar);
+    const body = el("div", "k-tab-content");
+    for (let i2 = 0; i2 < kids.length; i2++) {
+      const panelEl = renderNode(kids[i2], pm2, opts, depth + 1);
+      if (!panelEl) continue;
+      panelEl.classList.add("k-tabbed");
+      if (i2 !== active) panelEl.classList.add("k-tab-hidden");
+      body.appendChild(panelEl);
+    }
+    box.appendChild(body);
+    return box;
+  }
+  function toggleStrip(tabsId, pm2, on) {
+    const root = pm2.store.root;
+    if (!root) return;
+    const next = JSON.parse(JSON.stringify(root));
+    walk(next, (n) => {
+      if (n.type === "tabs" && n.id === tabsId) n.collapsed = !!on;
+    });
+    pm2.store.update(next);
+  }
+  function renderPanel(node, pm2, opts, depth) {
+    const md = metaOf(opts, node.id);
+    const box = el("div", "k-panel");
+    box.dataset.panelId = node.id;
+    if (md.cls) box.classList.add(md.cls);
+    if (node.collapsed) box.classList.add("k-collapsed");
+    if (md.fixed) box.classList.add("k-panel-fixed");
+    if (md.noHead) box.classList.add("k-panel-nohead");
+    else {
+      const head = buildHead(node, pm2, opts, md, false);
+      box.appendChild(head);
+      makePanelDraggable(head, node.id, pm2, { host: opts.host, ghostLabel: md.title || node.title || node.id });
+    }
+    box.appendChild(buildBody(node, opts));
+    return box;
+  }
+  function buildHead(node, pm2, opts, md, floating) {
+    const head = el("div", "k-panel-head");
+    head.appendChild(iconSpan(md.icon, "k-panel-head-icon"));
+    head.appendChild(el("span", "k-panel-head-title", md.title || node.title || node.id));
+    const ctrls = el("span", "k-panel-ctrls");
+    const extras2 = opts.headExtras ? opts.headExtras(node.id) || [] : [];
+    for (const b of extras2) ctrls.appendChild(b);
+    head.appendChild(ctrls);
+    const btns = el("span", "k-panel-btns");
+    const def = pm2.registry.get(node.id) || {};
+    for (const b of PANEL_BUTTONS) {
+      if (b.key === "close" && def.closable === false) continue;
+      if (b.key === "float" && def.floatable === false) continue;
+      const btn = el(
+        "span",
+        "k-panel-btn k-panel-btn-" + b.key,
+        b.key === "float" && floating ? "\u22A1" : b.key === "collapse" && node.collapsed ? "\u25B8" : b.icon
+      );
+      btn.title = b.title;
+      btn.dataset.act = b.key;
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        if (b.key === "collapse") pm2.collapsePanel(node.id);
+        else if (b.key === "close") pm2.hidePanel(node.id);
+        else if (b.key === "float") {
+          if (floating) {
+            const anchor = pm2.isDocked(opts.dockAnchor || "docs") ? opts.dockAnchor || "docs" : void 0;
+            pm2.dockPanel(node.id, def.defaultSide || "left", anchor);
+            return;
+          }
+          const host2 = e.target.closest(".k-panel");
+          const r = host2 ? host2.getBoundingClientRect() : { left: 90, top: 90, width: 320, height: 300 };
+          pm2.floatPanel(node.id, { x: r.left, y: r.top, w: Math.max(220, r.width), h: Math.max(160, r.height) });
+        }
+      };
+      btns.appendChild(btn);
+    }
+    head.appendChild(btns);
+    return head;
+  }
+  function buildBody(node, opts) {
+    const body = el("div", "k-panel-body");
+    if (opts.renderPanelBody) {
+      const content = opts.renderPanelBody(node.id, body);
+      if (content && content !== body && content.parentNode !== body) body.appendChild(content);
+    }
+    return body;
+  }
+  function iconSpan(name, cls) {
+    const s = el("span", cls);
+    if (name && hasIcon(name)) s.innerHTML = iconHtml(name, 14);
+    else if (name) s.textContent = name;
+    return s;
+  }
+  function renderFloatPanel(f, pm2, opts, container) {
+    const p = f.panel;
+    const md = metaOf(opts, p.id);
+    const pop = el("div", "k-float-panel");
+    pop.dataset.panelId = p.id;
+    pop.style.left = (f.x ?? 80) + "px";
+    pop.style.top = (f.y ?? 80) + "px";
+    pop.style.width = (f.w ?? 360) + "px";
+    pop.style.height = (f.h ?? 260) + "px";
+    if (p.collapsed) pop.classList.add("k-collapsed");
+    const head = buildHead(p, pm2, opts, md, true);
+    pop.appendChild(head);
+    pop.appendChild(buildBody(p, opts));
+    const grip = el("div", "k-panel-resize");
+    makeResizable(pop, grip, (w, h) => pm2.moveFloat(p.id, { w, h }));
+    pop.appendChild(grip);
+    makeFloatDraggable(head, pop, p.id, pm2, { host: opts.host });
+    pop.addEventListener("mousedown", () => {
+      if (typeof pm2._toFront === "function") pm2._toFront(p.id);
+    }, true);
+    (container || document.body).appendChild(pop);
+    return pop;
+  }
+  function createResizeHandle(dockId, index, dir, pm2) {
+    const row = dir === "row";
+    const h = el("div", "k-resize-handle " + (row ? "k-rh-col" : "k-rh-row"));
+    h.dataset.dockId = dockId;
+    h.dataset.index = String(index);
+    h.title = "\u0E25\u0E32\u0E01\u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E1B\u0E23\u0E31\u0E1A\u0E2A\u0E31\u0E14\u0E2A\u0E48\u0E27\u0E19 (\u0E14\u0E31\u0E1A\u0E40\u0E1A\u0E34\u0E25\u0E04\u0E25\u0E34\u0E01 = 50%)";
+    h.addEventListener("dblclick", () => pm2.resize(dockId, index, 0.5));
+    h.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const prev = h.previousElementSibling, next = h.nextElementSibling;
+      if (!prev || !next) return;
+      const pr = prev.getBoundingClientRect(), nr = next.getBoundingClientRect();
+      const total = row ? pr.width + nr.width : pr.height + nr.height;
+      if (total <= 0) return;
+      const start = row ? e.clientX : e.clientY;
+      const base3 = row ? pr.width : pr.height;
+      const growSum = (parseFloat(prev.style.flexGrow) || 1) + (parseFloat(next.style.flexGrow) || 1);
+      let ratio = base3 / total;
+      document.body.classList.add("k-resizing");
+      const move = (ev) => {
+        const d = (row ? ev.clientX : ev.clientY) - start;
+        ratio = Math.max(0.05, Math.min(0.95, (base3 + d) / total));
+        prev.style.flexGrow = String(growSum * ratio);
+        next.style.flexGrow = String(growSum * (1 - ratio));
+      };
+      const up = () => {
+        document.body.classList.remove("k-resizing");
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+        pm2.resize(dockId, index, ratio);
+      };
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
+    });
+    return h;
+  }
+  function makeResizable(box, grip, onEnd) {
+    grip.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const w0 = box.offsetWidth, h0 = box.offsetHeight, x0 = e.clientX, y0 = e.clientY;
+      const move = (ev) => {
+        box.style.width = Math.max(200, w0 + ev.clientX - x0) + "px";
+        box.style.height = Math.max(120, h0 + ev.clientY - y0) + "px";
+      };
+      const up = () => {
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+        onEnd(box.offsetWidth, box.offsetHeight);
+      };
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
+    });
+  }
+  function markDocsChain(container, docsId = "docs") {
+    if (!container) return;
+    container.querySelectorAll(".k-holds-docs").forEach((e) => e.classList.remove("k-holds-docs"));
+    let n = container.querySelector(`.k-panel[data-panel-id="${docsId}"]`);
+    while (n && n !== container) {
+      n.classList.add("k-holds-docs");
+      n = n.parentElement;
+    }
+  }
+  var init_panel_renderer = __esm({
+    "src/panels/panel-renderer.js"() {
+      init_core();
+      init_icons();
+      init_panel_layout();
+      init_panel_drag();
+    }
+  });
+
+  // src/panels/panel-ui.js
+  var panel_ui_exports = {};
+  __export(panel_ui_exports, {
+    PANEL_DEFS: () => PANEL_DEFS,
+    addPanelButton: () => addPanelButton,
+    defaultLayout: () => defaultLayout,
+    getPanelManager: () => getPanelManager,
+    hidePanel: () => hidePanel,
+    initPanelSystem: () => initPanelSystem,
+    isPanelOpen: () => isPanelOpen,
+    loadPanelLayout: () => loadPanelLayout,
+    onPanelLayoutChange: () => onPanelLayoutChange,
+    panelId: () => panelId,
+    panelMenuItems: () => panelMenuItems,
+    panelToggleState: () => panelToggleState,
+    registerPanels: () => registerPanels,
+    renderPanels: () => renderPanels,
+    resetPanelSystem: () => resetPanelSystem,
+    resetPanels: () => resetPanels,
+    savePanelLayout: () => savePanelLayout,
+    setPanelShowHook: () => setPanelShowHook,
+    showPanel: () => showPanel,
+    togglePanel: () => togglePanel,
+    togglePanelDialog: () => togglePanelDialog
+  });
+  function titleOf(d) {
+    return d.i18n ? t(d.i18n, d.title) : d.title;
+  }
+  function getPanelManager() {
+    if (!pm) pm = new PanelManager();
+    return pm;
+  }
+  function loadPanelLayout() {
+    return getPanelManager().load();
+  }
+  function savePanelLayout() {
+    if (pm) pm.store.save();
+  }
+  function host() {
+    return document.getElementById(HOST_ID) || document.body;
+  }
+  function srcHolder() {
+    let h = document.getElementById(SRC_ID);
+    if (!h) {
+      h = el("div");
+      h.id = SRC_ID;
+      h.hidden = true;
+      document.body.appendChild(h);
+    }
+    return h;
+  }
+  function registerPanels() {
+    const m = getPanelManager();
+    for (const d of PANEL_DEFS) {
+      meta.set(d.id, { title: d.title, icon: d.icon, fixed: !!d.fixed, noHead: !!d.noHead });
+      const node = d.adopt ? $(d.adopt) : null;
+      if (node) adopted.set(d.id, node);
+      m.registerPanel(d.id, {
+        title: d.title,
+        icon: d.icon,
+        closable: d.closable !== false,
+        floatable: d.floatable !== false,
+        defaultSide: d.defaultSide || "left",
+        render: (h) => {
+          const n = adopted.get(d.id);
+          if (n) h.appendChild(n);
+          return n;
+        }
+      });
+    }
+    return m;
+  }
+  function defaultLayout() {
+    return dock("col", [
+      panel("toolbar", "\u0E41\u0E16\u0E1A\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E21\u0E37\u0E2D"),
+      dock("row", [
+        tabs([panel("tree", "\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C"), panel("outline", "Navigation")], 0),
+        panel("docs", "\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23")
+      ], [0.24, 0.76]),
+      panel("statusbar", "\u0E41\u0E16\u0E1A\u0E2A\u0E16\u0E32\u0E19\u0E30")
+    ], [0, 1, 0]);
+  }
+  function renderOpts() {
+    for (const d of PANEL_DEFS) {
+      const m = meta.get(d.id) || {};
+      meta.set(d.id, { ...m, title: titleOf(d) });
+    }
+    return {
+      meta,
+      host: host(),
+      headExtras: (id) => extras.get(id) || [],
+      renderPanelBody: (id, body) => {
+        const node = adopted.get(id);
+        if (node) {
+          body.appendChild(node);
+          return node;
+        }
+        const def = pm && pm.registry.get(id);
+        if (def && def.render) return def.render(body);
+        return body;
+      }
+    };
+  }
+  function renderPanels(force) {
+    if (!pm) return;
+    const sig = JSON.stringify({ r: pm.store.root, f: pm.store.floats });
+    if (!force && sig === lastSig) return;
+    lastSig = sig;
+    renderPanelLayout(host(), pm, renderOpts());
+    const h = host(), holder = srcHolder();
+    for (const [, node] of adopted) if (!h.contains(node)) holder.appendChild(node);
+    if (_onLayoutChange) _onLayoutChange();
+  }
+  function onPanelLayoutChange(fn) {
+    _onLayoutChange = fn;
+  }
+  function initPanelSystem() {
+    const m = getPanelManager();
+    if (started) {
+      renderPanels(true);
+      return m;
+    }
+    started = true;
+    registerPanels();
+    srcHolder();
+    m.load();
+    if (!m.store.root) m.store.update(defaultLayout());
+    else if (!hasPanel(m.store.root, "docs")) {
+      const anchor = panelIds(m.store.root)[0];
+      m.store.update(dockPanel(m.store.root, anchor, "right", panel("docs", "\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23")));
+    }
+    m.store.onChange(() => {
+      savePanelLayout();
+      renderPanels();
+    });
+    onLanguageChanged(() => renderPanels(true));
+    renderPanels(true);
+    return m;
+  }
+  function isPanelOpen(id) {
+    return !!pm && pm.isOpen(panelId(id));
+  }
+  function setPanelShowHook(fn) {
+    onShowHook = fn;
+  }
+  function showPanel(id, opts = {}) {
+    const m = getPanelManager();
+    const pid = panelId(id);
+    let ok;
+    if (m.isDocked(pid) && !m.isCollapsed(pid)) {
+      m.activatePanel(pid);
+      ok = true;
+    } else {
+      const o = { ...opts };
+      if (!o.targetId && m.isDocked("docs") && pid !== "docs") o.targetId = "docs";
+      ok = m.showPanel(pid, o);
+    }
+    if (ok && onShowHook) {
+      try {
+        onShowHook(pid);
+      } catch {
+      }
+    }
+    return ok;
+  }
+  function hidePanel(id) {
+    return getPanelManager().hidePanel(panelId(id));
+  }
+  function togglePanel(id, opts) {
+    const m = getPanelManager();
+    const pid = panelId(id);
+    if (m.isOpen(pid) && !m.isCollapsed(pid)) {
+      return m.collapsePanel(pid, true);
+    }
+    if (m.isCollapsed(pid)) {
+      return m.collapsePanel(pid, false);
+    }
+    return showPanel(pid, opts);
+  }
+  function resetPanels() {
+    const m = getPanelManager();
+    m.store.reset();
+    m.store.update(defaultLayout());
+    renderPanels(true);
+    setStatus("\u0E23\u0E35\u0E40\u0E0B\u0E47\u0E15\u0E01\u0E32\u0E23\u0E08\u0E31\u0E14\u0E27\u0E32\u0E07\u0E41\u0E1C\u0E07\u0E41\u0E25\u0E49\u0E27");
+    return true;
+  }
+  function panelMenuItems() {
+    const m = getPanelManager();
+    return PANEL_DEFS.filter((d) => d.closable !== false).map((d) => ({
+      label: (m.isOpen(d.id) ? "\u2611 " : "\u2610 ") + titleOf(d),
+      click: () => togglePanel(d.id)
+    }));
+  }
+  function panelToggleState() {
+    const m = getPanelManager();
+    const o = {};
+    for (const d of PANEL_DEFS) o[d.id] = m.isOpen(d.id);
+    return o;
+  }
+  function addPanelButton(id, node) {
+    const pid = panelId(id);
+    const list = extras.get(pid) || [];
+    if (!list.includes(node)) list.push(node);
+    extras.set(pid, list);
+    renderPanels(true);
+    return node;
+  }
+  async function togglePanelDialog() {
+    const items = panelMenuItems();
+    items.push("-");
+    items.push({ label: "\u27F2 \u0E23\u0E35\u0E40\u0E0B\u0E47\u0E15\u0E01\u0E32\u0E23\u0E08\u0E31\u0E14\u0E27\u0E32\u0E07\u0E41\u0E1C\u0E07\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14", click: () => resetPanels() });
+    try {
+      const { popupMenu: popupMenu2 } = await Promise.resolve().then(() => (init_app(), app_exports));
+      const btn = $("#tb-panels");
+      const r = btn ? btn.getBoundingClientRect() : { left: 40, bottom: 60 };
+      popupMenu2(r.left, r.bottom + 4, items);
+    } catch {
+      const ov = el("div", "k-overlay");
+      const box = el("div", "k-dialog");
+      box.append(el("div", "k-dlg-title", "\u{1F4D0} \u0E08\u0E31\u0E14\u0E01\u0E32\u0E23\u0E41\u0E1C\u0E07"));
+      for (const it of items) {
+        if (it === "-") {
+          box.append(el("hr"));
+          continue;
+        }
+        const row = el("div", "k-menu-item", it.label);
+        row.onclick = () => {
+          it.click();
+          ov.remove();
+        };
+        box.append(row);
+      }
+      const closeBtn = el("button", "k-cancel", "\u0E1B\u0E34\u0E14");
+      closeBtn.onclick = () => ov.remove();
+      const btns = el("div", "k-dlg-btns");
+      btns.append(closeBtn);
+      box.append(btns);
+      ov.append(box);
+      document.body.append(ov);
+      ov.onclick = (e) => {
+        if (e.target === ov) ov.remove();
+      };
+    }
+  }
+  function resetPanelSystem() {
+    lastSig = "";
+  }
+  var HOST_ID, SRC_ID, ALIAS, panelId, PANEL_DEFS, pm, started, lastSig, adopted, extras, meta, _onLayoutChange, onShowHook;
+  var init_panel_ui = __esm({
+    "src/panels/panel-ui.js"() {
+      init_core();
+      init_panel_layout();
+      init_panel_store();
+      init_panel_renderer();
+      HOST_ID = "app-root";
+      SRC_ID = "k-panel-src";
+      ALIAS = {
+        "tree-panel": "tree",
+        explorer: "tree",
+        "props-panel": "props",
+        properties: "props",
+        "outline-panel": "outline",
+        navigation: "outline",
+        "content": "docs",
+        panes: "docs"
+      };
+      panelId = (id) => ALIAS[id] || id;
+      PANEL_DEFS = [
+        { id: "toolbar", title: "\u0E41\u0E16\u0E1A\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E21\u0E37\u0E2D", icon: "layout", adopt: "#toolbar", fixed: true, noHead: true, closable: false, floatable: false },
+        { id: "tree", title: "\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C", icon: "book-content", adopt: "#tree-panel", defaultSide: "left", i18n: "panel.project" },
+        { id: "outline", title: "Navigation", icon: "list-ul", adopt: "#outline-panel", defaultSide: "left", i18n: "panel.navigation" },
+        // แผงเอกสารไม่มีหัวแผง (พื้นที่ทำงานหลัก — แถบแท็บเอกสาร #tabs ทำหน้าที่นั้นอยู่แล้ว)
+        { id: "docs", title: "\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23", icon: "file", adopt: "#content", noHead: true, closable: false, floatable: false },
+        { id: "props", title: "\u0E04\u0E38\u0E13\u0E2A\u0E21\u0E1A\u0E31\u0E15\u0E34", icon: "clipboard", adopt: "#props-panel", defaultSide: "right", i18n: "panel.properties" },
+        { id: "statusbar", title: "\u0E41\u0E16\u0E1A\u0E2A\u0E16\u0E32\u0E19\u0E30", icon: "grid", adopt: "#statusbar", fixed: true, noHead: true, closable: false, floatable: false },
+        { id: "log", title: "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01", icon: "history", adopt: "#log-panel", defaultSide: "right", closable: true, floatable: true, i18n: "panel.logTitle" },
+        { id: "search", title: "\u0E04\u0E49\u0E19\u0E2B\u0E32", icon: "search", adopt: "#search-panel", defaultSide: "left", closable: true, floatable: true, i18n: "panel.searchTitle" },
+        { id: "notes", title: "\u0E2A\u0E21\u0E38\u0E14\u0E42\u0E19\u0E49\u0E15\u0E14\u0E48\u0E27\u0E19", icon: "note", adopt: "#notes-panel", defaultSide: "right", closable: true, floatable: true, i18n: "panel.notesTitle" },
+        { id: "comments", title: "\u0E04\u0E2D\u0E21\u0E40\u0E21\u0E19\u0E15\u0E4C", icon: "chat", adopt: "#comments-panel", defaultSide: "right", closable: true, floatable: true, i18n: "panel.commentsTitle" },
+        // ── บั๊ก #18: ฟีเจอร์ที่ไม่ใช่เอกสาร เป็นแผง ไม่ใช่แท็บ ──
+        { id: "dashboard", title: "\u0E41\u0E14\u0E0A\u0E1A\u0E2D\u0E23\u0E4C\u0E14", icon: "grid", adopt: "#dash-panel", defaultSide: "left", closable: true, floatable: true, i18n: "panel.dashboardTitle" },
+        { id: "kanban", title: "Kanban", icon: "grid", adopt: "#kanban-panel", defaultSide: "left", closable: true, floatable: true, i18n: "panel.kanbanTitle" },
+        { id: "books", title: "\u0E08\u0E31\u0E14\u0E01\u0E32\u0E23\u0E40\u0E25\u0E48\u0E21", icon: "book-content", adopt: "#books-panel", defaultSide: "left", closable: true, floatable: true, i18n: "panel.booksTitle" },
+        { id: "timeline", title: "\u0E40\u0E2A\u0E49\u0E19\u0E40\u0E27\u0E25\u0E32", icon: "history", adopt: "#tl-panel", defaultSide: "left", closable: true, floatable: true, i18n: "panel.timelineTitle" },
+        { id: "maps", title: "\u0E41\u0E1C\u0E19\u0E17\u0E35\u0E48", icon: "layout", adopt: "#maps-panel", defaultSide: "left", closable: true, floatable: true, i18n: "panel.mapsTitle" }
+      ];
+      pm = null;
+      started = false;
+      lastSig = "";
+      adopted = /* @__PURE__ */ new Map();
+      extras = /* @__PURE__ */ new Map();
+      meta = /* @__PURE__ */ new Map();
+      _onLayoutChange = null;
+      onShowHook = null;
+    }
+  });
+
   // src/dashboard.js
   async function openDashboard() {
-    const key = "::dash::";
-    if (state.tabs.has(key)) {
-      activate(key);
-      return renderDashboard(state.tabs.get(key).pane);
-    }
-    const pane = el("div", "pane");
-    $("#panes").append(pane);
-    const tabBtn = el("div", "tab");
-    tabBtn.append(el("span", "tab-title", "\u0E41\u0E14\u0E0A\u0E1A\u0E2D\u0E23\u0E4C\u0E14"));
-    const x = el("span", "tab-x", "\xD7");
-    tabBtn.append(x);
-    $("#tabs").append(tabBtn);
-    const tab = {
-      file: key,
-      title: "\u0E41\u0E14\u0E0A\u0E1A\u0E2D\u0E23\u0E4C\u0E14",
-      pane,
-      tabBtn,
-      dirty: false,
-      editor: null,
-      plain: null,
-      wiki: null,
-      gal: null,
-      dash: true
-    };
-    tabBtn.onclick = (e) => {
-      if (e.target !== x) activate(key);
-    };
-    x.onclick = () => closeTab(key);
-    state.tabs.set(key, tab);
-    activate(key);
-    renderDashboard(pane);
+    showPanel("dashboard");
+    return renderFeaturePanel("dashboard");
   }
   async function renderDashboard(pane) {
     pane.innerHTML = "";
@@ -44996,6 +46585,7 @@ ${mdToHtmlBody(md)}
       init_project_scan();
       init_app();
       init_app();
+      init_panel_ui();
     }
   });
 
@@ -45104,6 +46694,7 @@ ${mdToHtmlBody(md)}
     const s = state.settings, g = state.goals, m = state.meta;
     const origFont = parseInt(s.uiFontSize, 10) || 0;
     const origFontFamily = s.fontFamily || "";
+    const origSpFontFamily = s.spFontFamily || "";
     const ov = el("div", "k-overlay");
     const box = el("div", "k-dialog k-settings");
     box.innerHTML = `
@@ -45112,6 +46703,7 @@ ${mdToHtmlBody(md)}
       <div class="k-set-tab on" data-p="gen">${t("settings.general")}</div>
       <div class="k-set-tab" data-p="write">${t("settings.writing")}</div>
       <div class="k-set-tab" data-p="auto">${t("settings.automation")}</div>
+      <div class="k-set-tab" data-p="sp">\u{1F3AC} \u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07</div>
       <div class="k-set-tab" data-p="lang">${t("settings.language")}</div>
       <div class="k-set-tab" data-p="keys">${t("settings.shortcuts")}</div>
     </div>
@@ -45126,6 +46718,7 @@ ${mdToHtmlBody(md)}
     </div>
     <div class="k-set-page" data-p="write">
       <div class="k-row"><label>${t("settings.fontFamily")}<span class="k-hint">${t("settings.fontFamilyHint")}</span></label><select id="st-fontfamily" class="k-dlg-select" style="width:100%"></select></div>
+      <div class="k-row"><label>${t("settings.spFontFamily")}<span class="k-hint">${t("settings.spFontFamilyHint")}</span></label><select id="st-spfontfamily" class="k-dlg-select" style="width:100%"></select></div>
       <div class="k-row"><label>${t("settings.fontSize")}<span class="k-hint">${t("settings.fontSizeHint")} (${BASE_ED_FS}px)</span></label><input type="number" id="st-font" min="-6" max="16" step="1"></div>
       <div class="k-row"><label>${t("settings.lineNumbers")}<span class="k-hint">${t("settings.lineNumbersHint")}</span></label><input type="checkbox" id="st-ln"></div>
       <div class="k-row"><label>${t("settings.spellCheck")}<span class="k-hint">${t("settings.spellCheckHint")}</span></label><input type="checkbox" id="st-spell"></div>
@@ -45137,6 +46730,11 @@ ${mdToHtmlBody(md)}
     </div>
     <div class="k-set-page" data-p="auto">
       <div class="k-row"><label>${iconHtml("cloud-lightning", 14)} ${t("settings.autoSync")}<span class="k-hint">${t("settings.autoSyncHint")}</span></label><input type="checkbox" id="st-autosync"></div>
+    </div>
+    <div class="k-set-page" data-p="sp">
+      <div class="k-hint" style="margin-bottom:12px">\u0E04\u0E27\u0E1A\u0E04\u0E38\u0E21\u0E1B\u0E38\u0E48\u0E21 Tab/Enter/Shift+Tab \u0E43\u0E19\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07 \u2014 \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E27\u0E48\u0E32\u0E15\u0E49\u0E2D\u0E07\u0E01\u0E32\u0E23\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E2B\u0E23\u0E37\u0E2D\u0E2A\u0E25\u0E31\u0E1A\u0E40\u0E1B\u0E47\u0E19 element \u0E43\u0E14\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E01\u0E14\u0E41\u0E15\u0E48\u0E25\u0E30\u0E1B\u0E38\u0E48\u0E21</div>
+      <table class="k-sp-cycle-tbl" id="st-spcycle"><thead><tr><th>Element</th><th>Enter \u2192</th><th>Tab \u2192</th><th>Shift+Tab \u2192</th></tr></thead><tbody></tbody></table>
+      <div style="margin-top:12px; text-align:right"><button id="st-spcycle-reset" class="k-reset-btn">\u21BA \u0E04\u0E37\u0E19\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19</button></div>
     </div>
     <div class="k-set-page" data-p="lang">
       <div class="k-row"><label>${t("settings.languageSelect")}</label>
@@ -45155,9 +46753,14 @@ ${mdToHtmlBody(md)}
     ov.appendChild(box);
     document.body.appendChild(ov);
     const q = (id) => box.querySelector(id);
+    const applySpFont = (v) => {
+      if (v) document.documentElement.style.setProperty("--sp-font", v);
+      else document.documentElement.style.removeProperty("--sp-font");
+    };
     (async () => {
       const fs = q("#st-fontfamily");
       if (!fs) return;
+      const spFs = q("#st-spfontfamily");
       const builtin = [
         { name: "Segoe UI (\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19)", value: "" },
         { name: "Sarabun", value: "Sarabun, sans-serif" },
@@ -45186,6 +46789,16 @@ ${mdToHtmlBody(md)}
         if (f.value === (origFontFamily || "")) opt.selected = true;
         fs.appendChild(opt);
       }
+      if (spFs) {
+        for (const f of builtin) {
+          const opt = document.createElement("option");
+          opt.value = f.value;
+          opt.textContent = f.value === "" ? "Courier New (\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07)" : f.name;
+          if (f.value === (origSpFontFamily || "")) opt.selected = true;
+          spFs.appendChild(opt);
+        }
+        spFs.onchange = () => applySpFont(spFs.value);
+      }
     })();
     q("#st-title").value = m.title || "";
     q("#st-author").value = m.author || "";
@@ -45213,6 +46826,62 @@ ${mdToHtmlBody(md)}
     q("#st-uiscale-lbl").textContent = Math.round(origUiScale * 100) + "%";
     q("#st-uiscale").oninput = () => applyUIScale(parseFloat(q("#st-uiscale").value) || 1);
     q("#st-autosync").checked = isAutoSyncOn() || !!s.autoSync;
+    const cycleKeys = ["scene", "action", "character", "parenthetical", "dialogue", "transition", "shot", "act-break", "note"];
+    const cycleOpts = [
+      "scene",
+      "action",
+      "character",
+      "parenthetical",
+      "dialogue",
+      "transition",
+      "shot",
+      "act-break",
+      "summary",
+      "outline1",
+      "outline2",
+      "outline3",
+      "note",
+      "image",
+      "raw"
+    ];
+    const workSpCycle = {};
+    const srcCycle = s.spCycle || DEFAULT_SP_CYCLE;
+    for (const k of cycleKeys) {
+      workSpCycle[k] = { ...srcCycle[k] || DEFAULT_SP_CYCLE[k] || { enter: "action", tab: "action", shiftTab: "action" } };
+    }
+    const tbody = q("#st-spcycle tbody");
+    function renderSpCycle() {
+      tbody.innerHTML = "";
+      for (const k of cycleKeys) {
+        const row = el("tr");
+        const label = SP_ELEMS[k] && SP_ELEMS[k].th || k;
+        row.append(el("td", "", label));
+        for (const dir of ["enter", "tab", "shiftTab"]) {
+          const sel = el("select");
+          for (const opt of cycleOpts) {
+            const o = el("option");
+            o.value = opt;
+            o.textContent = SP_ELEMS[opt] && SP_ELEMS[opt].th || opt;
+            if (workSpCycle[k][dir] === opt) o.selected = true;
+            sel.append(o);
+          }
+          sel.onchange = () => {
+            workSpCycle[k][dir] = sel.value;
+          };
+          const td = el("td");
+          td.append(sel);
+          row.append(td);
+        }
+        tbody.append(row);
+      }
+    }
+    renderSpCycle();
+    q("#st-spcycle-reset").onclick = () => {
+      for (const k of cycleKeys) {
+        workSpCycle[k] = { ...DEFAULT_SP_CYCLE[k] };
+      }
+      renderSpCycle();
+    };
     if (q("#st-lang")) q("#st-lang").value = i18n.lang || "en";
     const origLang = i18n.lang;
     const origLn = !!s.lineNumbers, origSpell = s.spellCheck !== false, origSpellDict = s.spellCheckDict !== false, origMention = s.autoMention !== false;
@@ -45292,6 +46961,8 @@ ${mdToHtmlBody(md)}
     const cancel = () => {
       applyZoomVars(origFont);
       applyUIScale(origUiScale);
+      s.spFontFamily = origSpFontFamily;
+      applySpFont(origSpFontFamily);
       s.focusDim = origDim;
       applyFocusDim();
       document.body.classList.toggle("k-ln", origLn);
@@ -45319,6 +46990,7 @@ ${mdToHtmlBody(md)}
       s.maxBackups = Math.max(1, num3("#st-maxbak", 10));
       s.uiFontSize = Math.max(-6, Math.min(16, parseInt(q("#st-font").value, 10) || 0));
       s.fontFamily = q("#st-fontfamily")?.value || "";
+      s.spFontFamily = q("#st-spfontfamily")?.value || "";
       s.lineNumbers = q("#st-ln").checked;
       s.spellCheck = q("#st-spell").checked;
       s.spellCheckDict = q("#st-spelldict").checked;
@@ -45330,6 +47002,7 @@ ${mdToHtmlBody(md)}
       s.shortcuts = workKeys;
       s.autoSync = q("#st-autosync").checked;
       setAutoSync(s.autoSync);
+      s.spCycle = JSON.parse(JSON.stringify(workSpCycle));
       g.dailyWords = num3("#st-daily", 500);
       g.projectWords = num3("#st-proj", 5e4);
       try {
@@ -45339,8 +47012,6 @@ ${mdToHtmlBody(md)}
         document.title = m.title + " \u2014 Killian 2";
         $("#projname").textContent = m.title;
         $("#tb-title").textContent = m.title + " \u2014 Killian 2";
-        const dash = state.tabs.get("::dash::");
-        if (dash) renderDashboard(dash.pane);
       } catch (e) {
         log("error", "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E01\u0E32\u0E23\u0E15\u0E31\u0E49\u0E07\u0E04\u0E48\u0E32\u0E25\u0E49\u0E21\u0E40\u0E2B\u0E25\u0E27", e);
       }
@@ -45504,6 +47175,7 @@ ${mdToHtmlBody(md)}
     "src/dialogs.js"() {
       init_app();
       init_core();
+      init_fountain();
       init_dashboard();
       init_ui();
       import_md5 = __toESM(require_md());
@@ -45812,42 +47484,15 @@ ${mdToHtmlBody(md)}
 
   // src/maps-ui.js
   async function openMaps() {
-    const key = "::maps::";
-    if (state.tabs.has(key)) {
-      activate(key);
-      return renderMaps(state.tabs.get(key).pane);
-    }
-    const pane = el("div", "pane");
-    $("#panes").append(pane);
-    const tabBtn = el("div", "tab");
-    tabBtn.append(el("span", "tab-title", "\u0E41\u0E1C\u0E19\u0E17\u0E35\u0E48"));
-    const x = el("span", "tab-x", "\xD7");
-    tabBtn.append(x);
-    $("#tabs").append(tabBtn);
-    const tab = {
-      file: key,
-      title: "\u0E41\u0E1C\u0E19\u0E17\u0E35\u0E48",
-      pane,
-      tabBtn,
-      dirty: false,
-      editor: null,
-      plain: null,
-      wiki: null,
-      gal: null,
-      maps: true
-    };
-    tabBtn.onclick = (e) => {
-      if (e.target !== x) activate(key);
-    };
-    x.onclick = () => {
-      mapsState_C.s = null;
-      closeTab(key);
-    };
-    state.tabs.set(key, tab);
-    activate(key);
+    showPanel("maps");
+    return renderMapsPanel();
+  }
+  async function renderMapsPanel() {
+    const keepId = mapsState_C.s?.currentId || null;
     mapsState_C.s = { data: await loadMaps(), currentId: null };
-    if (mapsState_C.s.data.maps.length) mapsState_C.s.currentId = sortMaps(mapsState_C.s.data.maps)[0].id;
-    renderMaps(pane);
+    const all = mapsState_C.s.data.maps;
+    mapsState_C.s.currentId = keepId && all.some((m) => m.id === keepId) ? keepId : all.length ? sortMaps(all)[0].id : null;
+    return renderMaps($("#maps-body"));
   }
   async function renderMaps(pane) {
     pane.innerHTML = "";
@@ -46029,6 +47674,7 @@ ${mdToHtmlBody(md)}
       init_maps();
       init_ui();
       init_wiki_ui();
+      init_panel_ui();
     }
   });
 
@@ -46269,41 +47915,11 @@ ${mdToHtmlBody(md)}
     renderTimeline: () => renderTimeline
   });
   function refreshOpenTimeline() {
-    const t2 = state.tabs.get("::timeline::");
-    if (t2) renderTimeline(t2.pane);
+    if (isPanelOpen("timeline") && $("#tl-body")) renderTimeline($("#tl-body"));
   }
   async function openTimeline() {
-    const key = "::timeline::";
-    if (state.tabs.has(key)) {
-      activate(key);
-      return renderTimeline(state.tabs.get(key).pane);
-    }
-    const pane = el("div", "pane");
-    $("#panes").append(pane);
-    const tabBtn = el("div", "tab");
-    tabBtn.append(el("span", "tab-title", "\u0E40\u0E2A\u0E49\u0E19\u0E40\u0E27\u0E25\u0E32"));
-    const x = el("span", "tab-x", "\xD7");
-    tabBtn.append(x);
-    $("#tabs").append(tabBtn);
-    const tab = {
-      file: key,
-      title: "\u0E40\u0E2A\u0E49\u0E19\u0E40\u0E27\u0E25\u0E32",
-      pane,
-      tabBtn,
-      dirty: false,
-      editor: null,
-      plain: null,
-      wiki: null,
-      gal: null,
-      timeline: true
-    };
-    tabBtn.onclick = (e) => {
-      if (e.target !== x) activate(key);
-    };
-    x.onclick = () => closeTab(key);
-    state.tabs.set(key, tab);
-    activate(key);
-    renderTimeline(pane);
+    showPanel("timeline");
+    return renderTimeline($("#tl-body"));
   }
   async function renderTimeline(pane) {
     pane.innerHTML = "";
@@ -46510,6 +48126,7 @@ ${mdToHtmlBody(md)}
       init_timeline();
       init_session_notes();
       init_project_scan();
+      init_panel_ui();
     }
   });
 
@@ -47204,37 +48821,8 @@ ${mdToHtmlBody(md)}
 
   // src/books.js
   async function openBookManager() {
-    const key = "::books::";
-    if (state.tabs.has(key)) {
-      activate(key);
-      return renderBookManager(state.tabs.get(key).pane);
-    }
-    const pane = el("div", "pane");
-    $("#panes").append(pane);
-    const tabBtn = el("div", "tab");
-    tabBtn.append(el("span", "tab-title", "\u0E08\u0E31\u0E14\u0E01\u0E32\u0E23\u0E40\u0E25\u0E48\u0E21"));
-    const x = el("span", "tab-x", "\xD7");
-    tabBtn.append(x);
-    $("#tabs").append(tabBtn);
-    const tab = {
-      file: key,
-      title: "\u0E08\u0E31\u0E14\u0E01\u0E32\u0E23\u0E40\u0E25\u0E48\u0E21",
-      pane,
-      tabBtn,
-      dirty: false,
-      editor: null,
-      plain: null,
-      wiki: null,
-      gal: null,
-      books: true
-    };
-    tabBtn.onclick = (e) => {
-      if (e.target !== x) activate(key);
-    };
-    x.onclick = () => closeTab(key);
-    state.tabs.set(key, tab);
-    activate(key);
-    renderBookManager(pane);
+    showPanel("books");
+    return renderBookManager($("#books-body"));
   }
   async function renderBookManager(pane) {
     pane.innerHTML = "";
@@ -47449,6 +49037,7 @@ ${mdToHtmlBody(md)}
   var init_books = __esm({
     "src/books.js"() {
       init_app();
+      init_panel_ui();
       init_section_ops();
       init_core();
       init_gallery();
@@ -47463,7 +49052,8 @@ ${mdToHtmlBody(md)}
     createProjectCard: () => createProjectCard,
     openHome: () => openHome,
     renderHome: () => renderHome,
-    renderHomePanel: () => renderHomePanel
+    renderHomePanel: () => renderHomePanel,
+    showHomeDialog: () => showHomeDialog
   });
   async function openHome() {
     const key = "::home::";
@@ -47610,7 +49200,7 @@ ${mdToHtmlBody(md)}
       grid.append(el("div", "home-empty", "\u0E40\u0E01\u0E34\u0E14\u0E02\u0E49\u0E2D\u0E1C\u0E34\u0E14\u0E1E\u0E25\u0E32\u0E14\u0E43\u0E19\u0E01\u0E32\u0E23\u0E42\u0E2B\u0E25\u0E14\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C"));
     }
   }
-  function createProjectCard(project) {
+  function createProjectCard(project, onOpen) {
     const card = el("div", "home-card");
     const cover = el("div", "home-card-cover");
     if (project.cover) {
@@ -47648,12 +49238,59 @@ ${mdToHtmlBody(md)}
       e.stopPropagation();
       await kapi.pushRecent(project.root).catch(() => {
       });
+      onOpen?.();
       await loadProject(project.root);
     };
     body.append(openBtn);
     card.append(cover, body);
     card.addEventListener("click", () => openBtn.click());
     return card;
+  }
+  async function showHomeDialog() {
+    const ov = el("div", "k-overlay");
+    ov.style.zIndex = "90";
+    const box = el("div", "k-dialog k-wide");
+    box.style.maxWidth = "1100px";
+    box.style.minWidth = "720px";
+    const head = el("div", "home-head");
+    head.append(el("h2", "home-title", "Killian 2"));
+    const actions = el("div", "home-actions");
+    const newBtn = el("button", "k-ok", "+ \u0E2A\u0E23\u0E49\u0E32\u0E07\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C\u0E43\u0E2B\u0E21\u0E48");
+    const openBtn = el("button", null, "\u{1F4C2} \u0E40\u0E1B\u0E34\u0E14");
+    const viewBtn = el("button", null, "\u{1F4CB}");
+    viewBtn.title = "\u0E2A\u0E25\u0E31\u0E1A\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07 (\u0E01\u0E32\u0E23\u0E4C\u0E14 / \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23)";
+    actions.append(newBtn, openBtn, viewBtn);
+    const grid = el("div", "home-grid");
+    box.append(head, actions, grid);
+    ov.append(box);
+    document.body.append(ov);
+    ov.onclick = (e) => {
+      if (e.target === ov) ov.remove();
+    };
+    newBtn.onclick = () => {
+      ov.remove();
+      newProject();
+    };
+    openBtn.onclick = async () => {
+      const projectPath = await kapi.openProjectDialog?.();
+      if (projectPath) {
+        ov.remove();
+        const { loadProject: loadProject2 } = await Promise.resolve().then(() => (init_app(), app_exports));
+        await loadProject2(projectPath);
+      }
+    };
+    document.addEventListener("keydown", function esc2(e) {
+      if (e.key === "Escape") {
+        ov.remove();
+        document.removeEventListener("keydown", esc2);
+      }
+    });
+    viewBtn.onclick = () => {
+      grid.classList.toggle("list");
+      viewBtn.textContent = grid.classList.contains("list") ? "\u{1F4F1}" : "\u{1F4CB}";
+    };
+    await loadPanelProjects(grid, () => ov.remove());
+    return ov;
   }
   async function renderHomePanel(host2) {
     if (!host2 || host2.dataset.ready === "1") return;
@@ -47665,14 +49302,10 @@ ${mdToHtmlBody(md)}
     const newBtn = el("button", "k-ok", "+ \u0E2A\u0E23\u0E49\u0E32\u0E07\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C\u0E43\u0E2B\u0E21\u0E48");
     const openBtn = el("button", null, "\u{1F4C2} \u0E40\u0E1B\u0E34\u0E14");
     actions.append(newBtn, openBtn);
-    const list = el("div", "home-panel-list");
-    list.id = "home-grid";
+    const list = el("div", "home-grid");
     wrap2.append(head, actions, list);
     host2.append(wrap2);
-    newBtn.onclick = () => {
-      const { newProject: newProject2 } = Promise.resolve().then(() => (init_app(), app_exports));
-      newProject2();
-    };
+    newBtn.onclick = () => newProject();
     openBtn.onclick = async () => {
       const projectPath = await kapi.openProjectDialog?.();
       if (projectPath) {
@@ -47683,7 +49316,7 @@ ${mdToHtmlBody(md)}
     await loadPanelProjects(list);
     return wrap2;
   }
-  async function loadPanelProjects(grid) {
+  async function loadPanelProjects(grid, onOpen) {
     grid.innerHTML = "";
     try {
       const recent = await kapi.listRecent().catch(() => []);
@@ -47755,26 +49388,10 @@ ${mdToHtmlBody(md)}
         return;
       }
       projects.sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0));
-      for (const p of projects) {
-        const item = el("div", "home-panel-item");
-        const info = el("div", "home-panel-info");
-        info.append(el("span", "home-panel-name", p.title));
-        info.append(el("span", "home-panel-detail", `${p.totalScenes} \u0E09\u0E32\u0E01 \xB7 ${p.totalWords.toLocaleString()} \u0E04\u0E33 \xB7 ${p.dateStr}`));
-        const openB = el("button", "k-ok", "\u0E40\u0E1B\u0E34\u0E14");
-        openB.onclick = async (e) => {
-          e.stopPropagation();
-          await kapi.pushRecent(p.root).catch(() => {
-          });
-          const { loadProject: loadProject2 } = await Promise.resolve().then(() => (init_app(), app_exports));
-          await loadProject2(p.root);
-        };
-        item.append(info, openB);
-        item.addEventListener("click", () => openB.click());
-        grid.append(item);
-      }
+      for (const p of projects) grid.append(createProjectCard(p, onOpen));
     } catch (e) {
       log("error", "home-panel: \u0E42\u0E2B\u0E25\u0E14\u0E25\u0E49\u0E21\u0E40\u0E2B\u0E25\u0E27", e);
-      grid.append(el("div", "dim", "\u0E40\u0E01\u0E34\u0E14\u0E02\u0E49\u0E2D\u0E1C\u0E34\u0E14\u0E1E\u0E25\u0E32\u0E14"));
+      grid.append(el("div", "home-empty", "\u0E40\u0E01\u0E34\u0E14\u0E02\u0E49\u0E2D\u0E1C\u0E34\u0E14\u0E1E\u0E25\u0E32\u0E14\u0E43\u0E19\u0E01\u0E32\u0E23\u0E42\u0E2B\u0E25\u0E14\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C"));
     }
   }
   var init_home_ui = __esm({
@@ -54767,1381 +56384,15 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
     }
   });
 
-  // src/panels/panel-layout.js
-  function panel(id, title = "") {
-    return { type: "panel", id, title };
-  }
-  function tabs(children, active = 0, id = nid("t")) {
-    return { type: "tabs", id, children, active };
-  }
-  function dock(dir, children, sizes, id = nid("d")) {
-    return { type: "dock", id, dir, children, sizes: sizes || evenSizes(children.length) };
-  }
-  function evenSizes(n) {
-    return Array.from({ length: n }, () => +(1 / n).toFixed(4));
-  }
-  function normalizeSizes(sizes) {
-    const s = (sizes || []).map((v) => isFinite(v) && v > 0 ? v : 0);
-    if (!s.length) return [];
-    const sum = s.reduce((a, b) => a + b, 0);
-    if (sum <= 0) return evenSizes(s.length);
-    return s.map((v) => +(v / sum).toFixed(4));
-  }
-  function insertSize(sizes, at) {
-    const prev = (sizes || []).map((v) => isFinite(v) && v > 0 ? v : 0);
-    const n = prev.length;
-    if (!n) return [1];
-    const sum = prev.reduce((a, b) => a + b, 0);
-    const share = 1 / (n + 1);
-    const out = sum > 0 ? prev.map((v) => +(v * (1 - share) / sum).toFixed(4)) : prev.slice();
-    out.splice(Math.max(0, Math.min(at | 0, n)), 0, +share.toFixed(4));
-    return out;
-  }
-  function keepSizes(sizes, keep) {
-    const prev = sizes || [];
-    const fallback = prev.length ? 1 / prev.length : 1;
-    return normalizeSizes(keep.map((i2) => isFinite(prev[i2]) ? prev[i2] : fallback));
-  }
-  function snapZone(px, py, rect, edge = 0.25) {
-    const { x, y, w, h } = rect;
-    if (px < x || px > x + w || py < y || py > y + h) return null;
-    const rx = (px - x) / w, ry = (py - y) / h;
-    const dl = rx, dr = 1 - rx, dt = ry, db = 1 - ry;
-    const min = Math.min(dl, dr, dt, db);
-    if (min > edge) return "center";
-    if (min === dl) return "left";
-    if (min === dr) return "right";
-    if (min === dt) return "top";
-    return "bottom";
-  }
-  function walk(node, fn, parent = null) {
-    fn(node, parent);
-    if (node.children) for (const c of node.children) walk(c, fn, node);
-  }
-  function findPanel(node, id) {
-    let found2 = null;
-    walk(node, (n) => {
-      if (n.type === "panel" && n.id === id) found2 = n;
-    });
-    return found2;
-  }
-  function locate(root, id) {
-    let res = null;
-    walk(root, (n) => {
-      if (n.children) {
-        const i2 = n.children.findIndex((c) => c.type === "panel" ? c.id === id : c.id === id);
-        if (i2 >= 0) res = { parent: n, index: i2 };
-      }
-    });
-    return res;
-  }
-  function dockPanel(root, targetId, side, newPanel) {
-    root = clone(root);
-    if (side === "center") return addAsTab(root, targetId, newPanel);
-    const wantRow = side === "left" || side === "right";
-    const before = side === "left" || side === "top";
-    const loc = locate(root, targetId);
-    const targetNode = loc ? loc.parent.children[loc.index] : root;
-    const makeDock = (existing) => {
-      const kids = before ? [panelize(newPanel), existing] : [existing, panelize(newPanel)];
-      return dock(wantRow ? "row" : "col", kids);
-    };
-    if (!loc) return makeDock(root);
-    const parent = loc.parent;
-    if (parent.type === "dock" && parent.dir === (wantRow ? "row" : "col")) {
-      const at = before ? loc.index : loc.index + 1;
-      const cur = parent.sizes && parent.sizes.length === parent.children.length ? parent.sizes : evenSizes(parent.children.length);
-      parent.children.splice(at, 0, panelize(newPanel));
-      parent.sizes = insertSize(cur, at);
-    } else {
-      parent.children[loc.index] = makeDock(parent.children[loc.index]);
-    }
-    return root;
-  }
-  function panelize(p) {
-    return p.type ? p : panel(p.id, p.title);
-  }
-  function addAsTab(root, targetId, newPanel) {
-    root = clone(root);
-    const np = panelize(newPanel);
-    const loc = locate(root, targetId);
-    if (!loc) {
-      if (root.type === "tabs") {
-        root.children.push(np);
-        root.active = root.children.length - 1;
-        return root;
-      }
-      return tabs([root, np], 1);
-    }
-    if (loc.parent.type === "tabs") {
-      loc.parent.children.push(np);
-      loc.parent.active = loc.parent.children.length - 1;
-      return root;
-    }
-    const cur = loc.parent.children[loc.index];
-    if (cur.type === "tabs") {
-      cur.children.push(np);
-      cur.active = cur.children.length - 1;
-    } else loc.parent.children[loc.index] = tabs([cur, np], 1);
-    return root;
-  }
-  function activatePanel(root, panelId2) {
-    root = clone(root);
-    walk(root, (n) => {
-      if (n.type !== "tabs") return;
-      const i2 = n.children.findIndex((c) => c.id === panelId2);
-      if (i2 >= 0) n.active = i2;
-    });
-    return root;
-  }
-  function moveTab(root, tabsId, from2, to) {
-    root = clone(root);
-    let grp = null;
-    walk(root, (n) => {
-      if (n.id === tabsId && n.type === "tabs") grp = n;
-    });
-    if (!grp) return root;
-    const [m] = grp.children.splice(from2, 1);
-    grp.children.splice(to, 0, m);
-    grp.active = to;
-    return root;
-  }
-  function splitTab(root, panelId2, side = "right") {
-    root = clone(root);
-    const p = findPanel(root, panelId2);
-    if (!p) return { root, detached: null };
-    const detached = { ...p };
-    root = removePanel(root, panelId2);
-    if (side) root = root ? dockPanel(root, rootFirstPanelId(root), side, detached) : panelize(detached);
-    return { root, detached };
-  }
-  function groupPanels(root, ids) {
-    let out = clone(root);
-    if (!Array.isArray(ids) || ids.length < 2) return out;
-    const [target, ...rest] = ids;
-    if (!findPanel(out, target)) return out;
-    for (const id of rest) {
-      if (id === target) continue;
-      const p = findPanel(out, id);
-      if (!p) continue;
-      const detached = { ...p };
-      out = removePanel(out, id);
-      if (!findPanel(out, target)) return out;
-      out = addAsTab(out, target, detached);
-    }
-    return out;
-  }
-  function collapsePanel(root, id, on) {
-    root = clone(root);
-    const p = findPanel(root, id);
-    if (p) p.collapsed = on === void 0 ? !p.collapsed : !!on;
-    return root;
-  }
-  function isCollapsed(root, id) {
-    const p = findPanel(root, id);
-    return !!(p && p.collapsed);
-  }
-  function detachPanel(root, id) {
-    const p = findPanel(root, id);
-    if (!p) return { root: clone(root), detached: null };
-    return { root: removePanel(root, id), detached: { ...p, collapsed: false } };
-  }
-  function removePanel(root, id) {
-    if (!root) return null;
-    if (root.type === "panel") return root.id === id ? null : clone(root);
-    root = clone(root);
-    const prune = (node) => {
-      if (!node.children) return node;
-      const before = node.children;
-      const kids = [], keep = [];
-      for (let i2 = 0; i2 < before.length; i2++) {
-        const c = before[i2];
-        if (c.type === "panel" && c.id === id) continue;
-        const pc = prune(c);
-        if (pc.children && pc.children.length === 0) continue;
-        kids.push(pc);
-        keep.push(i2);
-      }
-      node.children = kids;
-      if (node.type === "tabs") {
-        if (node.active >= node.children.length) node.active = Math.max(0, node.children.length - 1);
-      }
-      if (node.type === "dock") {
-        node.sizes = kids.length === before.length && node.sizes && node.sizes.length === kids.length ? node.sizes : keepSizes(node.sizes, keep);
-      }
-      return node;
-    };
-    root = prune(root);
-    return collapse(root);
-  }
-  function collapse(node) {
-    if (!node.children) return node;
-    node.children = node.children.map(collapse);
-    if ((node.type === "dock" || node.type === "tabs") && node.children.length === 1) return node.children[0];
-    return node;
-  }
-  function rootFirstPanelId(root) {
-    let id = null;
-    walk(root, (n) => {
-      if (id === null && n.type === "panel") id = n.id;
-    });
-    return id;
-  }
-  function resizeDock(root, dockId, index, ratio) {
-    root = clone(root);
-    let d = null;
-    walk(root, (n) => {
-      if (n.id === dockId && n.type === "dock") d = n;
-    });
-    if (!d || index < 0 || index >= d.sizes.length - 1) return root;
-    const pair = d.sizes[index] + d.sizes[index + 1];
-    ratio = Math.max(0.05, Math.min(0.95, ratio));
-    d.sizes[index] = +(pair * ratio).toFixed(4);
-    d.sizes[index + 1] = +(pair * (1 - ratio)).toFixed(4);
-    return root;
-  }
-  function makeFloat(p, x = 80, y = 80, w = 360, h = 260) {
-    return { id: nid("f"), panel: panelize(p), x, y, w, h };
-  }
-  function panelIds(root) {
-    const ids = [];
-    walk(root, (n) => {
-      if (n.type === "panel") ids.push(n.id);
-    });
-    return ids;
-  }
-  function hasPanel(root, id) {
-    return !!(root && findPanel(root, id));
-  }
-  function tabGroupOf(root, panelId2) {
-    let grp = null;
-    walk(root, (n) => {
-      if (n.type === "tabs" && n.children.some((c) => c.id === panelId2)) grp = n;
-    });
-    return grp;
-  }
-  function clone(o) {
-    return JSON.parse(JSON.stringify(o));
-  }
-  var _uid, nid, PANEL_BUTTONS;
-  var init_panel_layout = __esm({
-    "src/panels/panel-layout.js"() {
-      _uid = 0;
-      nid = (p = "n") => `${p}${Date.now().toString(36)}${(_uid++).toString(36)}`;
-      PANEL_BUTTONS = [
-        { key: "collapse", icon: "\u25BE", title: "\u0E22\u0E48\u0E2D/\u0E02\u0E22\u0E32\u0E22", action: "collapsePanel" },
-        { key: "float", icon: "\u29C9", title: "\u0E25\u0E2D\u0E22/\u0E1C\u0E19\u0E36\u0E01", action: "toggleFloat" },
-        { key: "close", icon: "\u2715", title: "\u0E1B\u0E34\u0E14\u0E41\u0E1C\u0E07", action: "hidePanel" }
-      ];
-    }
-  });
-
-  // src/panels/panel-store.js
-  function defaultStorage() {
-    if (typeof localStorage !== "undefined") return localStorage;
-    const mem = /* @__PURE__ */ new Map();
-    return { getItem: (k) => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v), removeItem: (k) => mem.delete(k) };
-  }
-  function serializeLayout(state2) {
-    return JSON.stringify({ version: LAYOUT_VERSION, root: state2.root ?? null, floats: state2.floats ?? [] });
-  }
-  function deserializeLayout(str2) {
-    if (!str2) return null;
-    let data;
-    try {
-      data = JSON.parse(str2);
-    } catch {
-      return null;
-    }
-    data = migrate(data);
-    if (!data || data.version !== LAYOUT_VERSION) return null;
-    return { root: data.root ?? null, floats: data.floats ?? [] };
-  }
-  function migrate(data) {
-    if (!data || typeof data !== "object") return null;
-    if (data.version == null) {
-      data = { version: 1, root: data.root ?? data, floats: [] };
-    }
-    return data;
-  }
-  function pick(o, keys2) {
-    const out = {};
-    for (const k of keys2) if (o[k] !== void 0) out[k] = o[k];
-    return out;
-  }
-  var LAYOUT_VERSION, KEY, PanelStore, PanelManager;
-  var init_panel_store = __esm({
-    "src/panels/panel-store.js"() {
-      init_panel_layout();
-      LAYOUT_VERSION = 1;
-      KEY = "k2-panel-layout";
-      PanelStore = class {
-        constructor(storage = defaultStorage(), key = KEY) {
-          this.storage = storage;
-          this.key = key;
-          this.root = null;
-          this.floats = [];
-          this.listeners = /* @__PURE__ */ new Set();
-        }
-        load() {
-          const parsed = deserializeLayout(this.storage.getItem(this.key));
-          if (parsed) {
-            this.root = parsed.root;
-            this.floats = parsed.floats;
-          }
-          return !!parsed;
-        }
-        save() {
-          this.storage.setItem(this.key, serializeLayout({ root: this.root, floats: this.floats }));
-        }
-        reset() {
-          this.root = null;
-          this.floats = [];
-          this.storage.removeItem(this.key);
-          this._emit();
-        }
-        // อัปเดต layout (ผ่านฟังก์ชันจาก panel-layout) แล้วบันทึก + แจ้ง listener อัตโนมัติ
-        update(nextRoot) {
-          this.root = nextRoot;
-          this.save();
-          this._emit();
-        }
-        setFloats(floats) {
-          this.floats = floats;
-          this.save();
-          this._emit();
-        }
-        onChange(fn) {
-          this.listeners.add(fn);
-          return () => this.listeners.delete(fn);
-        }
-        _emit() {
-          for (const fn of this.listeners) fn(this.root, this.floats);
-        }
-      };
-      PanelManager = class {
-        constructor({ storage, key, store } = {}) {
-          this.store = store || new PanelStore(storage, key);
-          this.registry = /* @__PURE__ */ new Map();
-        }
-        get root() {
-          return this.store.root;
-        }
-        get floats() {
-          return this.store.floats;
-        }
-        layout() {
-          return { root: this.store.root, floats: this.store.floats };
-        }
-        // ---- registry ----
-        /** Register a panel definition. Must be called before load() so unknown ids can be pruned. */
-        registerPanel(id, opts = {}) {
-          const def = {
-            id,
-            title: opts.title || id,
-            icon: opts.icon || "",
-            render: opts.render || null,
-            closable: opts.closable !== false,
-            floatable: opts.floatable !== false,
-            defaultSide: opts.defaultSide || "left",
-            defaultSize: opts.defaultSize || null
-          };
-          this.registry.set(id, def);
-          return def;
-        }
-        unregisterPanel(id) {
-          this.hidePanel(id);
-          return this.registry.delete(id);
-        }
-        getPanel(id) {
-          return this.registry.get(id) || null;
-        }
-        registered() {
-          return [...this.registry.keys()];
-        }
-        // ---- สถานะ ----
-        isDocked(id) {
-          return !!(this.root && hasPanel(this.root, id));
-        }
-        isFloating(id) {
-          return this.floats.some((f) => f.panel.id === id);
-        }
-        isOpen(id) {
-          return this.isDocked(id) || this.isFloating(id);
-        }
-        openIds() {
-          return [...this.root ? panelIds(this.root) : [], ...this.floats.map((f) => f.panel.id)];
-        }
-        _node(id) {
-          const d = this.registry.get(id);
-          return { type: "panel", id, title: d ? d.title : id };
-        }
-        // ---- แสดง/ซ่อน ----
-        /** Show a panel: docks it on first use, otherwise brings it to front (tab + un-collapse). */
-        showPanel(id, opts = {}) {
-          const def = this.registry.get(id);
-          if (!def) return false;
-          if (this.isFloating(id)) {
-            this._toFront(id);
-            return true;
-          }
-          if (this.isDocked(id)) {
-            this.store.update(collapsePanel(activatePanel(this.root, id), id, false));
-            return true;
-          }
-          if (!this.root) {
-            this.store.update(this._node(id));
-            return true;
-          }
-          const side = opts.side || def.defaultSide || "left";
-          const target = this._target(opts.targetId);
-          this.store.update(dockPanel(this.root, target, side, this._node(id)));
-          return true;
-        }
-        /** Close a panel (✕) — removes it from the tree and from floating windows. */
-        hidePanel(id) {
-          const def = this.registry.get(id);
-          if (def && def.closable === false) return false;
-          let changed = false;
-          if (this.isFloating(id)) {
-            this.store.setFloats(this.floats.filter((f) => f.panel.id !== id));
-            changed = true;
-          }
-          if (this.isDocked(id)) {
-            this.store.update(removePanel(this.root, id));
-            changed = true;
-          }
-          return changed;
-        }
-        togglePanel(id, opts) {
-          return this.isOpen(id) ? this.hidePanel(id) : this.showPanel(id, opts);
-        }
-        // ---- ผนึก / ลอย ----
-        /** Dock a panel to `side` of `targetId` (moves it if it is floating or docked elsewhere). */
-        dockPanel(id, side = "left", targetId) {
-          let node = null;
-          const fl = this.floats.find((f) => f.panel.id === id);
-          if (fl) {
-            node = fl.panel;
-            this.store.setFloats(this.floats.filter((f) => f !== fl));
-          }
-          if (!node && this.isDocked(id)) {
-            const d = detachPanel(this.root, id);
-            node = d.detached;
-            this.store.update(d.root);
-          }
-          if (!node) node = this._node(id);
-          if (!this.root) {
-            this.store.update({ type: "panel", id: node.id, title: node.title });
-            return true;
-          }
-          this.store.update(dockPanel(this.root, this._target(targetId), side, node));
-          return true;
-        }
-        /** Pop a panel out into a floating window (⧉). */
-        floatPanel(id, box = {}) {
-          const def = this.registry.get(id);
-          if (def && def.floatable === false) return false;
-          if (this.isFloating(id)) {
-            this._toFront(id);
-            return true;
-          }
-          let node = this._node(id);
-          if (this.isDocked(id)) {
-            const d = detachPanel(this.root, id);
-            node = d.detached || node;
-            this.store.update(d.root);
-          }
-          const f = makeFloat(node, box.x ?? 80, box.y ?? 80, box.w ?? 360, box.h ?? 260);
-          this.store.setFloats([...this.floats, f]);
-          return true;
-        }
-        toggleFloat(id, box) {
-          return this.isFloating(id) ? this.dockPanel(id, box && box.side) : this.floatPanel(id, box);
-        }
-        /** Move/resize a floating window (drag + resize handle). */
-        moveFloat(id, box = {}) {
-          const next = this.floats.map((f) => f.panel.id === id ? { ...f, ...pick(box, ["x", "y", "w", "h"]) } : f);
-          this.store.setFloats(next);
-          return true;
-        }
-        _toFront(id) {
-          const f = this.floats.find((x) => x.panel.id === id);
-          if (!f) return;
-          this.store.setFloats([...this.floats.filter((x) => x !== f), f]);
-        }
-        // ---- แท็บ / กลุ่ม ----
-        /** Merge panels into a single tab group, anchored at ids[0]. */
-        groupPanels(ids) {
-          if (!Array.isArray(ids) || ids.length < 2) return false;
-          for (const id of ids) if (this.isFloating(id)) this.dockPanel(id, "center", ids[0]);
-          if (!this.root) return false;
-          this.store.update(groupPanels(this.root, ids.filter((id) => this.isDocked(id))));
-          return true;
-        }
-        /** Pull a panel out of its tab group and dock it to `side` (null → float it). */
-        ungroupPanel(id, side = "right") {
-          if (!this.isDocked(id)) return false;
-          if (!side) return this.floatPanel(id);
-          this.store.update(splitTab(this.root, id, side).root);
-          return true;
-        }
-        activatePanel(id) {
-          if (!this.isDocked(id)) return false;
-          this.store.update(activatePanel(this.root, id));
-          return true;
-        }
-        moveTab(tabsId, from2, to) {
-          if (!this.root) return false;
-          this.store.update(moveTab(this.root, tabsId, from2, to));
-          return true;
-        }
-        // ---- ย่อ / ปรับขนาด ----
-        /** Collapse (▾) — pass `on` to force, omit to toggle. */
-        collapsePanel(id, on) {
-          if (this.isFloating(id)) {
-            const next = this.floats.map((f) => f.panel.id === id ? { ...f, panel: { ...f.panel, collapsed: on === void 0 ? !f.panel.collapsed : !!on } } : f);
-            this.store.setFloats(next);
-            return true;
-          }
-          if (!this.isDocked(id)) return false;
-          this.store.update(collapsePanel(this.root, id, on));
-          return true;
-        }
-        isCollapsed(id) {
-          const f = this.floats.find((x) => x.panel.id === id);
-          if (f) return !!f.panel.collapsed;
-          return !!(this.root && isCollapsed(this.root, id));
-        }
-        resize(dockId, index, ratio) {
-          if (!this.root) return false;
-          this.store.update(resizeDock(this.root, dockId, index, ratio));
-          return true;
-        }
-        // ---- persist ----
-        save() {
-          this.store.save();
-        }
-        /** Load the saved layout, dropping panels that are no longer registered. */
-        load() {
-          const ok = this.store.load();
-          if (ok && this.registry.size) this._prune();
-          return ok;
-        }
-        reset() {
-          this.store.reset();
-        }
-        onChange(fn) {
-          return this.store.onChange(fn);
-        }
-        _prune() {
-          let r = this.store.root;
-          if (r) {
-            for (const id of panelIds(r)) if (!this.registry.has(id)) r = removePanel(r, id);
-          }
-          this.store.root = r;
-          this.store.floats = this.store.floats.filter((f) => this.registry.has(f.panel.id));
-          this.store.save();
-          this.store._emit();
-        }
-        //   → onChange ไม่ยิง UI ค้างกับต้นไม้เก่า
-        _target(id) {
-          if (id && hasPanel(this.root, id)) return id;
-          return panelIds(this.root)[0];
-        }
-      };
-    }
-  });
-
-  // src/panels/panel-drag.js
-  function createDropOverlay() {
-    if (_ov && _ov.el.isConnected) return _ov;
-    const box = document.createElement("div");
-    box.className = "k-drop-zone";
-    box.style.display = "none";
-    document.body.appendChild(box);
-    _ov = {
-      el: box,
-      show(rect, zone) {
-        box.dataset.zone = zone || "";
-        box.style.left = Math.round(rect.x) + "px";
-        box.style.top = Math.round(rect.y) + "px";
-        box.style.width = Math.round(rect.w) + "px";
-        box.style.height = Math.round(rect.h) + "px";
-        box.style.display = "block";
-      },
-      hide() {
-        box.style.display = "none";
-      },
-      destroy() {
-        box.remove();
-        _ov = null;
-      }
-    };
-    return _ov;
-  }
-  function zoneRect(rect, zone) {
-    const { x, y, w, h } = rect;
-    switch (zone) {
-      case "left":
-        return { x, y, w: w / 2, h };
-      case "right":
-        return { x: x + w / 2, y, w: w / 2, h };
-      case "top":
-        return { x, y, w, h: h / 2 };
-      case "bottom":
-        return { x, y: y + h / 2, w, h: h / 2 };
-      default:
-        return { x, y, w, h };
-    }
-  }
-  function detectSnapTarget(mx, my, host2, excludeId) {
-    if (!host2) return null;
-    let best = null;
-    for (const e of host2.querySelectorAll(".k-panel[data-panel-id]")) {
-      if (e.dataset.panelId === excludeId) continue;
-      if (e.closest(".k-float-panel")) continue;
-      if (e.offsetParent === null) continue;
-      const r = e.getBoundingClientRect();
-      if (!r.width || !r.height) continue;
-      const rect = { x: r.left, y: r.top, w: r.width, h: r.height };
-      const zone = snapZone(mx, my, rect);
-      if (!zone) continue;
-      const area = r.width * r.height;
-      if (!best || area < best.area) best = { targetId: e.dataset.panelId, zone, rect, area };
-    }
-    return best;
-  }
-  function startPanelDrag(e, panelId2, pm2, ctx = {}) {
-    if (e.button !== 0) return;
-    const host2 = ctx.host || document.getElementById("app-root") || document.body;
-    const sx = e.clientX, sy = e.clientY;
-    let moved = false, ghost = null;
-    const ov = createDropOverlay();
-    let hit = null;
-    const move = (ev) => {
-      if (!moved) {
-        if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < DRAG_MIN) return;
-        moved = true;
-        document.body.classList.add("k-panel-dragging");
-        ghost = document.createElement("div");
-        ghost.className = "k-drag-ghost";
-        ghost.textContent = ctx.ghostLabel || panelId2;
-        document.body.appendChild(ghost);
-      }
-      if (ghost) {
-        ghost.style.left = ev.clientX + 12 + "px";
-        ghost.style.top = ev.clientY + 14 + "px";
-      }
-      hit = detectSnapTarget(ev.clientX, ev.clientY, host2, panelId2);
-      if (hit) ov.show(zoneRect(hit.rect, hit.zone), hit.zone);
-      else ov.hide();
-    };
-    const up = (ev) => {
-      document.removeEventListener("mousemove", move);
-      document.removeEventListener("mouseup", up);
-      ov.hide();
-      if (ghost) ghost.remove();
-      document.body.classList.remove("k-panel-dragging");
-      if (!moved) return;
-      if (ctx.onReorder && ctx.onReorder(ev.clientX, ev.clientY)) return;
-      if (hit) {
-        if (hit.targetId === panelId2) return;
-        pm2.dockPanel(panelId2, hit.zone, hit.targetId);
-        return;
-      }
-      pm2.floatPanel(panelId2, {
-        x: Math.max(0, ev.clientX - 60),
-        y: Math.max(0, ev.clientY - 12),
-        w: ctx.floatW || 320,
-        h: ctx.floatH || 300
-      });
-    };
-    document.addEventListener("mousemove", move);
-    document.addEventListener("mouseup", up);
-    e.preventDefault();
-  }
-  function makePanelDraggable(header, panelId2, pm2, ctx = {}) {
-    header.addEventListener("mousedown", (e) => {
-      if (e.target.closest(".k-panel-btn") || e.target.closest(".k-panel-ctrls")) return;
-      startPanelDrag(e, panelId2, pm2, ctx);
-    });
-  }
-  function makeTabDraggable(tab, panelId2, tabsId, index, pm2, ctx = {}) {
-    tab.addEventListener("mousedown", (e) => {
-      if (e.target.closest(".k-panel-btn")) return;
-      const bar = tab.parentNode;
-      startPanelDrag(e, panelId2, pm2, {
-        ...ctx,
-        ghostLabel: ctx.ghostLabel || tab.textContent.trim(),
-        onReorder: (mx, my) => {
-          if (!bar) return false;
-          const r = bar.getBoundingClientRect();
-          if (mx < r.left || mx > r.right || my < r.top || my > r.bottom) return false;
-          const sibs = [...bar.querySelectorAll(".k-tab")];
-          let to = sibs.length - 1;
-          for (let i2 = 0; i2 < sibs.length; i2++) {
-            const sr = sibs[i2].getBoundingClientRect();
-            const mid = bar.classList.contains("k-vertical") ? sr.top + sr.height / 2 : sr.left + sr.width / 2;
-            const p = bar.classList.contains("k-vertical") ? my : mx;
-            if (p < mid) {
-              to = i2;
-              break;
-            }
-          }
-          if (to !== index) pm2.moveTab(tabsId, index, to);
-          return true;
-        }
-      });
-    });
-  }
-  function makeFloatDraggable(header, popup, panelId2, pm2, ctx = {}) {
-    header.addEventListener("mousedown", (e) => {
-      if (e.button !== 0) return;
-      if (e.target.closest(".k-panel-btn")) return;
-      const host2 = ctx.host || document.getElementById("app-root") || document.body;
-      const sx = e.clientX, sy = e.clientY;
-      const x0 = popup.offsetLeft, y0 = popup.offsetTop;
-      const ov = createDropOverlay();
-      let hit = null, moved = false;
-      const move = (ev) => {
-        if (!moved && Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < DRAG_MIN) return;
-        moved = true;
-        popup.style.left = x0 + ev.clientX - sx + "px";
-        popup.style.top = y0 + ev.clientY - sy + "px";
-        hit = detectSnapTarget(ev.clientX, ev.clientY, host2, panelId2);
-        if (hit) ov.show(zoneRect(hit.rect, hit.zone), hit.zone);
-        else ov.hide();
-      };
-      const up = () => {
-        document.removeEventListener("mousemove", move);
-        document.removeEventListener("mouseup", up);
-        ov.hide();
-        if (!moved) return;
-        if (hit) {
-          pm2.dockPanel(panelId2, hit.zone, hit.targetId);
-          return;
-        }
-        pm2.moveFloat(panelId2, { x: popup.offsetLeft, y: popup.offsetTop });
-      };
-      document.addEventListener("mousemove", move);
-      document.addEventListener("mouseup", up);
-      e.preventDefault();
-    });
-  }
-  var DRAG_MIN, _ov;
-  var init_panel_drag = __esm({
-    "src/panels/panel-drag.js"() {
-      init_panel_layout();
-      DRAG_MIN = 8;
-      _ov = null;
-    }
-  });
-
-  // src/panels/panel-renderer.js
-  function renderPanelLayout(container, pm2, opts = {}) {
-    if (!container) return;
-    container.innerHTML = "";
-    const root = pm2.store.root;
-    if (root) {
-      const tree = renderNode(root, pm2, opts, 0);
-      if (tree) {
-        tree.classList.add("k-panel-root");
-        container.appendChild(tree);
-      }
-    }
-    for (const f of pm2.store.floats || []) renderFloatPanel(f, pm2, opts, container);
-    markDocsChain(container);
-    return container;
-  }
-  function renderNode(node, pm2, opts, depth) {
-    if (!node) return null;
-    switch (node.type) {
-      case "dock":
-        return renderDock(node, pm2, opts, depth);
-      case "tabs":
-        return renderTabs(node, pm2, opts, depth);
-      case "panel":
-        return renderPanel(node, pm2, opts, depth);
-      default:
-        return null;
-    }
-  }
-  function metaOf(opts, id) {
-    const m = opts.meta;
-    const v = m && (typeof m.get === "function" ? m.get(id) : m[id]);
-    return v || {};
-  }
-  function isFixed(node, opts) {
-    return node && node.type === "panel" && !!metaOf(opts, node.id).fixed;
-  }
-  function renderDock(node, pm2, opts, depth) {
-    const box = el("div", "k-dock");
-    box.dataset.dockId = node.id;
-    box.dataset.dir = node.dir === "row" ? "row" : "col";
-    const kids = node.children || [];
-    const growSum = kids.reduce((a, k, i2) => a + (isFixed(k, opts) ? 0 : node.sizes?.[i2] ?? 1), 0) || 1;
-    for (let i2 = 0; i2 < kids.length; i2++) {
-      const childEl = renderNode(kids[i2], pm2, opts, depth + 1);
-      if (!childEl) continue;
-      if (isFixed(kids[i2], opts)) {
-        childEl.style.flex = "0 0 auto";
-      } else {
-        childEl.style.flexGrow = String((node.sizes?.[i2] ?? 1) / growSum);
-        childEl.style.flexShrink = "1";
-        childEl.style.flexBasis = "0%";
-      }
-      box.appendChild(childEl);
-      const next = kids[i2 + 1];
-      if (next && !isFixed(kids[i2], opts) && !isFixed(next, opts)) {
-        box.appendChild(createResizeHandle(node.id, i2, node.dir, pm2));
-      }
-    }
-    return box;
-  }
-  function renderTabs(node, pm2, opts, depth) {
-    const box = el("div", "k-tab-group");
-    box.dataset.tabsId = node.id;
-    const strip = !!node.collapsed;
-    if (strip) box.classList.add("icon-strip");
-    const bar = el("div", "k-tab-bar" + (strip ? " k-vertical" : ""));
-    const kids = node.children || [];
-    const active = Math.max(0, Math.min(node.active | 0, kids.length - 1));
-    for (let i2 = 0; i2 < kids.length; i2++) {
-      const child = kids[i2];
-      const md = metaOf(opts, child.id);
-      const tab = el("div", "k-tab" + (i2 === active ? " active" : ""));
-      tab.dataset.index = String(i2);
-      tab.dataset.panelId = child.id;
-      tab.appendChild(iconSpan(md.icon, "k-tab-icon"));
-      tab.appendChild(el("span", "k-tab-title", md.title || child.title || child.id));
-      tab.title = md.title || child.title || child.id;
-      tab.onclick = () => {
-        if (strip) {
-          toggleStrip(node.id, pm2, false);
-          pm2.activatePanel(child.id);
-          return;
-        }
-        pm2.activatePanel(child.id);
-      };
-      makeTabDraggable(tab, child.id, node.id, i2, pm2, { host: opts.host });
-      bar.appendChild(tab);
-    }
-    const strBtn = el("span", "k-panel-btn k-strip-btn", strip ? "\xBB" : "\xAB");
-    strBtn.title = strip ? "\u0E04\u0E25\u0E35\u0E48\u0E01\u0E25\u0E38\u0E48\u0E21\u0E41\u0E17\u0E47\u0E1A" : "\u0E22\u0E48\u0E2D\u0E40\u0E1B\u0E47\u0E19\u0E41\u0E16\u0E1A\u0E44\u0E2D\u0E04\u0E2D\u0E19";
-    strBtn.onclick = (e) => {
-      e.stopPropagation();
-      toggleStrip(node.id, pm2, !strip);
-    };
-    bar.appendChild(strBtn);
-    box.appendChild(bar);
-    const body = el("div", "k-tab-content");
-    for (let i2 = 0; i2 < kids.length; i2++) {
-      const panelEl = renderNode(kids[i2], pm2, opts, depth + 1);
-      if (!panelEl) continue;
-      panelEl.classList.add("k-tabbed");
-      if (i2 !== active) panelEl.classList.add("k-tab-hidden");
-      body.appendChild(panelEl);
-    }
-    box.appendChild(body);
-    return box;
-  }
-  function toggleStrip(tabsId, pm2, on) {
-    const root = pm2.store.root;
-    if (!root) return;
-    const next = JSON.parse(JSON.stringify(root));
-    walk(next, (n) => {
-      if (n.type === "tabs" && n.id === tabsId) n.collapsed = !!on;
-    });
-    pm2.store.update(next);
-  }
-  function renderPanel(node, pm2, opts, depth) {
-    const md = metaOf(opts, node.id);
-    const box = el("div", "k-panel");
-    box.dataset.panelId = node.id;
-    if (md.cls) box.classList.add(md.cls);
-    if (node.collapsed) box.classList.add("k-collapsed");
-    if (md.fixed) box.classList.add("k-panel-fixed");
-    if (md.noHead) box.classList.add("k-panel-nohead");
-    else {
-      const head = buildHead(node, pm2, opts, md, false);
-      box.appendChild(head);
-      makePanelDraggable(head, node.id, pm2, { host: opts.host, ghostLabel: md.title || node.title || node.id });
-    }
-    box.appendChild(buildBody(node, opts));
-    return box;
-  }
-  function buildHead(node, pm2, opts, md, floating) {
-    const head = el("div", "k-panel-head");
-    head.appendChild(iconSpan(md.icon, "k-panel-head-icon"));
-    head.appendChild(el("span", "k-panel-head-title", md.title || node.title || node.id));
-    const ctrls = el("span", "k-panel-ctrls");
-    const extras2 = opts.headExtras ? opts.headExtras(node.id) || [] : [];
-    for (const b of extras2) ctrls.appendChild(b);
-    head.appendChild(ctrls);
-    const btns = el("span", "k-panel-btns");
-    const def = pm2.registry.get(node.id) || {};
-    for (const b of PANEL_BUTTONS) {
-      if (b.key === "close" && def.closable === false) continue;
-      if (b.key === "float" && def.floatable === false) continue;
-      const btn = el(
-        "span",
-        "k-panel-btn k-panel-btn-" + b.key,
-        b.key === "float" && floating ? "\u22A1" : b.key === "collapse" && node.collapsed ? "\u25B8" : b.icon
-      );
-      btn.title = b.title;
-      btn.dataset.act = b.key;
-      btn.onclick = (e) => {
-        e.stopPropagation();
-        if (b.key === "collapse") pm2.collapsePanel(node.id);
-        else if (b.key === "close") pm2.hidePanel(node.id);
-        else if (b.key === "float") {
-          if (floating) {
-            const anchor = pm2.isDocked(opts.dockAnchor || "docs") ? opts.dockAnchor || "docs" : void 0;
-            pm2.dockPanel(node.id, def.defaultSide || "left", anchor);
-            return;
-          }
-          const host2 = e.target.closest(".k-panel");
-          const r = host2 ? host2.getBoundingClientRect() : { left: 90, top: 90, width: 320, height: 300 };
-          pm2.floatPanel(node.id, { x: r.left, y: r.top, w: Math.max(220, r.width), h: Math.max(160, r.height) });
-        }
-      };
-      btns.appendChild(btn);
-    }
-    head.appendChild(btns);
-    return head;
-  }
-  function buildBody(node, opts) {
-    const body = el("div", "k-panel-body");
-    if (opts.renderPanelBody) {
-      const content = opts.renderPanelBody(node.id, body);
-      if (content && content !== body && content.parentNode !== body) body.appendChild(content);
-    }
-    return body;
-  }
-  function iconSpan(name, cls) {
-    const s = el("span", cls);
-    if (name && hasIcon(name)) s.innerHTML = iconHtml(name, 14);
-    else if (name) s.textContent = name;
-    return s;
-  }
-  function renderFloatPanel(f, pm2, opts, container) {
-    const p = f.panel;
-    const md = metaOf(opts, p.id);
-    const pop = el("div", "k-float-panel");
-    pop.dataset.panelId = p.id;
-    pop.style.left = (f.x ?? 80) + "px";
-    pop.style.top = (f.y ?? 80) + "px";
-    pop.style.width = (f.w ?? 360) + "px";
-    pop.style.height = (f.h ?? 260) + "px";
-    if (p.collapsed) pop.classList.add("k-collapsed");
-    const head = buildHead(p, pm2, opts, md, true);
-    pop.appendChild(head);
-    pop.appendChild(buildBody(p, opts));
-    const grip = el("div", "k-panel-resize");
-    makeResizable(pop, grip, (w, h) => pm2.moveFloat(p.id, { w, h }));
-    pop.appendChild(grip);
-    makeFloatDraggable(head, pop, p.id, pm2, { host: opts.host });
-    pop.addEventListener("mousedown", () => {
-      if (typeof pm2._toFront === "function") pm2._toFront(p.id);
-    }, true);
-    (container || document.body).appendChild(pop);
-    return pop;
-  }
-  function createResizeHandle(dockId, index, dir, pm2) {
-    const row = dir === "row";
-    const h = el("div", "k-resize-handle " + (row ? "k-rh-col" : "k-rh-row"));
-    h.dataset.dockId = dockId;
-    h.dataset.index = String(index);
-    h.title = "\u0E25\u0E32\u0E01\u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E1B\u0E23\u0E31\u0E1A\u0E2A\u0E31\u0E14\u0E2A\u0E48\u0E27\u0E19 (\u0E14\u0E31\u0E1A\u0E40\u0E1A\u0E34\u0E25\u0E04\u0E25\u0E34\u0E01 = 50%)";
-    h.addEventListener("dblclick", () => pm2.resize(dockId, index, 0.5));
-    h.addEventListener("mousedown", (e) => {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      const prev = h.previousElementSibling, next = h.nextElementSibling;
-      if (!prev || !next) return;
-      const pr = prev.getBoundingClientRect(), nr = next.getBoundingClientRect();
-      const total = row ? pr.width + nr.width : pr.height + nr.height;
-      if (total <= 0) return;
-      const start = row ? e.clientX : e.clientY;
-      const base3 = row ? pr.width : pr.height;
-      const growSum = (parseFloat(prev.style.flexGrow) || 1) + (parseFloat(next.style.flexGrow) || 1);
-      let ratio = base3 / total;
-      document.body.classList.add("k-resizing");
-      const move = (ev) => {
-        const d = (row ? ev.clientX : ev.clientY) - start;
-        ratio = Math.max(0.05, Math.min(0.95, (base3 + d) / total));
-        prev.style.flexGrow = String(growSum * ratio);
-        next.style.flexGrow = String(growSum * (1 - ratio));
-      };
-      const up = () => {
-        document.body.classList.remove("k-resizing");
-        document.removeEventListener("mousemove", move);
-        document.removeEventListener("mouseup", up);
-        pm2.resize(dockId, index, ratio);
-      };
-      document.addEventListener("mousemove", move);
-      document.addEventListener("mouseup", up);
-    });
-    return h;
-  }
-  function makeResizable(box, grip, onEnd) {
-    grip.addEventListener("mousedown", (e) => {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const w0 = box.offsetWidth, h0 = box.offsetHeight, x0 = e.clientX, y0 = e.clientY;
-      const move = (ev) => {
-        box.style.width = Math.max(200, w0 + ev.clientX - x0) + "px";
-        box.style.height = Math.max(120, h0 + ev.clientY - y0) + "px";
-      };
-      const up = () => {
-        document.removeEventListener("mousemove", move);
-        document.removeEventListener("mouseup", up);
-        onEnd(box.offsetWidth, box.offsetHeight);
-      };
-      document.addEventListener("mousemove", move);
-      document.addEventListener("mouseup", up);
-    });
-  }
-  function markDocsChain(container, docsId = "docs") {
-    if (!container) return;
-    container.querySelectorAll(".k-holds-docs").forEach((e) => e.classList.remove("k-holds-docs"));
-    let n = container.querySelector(`.k-panel[data-panel-id="${docsId}"]`);
-    while (n && n !== container) {
-      n.classList.add("k-holds-docs");
-      n = n.parentElement;
-    }
-  }
-  var init_panel_renderer = __esm({
-    "src/panels/panel-renderer.js"() {
-      init_core();
-      init_icons();
-      init_panel_layout();
-      init_panel_drag();
-    }
-  });
-
-  // src/panels/panel-ui.js
-  var panel_ui_exports = {};
-  __export(panel_ui_exports, {
-    PANEL_DEFS: () => PANEL_DEFS,
-    addPanelButton: () => addPanelButton,
-    defaultLayout: () => defaultLayout,
-    getPanelManager: () => getPanelManager,
-    hidePanel: () => hidePanel,
-    initPanelSystem: () => initPanelSystem,
-    isPanelOpen: () => isPanelOpen,
-    loadPanelLayout: () => loadPanelLayout,
-    panelId: () => panelId,
-    panelMenuItems: () => panelMenuItems,
-    panelToggleState: () => panelToggleState,
-    registerPanels: () => registerPanels,
-    renderPanels: () => renderPanels,
-    resetPanelSystem: () => resetPanelSystem,
-    resetPanels: () => resetPanels,
-    savePanelLayout: () => savePanelLayout,
-    showPanel: () => showPanel,
-    togglePanel: () => togglePanel,
-    togglePanelDialog: () => togglePanelDialog
-  });
-  function titleOf(d) {
-    return d.i18n ? t(d.i18n, d.title) : d.title;
-  }
-  function getPanelManager() {
-    if (!pm) pm = new PanelManager();
-    return pm;
-  }
-  function loadPanelLayout() {
-    return getPanelManager().load();
-  }
-  function savePanelLayout() {
-    if (pm) pm.store.save();
-  }
-  function host() {
-    return document.getElementById(HOST_ID) || document.body;
-  }
-  function srcHolder() {
-    let h = document.getElementById(SRC_ID);
-    if (!h) {
-      h = el("div");
-      h.id = SRC_ID;
-      h.hidden = true;
-      document.body.appendChild(h);
-    }
-    return h;
-  }
-  function registerPanels() {
-    const m = getPanelManager();
-    for (const d of PANEL_DEFS) {
-      meta.set(d.id, { title: d.title, icon: d.icon, fixed: !!d.fixed, noHead: !!d.noHead });
-      const node = d.adopt ? $(d.adopt) : null;
-      if (node) adopted.set(d.id, node);
-      m.registerPanel(d.id, {
-        title: d.title,
-        icon: d.icon,
-        closable: d.closable !== false,
-        floatable: d.floatable !== false,
-        defaultSide: d.defaultSide || "left",
-        render: (h) => {
-          const n = adopted.get(d.id);
-          if (n) h.appendChild(n);
-          return n;
-        }
-      });
-    }
-    return m;
-  }
-  function defaultLayout() {
-    return dock("col", [
-      panel("toolbar", "\u0E41\u0E16\u0E1A\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E21\u0E37\u0E2D"),
-      dock("row", [
-        tabs([panel("tree", "\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C"), panel("outline", "Navigation")], 0),
-        panel("docs", "\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23")
-      ], [0.24, 0.76]),
-      panel("statusbar", "\u0E41\u0E16\u0E1A\u0E2A\u0E16\u0E32\u0E19\u0E30")
-    ], [0, 1, 0]);
-  }
-  function renderOpts() {
-    for (const d of PANEL_DEFS) {
-      const m = meta.get(d.id) || {};
-      meta.set(d.id, { ...m, title: titleOf(d) });
-    }
-    return {
-      meta,
-      host: host(),
-      headExtras: (id) => extras.get(id) || [],
-      renderPanelBody: (id, body) => {
-        const node = adopted.get(id);
-        if (node) {
-          body.appendChild(node);
-          return node;
-        }
-        const def = pm && pm.registry.get(id);
-        if (def && def.render) return def.render(body);
-        return body;
-      }
-    };
-  }
-  function renderPanels(force) {
-    if (!pm) return;
-    const sig = JSON.stringify({ r: pm.store.root, f: pm.store.floats });
-    if (!force && sig === lastSig) return;
-    lastSig = sig;
-    renderPanelLayout(host(), pm, renderOpts());
-    const h = host(), holder = srcHolder();
-    for (const [, node] of adopted) if (!h.contains(node)) holder.appendChild(node);
-    syncMinTray();
-  }
-  function rememberSides() {
-    const h = host();
-    const hr = h.getBoundingClientRect();
-    if (!hr.width) return;
-    for (const d of PANEL_DEFS) {
-      if (d.closable === false) continue;
-      const node = h.querySelector(`.k-panel[data-panel-id="${d.id}"]`) || document.querySelector(`.k-float-panel[data-panel-id="${d.id}"]`);
-      if (!node) continue;
-      const r = node.getBoundingClientRect();
-      if (!r.width) continue;
-      lastSide.set(d.id, r.left + r.width / 2 < hr.left + hr.width / 2 ? "left" : "right");
-    }
-  }
-  function sideOf(d) {
-    return lastSide.get(d.id) || d.defaultSide || "left";
-  }
-  function trayEl(side) {
-    const id = side === "right" ? "k-min-tray-r" : "k-min-tray-l";
-    let tray = document.getElementById(id);
-    if (!tray) {
-      tray = el("div", "k-min-tray");
-      tray.id = id;
-      document.body.appendChild(tray);
-    }
-    return tray;
-  }
-  function syncMinTray() {
-    rememberSides();
-    const closed = PANEL_DEFS.filter((d) => d.closable !== false && !pm.isOpen(d.id));
-    const want = new Map(closed.map((d) => [d.id, sideOf(d)]));
-    for (const side of ["left", "right"]) {
-      const tray = trayEl(side);
-      for (const chip of [...tray.children]) if (want.get(chip.dataset.key) !== side) chip.remove();
-      for (const d of closed) {
-        if (want.get(d.id) !== side) continue;
-        if (tray.querySelector(`[data-key="${d.id}"]`)) continue;
-        const chip = el("div", "k-min-chip", "\u25A3 " + titleOf(d));
-        chip.dataset.key = d.id;
-        chip.title = '\u0E04\u0E25\u0E34\u0E01\u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E40\u0E23\u0E35\u0E22\u0E01\u0E41\u0E1C\u0E07 "' + titleOf(d) + '" \u0E01\u0E25\u0E31\u0E1A\u0E21\u0E32';
-        chip.onclick = () => showPanel(d.id, { side: sideOf(d) });
-        tray.appendChild(chip);
-      }
-      tray.classList.toggle("on", !!tray.children.length);
-    }
-  }
-  function initPanelSystem() {
-    const m = getPanelManager();
-    if (started) {
-      renderPanels(true);
-      return m;
-    }
-    started = true;
-    registerPanels();
-    srcHolder();
-    m.load();
-    if (!m.store.root) m.store.update(defaultLayout());
-    else if (!hasPanel(m.store.root, "docs")) {
-      const anchor = panelIds(m.store.root)[0];
-      m.store.update(dockPanel(m.store.root, anchor, "right", panel("docs", "\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23")));
-    }
-    m.store.onChange(() => {
-      savePanelLayout();
-      renderPanels();
-    });
-    onLanguageChanged(() => renderPanels(true));
-    renderPanels(true);
-    return m;
-  }
-  function isPanelOpen(id) {
-    return !!pm && pm.isOpen(panelId(id));
-  }
-  function showPanel(id, opts = {}) {
-    const m = getPanelManager();
-    const pid = panelId(id);
-    if (m.isDocked(pid) && !m.isCollapsed(pid)) {
-      m.activatePanel(pid);
-      return true;
-    }
-    const o = { ...opts };
-    if (!o.targetId && m.isDocked("docs") && pid !== "docs") o.targetId = "docs";
-    return m.showPanel(pid, o);
-  }
-  function hidePanel(id) {
-    return getPanelManager().hidePanel(panelId(id));
-  }
-  function togglePanel(id, opts) {
-    const m = getPanelManager();
-    const pid = panelId(id);
-    return m.isOpen(pid) ? m.hidePanel(pid) : showPanel(pid, opts);
-  }
-  function resetPanels() {
-    const m = getPanelManager();
-    m.store.reset();
-    m.store.update(defaultLayout());
-    renderPanels(true);
-    setStatus("\u0E23\u0E35\u0E40\u0E0B\u0E47\u0E15\u0E01\u0E32\u0E23\u0E08\u0E31\u0E14\u0E27\u0E32\u0E07\u0E41\u0E1C\u0E07\u0E41\u0E25\u0E49\u0E27");
-    return true;
-  }
-  function panelMenuItems() {
-    const m = getPanelManager();
-    return PANEL_DEFS.filter((d) => d.closable !== false).map((d) => ({
-      label: (m.isOpen(d.id) ? "\u2611 " : "\u2610 ") + titleOf(d),
-      click: () => togglePanel(d.id)
-    }));
-  }
-  function panelToggleState() {
-    const m = getPanelManager();
-    const o = {};
-    for (const d of PANEL_DEFS) o[d.id] = m.isOpen(d.id);
-    return o;
-  }
-  function addPanelButton(id, node) {
-    const pid = panelId(id);
-    const list = extras.get(pid) || [];
-    if (!list.includes(node)) list.push(node);
-    extras.set(pid, list);
-    renderPanels(true);
-    return node;
-  }
-  async function togglePanelDialog() {
-    const items = panelMenuItems();
-    items.push("-");
-    items.push({ label: "\u27F2 \u0E23\u0E35\u0E40\u0E0B\u0E47\u0E15\u0E01\u0E32\u0E23\u0E08\u0E31\u0E14\u0E27\u0E32\u0E07\u0E41\u0E1C\u0E07\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14", click: () => resetPanels() });
-    try {
-      const { popupMenu: popupMenu2 } = await Promise.resolve().then(() => (init_app(), app_exports));
-      const btn = $("#tb-panels");
-      const r = btn ? btn.getBoundingClientRect() : { left: 40, bottom: 60 };
-      popupMenu2(r.left, r.bottom + 4, items);
-    } catch {
-      const ov = el("div", "k-overlay");
-      const box = el("div", "k-dialog");
-      box.append(el("div", "k-dlg-title", "\u{1F4D0} \u0E08\u0E31\u0E14\u0E01\u0E32\u0E23\u0E41\u0E1C\u0E07"));
-      for (const it of items) {
-        if (it === "-") {
-          box.append(el("hr"));
-          continue;
-        }
-        const row = el("div", "k-menu-item", it.label);
-        row.onclick = () => {
-          it.click();
-          ov.remove();
-        };
-        box.append(row);
-      }
-      const closeBtn = el("button", "k-cancel", "\u0E1B\u0E34\u0E14");
-      closeBtn.onclick = () => ov.remove();
-      const btns = el("div", "k-dlg-btns");
-      btns.append(closeBtn);
-      box.append(btns);
-      ov.append(box);
-      document.body.append(ov);
-      ov.onclick = (e) => {
-        if (e.target === ov) ov.remove();
-      };
-    }
-  }
-  function resetPanelSystem() {
-    lastSig = "";
-  }
-  var HOST_ID, SRC_ID, ALIAS, panelId, PANEL_DEFS, pm, started, lastSig, adopted, extras, meta, lastSide;
-  var init_panel_ui = __esm({
-    "src/panels/panel-ui.js"() {
-      init_core();
-      init_panel_layout();
-      init_panel_store();
-      init_panel_renderer();
-      HOST_ID = "app-root";
-      SRC_ID = "k-panel-src";
-      ALIAS = {
-        "tree-panel": "tree",
-        explorer: "tree",
-        "props-panel": "props",
-        properties: "props",
-        "outline-panel": "outline",
-        navigation: "outline",
-        "content": "docs",
-        panes: "docs"
-      };
-      panelId = (id) => ALIAS[id] || id;
-      PANEL_DEFS = [
-        { id: "toolbar", title: "\u0E41\u0E16\u0E1A\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E21\u0E37\u0E2D", icon: "layout", adopt: "#toolbar", fixed: true, noHead: true, closable: false, floatable: false },
-        { id: "tree", title: "\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C", icon: "book-content", adopt: "#tree-panel", defaultSide: "left", i18n: "panel.project" },
-        { id: "outline", title: "Navigation", icon: "list-ul", adopt: "#outline-panel", defaultSide: "left", i18n: "panel.navigation" },
-        // แผงเอกสารไม่มีหัวแผง (พื้นที่ทำงานหลัก — แถบแท็บเอกสาร #tabs ทำหน้าที่นั้นอยู่แล้ว)
-        { id: "docs", title: "\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23", icon: "file", adopt: "#content", noHead: true, closable: false, floatable: false },
-        { id: "props", title: "\u0E04\u0E38\u0E13\u0E2A\u0E21\u0E1A\u0E31\u0E15\u0E34", icon: "clipboard", adopt: "#props-panel", defaultSide: "right", i18n: "panel.properties" },
-        { id: "statusbar", title: "\u0E41\u0E16\u0E1A\u0E2A\u0E16\u0E32\u0E19\u0E30", icon: "grid", adopt: "#statusbar", fixed: true, noHead: true, closable: false, floatable: false },
-        { id: "log", title: "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01", icon: "history", adopt: "#log-panel", defaultSide: "right", closable: true, floatable: true, i18n: "panel.logTitle" },
-        { id: "search", title: "\u0E04\u0E49\u0E19\u0E2B\u0E32", icon: "search", adopt: "#search-panel", defaultSide: "left", closable: true, floatable: true, i18n: "panel.searchTitle" },
-        { id: "notes", title: "\u0E2A\u0E21\u0E38\u0E14\u0E42\u0E19\u0E49\u0E15\u0E14\u0E48\u0E27\u0E19", icon: "note", adopt: "#notes-panel", defaultSide: "right", closable: true, floatable: true, i18n: "panel.notesTitle" },
-        { id: "home", title: "\u0E2B\u0E19\u0E49\u0E32\u0E41\u0E23\u0E01", icon: "home", adopt: "#home-panel", defaultSide: "left", closable: true, floatable: true, i18n: "panel.homeTitle" },
-        { id: "comments", title: "\u0E04\u0E2D\u0E21\u0E40\u0E21\u0E19\u0E15\u0E4C", icon: "chat", adopt: "#comments-panel", defaultSide: "right", closable: true, floatable: true, i18n: "panel.commentsTitle" }
-      ];
-      pm = null;
-      started = false;
-      lastSig = "";
-      adopted = /* @__PURE__ */ new Map();
-      extras = /* @__PURE__ */ new Map();
-      meta = /* @__PURE__ */ new Map();
-      lastSide = /* @__PURE__ */ new Map();
-    }
-  });
-
   // src/layout/split-layout.js
   var split_layout_exports = {};
   __export(split_layout_exports, {
     SPLIT_VERSION: () => SPLIT_VERSION,
     SplitManager: () => SplitManager,
     SplitStore: () => SplitStore,
+    activateLeafTab: () => activateLeafTab,
+    addLeafTab: () => addLeafTab,
+    allTabIds: () => allTabIds,
     closeTab: () => closeTab2,
     deserializeSplit: () => deserializeSplit,
     dropZone: () => dropZone,
@@ -56149,10 +56400,14 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
     findLeafByTab: () => findLeafByTab,
     leaf: () => leaf,
     leafIds: () => leafIds,
+    leafTab: () => leafTab,
+    leafTabs: () => leafTabs,
     moveTabToPane: () => moveTabToPane,
+    normalizeLeaves: () => normalizeLeaves,
     paneCount: () => paneCount,
     pruneTabs: () => pruneTabs,
     removeLeaf: () => removeLeaf,
+    removeLeafTab: () => removeLeafTab,
     resizeSplit: () => resizeSplit,
     serializeSplit: () => serializeSplit,
     setLeafTab: () => setLeafTab,
@@ -56163,10 +56418,27 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
     walk: () => walk2
   });
   function leaf(tabId, id = nid2("l")) {
-    return { type: "leaf", id, tabId };
+    return syncLeaf({ type: "leaf", id, tabs: tabId == null ? [] : [tabId], active: 0 });
   }
   function split2(dir, children, sizes, id = nid2("sp")) {
     return { type: "split", id, dir, children, sizes: sizes || even(children.length) };
+  }
+  function syncLeaf(l) {
+    if (!Array.isArray(l.tabs)) l.tabs = l.tabId == null ? [] : [l.tabId];
+    l.tabs = l.tabs.filter((x) => x != null);
+    if (!Number.isInteger(l.active)) l.active = 0;
+    l.active = l.tabs.length ? Math.max(0, Math.min(l.active, l.tabs.length - 1)) : 0;
+    l.tabId = l.tabs.length ? l.tabs[l.active] : null;
+    return l;
+  }
+  function leafTab(l) {
+    return l && l.tabs && l.tabs.length ? l.tabs[l.active] ?? null : null;
+  }
+  function normalizeLeaves(root) {
+    if (root) walk2(root, (n) => {
+      if (n.type === "leaf") syncLeaf(n);
+    });
+    return root;
   }
   function walk2(node, fn, parent = null) {
     fn(node, parent);
@@ -56182,7 +56454,14 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
   function tabIds(root) {
     const o = [];
     walk2(root, (n) => {
-      if (n.type === "leaf") o.push(n.tabId);
+      if (n.type === "leaf") o.push(leafTab(n));
+    });
+    return o;
+  }
+  function allTabIds(root) {
+    const o = [];
+    walk2(root, (n) => {
+      if (n.type === "leaf") o.push(...n.tabs || []);
     });
     return o;
   }
@@ -56206,7 +56485,7 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
   function findLeafByTab(root, tabId) {
     let f = null;
     walk2(root, (n) => {
-      if (n.type === "leaf" && n.tabId === tabId) f = n;
+      if (!f && n.type === "leaf" && (n.tabs || []).includes(tabId)) f = n;
     });
     return f;
   }
@@ -56248,17 +56527,50 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
     return root;
   }
   function setLeafTab(root, leafId, tabId) {
+    return addLeafTab(root, leafId, tabId, true);
+  }
+  function addLeafTab(root, leafId, tabId, activate2 = true) {
     root = clone2(root);
     const l = findLeaf(root, leafId);
-    if (l) l.tabId = tabId;
+    if (!l || tabId == null) return root;
+    let i2 = l.tabs.indexOf(tabId);
+    if (i2 < 0) {
+      l.tabs.push(tabId);
+      i2 = l.tabs.length - 1;
+    }
+    if (activate2) l.active = i2;
+    return syncLeaf(l), root;
+  }
+  function activateLeafTab(root, leafId, tabId) {
+    root = clone2(root);
+    const l = findLeaf(root, leafId);
+    if (!l) return root;
+    const i2 = l.tabs.indexOf(tabId);
+    if (i2 >= 0) l.active = i2;
+    return syncLeaf(l), root;
+  }
+  function removeLeafTab(root, leafId, tabId) {
+    root = clone2(root);
+    const l = findLeaf(root, leafId);
+    if (!l) return root;
+    const i2 = l.tabs.indexOf(tabId);
+    if (i2 < 0) return root;
+    l.tabs.splice(i2, 1);
+    if (l.active >= i2) l.active = Math.max(0, l.active - 1);
+    syncLeaf(l);
+    if (!l.tabs.length && leafIds(root).length > 1) return removeLeaf(root, l.id);
     return root;
+  }
+  function leafTabs(root, leafId) {
+    const l = root && findLeaf(root, leafId);
+    return l ? [...l.tabs] : [];
   }
   function moveTabToPane(root, tabId, targetLeafId, side = "right") {
     const src = findLeafByTab(root, tabId);
     if (src && src.id === targetLeafId && side !== "center") return clone2(root);
     let out = clone2(root);
     if (src) {
-      out = removeLeaf(out, src.id);
+      out = removeLeafTab(out, src.id, tabId);
       if (!out) return leaf(tabId);
       if (!findLeaf(out, targetLeafId)) return out;
     }
@@ -56291,18 +56603,46 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
     return collapse2(prune(root));
   }
   function closeTab2(root, tabId) {
-    const l = root && findLeafByTab(root, tabId);
-    return l ? removeLeaf(root, l.id) : root ? clone2(root) : null;
+    if (!root) return null;
+    const out = clone2(root);
+    const emptied = [];
+    walk2(out, (n) => {
+      if (n.type !== "leaf") return;
+      const i2 = n.tabs.indexOf(tabId);
+      if (i2 < 0) return;
+      n.tabs.splice(i2, 1);
+      if (n.active >= i2) n.active = Math.max(0, n.active - 1);
+      syncLeaf(n);
+      if (!n.tabs.length) emptied.push(n.id);
+    });
+    return dropEmpty(out, emptied);
   }
   function pruneTabs(root, validTabIds) {
     if (!root) return null;
     const ok = new Set(validTabIds);
-    let out = clone2(root);
-    for (const l of leavesOf(out)) if (!ok.has(l.tabId)) {
-      out = removeLeaf(out, l.id);
-      if (!out) return null;
+    const out = clone2(root);
+    const emptied = [];
+    walk2(out, (n) => {
+      if (n.type !== "leaf" || !n.tabs.length) return;
+      const keep = n.tabs.filter((tid) => ok.has(tid));
+      if (keep.length === n.tabs.length) return;
+      const wasActive = leafTab(n);
+      n.tabs = keep;
+      n.active = Math.max(0, keep.indexOf(wasActive));
+      syncLeaf(n);
+      if (!n.tabs.length) emptied.push(n.id);
+    });
+    return dropEmpty(out, emptied, ok.has(null));
+  }
+  function dropEmpty(out, emptied, allowEmpty = false) {
+    let r = out;
+    for (const id of emptied) {
+      if (leafIds(r).length <= 1) break;
+      r = removeLeaf(r, id);
+      if (!r) return null;
     }
-    return out;
+    if (r.type === "leaf" && !r.tabs.length && !allowEmpty) return null;
+    return r;
   }
   function leavesOf(root) {
     const o = [];
@@ -56335,7 +56675,7 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
     }
     d = migrate2(d);
     if (!d || d.version !== SPLIT_VERSION) return null;
-    return d.root ?? null;
+    return normalizeLeaves(d.root ?? null);
   }
   function migrate2(d) {
     if (!d || typeof d !== "object") return null;
@@ -56450,6 +56790,32 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
           this.focusId = leafId;
           return true;
         }
+        // ───── บั๊ก #12: กลุ่มแท็บต่อช่อง — ห่อฟังก์ชันโมดูลไว้ให้ UI เรียกผ่าน manager ─────
+        /** id ของช่องที่โฟกัสอยู่ (null ถ้ายังไม่แยกจอ) */
+        focusLeafId() {
+          const l = this._focusLeaf();
+          return l ? l.id : null;
+        }
+        /** เพิ่มแท็บเข้าช่อง — ไม่ระบุช่อง = ช่องที่โฟกัสอยู่ */
+        addTab(tabId, leafId) {
+          const id = leafId || this.focusLeafId();
+          if (!id || !this.root) return false;
+          this._set(addLeafTab(this.root, id, tabId));
+          return true;
+        }
+        /** สลับแท็บที่แสดงในช่องนั้น โดยไม่ไปยุ่งกับช่องอื่น */
+        activateInLeaf(leafId, tabId) {
+          if (!this.root || !findLeaf(this.root, leafId)) return false;
+          this._set(activateLeafTab(this.root, leafId, tabId));
+          this.focusId = leafId;
+          return true;
+        }
+        /** เอาแท็บออกจากช่องนี้ (สำเนาในช่องอื่นยังอยู่) */
+        closeInLeaf(leafId, tabId) {
+          if (!this.root || !findLeaf(this.root, leafId)) return false;
+          this._set(removeLeafTab(this.root, leafId, tabId));
+          return true;
+        }
         activeTabId() {
           const l = this._focusLeaf();
           return l ? l.tabId : null;
@@ -56513,10 +56879,12 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
     makeTabSplitDraggable: () => makeTabSplitDraggable,
     openInSplit: () => openInSplit,
     paneCount: () => paneCount2,
+    refreshSplitTabs: () => refreshSplitTabs,
     renderSplit: () => renderSplit,
     renderSplitNode: () => renderSplitNode,
     resetSplit: () => resetSplit,
     resetSplitSystem: () => resetSplitSystem,
+    selectTabInPane: () => selectTabInPane,
     setLeafTab: () => setLeafTab2,
     setSplitHooks: () => setSplitHooks,
     splitDir: () => splitDir,
@@ -56561,7 +56929,7 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
   }
   function reclaimPanes(panes) {
     if (!panes) return;
-    panes.querySelectorAll(".k-split-pane > .pane").forEach((p) => panes.appendChild(p));
+    panes.querySelectorAll(".k-split-body > .pane, .k-split-pane > .pane").forEach((p) => panes.appendChild(p));
   }
   function tabOf(id) {
     const t2 = id && state.tabs.get(id);
@@ -56575,11 +56943,20 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
     const panes = panesEl();
     if (!panes) return;
     const sm = getSplitManager();
+    if (isSplit() && !_ensuring) {
+      _ensuring = true;
+      try {
+        if (ensureAllTabsInSplit()) return;
+      } finally {
+        _ensuring = false;
+      }
+    }
     reclaimPanes(panes);
     document.querySelectorAll(".pane").forEach((p) => p.classList.remove("compare-on", "k-in-split"));
     if (!isSplit()) {
       rootEl()?.remove();
       panes.classList.remove("split", "split-h");
+      document.body.classList.remove("k-split-on");
       document.querySelectorAll(".cmp-close").forEach((b) => b.remove());
       syncCompareFile();
       hooks.onRender?.();
@@ -56596,6 +56973,7 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
     if (tree) host2.appendChild(tree);
     panes.classList.add("split");
     panes.classList.toggle("split-h", splitDir() === "down");
+    document.body.classList.add("k-split-on");
     syncCompareFile();
     markCompare();
     hooks.onRender?.();
@@ -56640,15 +57018,18 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
     pane.dataset.leafId = node.id;
     pane.dataset.tabId = node.tabId || "";
     pane.addEventListener("mousedown", () => focusPane(node.id), true);
+    pane.appendChild(renderLeafTabs(node, sm));
+    const body = el("div", "k-split-body");
     const t2 = tabOf(node.tabId);
-    if (t2) pane.appendChild(t2.pane);
+    if (t2) body.appendChild(t2.pane);
     else {
       const hint = el("div", "k-split-empty");
       hint.append(el("div", "k-split-empty-icon", "\u2317"));
       hint.append(el("div", "", "\u0E0A\u0E48\u0E2D\u0E07\u0E27\u0E48\u0E32\u0E07 \u2014 \u0E25\u0E32\u0E01\u0E2B\u0E31\u0E27\u0E41\u0E17\u0E47\u0E1A\u0E21\u0E32\u0E27\u0E32\u0E07\u0E17\u0E35\u0E48\u0E19\u0E35\u0E48"));
       hint.append(el("div", "dim", "\u0E2B\u0E23\u0E37\u0E2D\u0E04\u0E25\u0E34\u0E01\u0E0A\u0E48\u0E2D\u0E07\u0E19\u0E35\u0E49\u0E41\u0E25\u0E49\u0E27\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E41\u0E17\u0E47\u0E1A\u0E14\u0E49\u0E32\u0E19\u0E1A\u0E19"));
-      pane.appendChild(hint);
+      body.appendChild(hint);
     }
+    pane.appendChild(body);
     const cb = el("div", "cmp-close", "\u2715 \u0E1B\u0E34\u0E14\u0E0A\u0E48\u0E2D\u0E07\u0E19\u0E35\u0E49");
     cb.title = "\u0E1B\u0E34\u0E14\u0E0A\u0E48\u0E2D\u0E07\u0E19\u0E35\u0E49 (\u0E41\u0E17\u0E47\u0E1A\u0E22\u0E31\u0E07\u0E40\u0E1B\u0E34\u0E14\u0E2D\u0E22\u0E39\u0E48)";
     cb.onmousedown = (e) => e.stopPropagation();
@@ -56658,6 +57039,64 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
     };
     pane.appendChild(cb);
     return pane;
+  }
+  function renderLeafTabs(node, sm) {
+    const bar = el("div", "k-split-tabs");
+    bar.dataset.leafId = node.id;
+    const cur = leafTab(node);
+    for (const id of node.tabs || []) {
+      const t2 = state.tabs.get(id);
+      const btn = el("div", "k-mtab" + (id === cur ? " on" : "") + (t2 && t2.dirty ? " dirty" : ""));
+      btn.dataset.file = id;
+      btn.title = id;
+      btn.append(el("span", "k-mtab-title", t2 && t2.title || id.split(/[\\/]/).pop()));
+      const x = el("span", "k-mtab-x", "\xD7");
+      x.title = "\u0E40\u0E2D\u0E32\u0E2D\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E0A\u0E48\u0E2D\u0E07\u0E19\u0E35\u0E49 (\u0E41\u0E17\u0E47\u0E1A\u0E22\u0E31\u0E07\u0E40\u0E1B\u0E34\u0E14\u0E2D\u0E22\u0E39\u0E48)";
+      x.onmousedown = (e) => e.stopPropagation();
+      x.onclick = (e) => {
+        e.stopPropagation();
+        sm.closeInLeaf(node.id, id);
+        if (!sm.has(id)) {
+          hooks.closeTab?.(id);
+          return;
+        }
+        const tid = sm.activeTabId();
+        if (tid && tid !== state.active?.file && state.tabs.has(tid)) hooks.activate?.(tid);
+      };
+      btn.append(x);
+      btn.onclick = (e) => {
+        if (e.target === x) return;
+        selectTabInPane(node.id, id);
+      };
+      bar.append(btn);
+    }
+    if (!(node.tabs || []).length) bar.append(el("span", "k-split-tabs-empty", "\u0E0A\u0E48\u0E2D\u0E07\u0E27\u0E48\u0E32\u0E07"));
+    makeTabSplitDraggable(bar);
+    return bar;
+  }
+  function refreshSplitTabs() {
+    for (const btn of document.querySelectorAll(".k-split-tabs .k-mtab")) {
+      const t2 = state.tabs.get(btn.dataset.file);
+      if (!t2) continue;
+      btn.classList.toggle("dirty", !!t2.dirty);
+      const ttl = btn.querySelector(".k-mtab-title");
+      if (ttl && ttl.textContent !== t2.title) ttl.textContent = t2.title;
+    }
+  }
+  function selectTabInPane(leafId, tabId) {
+    const sm = getSplitManager();
+    if (!sm.root) return false;
+    if (!sm.activateInLeaf(leafId, tabId)) return false;
+    if (state.tabs.has(tabId) && tabId !== state.active?.file && hooks.activate && !_syncing) {
+      _syncing = true;
+      try {
+        hooks.activate(tabId);
+      } finally {
+        _syncing = false;
+      }
+    }
+    markCompare();
+    return true;
   }
   function splitHandle(node, index, sm) {
     const row = node.dir !== "col";
@@ -56724,6 +57163,15 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
     }
     const l = findLeafByTab(sm.root, file);
     if (l) {
+      if (leafTab(l) !== file) {
+        _syncing = true;
+        try {
+          sm.activateInLeaf(l.id, file);
+        } finally {
+          _syncing = false;
+        }
+        return;
+      }
       if (sm.focusId !== l.id) {
         sm.focusId = l.id;
         for (const p of document.querySelectorAll(".k-split-pane")) p.classList.toggle("focus", p.dataset.leafId === l.id);
@@ -56734,10 +57182,23 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
     }
     _syncing = true;
     try {
-      sm.open(file);
+      sm.addTab(file);
     } finally {
       _syncing = false;
     }
+  }
+  function ensureAllTabsInSplit() {
+    const sm = getSplitManager();
+    if (!sm.root) return false;
+    const have = new Set(allTabIds(sm.root));
+    const missing = [...state.tabs.keys()].filter((id) => !have.has(id) && tabOf(id));
+    if (!missing.length) return false;
+    const target = sm.focusLeafId() || leafIds(sm.root)[0];
+    if (!target) return false;
+    let next = sm.root;
+    for (const id of missing) next = addLeafTab(next, target, id, false);
+    sm.store.update(next);
+    return true;
   }
   function createSplit(tabId, dir) {
     const panes = panesEl();
@@ -56804,7 +57265,12 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
     }
     if (sm.has(tabId)) {
       const l = findLeafByTab(sm.root, tabId);
-      if (l) focusPane(l.id);
+      const curLeaf = cur ? findLeafByTab(sm.root, cur) : null;
+      if (l && curLeaf && l.id === curLeaf.id) sm.splitWith(tabId, side === "down" ? "bottom" : side, l.id);
+      else if (l) {
+        sm.activateInLeaf(l.id, tabId);
+        focusPane(l.id);
+      }
       return true;
     }
     const empty2 = emptyLeafId();
@@ -56832,10 +57298,11 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
     if (!strip || strip._splitDrag) return;
     strip._splitDrag = true;
     strip.addEventListener("mousedown", (e) => {
-      const btn = e.target.closest(".tab");
-      if (!btn || e.button !== 0 || e.target.classList.contains("tab-x")) return;
+      const btn = e.target.closest(".tab, .k-mtab");
+      if (!btn || e.button !== 0 || e.target.classList.contains("tab-x") || e.target.classList.contains("k-mtab-x")) return;
       const file = fileOfTabBtn(btn);
       if (!file) return;
+      const fromLeaf = btn.parentElement?.dataset?.leafId || null;
       const sx = e.clientX, sy = e.clientY;
       let moved = false, ghost = null, hit = null;
       const ov = dropOverlay();
@@ -56863,6 +57330,7 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
         if (!moved) return;
         const sm = getSplitManager();
         if (hit) {
+          if (hit.leafId === fromLeaf && hit.zone === "center") return;
           if (hit.zone === "center") sm.moveTab(file, hit.leafId, "center");
           else sm.splitWith(file, hit.zone === "left" ? "left" : hit.zone === "top" ? "top" : hit.zone === "bottom" ? "bottom" : "right", hit.leafId);
           hooks.activate?.(file);
@@ -56883,6 +57351,7 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
     });
   }
   function fileOfTabBtn(btn) {
+    if (btn.dataset && btn.dataset.file) return btn.dataset.file;
     for (const [f, t2] of state.tabs) if (t2.tabBtn === btn) return f;
     return null;
   }
@@ -56946,6 +57415,7 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
     reclaimPanes(panes);
     rootEl()?.remove();
     panes?.classList.remove("split", "split-h");
+    document.body.classList.remove("k-split-on");
     document.querySelectorAll(".pane").forEach((p) => p.classList.remove("compare-on", "k-in-split"));
     document.querySelectorAll(".cmp-close").forEach((b) => b.remove());
     state.compareFile = null;
@@ -56973,15 +57443,16 @@ ${String(opts.context).slice(0, 1500)}` : "") + "\n\n\u0E2A\u0E48\u0E07\u0E40\u0
     resetSplitSystem();
     renderSplit();
   }
-  var ROOT_ID, hooks, mgr, _syncing, _ov2;
+  var ROOT_ID, hooks, mgr, _syncing, _ensuring, _ov2;
   var init_split_ui = __esm({
     "src/layout/split-ui.js"() {
       init_core();
       init_split_layout();
       ROOT_ID = "split-root";
-      hooks = { activate: null, onRender: null };
+      hooks = { activate: null, onRender: null, closeTab: null };
       mgr = null;
       _syncing = false;
+      _ensuring = false;
       _ov2 = null;
     }
   });
@@ -58564,46 +59035,23 @@ ${preview}` + (found2.length > 8 ? `
     return board;
   }
   async function openKanban() {
-    const key = "::kanban::";
-    if (state.tabs.has(key)) {
-      activate(key);
-      return;
-    }
     const b = await getBoard();
     if (!b) {
       setStatus("\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E09\u0E1A\u0E31\u0E1A\u0E23\u0E48\u0E32\u0E07\u0E01\u0E48\u0E2D\u0E19\u0E08\u0E36\u0E07\u0E08\u0E30\u0E43\u0E0A\u0E49 Kanban \u0E44\u0E14\u0E49");
       return;
     }
-    const pane = el("div", "pane kanban-pane");
-    pane.id = "kanban-pane";
-    $("#panes").append(pane);
-    const tabBtn = el("div", "tab");
-    tabBtn.append(el("span", "tab-title", "\u{1F4CB} Kanban"));
-    const x = el("span", "tab-x", "\xD7");
-    tabBtn.append(x);
-    $("#tabs").append(tabBtn);
-    const tab = {
-      file: key,
-      title: "\u{1F4CB} Kanban",
-      pane,
-      tabBtn,
-      dirty: false,
-      editor: null,
-      plain: null,
-      wiki: null,
-      gal: null,
-      net: null,
-      planner: null,
-      kanban: true
-    };
-    tabBtn.onclick = (e) => {
-      if (e.target !== x) activate(key);
-    };
-    x.onclick = () => closeTab(key);
-    state.tabs.set(key, tab);
-    activate(key);
-    uiPane = pane;
-    uiTabBtn = tabBtn;
+    showPanel("kanban");
+    return renderKanbanPanel();
+  }
+  async function renderKanbanPanel() {
+    const b = await getBoard();
+    if (!b) {
+      setStatus("\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E09\u0E1A\u0E31\u0E1A\u0E23\u0E48\u0E32\u0E07\u0E01\u0E48\u0E2D\u0E19\u0E08\u0E36\u0E07\u0E08\u0E30\u0E43\u0E0A\u0E49 Kanban \u0E44\u0E14\u0E49");
+      return;
+    }
+    uiPane = $("#kanban-body");
+    if (!uiPane) return;
+    uiPane.classList.add("kanban-pane");
     renderKanban(b);
   }
   function renderKanban(b) {
@@ -58707,15 +59155,16 @@ ${preview}` + (found2.length > 8 ? `
     uiPane.append(wrap2);
   }
   function refreshKanbanUI() {
-    if (!uiPane || !board) return;
+    if (!board) return;
+    if (isPanelOpen("kanban")) uiPane = $("#kanban-body");
+    if (!uiPane) return;
     renderKanban(board);
   }
   function resetKanban() {
     board = null;
     uiPane = null;
-    uiTabBtn = null;
   }
-  var board, uiPane, uiTabBtn;
+  var board, uiPane;
   var init_kanban_ui = __esm({
     "src/kanban/kanban-ui.js"() {
       init_core();
@@ -58724,9 +59173,9 @@ ${preview}` + (found2.length > 8 ? `
       init_app();
       init_project_scan();
       init_ui();
+      init_panel_ui();
       board = null;
       uiPane = null;
-      uiTabBtn = null;
     }
   });
 
@@ -61854,6 +62303,7 @@ ${sc.body || ""}
     catIconHtml: () => catIconHtml,
     catKeyFrom: () => catKeyFrom,
     catLabel: () => catLabel,
+    clearFeaturePanels: () => clearFeaturePanels,
     closeTab: () => closeTab,
     entityCreateDialog: () => entityCreateDialog,
     eventDialog: () => eventDialog,
@@ -61862,6 +62312,7 @@ ${sc.body || ""}
     fmtTs: () => fmtTs,
     guid: () => guid,
     invertRole: () => invertRole,
+    isFeaturePanel: () => isFeaturePanel,
     listRefTargets: () => listRefTargets,
     listSnapshots: () => listSnapshots,
     loadAllEntities: () => loadAllEntities,
@@ -61887,7 +62338,10 @@ ${sc.body || ""}
     refreshAllSpell: () => refreshAllSpell,
     refreshCommentsPanel: () => refreshCommentsPanel,
     relationDialog: () => relationDialog,
+    renderFeaturePanel: () => renderFeaturePanel,
+    renderOpenFeaturePanels: () => renderOpenFeaturePanels,
     resolveImg: () => resolveImg,
+    revertTab: () => revertTab,
     safeName: () => safeName,
     saveMaps: () => saveMaps,
     saveProjectMeta: () => saveProjectMeta,
@@ -61921,6 +62375,11 @@ ${sc.body || ""}
     } else {
       document.documentElement.style.removeProperty("--ed-font");
     }
+    if (state.settings.spFontFamily) {
+      document.documentElement.style.setProperty("--sp-font", state.settings.spFontFamily);
+    } else {
+      document.documentElement.style.removeProperty("--sp-font");
+    }
     applySpellcheck();
     refreshAllSpell();
     restartAutosave();
@@ -61933,6 +62392,9 @@ ${sc.body || ""}
     R.setProperty("--ed-fs", edfs + "px");
     R.setProperty("--sp-fs", spfs + "px");
     R.setProperty("--page-scale", pageScale.toFixed(3));
+    document.querySelectorAll(".pane > .workspace").forEach((ws) => {
+      ws.style.minWidth = pageScale * 100 + "%";
+    });
     const slider = $("#zoom-slider");
     if (slider) slider.value = String(Math.round(pageScale * 100));
     const lbl = $("#zoom-label");
@@ -62116,6 +62578,7 @@ ${sc.body || ""}
     _cmMigrated.clear();
     clearCommentAnchors();
     imgURLBase.clear();
+    clearFeaturePanels();
     $("#tree").innerHTML = "";
     $("#outline").innerHTML = "";
     refreshToolbar();
@@ -62156,8 +62619,10 @@ ${sc.body || ""}
     await loadTemplates();
     warmInverse();
     loadPlugins();
-    if (!state.tabs.size) openDashboard();
     initPanelSystem();
+    onPanelLayoutChange(refreshToolbar);
+    await renderOpenFeaturePanels();
+    if (!state.tabs.size) openDashboard();
     initThesaurus().catch(() => {
     });
     ensureAutoLink().catch(() => {
@@ -63855,7 +64320,7 @@ ${sc.body || ""}
     mapsState_C.s.data.maps.push(m);
     mapsState_C.s.currentId = m.id;
     await saveMaps(mapsState_C.s.data);
-    renderMaps(state.tabs.get("::maps::").pane);
+    renderMaps($("#maps-body"));
   }
   function pinDialog(pin, maps, curMapId, canDelete = false) {
     return new Promise((resolve) => {
@@ -63989,6 +64454,7 @@ ${sc.body || ""}
     document.body.classList.toggle("focus-mode", v);
     toggleFocusMode2(v);
     syncMenuToggles();
+    refreshToolbar();
     setStatus(v ? "\u0E42\u0E2B\u0E21\u0E14\u0E42\u0E1F\u0E01\u0E31\u0E2A \u2014 Esc \u0E2B\u0E23\u0E37\u0E2D Ctrl+Shift+D \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E2D\u0E2D\u0E01" : "\u0E2D\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E42\u0E2B\u0E21\u0E14\u0E42\u0E1F\u0E01\u0E31\u0E2A");
   }
   function syncMenuToggles() {
@@ -64036,7 +64502,7 @@ ${sc.body || ""}
     const ce = v ? "false" : "true";
     if (t2?.editor) t2.editor.view.dom.setAttribute("contenteditable", ce);
     if (t2?.sp) t2.sp.view.dom.setAttribute("contenteditable", ce);
-    for (const id of ["#app-root", "#topbar", "#statusbar", "#k-fab"]) {
+    for (const id of ["#app-root", "#topbar", "#statusbar", "#toolbar", "#titlebar", "#tabs", "#k-fab"]) {
       const elx = $(id);
       if (elx) elx.style.display = "";
     }
@@ -65355,6 +65821,8 @@ ${sc.body || ""}
     const raw = await kapi.readFile(file);
     const { meta: meta2, body } = (0, import_md10.parseMdFile)(raw);
     const pane = el("div", "pane");
+    const ws = el("div", "workspace");
+    pane.appendChild(ws);
     $("#panes").append(pane);
     const tabBtn = el("div", "tab");
     tabBtn.append(el("span", "tab-title", title));
@@ -65384,8 +65852,9 @@ ${sc.body || ""}
   }
   function mountEditor(tab, dir, body) {
     const pane = tab.pane;
+    const mount = pane.querySelector(".workspace") || pane;
     if ((tab.meta.format || "prose") === "screenplay") {
-      tab.sp = new SPEditor(pane, {
+      tab.sp = new SPEditor(mount, {
         markdown: body,
         onChange: () => {
           markDirty(tab);
@@ -65413,7 +65882,7 @@ ${sc.body || ""}
       });
       pane.addEventListener("keyup", () => refreshToolbar());
     } else {
-      tab.editor = new KEditor(pane, {
+      tab.editor = new KEditor(mount, {
         markdown: body,
         onChange: () => {
           markDirty(tab);
@@ -65457,6 +65926,7 @@ ${sc.body || ""}
     tab.editor = null;
     tab.sp = null;
     tab.pane.innerHTML = "";
+    tab.pane.appendChild(el("div", "workspace"));
     tab.meta.format = to;
     tab.body = body;
     mountEditor(tab, dir, body);
@@ -65684,11 +66154,24 @@ ${sc.body || ""}
       log("warn", "markCentralizeStale \u0E25\u0E49\u0E21\u0E40\u0E2B\u0E25\u0E27", e);
     }
   }
-  async function saveAllTabs() {
-    const dirty = [...state.tabs.values()].filter((t2) => t2.dirty);
+  function dirtyTabList() {
+    return [...state.tabs.values()].filter((t2) => t2.dirty).map((t2) => ({ key: t2.file, title: t2.title || t2.file, file: t2.file }));
+  }
+  async function saveAllTabs(silent = false) {
+    let dirty = [...state.tabs.values()].filter((t2) => t2.dirty);
     if (!dirty.length) {
       setStatus("\u0E44\u0E21\u0E48\u0E21\u0E35\u0E07\u0E32\u0E19\u0E04\u0E49\u0E32\u0E07\u0E43\u0E2B\u0E49\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01");
       return 0;
+    }
+    if (!silent) {
+      const { action, keys: keys2 } = await saveAllDialog(dirtyTabList());
+      if (action !== "save") {
+        if (action === null) setStatus("\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01\u0E01\u0E32\u0E23\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01");
+        return 0;
+      }
+      const pick2 = new Set(keys2);
+      dirty = dirty.filter((t2) => pick2.has(t2.file));
+      if (!dirty.length) return 0;
     }
     let n = 0;
     for (const t2 of dirty) {
@@ -65911,6 +66394,156 @@ ${sc.body || ""}
     if (t2.dirty) saveTab(t2).then(done);
     else done();
   }
+  async function revertTab(file) {
+    const t2 = state.tabs.get(file);
+    if (!t2) return;
+    if (!await confirmBox("\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01\u0E01\u0E32\u0E23\u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E41\u0E1B\u0E25\u0E07\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14\u0E43\u0E19\u0E41\u0E17\u0E47\u0E1A\u0E19\u0E35\u0E49?\n\u0E40\u0E19\u0E37\u0E49\u0E2D\u0E2B\u0E32\u0E08\u0E30\u0E01\u0E25\u0E31\u0E1A\u0E44\u0E1B\u0E40\u0E1B\u0E47\u0E19\u0E40\u0E27\u0E2D\u0E23\u0E4C\u0E0A\u0E31\u0E19\u0E25\u0E48\u0E32\u0E2A\u0E38\u0E14\u0E17\u0E35\u0E48\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E44\u0E27\u0E49", "Revert")) return;
+    const content = await kapi.readFile(file);
+    const { meta: meta2, body } = (0, import_md10.parseMdFile)(content);
+    if (t2.editor) {
+      t2.editor.setMarkdown(body);
+      refreshMentions(t2.editor.view);
+    } else if (t2.sp) {
+      t2.sp.destroy();
+      t2.sp = new SPEditor(t2.pane.querySelector(".pane.on") || t2.pane, {
+        markdown: body,
+        onChange: () => {
+          markDirty(t2);
+          smartDirty();
+        },
+        onElement: (el3) => {
+          spSmartCheck(t2);
+          setElementBadge(el3);
+        },
+        onKeyDown: (ev) => smart.onKey(ev),
+        getChecker: getSpellchecker,
+        resolveSrc: (p) => resolvePath(file, p),
+        getNames: () => smart.names,
+        onMention: (n) => t2.wiki ? openWikiEntity(n) : openEntity(n)
+      });
+      t2.sp.view.dom.classList.add("on");
+    } else if (t2.wiki) {
+      t2.wiki.destroy();
+      openEntity(t2.title);
+      return;
+    } else if (t2.plain) {
+      t2.plain = false;
+      openPlainFile(file, t2.title);
+      return;
+    }
+    t2.dirty = false;
+    refreshAllSpell();
+    refreshAllMentions();
+    setStatus("\u21A9 \u0E01\u0E25\u0E31\u0E1A\u0E44\u0E1B\u0E22\u0E31\u0E07\u0E40\u0E27\u0E2D\u0E23\u0E4C\u0E0A\u0E31\u0E19\u0E25\u0E48\u0E32\u0E2A\u0E38\u0E14\u0E17\u0E35\u0E48\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01");
+  }
+  async function removeElementsDialog() {
+    const sp = state.active?.sp;
+    if (!sp) {
+      setStatus("\u0E40\u0E1B\u0E34\u0E14\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07\u0E01\u0E48\u0E2D\u0E19");
+      return;
+    }
+    const v = sp.view;
+    const counts = {};
+    v.state.doc.forEach((n) => {
+      if (n.type.name === "sp") counts[n.attrs.el] = (counts[n.attrs.el] || 0) + 1;
+    });
+    const types = Object.keys(counts).filter((k) => SP_ELEMS[k]);
+    if (!types.length) {
+      setStatus("\u0E44\u0E21\u0E48\u0E21\u0E35 element \u0E43\u0E2B\u0E49\u0E25\u0E1A");
+      return;
+    }
+    const ov = el("div", "k-overlay");
+    const box = el("div", "k-dialog");
+    box.innerHTML = `<div class="k-dlg-title">\u0E25\u0E1A element \u0E15\u0E32\u0E21\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17</div>
+    <div class="k-hint" style="margin-bottom:10px">\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1B\u0E23\u0E30\u0E40\u0E20\u0E17 element \u0E17\u0E35\u0E48\u0E15\u0E49\u0E2D\u0E07\u0E01\u0E32\u0E23\u0E25\u0E1A\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14\u0E2D\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E1A\u0E17</div>
+    <div id="rm-el-list"></div>
+    <div style="margin-top:8px"><a href="#" id="rm-el-all">\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14</a> \xB7 <a href="#" id="rm-el-none">\u0E44\u0E21\u0E48\u0E40\u0E25\u0E37\u0E2D\u0E01</a></div>
+    <div class="k-dlg-btns"><button class="k-cancel">${t("dialogs.cancel")}</button><button class="k-ok k-danger-btn">\u0E25\u0E1A</button></div>`;
+    ov.append(box);
+    document.body.append(ov);
+    const list = box.querySelector("#rm-el-list");
+    const chks = [];
+    for (const ty of types) {
+      const label = el("label", "k-row");
+      const cb = el("input");
+      cb.type = "checkbox";
+      cb.value = ty;
+      chks.push(cb);
+      label.append(cb, " " + (SP_ELEMS[ty]?.th || ty) + ` (${counts[ty]} \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23)`);
+      list.append(label);
+    }
+    box.querySelector("#rm-el-all").onclick = (e) => {
+      e.preventDefault();
+      chks.forEach((c) => c.checked = true);
+    };
+    box.querySelector("#rm-el-none").onclick = (e) => {
+      e.preventDefault();
+      chks.forEach((c) => c.checked = false);
+    };
+    box.querySelector(".k-cancel").onclick = () => ov.remove();
+    ov.onclick = (e) => {
+      if (e.target === ov) ov.remove();
+    };
+    box.querySelector(".k-ok").onclick = async () => {
+      const sel = chks.filter((c) => c.checked).map((c) => c.value);
+      if (!sel.length) {
+        ov.remove();
+        return;
+      }
+      if (!await confirmBox(`\u0E25\u0E1A element ${sel.map((t3) => SP_ELEMS[t3]?.th || t3).join(", ")} \u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14 (${sel.reduce((s, t3) => s + (counts[t3] || 0), 0)} \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23)?`, "\u0E25\u0E1A")) return;
+      const t2 = state.active;
+      if (t2) await snapshotFile(t2.file, "\u0E01\u0E48\u0E2D\u0E19\u0E25\u0E1A " + sel.map((x) => SP_ELEMS[x]?.th).join(","));
+      let tr2 = v.state.tr;
+      const delSet = new Set(sel);
+      const toRemove = [];
+      v.state.doc.forEach((n, pos) => {
+        if (n.type.name === "sp" && delSet.has(n.attrs.el)) toRemove.push({ pos, size: n.nodeSize });
+      });
+      for (const { pos, size } of toRemove.reverse()) tr2 = tr2.delete(pos, pos + size);
+      v.dispatch(tr2);
+      if (t2) {
+        markDirty(t2);
+        smartDirty();
+      }
+      ov.remove();
+      setStatus("\u0E25\u0E1A " + toRemove.length + " element \u0E41\u0E25\u0E49\u0E27");
+    };
+  }
+  async function showCharMap() {
+    const LATIN1 = [
+      "\xC0\xC1\xC2\xC3\xC4\xC5\xC6\xC7\xC8\xC9\xCA\xCB\xCC\xCD\xCE\xCF\xD0\xD1\xD2\xD3\xD4\xD5\xD6\xD7\xD8\xD9\xDA\xDB\xDC\xDD\xDE\xDF",
+      "\xE0\xE1\xE2\xE3\xE4\xE5\xE6\xE7\xE8\xE9\xEA\xEB\xEC\xED\xEE\xEF\xF0\xF1\xF2\xF3\xF4\xF5\xF6\xF7\xF8\xF9\xFA\xFB\xFC\xFD\xFE\xFF",
+      "\xA1\xA2\xA3\xA4\xA5\xA6\xA7\xA8\xA9\xAA\xAB\xAC\xAD\xAE\xAF\xB0\xB1\xB2\xB3\xB4\xB5\xB6\xB7\xB8\xB9\xBA\xBB\xBC\xBD\xBE\xBF"
+    ];
+    const ov = el("div", "k-overlay");
+    const box = el("div", "k-dialog");
+    box.innerHTML = `<div class="k-dlg-title">\u0E41\u0E1C\u0E19\u0E17\u0E35\u0E48\u0E2D\u0E31\u0E01\u0E02\u0E23\u0E30\u0E1E\u0E34\u0E40\u0E28\u0E29</div>
+    <div class="k-charmap"></div>
+    <div class="k-dlg-btns"><button class="k-ok">${t("dialogs.close")}</button></div>`;
+    ov.append(box);
+    document.body.append(ov);
+    const grid = box.querySelector(".k-charmap");
+    for (const row of LATIN1) {
+      const r = el("div", "k-cm-row");
+      for (const ch of row) {
+        const btn = el("button", "k-cm-btn", ch);
+        btn.title = "U+" + ch.codePointAt(0).toString(16).toUpperCase().padStart(4, "0");
+        btn.onclick = () => {
+          const ed = getActiveEditor();
+          if (ed?.view) {
+            ed.view.dispatch(ed.view.state.tr.insertText(ch));
+            ed.view.focus();
+          }
+        };
+        r.append(btn);
+      }
+      grid.append(r);
+    }
+    box.querySelector(".k-ok").onclick = () => ov.remove();
+    ov.onclick = (e) => {
+      if (e.target === ov) ov.remove();
+    };
+  }
   async function closeAllTabs() {
     const files = [...state.tabs.keys()];
     for (const f of files) {
@@ -66062,7 +66695,8 @@ ${sc.body || ""}
         b.classList.toggle("dis", state.tabs.size === 0);
         return;
       }
-      if (b.id === "tb-close" || b.id === "tb-close-all" || b.id === "tb-focus" || b.id === "tb-typewriter" || b.id === "tb-linenum" || b.id === "tb-quickopen" || b.id === "tb-sp-elem") return;
+      if (b.id === "tb-close" || b.id === "tb-close-all" || b.id === "tb-focus" || b.id === "tb-typewriter" || b.id === "tb-linenum" || b.id === "tb-quickopen" || b.id === "tb-gallery" || b.id === "tb-sp-elem") return;
+      if (b.id === "tb-tree-panel" || b.id === "tb-outline-panel" || b.id === "tb-props-panel" || b.id === "tb-search-panel") return;
       b.classList.toggle("dis", !canEdit);
     });
     $("#tb-paper").classList.toggle("on", state.settings.paperMode !== false);
@@ -66071,6 +66705,10 @@ ${sc.body || ""}
     $("#tb-focus")?.classList.toggle("on", document.body.classList.contains("focus-mode"));
     $("#tb-typewriter")?.classList.toggle("on", isTypewriter());
     $("#tb-linenum")?.classList.toggle("on", !!state.settings.lineNumbers);
+    $("#tb-tree-panel")?.classList.toggle("on", isPanelOpen("tree"));
+    $("#tb-outline-panel")?.classList.toggle("on", isPanelOpen("outline"));
+    $("#tb-props-panel")?.classList.toggle("on", isPanelOpen("props"));
+    $("#tb-search-panel")?.classList.toggle("on", isPanelOpen("search"));
     syncFloatBarVisible();
     syncMenuToggles();
   }
@@ -66246,6 +66884,44 @@ ${sc.body || ""}
       if (isPanelOpen("log")) renderLogPanel();
     }, 2e3);
   }
+  function isFeaturePanel(id) {
+    return !!FEATURE_PANELS[panelId(id)];
+  }
+  function renderFeaturePanel(id) {
+    const pid = panelId(id);
+    const f = FEATURE_PANELS[pid];
+    if (!f) return Promise.resolve(false);
+    if (_featInFlight.has(pid)) return _featInFlight.get(pid);
+    const p = Promise.resolve().then(f).catch((e) => {
+      log("error", "\u0E27\u0E32\u0E14\u0E41\u0E1C\u0E07 " + pid + " \u0E25\u0E49\u0E21\u0E40\u0E2B\u0E25\u0E27", e);
+    }).finally(() => _featInFlight.delete(pid)).then(() => true);
+    _featInFlight.set(pid, p);
+    return p;
+  }
+  function clearFeaturePanels() {
+    for (const sel of ["#dash-body", "#kanban-body", "#books-body", "#tl-body", "#maps-body"]) {
+      const n = $(sel);
+      if (n) n.innerHTML = "";
+    }
+    mapsState_C.s = null;
+  }
+  async function renderOpenFeaturePanels() {
+    for (const id of Object.keys(FEATURE_PANELS)) {
+      if (isPanelOpen(id)) await renderFeaturePanel(id);
+    }
+  }
+  function hideInactivePanes() {
+    document.querySelectorAll("#panes .pane:not(.on)").forEach((p) => {
+      p.dataset.k2hide = p.style.display || "";
+      p.style.display = "none";
+    });
+  }
+  function restoreInactivePanes() {
+    document.querySelectorAll("#panes .pane[data-k2hide]").forEach((p) => {
+      p.style.display = p.dataset.k2hide;
+      delete p.dataset.k2hide;
+    });
+  }
   async function handleCommand(ch, ...a) {
     const t2 = state.active;
     switch (ch) {
@@ -66289,7 +66965,9 @@ ${sc.body || ""}
       }
       case "print":
         document.body.classList.add("printing");
+        hideInactivePanes();
         await kapi.print();
+        restoreInactivePanes();
         setTimeout(() => document.body.classList.remove("printing"), 800);
         break;
       case "export-pdf": {
@@ -66297,7 +66975,9 @@ ${sc.body || ""}
         const p = await kapi.savePdfDialog(t2.title + ".pdf");
         if (p) {
           document.body.classList.add("printing");
+          hideInactivePanes();
           await kapi.printToPdf(p);
+          restoreInactivePanes();
           document.body.classList.remove("printing");
           setStatus("\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01 PDF: " + p);
         }
@@ -66309,11 +66989,19 @@ ${sc.body || ""}
       case "close-all-tabs":
         closeAllTabs();
         break;
-      case "fmt":
-        getActiveEditor()?.cmd(a[0], a[1]);
+      // [95] ในบทหนัง Ctrl+1/2/3 = scene/action/character (คีย์เดียวกับหัวข้อ 1-3 ของนิยาย)
+      case "fmt": {
+        const spFmt = state.active?.sp;
+        const SP_HEAD = { 1: "scene", 2: "action", 3: "character" };
+        if (spFmt && a[0] === "heading" && SP_HEAD[a[1]]) {
+          spFmt.switchTo(SP_HEAD[a[1]]);
+        } else {
+          getActiveEditor()?.cmd(a[0], a[1]);
+        }
         refreshToolbar();
         if (t2) markDirty(t2);
         break;
+      }
       case "editor-undo":
         getActiveEditor()?.cmd("undo");
         refreshToolbar();
@@ -66324,6 +67012,9 @@ ${sc.body || ""}
         break;
       case "insert-image":
         insertImage();
+        break;
+      case "gallery":
+        await openGallery();
         break;
       case "find":
         openFind();
@@ -66360,11 +67051,13 @@ ${sc.body || ""}
         applySettings();
         saveProjectMeta();
         syncMenuToggles();
+        refreshToolbar();
         setStatus(state.settings.lineNumbers ? "\u0E40\u0E25\u0E02\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14: \u0E40\u0E1B\u0E34\u0E14" : "\u0E40\u0E25\u0E02\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14: \u0E1B\u0E34\u0E14");
         break;
       // ---- ฟีเจอร์ที่เคยไม่มีทางเข้าถึง (import ไว้แต่ไม่มีเมนู/ปุ่ม) ----
       case "typewriter":
         setStatus(toggleTypewriter() ? "\u0E42\u0E2B\u0E21\u0E14\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E14\u0E35\u0E14: \u0E40\u0E1B\u0E34\u0E14" : "\u0E42\u0E2B\u0E21\u0E14\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E14\u0E35\u0E14: \u0E1B\u0E34\u0E14");
+        refreshToolbar();
         syncMenuToggles();
         break;
       case "quick-open":
@@ -66452,6 +67145,7 @@ ${sc.body || ""}
         syncMenuToggles();
         break;
       // สลับแสดง/ซ่อนแผง — เมนูเป็นสวิตช์ (มีเครื่องหมายถูก) จึงต้องปิดได้ด้วย ไม่ใช่แค่เปิด
+      // แผงฟีเจอร์ (บั๊ก #18) วาดเนื้อหาผ่าน hook ใน showPanel แล้ว
       case "toggle-panel":
         togglePanel(a[0]);
         syncMenuToggles();
@@ -66487,9 +67181,37 @@ ${sc.body || ""}
       case "test-run":
         runTest(a[0]);
         break;
+      // [95] Per-element shortcuts + [79] Select scene + [77] Non-breaking space
+      case "sp-element": {
+        const sp = state.active?.sp;
+        if (sp) sp.switchTo(a[0]);
+        refreshToolbar();
+        if (t2) markDirty(t2);
+        break;
+      }
+      case "select-scene": {
+        const spAct = state.active?.sp;
+        if (spAct) spAct.selectScene();
+        break;
+      }
+      case "nbsp": {
+        const ed = getActiveEditor();
+        if (ed?.view) ed.view.dispatch(ed.view.state.tr.insertText("\xA0"));
+        ed?.focus();
+        break;
+      }
+      case "revert":
+        if (t2) await revertTab(t2.file);
+        break;
+      case "remove-elements":
+        removeElementsDialog();
+        break;
+      case "char-map":
+        showCharMap();
+        break;
       // ---- Part 1+2: ฟีเจอร์ใหม่ (Kanban, Panel, Split, AI, Thesaurus, Auto-sync) ----
       case "kanban":
-        openKanban();
+        togglePanel("kanban");
         break;
       case "split-view":
         toggleSplit(state.active?.file || "", a[0] || void 0);
@@ -66741,7 +67463,9 @@ ${sc.body || ""}
   }
   function syncFloatBarVisible() {
     if (!floatBar) return;
-    floatBar.style.display = getActiveEditor() ? "flex" : "none";
+    const ed = getActiveEditor();
+    const wk = state.active?.wiki?.secEditors?.some(({ k }) => k?.view?.hasFocus()) || state.active?.wiki?.secEditors?.length > 0;
+    floatBar.style.display = ed || wk ? "flex" : "none";
   }
   function tipBox() {
     if (!_tipEl) {
@@ -67416,6 +68140,86 @@ ${sc.body || ""}
       t2.editor.setMarkdown(orig);
       await saveTab(t2);
       activate(t2.file);
+      {
+        const spEl = [...document.querySelectorAll(".scene")].find((x) => x.textContent.includes("\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07\u0E17\u0E14\u0E2A\u0E2D\u0E1A"));
+        if (spEl) spEl.click();
+        await new Promise((r) => setTimeout(r, 300));
+        const sp = state.active?.sp;
+        check2("[Batch1] \u0E21\u0E35 sp editor \u0E2D\u0E22\u0E39\u0E48", !!sp);
+        sp.switchTo("action");
+        check2("[95] switchTo \u2192 action", sp.curElement() === "action");
+        sp.switchTo("scene");
+        check2("[95] switchTo \u2192 scene", sp.curElement() === "scene");
+        const cur1 = sp.curElement();
+        sp.enter();
+        const nextAfterEnter = sp.curElement();
+        check2(
+          "[51] Enter \u0E2A\u0E23\u0E49\u0E32\u0E07 element \u0E15\u0E32\u0E21 spCycle",
+          nextAfterEnter !== cur1,
+          cur1 + " \u2192 " + nextAfterEnter
+        );
+        const cur2 = sp.curElement();
+        sp._tabCycle("tab");
+        const nextAfterTab = sp.curElement();
+        check2(
+          "[51] Tab \u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19 element \u0E15\u0E32\u0E21 spCycle",
+          nextAfterTab !== cur2,
+          cur2 + " \u2192 " + nextAfterTab
+        );
+        sp.switchTo("action");
+        const v4 = sp.view;
+        v4.dispatch(v4.state.tr.insertText("INT. \u0E15\u0E25\u0E32\u0E14\u0E2A\u0E14", v4.state.selection.from));
+        sp._autoDetect();
+        check2(
+          "[52] \u0E1E\u0E34\u0E21\u0E1E\u0E4C INT. \u0E43\u0E19 action \u2192 auto-switch \u0E40\u0E1B\u0E47\u0E19 scene",
+          sp.curElement() === "scene",
+          sp.curElement()
+        );
+        sp.switchTo("character");
+        const charBlock = sp.curBlock();
+        const charPos = charBlock.pos;
+        v4.dispatch(v4.state.tr.insertText("\u0E25\u0E38\u0E07\u0E2A\u0E21\u0E2B\u0E21\u0E32\u0E22", charPos + 1));
+        const from2 = v4.state.selection.from;
+        let tr2 = v4.state.tr;
+        tr2 = tr2.setNodeMarkup(charPos, null, { el: "parenthetical", align: sp.curBlock().node.attrs.align || null });
+        tr2 = tr2.insertText("()", from2);
+        tr2 = tr2.setSelection(TextSelection2.create(tr2.doc, from2 + 1));
+        v4.dispatch(tr2);
+        check2(
+          "[53] \u0E01\u0E14 ( \u0E43\u0E19 character \u2192 parenthetical \u0E1E\u0E23\u0E49\u0E2D\u0E21 ()",
+          sp.curElement() === "parenthetical" && sp.curBlock().node.textContent.includes("()"),
+          sp.curElement() + " : " + sp.curBlock().node.textContent
+        );
+        sp.switchTo("scene");
+        sp.selectScene();
+        const sel = v4.state.selection;
+        check2(
+          "[79] SelectScene \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E0A\u0E48\u0E27\u0E07 > 0",
+          sel.from < sel.to && sel.to > 0,
+          "from=" + sel.from + " to=" + sel.to
+        );
+        sp.switchTo("action");
+        v4.dispatch(v4.state.tr.insertText("\xA0"));
+        check2("[77] \u0E41\u0E17\u0E23\u0E01 \xA0 \u0E44\u0E14\u0E49", sp.curBlock().node.textContent.includes("\xA0"));
+        sp.switchTo("action");
+        await handleCommand("fmt", "heading", 1);
+        check2("[95] Ctrl+1 \u0E43\u0E19\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07 \u2192 scene", sp.curElement() === "scene");
+        sp.switchTo("action");
+        await handleCommand("fmt", "heading", 2);
+        check2("[95] Ctrl+2 \u0E43\u0E19\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07 \u2192 action", sp.curElement() === "action");
+        sp.switchTo("action");
+        await handleCommand("fmt", "heading", 3);
+        check2("[95] Ctrl+3 \u0E43\u0E19\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07 \u2192 character", sp.curElement() === "character");
+        sp.switchTo("scene");
+        await handleCommand("sp-element", "dialogue");
+        check2("[95] sp-element \u2192 dialogue", sp.curElement() === "dialogue");
+        check2(
+          "[51] DEFAULT_SP_CYCLE \u0E21\u0E35 scene/action/character/dialogue/transition",
+          ["scene", "action", "character", "parenthetical", "dialogue", "transition"].every((k) => DEFAULT_SP_CYCLE[k]?.enter && DEFAULT_SP_CYCLE[k]?.tab && DEFAULT_SP_CYCLE[k]?.shiftTab)
+        );
+        const spFile = state.active?.file;
+        if (spFile) closeTab(spFile);
+      }
       const dlgTest = ask("\u0E17\u0E14\u0E2A\u0E2D\u0E1A dialog");
       await new Promise((r) => setTimeout(r, 60));
       check2("dialog \u0E02\u0E36\u0E49\u0E19\u0E08\u0E23\u0E34\u0E07", !!document.querySelector(".k-dialog"));
@@ -67536,11 +68340,11 @@ ${sc.body || ""}
         await new Promise((r) => setTimeout(r, 250));
         check2(
           "\u0E40\u0E1B\u0E34\u0E14\u0E15\u0E31\u0E27\u0E08\u0E31\u0E14\u0E01\u0E32\u0E23\u0E40\u0E25\u0E48\u0E21\u0E44\u0E14\u0E49 + \u0E21\u0E35\u0E01\u0E32\u0E23\u0E4C\u0E14\u0E40\u0E25\u0E48\u0E21",
-          !!state.active?.books && document.querySelectorAll(".pane.on .book-card").length >= 2
+          isPanelOpen("books") && document.querySelectorAll("#books-body .book-card").length >= 2
         );
         check2(
           "\u0E01\u0E32\u0E23\u0E4C\u0E14\u0E40\u0E25\u0E48\u0E21\u0E21\u0E35\u0E2A\u0E16\u0E34\u0E15\u0E34 (\u0E1A\u0E17/\u0E09\u0E32\u0E01/\u0E04\u0E33) \u0E42\u0E2B\u0E25\u0E14\u0E40\u0E02\u0E49\u0E32\u0E21\u0E32",
-          [...document.querySelectorAll(".pane.on .book-stats")].some((e) => /คำ/.test(e.textContent) && e.textContent !== "\u2026")
+          [...document.querySelectorAll("#books-body .book-stats")].some((e) => /คำ/.test(e.textContent) && e.textContent !== "\u2026")
         );
         await kapi.testShot("/tmp/k2_books.png");
         const secsNow = await listSections();
@@ -67613,33 +68417,33 @@ ${sc.body || ""}
         await openTimeline();
         await new Promise((r) => setTimeout(r, 250));
         check2(
-          "\u0E41\u0E17\u0E47\u0E1A\u0E40\u0E2A\u0E49\u0E19\u0E40\u0E27\u0E25\u0E32\u0E40\u0E1B\u0E34\u0E14 + \u0E21\u0E35\u0E01\u0E32\u0E23\u0E4C\u0E14\u0E40\u0E2B\u0E15\u0E38\u0E01\u0E32\u0E23\u0E13\u0E4C",
-          !!state.active?.timeline && document.querySelectorAll(".pane.on .tl-event").length >= 3
+          "\u0E41\u0E1C\u0E07\u0E40\u0E2A\u0E49\u0E19\u0E40\u0E27\u0E25\u0E32\u0E40\u0E1B\u0E34\u0E14 + \u0E21\u0E35\u0E01\u0E32\u0E23\u0E4C\u0E14\u0E40\u0E2B\u0E15\u0E38\u0E01\u0E32\u0E23\u0E13\u0E4C",
+          isPanelOpen("timeline") && document.querySelectorAll("#tl-body .tl-event").length >= 3
         );
         check2(
           "\u0E40\u0E2A\u0E49\u0E19\u0E40\u0E27\u0E25\u0E32\u0E08\u0E31\u0E14\u0E01\u0E25\u0E38\u0E48\u0E21\u0E40\u0E1B\u0E47\u0E19\u0E40\u0E25\u0E19 (track)",
-          document.querySelectorAll(".pane.on .tl-lane").length >= 1
+          document.querySelectorAll("#tl-body .tl-lane").length >= 1
         );
         check2(
           "\u0E09\u0E32\u0E01\u0E1A\u0E19\u0E40\u0E2A\u0E49\u0E19\u0E40\u0E27\u0E25\u0E32\u0E40\u0E1B\u0E34\u0E14\u0E04\u0E25\u0E34\u0E01\u0E44\u0E14\u0E49 (\u0E21\u0E35 tl-event-scene)",
-          !!document.querySelector(".pane.on .tl-event-scene")
+          !!document.querySelector("#tl-body .tl-event-scene")
         );
         await kapi.testShot("/tmp/k2_timeline.png");
         state._tlView = "gantt";
-        await renderTimeline(state.tabs.get("::timeline::").pane);
+        await renderTimeline($("#tl-body"));
         await new Promise((r) => setTimeout(r, 150));
         check2(
           "\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07 Gantt: \u0E21\u0E35\u0E41\u0E17\u0E48\u0E07\u0E40\u0E2B\u0E15\u0E38\u0E01\u0E32\u0E23\u0E13\u0E4C (gantt-bar)",
-          document.querySelectorAll(".pane.on .gantt-bar").length >= 2
+          document.querySelectorAll("#tl-body .gantt-bar").length >= 2
         );
         check2(
           "\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07 Gantt: \u0E21\u0E35\u0E02\u0E35\u0E14\u0E41\u0E01\u0E19\u0E40\u0E27\u0E25\u0E32 (gantt-tick)",
-          document.querySelectorAll(".pane.on .gantt-tick").length >= 2
+          document.querySelectorAll("#tl-body .gantt-tick").length >= 2
         );
         check2(
           "\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07 Gantt: \u0E41\u0E17\u0E48\u0E07\u0E01\u0E27\u0E49\u0E32\u0E07\u0E15\u0E32\u0E21\u0E0A\u0E48\u0E27\u0E07\u0E40\u0E27\u0E25\u0E32 (event \u0E21\u0E35 whenEnd)",
-          [...document.querySelectorAll(".pane.on .gantt-bar")].some((b) => parseFloat(b.style.width) > 5),
-          [...document.querySelectorAll(".pane.on .gantt-bar")].map((b) => b.style.width).join(",")
+          [...document.querySelectorAll("#tl-body .gantt-bar")].some((b) => parseFloat(b.style.width) > 5),
+          [...document.querySelectorAll("#tl-body .gantt-bar")].map((b) => b.style.width).join(",")
         );
         await kapi.testShot("/tmp/k2_gantt.png");
         state._tlView = "cards";
@@ -67677,17 +68481,17 @@ ${sc.body || ""}
         await new Promise((r) => setTimeout(r, 250));
         check2(
           "\u0E41\u0E17\u0E47\u0E1A\u0E41\u0E1C\u0E19\u0E17\u0E35\u0E48\u0E40\u0E1B\u0E34\u0E14 + \u0E21\u0E35 chip \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E41\u0E1C\u0E19\u0E17\u0E35\u0E48",
-          !!state.active?.maps && document.querySelectorAll(".pane.on .map-chip").length === 2
+          isPanelOpen("maps") && document.querySelectorAll("#maps-body .map-chip").length === 2
         );
         check2(
           "\u0E21\u0E35\u0E2B\u0E21\u0E38\u0E14\u0E27\u0E32\u0E14\u0E1A\u0E19\u0E41\u0E1C\u0E19\u0E17\u0E35\u0E48 (portal + entity)",
-          document.querySelectorAll(".pane.on .map-pin").length >= (someEnt ? 2 : 1)
+          document.querySelectorAll("#maps-body .map-pin").length >= (someEnt ? 2 : 1)
         );
         check2(
           "\u0E2B\u0E21\u0E38\u0E14 portal \u0E21\u0E35\u0E44\u0E2D\u0E04\u0E2D\u0E19\u0E1B\u0E23\u0E30\u0E15\u0E39",
-          !!document.querySelector(".pane.on .map-pin-portal")
+          !!document.querySelector("#maps-body .map-pin-portal")
         );
-        const cityChip = [...document.querySelectorAll(".pane.on .map-chip")].find((c) => c.textContent.includes("\u0E40\u0E21\u0E37\u0E2D\u0E07\u0E17\u0E14\u0E2A\u0E2D\u0E1A"));
+        const cityChip = [...document.querySelectorAll("#maps-body .map-chip")].find((c) => c.textContent.includes("\u0E40\u0E21\u0E37\u0E2D\u0E07\u0E17\u0E14\u0E2A\u0E2D\u0E1A"));
         if (cityChip) {
           cityChip.click();
           await new Promise((r) => setTimeout(r, 120));
@@ -68252,13 +69056,16 @@ ${sc.body || ""}
       pBtn("tree", "close").click();
       await new Promise((r) => setTimeout(r, 30));
       check2("\u0E1B\u0E34\u0E14\u0E41\u0E1C\u0E07 \u2192 \u0E2B\u0E32\u0E22\u0E08\u0E32\u0E01\u0E15\u0E49\u0E19\u0E44\u0E21\u0E49", !PMG.isOpen("tree") && !pEl("tree"));
-      const trayChip = document.querySelector('#k-min-tray-l .k-min-chip[data-key="tree"]');
-      check2("\u0E1B\u0E34\u0E14\u0E41\u0E1C\u0E07\u0E41\u0E25\u0E49\u0E27\u0E21\u0E35\u0E1B\u0E38\u0E48\u0E21\u0E43\u0E19\u0E16\u0E32\u0E14\u0E44\u0E27\u0E49\u0E40\u0E23\u0E35\u0E22\u0E01\u0E01\u0E25\u0E31\u0E1A (\u0E44\u0E21\u0E48\u0E2B\u0E32\u0E22\u0E16\u0E32\u0E27\u0E23)", !!trayChip);
-      trayChip.click();
+      check2(
+        "\u0E1B\u0E34\u0E14\u0E41\u0E1C\u0E07\u0E41\u0E25\u0E49\u0E27\u0E1B\u0E38\u0E48\u0E21 toggle \u0E1A\u0E19 toolbar \u0E44\u0E21\u0E48\u0E15\u0E34\u0E14 .on",
+        $("#tb-tree-panel") && !$("#tb-tree-panel").classList.contains("on")
+      );
+      await new Promise((r) => setTimeout(r, 60));
+      $("#tb-tree-panel").click();
       await new Promise((r) => setTimeout(r, 30));
       check2(
-        "\u0E04\u0E25\u0E34\u0E01\u0E1B\u0E38\u0E48\u0E21\u0E43\u0E19\u0E16\u0E32\u0E14 \u2192 \u0E41\u0E1C\u0E07\u0E01\u0E25\u0E31\u0E1A\u0E21\u0E32",
-        PMG.isOpen("tree") && !!pEl("tree") && !document.querySelector('#k-min-tray-l .k-min-chip[data-key="tree"]')
+        "\u0E01\u0E14\u0E1B\u0E38\u0E48\u0E21 toggle toolbar \u2192 \u0E41\u0E1C\u0E07\u0E01\u0E25\u0E31\u0E1A\u0E21\u0E32",
+        PMG.isOpen("tree") && !!pEl("tree") && $("#tb-tree-panel") && $("#tb-tree-panel").classList.contains("on")
       );
       {
         pBtn("tree", "float").click();
@@ -68296,30 +69103,33 @@ ${sc.body || ""}
         await new Promise((r) => setTimeout(r, 40));
         hidePanel("props");
         await new Promise((r) => setTimeout(r, 40));
-        const rChip = document.querySelector('#k-min-tray-r .k-min-chip[data-key="props"]');
-        check2("#17 \u0E1B\u0E34\u0E14\u0E41\u0E1C\u0E07\u0E1D\u0E31\u0E48\u0E07\u0E02\u0E27\u0E32 \u2192 chip \u0E2D\u0E22\u0E39\u0E48\u0E16\u0E32\u0E14\u0E02\u0E27\u0E32", !!rChip);
         check2(
-          "#17 chip \u0E1D\u0E31\u0E48\u0E07\u0E02\u0E27\u0E32\u0E44\u0E21\u0E48\u0E44\u0E1B\u0E42\u0E1C\u0E25\u0E48\u0E16\u0E32\u0E14\u0E0B\u0E49\u0E32\u0E22",
-          !document.querySelector('#k-min-tray-l .k-min-chip[data-key="props"]')
+          "#17 \u0E1B\u0E34\u0E14\u0E41\u0E1C\u0E07\u0E1D\u0E31\u0E48\u0E07\u0E02\u0E27\u0E32 \u2192 \u0E1B\u0E38\u0E48\u0E21 toggle toolbar \u0E44\u0E21\u0E48\u0E15\u0E34\u0E14 .on",
+          $("#tb-props-panel") && !$("#tb-props-panel").classList.contains("on")
         );
-        const rr = document.getElementById("k-min-tray-r").getBoundingClientRect();
-        check2("#17 \u0E16\u0E32\u0E14\u0E02\u0E27\u0E32\u0E27\u0E32\u0E07\u0E0A\u0E34\u0E14\u0E02\u0E2D\u0E1A\u0E02\u0E27\u0E32\u0E08\u0E23\u0E34\u0E07", rr.right > innerWidth - 60, `right=${Math.round(rr.right)} vw=${innerWidth}`);
         hidePanel("tree");
         await new Promise((r) => setTimeout(r, 40));
         check2(
-          "#17 \u0E41\u0E1C\u0E07\u0E1D\u0E31\u0E48\u0E07\u0E0B\u0E49\u0E32\u0E22\u0E22\u0E31\u0E07\u0E25\u0E07\u0E16\u0E32\u0E14\u0E0B\u0E49\u0E32\u0E22\u0E40\u0E2B\u0E21\u0E37\u0E2D\u0E19\u0E40\u0E14\u0E34\u0E21",
-          !!document.querySelector('#k-min-tray-l .k-min-chip[data-key="tree"]')
+          "#17 \u0E1B\u0E34\u0E14\u0E41\u0E1C\u0E07\u0E1D\u0E31\u0E48\u0E07\u0E0B\u0E49\u0E32\u0E22 \u2192 \u0E1B\u0E38\u0E48\u0E21 toggle toolbar \u0E44\u0E21\u0E48\u0E15\u0E34\u0E14 .on",
+          $("#tb-tree-panel") && !$("#tb-tree-panel").classList.contains("on")
         );
         check2(
-          "#17 \u0E2A\u0E2D\u0E07\u0E16\u0E32\u0E14\u0E2D\u0E22\u0E39\u0E48\u0E04\u0E19\u0E25\u0E30\u0E1D\u0E31\u0E48\u0E07\u0E08\u0E23\u0E34\u0E07 (\u0E44\u0E21\u0E48\u0E17\u0E31\u0E1A\u0E01\u0E31\u0E19)",
-          document.getElementById("k-min-tray-l").getBoundingClientRect().left < document.getElementById("k-min-tray-r").getBoundingClientRect().left
+          "#17 \u0E17\u0E31\u0E49\u0E07\u0E2A\u0E2D\u0E07\u0E1B\u0E38\u0E48\u0E21 toggle \u0E41\u0E22\u0E01\u0E08\u0E32\u0E01\u0E01\u0E31\u0E19 (\u0E04\u0E19\u0E25\u0E30 element)",
+          $("#tb-tree-panel") !== $("#tb-props-panel")
         );
-        rChip.click();
+        check2(
+          "#17 \u0E1B\u0E38\u0E48\u0E21 toggle \u0E02\u0E2D\u0E07\u0E41\u0E1C\u0E07\u0E17\u0E35\u0E48\u0E22\u0E31\u0E07\u0E40\u0E1B\u0E34\u0E14\u0E2D\u0E22\u0E39\u0E48\u0E15\u0E34\u0E14 .on \u0E41\u0E15\u0E48\u0E02\u0E2D\u0E07\u0E17\u0E35\u0E48\u0E1B\u0E34\u0E14\u0E41\u0E25\u0E49\u0E27\u0E44\u0E21\u0E48\u0E15\u0E34\u0E14",
+          !$("#tb-tree-panel").classList.contains("on") && !$("#tb-props-panel").classList.contains("on") && $("#tb-outline-panel").classList.contains("on")
+        );
+        $("#tb-props-panel").click();
         await new Promise((r) => setTimeout(r, 40));
         check2(
-          "#17 \u0E04\u0E25\u0E34\u0E01 chip \u0E1D\u0E31\u0E48\u0E07\u0E02\u0E27\u0E32 \u2192 \u0E41\u0E1C\u0E07\u0E01\u0E25\u0E31\u0E1A\u0E44\u0E1B\u0E2D\u0E22\u0E39\u0E48\u0E1D\u0E31\u0E48\u0E07\u0E02\u0E27\u0E32\u0E15\u0E32\u0E21\u0E40\u0E14\u0E34\u0E21",
-          PMG.isDocked("props") && pEl("props").getBoundingClientRect().left > pEl("docs").getBoundingClientRect().left,
-          `props=${Math.round(pEl("props")?.getBoundingClientRect().left)} docs=${Math.round(pEl("docs").getBoundingClientRect().left)}`
+          "#17 \u0E01\u0E14\u0E1B\u0E38\u0E48\u0E21 toggle \u2192 \u0E41\u0E1C\u0E07\u0E01\u0E25\u0E31\u0E1A\u0E21\u0E32",
+          PMG.isOpen("props") && $("#tb-props-panel").classList.contains("on")
+        );
+        check2(
+          "#17 \u0E40\u0E1B\u0E34\u0E14\u0E41\u0E1C\u0E07\u0E2B\u0E19\u0E36\u0E48\u0E07\u0E44\u0E21\u0E48\u0E44\u0E1B\u0E40\u0E1B\u0E34\u0E14\u0E2D\u0E35\u0E01\u0E41\u0E1C\u0E07\u0E42\u0E14\u0E22\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E15\u0E31\u0E49\u0E07\u0E43\u0E08",
+          !PMG.isOpen("tree") && !$("#tb-tree-panel").classList.contains("on")
         );
         resetPanels();
         await new Promise((r) => setTimeout(r, 40));
@@ -68587,8 +69397,8 @@ ${sc.body || ""}
       warnBtn.click();
       await pNew;
       check2(
-        "\u0E2A\u0E23\u0E49\u0E32\u0E07+\u0E2A\u0E25\u0E31\u0E1A\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C\u0E41\u0E25\u0E49\u0E27\u0E41\u0E17\u0E47\u0E1A\u0E40\u0E01\u0E48\u0E32\u0E16\u0E39\u0E01\u0E1B\u0E34\u0E14\u0E2B\u0E21\u0E14 (\u0E40\u0E2B\u0E25\u0E37\u0E2D\u0E41\u0E14\u0E0A\u0E1A\u0E2D\u0E23\u0E4C\u0E14\u0E02\u0E2D\u0E07\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C\u0E43\u0E2B\u0E21\u0E48)",
-        state.title === "\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C\u0E17\u0E14\u0E2A\u0E2D\u0E1A\u0E1B\u0E34\u0E14\u0E40\u0E01\u0E48\u0E32" && state.tabs.size === 1 && state.tabs.has("::dash::"),
+        "\u0E2A\u0E23\u0E49\u0E32\u0E07+\u0E2A\u0E25\u0E31\u0E1A\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C\u0E41\u0E25\u0E49\u0E27\u0E41\u0E17\u0E47\u0E1A\u0E40\u0E01\u0E48\u0E32\u0E16\u0E39\u0E01\u0E1B\u0E34\u0E14\u0E2B\u0E21\u0E14 (\u0E41\u0E14\u0E0A\u0E1A\u0E2D\u0E23\u0E4C\u0E14\u0E40\u0E1B\u0E47\u0E19\u0E41\u0E1C\u0E07 \u0E44\u0E21\u0E48\u0E43\u0E0A\u0E48\u0E41\u0E17\u0E47\u0E1A)",
+        state.title === "\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C\u0E17\u0E14\u0E2A\u0E2D\u0E1A\u0E1B\u0E34\u0E14\u0E40\u0E01\u0E48\u0E32" && state.tabs.size === 0,
         `${state.title} tabs=${state.tabs.size} (\u0E01\u0E48\u0E2D\u0E19=${beforeTabs})`
       );
       check2(
@@ -68763,19 +69573,19 @@ ${sc.body || ""}
       await new Promise((r) => setTimeout(r, 600));
       check2(
         "\u0E41\u0E14\u0E0A\u0E1A\u0E2D\u0E23\u0E4C\u0E14\u0E40\u0E1B\u0E34\u0E14 + \u0E15\u0E31\u0E27\u0E40\u0E25\u0E02\u0E2A\u0E16\u0E34\u0E15\u0E34\u0E21\u0E32",
-        !!state.active?.dash && document.querySelector(".pane.on .dash-num")?.textContent !== "\u2026"
+        isPanelOpen("dashboard") && document.querySelector("#dash-body .dash-num")?.textContent !== "\u2026"
       );
       check2(
         "\u0E41\u0E14\u0E0A\u0E1A\u0E2D\u0E23\u0E4C\u0E14\u0E21\u0E35\u0E41\u0E1C\u0E07\u0E2A\u0E16\u0E34\u0E15\u0E34\u0E40\u0E0A\u0E34\u0E07\u0E25\u0E36\u0E01 (analytics)",
-        !!document.querySelector(".pane.on .dash-analytics")
+        !!document.querySelector("#dash-body .dash-analytics")
       );
       check2(
         "\u0E21\u0E35\u0E41\u0E16\u0E1A\u0E04\u0E27\u0E32\u0E21\u0E04\u0E37\u0E1A\u0E2B\u0E19\u0E49\u0E32\u0E15\u0E32\u0E21\u0E2A\u0E16\u0E32\u0E19\u0E30\u0E09\u0E32\u0E01",
-        !!document.querySelector(".pane.on .dash-apanel .dash-stat-fill")
+        !!document.querySelector("#dash-body .dash-apanel .dash-stat-fill")
       );
       check2(
         "\u0E21\u0E35\u0E41\u0E1C\u0E07\u0E04\u0E27\u0E32\u0E21\u0E22\u0E32\u0E27\u0E41\u0E15\u0E48\u0E25\u0E30\u0E1A\u0E17",
-        [...document.querySelectorAll(".pane.on .dash-apanel-title")].some((e) => e.textContent.includes("\u0E04\u0E27\u0E32\u0E21\u0E22\u0E32\u0E27\u0E41\u0E15\u0E48\u0E25\u0E30\u0E1A\u0E17"))
+        [...document.querySelectorAll("#dash-body .dash-apanel-title")].some((e) => e.textContent.includes("\u0E04\u0E27\u0E32\u0E21\u0E22\u0E32\u0E27\u0E41\u0E15\u0E48\u0E25\u0E30\u0E1A\u0E17"))
       );
       await kapi.testShot("/tmp/k2_analytics.png");
       closeTab("::dash::");
@@ -69942,8 +70752,29 @@ ${sc.body || ""}
           "mark dirty \u2192 \u0E08\u0E38\u0E14 \u{1F4BE} \u0E1A\u0E19 titlebar \u0E41\u0E2A\u0E14\u0E07",
           $("#tb-dirty-dot") && $("#tb-dirty-dot").style.display !== "none"
         );
-        const nSaved = await saveAllTabs();
+        const pSave = saveAllTabs();
+        await new Promise((r) => setTimeout(r, 60));
+        const saDlg = document.querySelector(".k-dialog.k-saveall");
+        check2("\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14 \u2192 \u0E02\u0E36\u0E49\u0E19\u0E01\u0E25\u0E48\u0E2D\u0E07\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E44\u0E1F\u0E25\u0E4C", !!saDlg);
+        const saRows = saDlg ? saDlg.querySelectorAll(".k-saveall-row") : [];
+        check2(
+          "\u0E01\u0E25\u0E48\u0E2D\u0E07\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14\u0E41\u0E2A\u0E14\u0E07\u0E0A\u0E37\u0E48\u0E2D+\u0E1E\u0E32\u0E18\u0E02\u0E2D\u0E07\u0E44\u0E1F\u0E25\u0E4C\u0E04\u0E49\u0E32\u0E07",
+          saRows.length >= 1 && !!saRows[0].querySelector(".k-saveall-name")?.textContent && (saRows[0].querySelector(".k-saveall-path")?.textContent || "").includes(".md"),
+          saRows.length + " rows"
+        );
+        check2(
+          "\u0E17\u0E38\u0E01\u0E41\u0E16\u0E27\u0E15\u0E34\u0E4A\u0E01\u0E44\u0E27\u0E49\u0E15\u0E31\u0E49\u0E07\u0E41\u0E15\u0E48\u0E41\u0E23\u0E01",
+          [...saRows].every((r) => r.querySelector("input").checked)
+        );
+        check2(
+          "\u0E2B\u0E31\u0E27\u0E01\u0E25\u0E48\u0E2D\u0E07\u0E1A\u0E2D\u0E01\u0E08\u0E33\u0E19\u0E27\u0E19\u0E44\u0E1F\u0E25\u0E4C\u0E17\u0E35\u0E48\u0E04\u0E49\u0E32\u0E07",
+          (saDlg.querySelector(".k-dlg-title").textContent || "").includes(String(saRows.length)),
+          saDlg.querySelector(".k-dlg-title").textContent
+        );
+        saDlg.querySelector(".k-dlg-btns .k-ok").click();
+        const nSaved = await pSave;
         check2("saveAllTabs \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E41\u0E17\u0E47\u0E1A\u0E04\u0E49\u0E32\u0E07", nSaved >= 1, "saved=" + nSaved);
+        check2("\u0E01\u0E25\u0E48\u0E2D\u0E07\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14\u0E1B\u0E34\u0E14\u0E2B\u0E25\u0E31\u0E07\u0E01\u0E14\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01", !document.querySelector(".k-saveall"));
         check2("\u0E2B\u0E25\u0E31\u0E07 saveAll \u0E44\u0E21\u0E48\u0E21\u0E35\u0E41\u0E17\u0E47\u0E1A dirty", [...state.tabs.values()].every((x) => !x.dirty));
         updateDirtyBadge();
         check2(
@@ -69967,7 +70798,7 @@ ${sc.body || ""}
         );
         check2(
           "\u0E41\u0E1C\u0E07 Home \u0E21\u0E35\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C",
-          !!hb?.querySelector(".home-panel-item") || !!hb?.querySelector(".home-empty")
+          !!hb?.querySelector(".home-card") || !!hb?.querySelector(".home-empty")
         );
         await kapi.testShot("/tmp/k2_home.png");
         hidePanel("home");
@@ -70004,10 +70835,15 @@ ${sc.body || ""}
         const ndirty = [...state.tabs.values()].filter((t3) => t3.dirty).length;
         check2("markDirty \u0E41\u0E25\u0E49\u0E27\u0E21\u0E35\u0E41\u0E17\u0E47\u0E1A dirty", ndirty > dirtyBefore, "dirty=" + ndirty);
         window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyS", ctrlKey: true, shiftKey: true, bubbles: true }));
-        await new Promise((r) => setTimeout(r, 100));
+        await new Promise((r) => setTimeout(r, 120));
+        const scDlg = document.querySelector(".k-dialog.k-saveall");
+        check2("Ctrl+Shift+S \u2192 \u0E02\u0E36\u0E49\u0E19\u0E01\u0E25\u0E48\u0E2D\u0E07\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E44\u0E1F\u0E25\u0E4C\u0E17\u0E35\u0E48\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01", !!scDlg);
+        scDlg.querySelector(".k-dlg-btns .k-ok").click();
+        await new Promise((r) => setTimeout(r, 250));
         check2(
           "Ctrl+Shift+S \u2192 \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14 (\u0E44\u0E21\u0E48\u0E21\u0E35\u0E41\u0E17\u0E47\u0E1A dirty)",
-          [...state.tabs.values()].every((t3) => !t3.dirty)
+          [...state.tabs.values()].every((t3) => !t3.dirty),
+          [...state.tabs.values()].filter((t3) => t3.dirty).map((t3) => t3.title).join("|")
         );
       }
       {
@@ -70814,8 +71650,8 @@ ${sc.body || ""}
       }
       {
         await openKanban();
-        const kbPane = document.querySelector("#kanban-pane");
-        check2("\u0E40\u0E1B\u0E34\u0E14\u0E01\u0E23\u0E30\u0E14\u0E32\u0E19 Kanban \u0E40\u0E1B\u0E47\u0E19\u0E41\u0E17\u0E47\u0E1A\u0E44\u0E14\u0E49", !!kbPane && state.tabs.has("::kanban::"));
+        const kbPane = document.querySelector("#kanban-body");
+        check2("\u0E40\u0E1B\u0E34\u0E14\u0E01\u0E23\u0E30\u0E14\u0E32\u0E19 Kanban \u0E40\u0E1B\u0E47\u0E19\u0E41\u0E1C\u0E07\u0E44\u0E14\u0E49", !!kbPane && isPanelOpen("kanban"));
         const cards = kbPane ? [...kbPane.querySelectorAll(".kb-card")] : [];
         check2("Kanban \u0E2D\u0E48\u0E32\u0E19\u0E09\u0E32\u0E01\u0E08\u0E32\u0E01 scenes.json \u0E21\u0E32\u0E40\u0E1B\u0E47\u0E19\u0E01\u0E32\u0E23\u0E4C\u0E14", cards.length >= 2, "cards=" + cards.length);
         const cols = kbPane ? [...kbPane.querySelectorAll(".kb-col")] : [];
@@ -70836,7 +71672,7 @@ ${sc.body || ""}
             (sc2 && sc2.row.status) + " vs " + target.dataset.status
           );
         }
-        closeTab("::kanban::");
+        hidePanel("kanban");
       }
       {
         const headOf = () => document.querySelector('#app-root .k-panel[data-panel-id="outline"] .k-panel-head');
@@ -70874,7 +71710,8 @@ ${sc.body || ""}
           );
           check2(
             "\u0E17\u0E31\u0E49\u0E07\u0E2A\u0E2D\u0E07\u0E0A\u0E48\u0E2D\u0E07\u0E22\u0E37\u0E21 .pane \u0E02\u0E2D\u0E07\u0E41\u0E17\u0E47\u0E1A\u0E08\u0E23\u0E34\u0E07\u0E21\u0E32\u0E41\u0E2A\u0E14\u0E07 (\u0E44\u0E21\u0E48\u0E43\u0E0A\u0E48\u0E01\u0E25\u0E48\u0E2D\u0E07\u0E40\u0E1B\u0E25\u0E48\u0E32)",
-            document.querySelectorAll("#split-root .k-split-pane > .pane").length === 2
+            // .52+ : .k-split-pane > .k-split-tabs + .k-split-body > .pane (บั๊ก #12 แถบแท็บย่อย)
+            document.querySelectorAll("#split-root .k-split-pane .k-split-body > .pane").length === 2
           );
           check2(
             "\u0E40\u0E19\u0E37\u0E49\u0E2D\u0E40\u0E2D\u0E14\u0E34\u0E40\u0E15\u0E2D\u0E23\u0E4C\u0E22\u0E31\u0E07\u0E2D\u0E22\u0E39\u0E48\u0E2B\u0E25\u0E31\u0E07\u0E16\u0E39\u0E01\u0E22\u0E49\u0E32\u0E22\u0E40\u0E02\u0E49\u0E32\u0E0A\u0E48\u0E2D\u0E07 (ProseMirror \u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E17\u0E33\u0E25\u0E32\u0E22)",
@@ -71090,7 +71927,7 @@ ${sc.body || ""}
         togglePaper(true);
         toggleReading(true);
         await new Promise((r) => setTimeout(r, 120));
-        const pm2 = document.querySelector(".pane.on > .ProseMirror");
+        const pm2 = document.querySelector(".pane.on .ProseMirror");
         const csRead = pm2 ? getComputedStyle(pm2) : null;
         const rgb = (s) => (String(s).match(/\d+/g) || [0, 0, 0]).slice(0, 3).map(Number);
         const lum = (s) => {
@@ -71170,14 +72007,16 @@ ${sc.body || ""}
         check2("\u0E01\u0E14\u0E1E\u0E31\u0E1A\u0E0B\u0E49\u0E33 = \u0E04\u0E25\u0E35\u0E48\u0E01\u0E25\u0E31\u0E1A", !treePanelEl().classList.contains("k-collapsed"));
         treeBtn("close").click();
         await new Promise((r) => setTimeout(r, 60));
-        const chip = document.querySelector('#k-min-tray-l .k-min-chip[data-key="tree"]');
         check2("\u0E1B\u0E34\u0E14\u0E41\u0E1C\u0E07 \u2192 \u0E41\u0E1C\u0E07\u0E16\u0E39\u0E01\u0E40\u0E01\u0E47\u0E1A\u0E2D\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E15\u0E49\u0E19\u0E44\u0E21\u0E49", !treePanelEl());
-        check2("\u0E1B\u0E34\u0E14\u0E41\u0E1C\u0E07 \u2192 \u0E21\u0E35\u0E1B\u0E38\u0E48\u0E21\u0E43\u0E19\u0E16\u0E32\u0E14\u0E44\u0E27\u0E49\u0E40\u0E23\u0E35\u0E22\u0E01\u0E01\u0E25\u0E31\u0E1A (\u0E44\u0E21\u0E48\u0E2B\u0E32\u0E22\u0E16\u0E32\u0E27\u0E23)", !!chip);
-        chip.click();
+        check2(
+          "\u0E1B\u0E34\u0E14\u0E41\u0E1C\u0E07 \u2192 \u0E1B\u0E38\u0E48\u0E21 toggle toolbar \u0E44\u0E21\u0E48\u0E15\u0E34\u0E14 .on",
+          $("#tb-tree-panel") && !$("#tb-tree-panel").classList.contains("on")
+        );
+        $("#tb-tree-panel").click();
         await new Promise((r) => setTimeout(r, 60));
         check2(
-          "\u0E04\u0E25\u0E34\u0E01\u0E1B\u0E38\u0E48\u0E21\u0E43\u0E19\u0E16\u0E32\u0E14 \u2192 \u0E41\u0E1C\u0E07\u0E01\u0E25\u0E31\u0E1A\u0E21\u0E32",
-          !!treePanelEl() && !document.querySelector('#k-min-tray-l .k-min-chip[data-key="tree"]')
+          "\u0E04\u0E25\u0E34\u0E01\u0E1B\u0E38\u0E48\u0E21 toggle toolbar \u2192 \u0E41\u0E1C\u0E07\u0E01\u0E25\u0E31\u0E1A\u0E21\u0E32",
+          !!treePanelEl() && $("#tb-tree-panel") && $("#tb-tree-panel").classList.contains("on")
         );
         const zf = parseInt(getComputedStyle($("#k-fab")).zIndex, 10);
         const probe = el("div", "k-float-panel");
@@ -71479,10 +72318,10 @@ ${sc.body || ""}
             );
             check2(
               "\u0E2A\u0E25\u0E31\u0E1A\u0E02\u0E49\u0E32\u0E07\u0E41\u0E25\u0E49\u0E27\u0E0A\u0E48\u0E2D\u0E07\u0E17\u0E35\u0E48\u0E44\u0E21\u0E48\u0E43\u0E0A\u0E48\u0E41\u0E17\u0E47\u0E1A\u0E1B\u0E31\u0E08\u0E08\u0E38\u0E1A\u0E31\u0E19\u0E16\u0E39\u0E01\u0E17\u0E33\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E2B\u0E21\u0E32\u0E22\u0E43\u0E1A\u0E40\u0E14\u0E35\u0E22\u0E27",
-              document.querySelectorAll(".k-split-pane > .pane.compare-on").length === 1,
-              String(document.querySelectorAll(".k-split-pane > .pane.compare-on").length)
+              document.querySelectorAll(".k-split-body > .pane.compare-on").length === 1,
+              String(document.querySelectorAll(".k-split-body > .pane.compare-on").length)
             );
-            const paneOn = document.querySelector("#split-root .k-split-pane > .pane > .ProseMirror");
+            const paneOn = document.querySelector("#split-root .k-split-body > .pane > .workspace > .ProseMirror");
             check2(
               "\u0E42\u0E2B\u0E21\u0E14\u0E41\u0E22\u0E01\u0E08\u0E2D: \u0E2B\u0E19\u0E49\u0E32\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E2B\u0E14\u0E15\u0E32\u0E21\u0E0A\u0E48\u0E2D\u0E07\u0E17\u0E35\u0E48\u0E41\u0E04\u0E1A\u0E25\u0E07 (sync \u0E01\u0E31\u0E1A\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29)",
               !!paneOn && getComputedStyle(paneOn).maxWidth.includes("px"),
@@ -71564,7 +72403,7 @@ ${sc.body || ""}
           }
         }
         {
-          const pmNow = document.querySelector(".pane.on > .ProseMirror");
+          const pmNow = document.querySelector(".pane.on .ProseMirror");
           check2(
             "\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E14\u0E35\u0E14: \u0E15\u0E31\u0E27\u0E41\u0E01\u0E49\u0E44\u0E02\u0E43\u0E19 pane \u2192 \u0E43\u0E0A\u0E49 .pane \u0E40\u0E1B\u0E47\u0E19\u0E15\u0E31\u0E27\u0E40\u0E25\u0E37\u0E48\u0E2D\u0E19",
             !!pmNow && scrollHost(pmNow) === pmNow.closest(".pane")
@@ -71851,6 +72690,193 @@ ${sc.body || ""}
         document.querySelectorAll(".k-overlay").forEach((o) => o.remove());
         closeMenu();
       }
+      {
+        let onRule = null, offRule = null, bareBlock = null;
+        for (const ss of document.styleSheets) {
+          let rules;
+          try {
+            rules = ss.cssRules;
+          } catch {
+            continue;
+          }
+          for (const r of rules) {
+            if (!r.media || !String(r.conditionText || r.media.mediaText).includes("print")) continue;
+            for (const q of r.cssRules || []) {
+              if (q.selectorText === ".pane.on" && q.style.display === "block") onRule = q;
+              if (q.selectorText === ".pane:not(.on)" && q.style.display === "none") offRule = q;
+              if (q.selectorText === ".pane" && q.style.display === "block") bareBlock = q;
+            }
+          }
+        }
+        check2("#10 @media print \u0E2A\u0E31\u0E48\u0E07 display:block \u0E40\u0E09\u0E1E\u0E32\u0E30 .pane.on", !!onRule);
+        check2("#10 @media print \u0E0B\u0E48\u0E2D\u0E19 .pane \u0E17\u0E35\u0E48\u0E44\u0E21\u0E48 active \u0E14\u0E49\u0E27\u0E22 !important", !!offRule && offRule.style.getPropertyPriority("display") === "important");
+        check2(
+          "#10 \u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E0E `.pane { display:block }` \u0E40\u0E2B\u0E21\u0E32\u0E40\u0E02\u0E48\u0E07\u0E43\u0E19 @media print \u0E41\u0E25\u0E49\u0E27",
+          !bareBlock,
+          bareBlock && bareBlock.cssText
+        );
+        const panesAll = [...document.querySelectorAll("#panes .pane")];
+        const inactive = panesAll.filter((p) => !p.classList.contains("on"));
+        check2("\u0E21\u0E35 pane \u0E17\u0E35\u0E48\u0E44\u0E21\u0E48 active \u0E43\u0E2B\u0E49\u0E17\u0E14\u0E2A\u0E2D\u0E1A", inactive.length >= 1, "panes=" + panesAll.length);
+        const beforeDisp = panesAll.map((p) => p.style.display);
+        hideInactivePanes();
+        check2(
+          "#10 hideInactivePanes \u0E0B\u0E48\u0E2D\u0E19 pane \u0E17\u0E35\u0E48\u0E44\u0E21\u0E48 active \u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14",
+          inactive.every((p) => p.style.display === "none")
+        );
+        check2(
+          "#10 hideInactivePanes \u0E44\u0E21\u0E48\u0E41\u0E15\u0E30 pane \u0E17\u0E35\u0E48 active",
+          panesAll.filter((p) => p.classList.contains("on")).every((p) => p.style.display !== "none")
+        );
+        restoreInactivePanes();
+        check2(
+          "#10 restoreInactivePanes \u0E04\u0E37\u0E19 display \u0E40\u0E14\u0E34\u0E21\u0E04\u0E23\u0E1A\u0E17\u0E38\u0E01\u0E15\u0E31\u0E27",
+          panesAll.every((p, i2) => p.style.display === beforeDisp[i2]) && !document.querySelector("#panes .pane[data-k2hide]")
+        );
+      }
+      {
+        check2("#28 \u0E21\u0E35\u0E1B\u0E38\u0E48\u0E21\u0E04\u0E25\u0E31\u0E07\u0E23\u0E39\u0E1B\u0E1A\u0E19\u0E41\u0E16\u0E1A\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E21\u0E37\u0E2D", !!$("#tb-gallery"));
+        check2(
+          "#28 \u0E1B\u0E38\u0E48\u0E21\u0E04\u0E25\u0E31\u0E07\u0E23\u0E39\u0E1B\u0E43\u0E0A\u0E49\u0E44\u0E14\u0E49\u0E41\u0E21\u0E49\u0E44\u0E21\u0E48\u0E21\u0E35\u0E15\u0E31\u0E27\u0E41\u0E01\u0E49\u0E44\u0E02 (\u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E1B\u0E34\u0E14\u0E15\u0E32\u0E22)",
+          !$("#tb-gallery").classList.contains("dis")
+        );
+        const scGal = SHORTCUTS.find((s) => shortcutId(s) === "gallery");
+        check2(
+          "#28 \u0E21\u0E35\u0E04\u0E35\u0E22\u0E4C\u0E25\u0E31\u0E14 Ctrl+Shift+G \u0E43\u0E19\u0E15\u0E32\u0E23\u0E32\u0E07 SHORTCUTS",
+          !!scGal && scGal[0] === "KeyG" && scGal[1] === true && scGal[2] === true,
+          JSON.stringify(scGal)
+        );
+        check2("#28 \u0E04\u0E35\u0E22\u0E4C\u0E25\u0E31\u0E14\u0E04\u0E25\u0E31\u0E07\u0E23\u0E39\u0E1B\u0E21\u0E35\u0E1B\u0E49\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D (\u0E42\u0E1C\u0E25\u0E48\u0E43\u0E19\u0E41\u0E17\u0E47\u0E1A\u0E1B\u0E38\u0E48\u0E21\u0E25\u0E31\u0E14)", !!SHORTCUT_LABELS["gallery"]);
+        await handleCommand("gallery");
+        await new Promise((r) => setTimeout(r, 400));
+        check2("#28 \u0E04\u0E33\u0E2A\u0E31\u0E48\u0E07 gallery \u0E40\u0E1B\u0E34\u0E14\u0E04\u0E25\u0E31\u0E07\u0E23\u0E39\u0E1B\u0E44\u0E14\u0E49", !!state.active?.gal && document.querySelectorAll(".pane.on .gal-cell").length >= 1);
+        closeTab("::gallery::");
+        activate(t2.file);
+      }
+      {
+        check2("#2 DEFAULT_SETTINGS \u0E21\u0E35 spFontFamily", "spFontFamily" in DEFAULT_SETTINGS);
+        const origSp = state.settings.spFontFamily || "";
+        state.settings.spFontFamily = "";
+        applySettings();
+        check2(
+          "#2 \u0E44\u0E21\u0E48\u0E15\u0E31\u0E49\u0E07\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07 \u2192 \u0E44\u0E21\u0E48\u0E21\u0E35 --sp-font (\u0E43\u0E0A\u0E49 Courier New \u0E15\u0E32\u0E21\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19)",
+          !document.documentElement.style.getPropertyValue("--sp-font")
+        );
+        state.settings.spFontFamily = '"TH Sarabun New", sans-serif';
+        applySettings();
+        check2(
+          "#2 \u0E15\u0E31\u0E49\u0E07\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07 \u2192 --sp-font \u0E16\u0E39\u0E01\u0E40\u0E0B\u0E47\u0E15",
+          getComputedStyle(document.documentElement).getPropertyValue("--sp-font").trim() === '"TH Sarabun New", sans-serif',
+          getComputedStyle(document.documentElement).getPropertyValue("--sp-font")
+        );
+        const spProbe = el("div", "sp sp-action", "\u0E17\u0E14\u0E2A\u0E2D\u0E1A");
+        document.body.appendChild(spProbe);
+        check2(
+          "#2 \u0E1A\u0E25\u0E47\u0E2D\u0E01\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07\u0E43\u0E0A\u0E49\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E17\u0E35\u0E48\u0E15\u0E31\u0E49\u0E07",
+          getComputedStyle(spProbe).fontFamily.includes("TH Sarabun New"),
+          getComputedStyle(spProbe).fontFamily
+        );
+        spProbe.remove();
+        check2(
+          "#2 \u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07\u0E44\u0E21\u0E48\u0E44\u0E1B\u0E17\u0E31\u0E1A --ed-font \u0E02\u0E2D\u0E07\u0E19\u0E34\u0E22\u0E32\u0E22",
+          (document.documentElement.style.getPropertyValue("--ed-font") || "") !== '"TH Sarabun New", sans-serif'
+        );
+        settingsDialog();
+        await new Promise((r) => setTimeout(r, 120));
+        [...document.querySelectorAll(".k-set-tab")].find((x) => x.dataset.p === "write").click();
+        const spSel = document.querySelector("#st-spfontfamily");
+        check2('#2 \u0E41\u0E17\u0E47\u0E1A "\u0E01\u0E32\u0E23\u0E40\u0E02\u0E35\u0E22\u0E19" \u0E21\u0E35\u0E0A\u0E48\u0E2D\u0E07\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E41\u0E1A\u0E1A\u0E2D\u0E31\u0E01\u0E29\u0E23\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07', !!spSel);
+        check2(
+          "#2 \u0E0A\u0E48\u0E2D\u0E07\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07\u0E21\u0E35\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E43\u0E2B\u0E49\u0E40\u0E25\u0E37\u0E2D\u0E01",
+          spSel && spSel.options.length >= 8,
+          spSel && String(spSel.options.length)
+        );
+        check2(
+          "#2 \u0E0A\u0E48\u0E2D\u0E07\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E42\u0E0A\u0E27\u0E4C\u0E04\u0E48\u0E32\u0E17\u0E35\u0E48\u0E15\u0E31\u0E49\u0E07\u0E44\u0E27\u0E49\u0E1B\u0E31\u0E08\u0E08\u0E38\u0E1A\u0E31\u0E19",
+          spSel && spSel.value === '"TH Sarabun New", sans-serif',
+          spSel && spSel.value
+        );
+        document.querySelector(".k-dialog .k-cancel").click();
+        await new Promise((r) => setTimeout(r, 40));
+        check2(
+          "#2 \u0E01\u0E14\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01\u0E41\u0E25\u0E49\u0E27\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07\u0E04\u0E37\u0E19\u0E04\u0E48\u0E32\u0E17\u0E35\u0E48\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E44\u0E27\u0E49",
+          state.settings.spFontFamily === '"TH Sarabun New", sans-serif',
+          state.settings.spFontFamily
+        );
+        state.settings.spFontFamily = origSp;
+        applySettings();
+      }
+      {
+        const FEAT = [
+          ["dashboard", "#dash-body"],
+          ["kanban", "#kanban-body"],
+          ["books", "#books-body"],
+          ["timeline", "#tl-body"],
+          ["maps", "#maps-body"]
+        ];
+        for (const [id, sel] of FEAT) {
+          check2(
+            "#18 \u0E25\u0E07\u0E17\u0E30\u0E40\u0E1A\u0E35\u0E22\u0E19\u0E41\u0E1C\u0E07 " + id + " \u0E43\u0E19 PANEL_DEFS \u0E41\u0E25\u0E49\u0E27",
+            PANEL_DEFS.some((d) => d.id === id && d.closable !== false && d.floatable !== false)
+          );
+          check2("#18 \u0E21\u0E35\u0E01\u0E25\u0E48\u0E2D\u0E07\u0E40\u0E19\u0E37\u0E49\u0E2D\u0E2B\u0E32 " + sel + " \u0E43\u0E19 DOM", !!$(sel));
+          check2(
+            "#18 \u0E41\u0E1C\u0E07 " + id + ' \u0E42\u0E1C\u0E25\u0E48\u0E43\u0E19\u0E40\u0E21\u0E19\u0E39 "\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07 \u2192 \u0E41\u0E1C\u0E07"',
+            panelMenuItems().some((m) => m.click && PANEL_DEFS.find((d) => d.id === id) && m.label.includes(PANEL_DEFS.find((d) => d.id === id).title))
+          );
+        }
+        const tabsBefore = state.tabs.size;
+        for (const [id] of FEAT) {
+          if (isPanelOpen(id)) hidePanel(id);
+          await handleCommand("toggle-panel", id);
+          await new Promise((r) => setTimeout(r, 300));
+          check2("#18 toggle-panel \u0E40\u0E1B\u0E34\u0E14\u0E41\u0E1C\u0E07 " + id + " \u0E44\u0E14\u0E49", isPanelOpen(id));
+        }
+        await new Promise((r) => setTimeout(r, 400));
+        check2(
+          "#18 \u0E40\u0E1B\u0E34\u0E14\u0E04\u0E23\u0E1A 5 \u0E41\u0E1C\u0E07\u0E41\u0E25\u0E49\u0E27\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E41\u0E17\u0E47\u0E1A\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E40\u0E25\u0E22",
+          state.tabs.size === tabsBefore,
+          `tabs=${state.tabs.size} \u0E01\u0E48\u0E2D\u0E19=${tabsBefore}`
+        );
+        check2(
+          "#18 \u0E41\u0E16\u0E1A\u0E41\u0E17\u0E47\u0E1A\u0E44\u0E21\u0E48\u0E21\u0E35\u0E1B\u0E38\u0E48\u0E21\u0E02\u0E2D\u0E07\u0E41\u0E14\u0E0A\u0E1A\u0E2D\u0E23\u0E4C\u0E14/Kanban/\u0E40\u0E25\u0E48\u0E21/\u0E40\u0E2A\u0E49\u0E19\u0E40\u0E27\u0E25\u0E32/\u0E41\u0E1C\u0E19\u0E17\u0E35\u0E48",
+          ![...document.querySelectorAll("#tabs .tab-title")].some((n) => /แดชบอร์ด|Kanban|จัดการเล่ม|เส้นเวลา|แผนที่/.test(n.textContent)),
+          [...document.querySelectorAll("#tabs .tab-title")].map((n) => n.textContent).join("|")
+        );
+        check2(
+          "#18 \u0E41\u0E1C\u0E07\u0E41\u0E14\u0E0A\u0E1A\u0E2D\u0E23\u0E4C\u0E14\u0E21\u0E35\u0E40\u0E19\u0E37\u0E49\u0E2D\u0E2B\u0E32\u0E2B\u0E25\u0E31\u0E07\u0E40\u0E1B\u0E34\u0E14\u0E08\u0E32\u0E01\u0E40\u0E21\u0E19\u0E39",
+          !!document.querySelector("#dash-body .dash-num")
+        );
+        check2(
+          "#18 \u0E41\u0E1C\u0E07\u0E08\u0E31\u0E14\u0E01\u0E32\u0E23\u0E40\u0E25\u0E48\u0E21\u0E21\u0E35\u0E40\u0E19\u0E37\u0E49\u0E2D\u0E2B\u0E32\u0E2B\u0E25\u0E31\u0E07\u0E40\u0E1B\u0E34\u0E14\u0E08\u0E32\u0E01\u0E40\u0E21\u0E19\u0E39",
+          !!document.querySelector("#books-body .book-card")
+        );
+        check2(
+          "#18 \u0E41\u0E1C\u0E07\u0E40\u0E2A\u0E49\u0E19\u0E40\u0E27\u0E25\u0E32\u0E21\u0E35\u0E40\u0E19\u0E37\u0E49\u0E2D\u0E2B\u0E32\u0E2B\u0E25\u0E31\u0E07\u0E40\u0E1B\u0E34\u0E14\u0E08\u0E32\u0E01\u0E40\u0E21\u0E19\u0E39",
+          !!document.querySelector("#tl-body .tl-wrap")
+        );
+        check2(
+          "#18 \u0E41\u0E1C\u0E07\u0E41\u0E1C\u0E19\u0E17\u0E35\u0E48\u0E21\u0E35\u0E40\u0E19\u0E37\u0E49\u0E2D\u0E2B\u0E32\u0E2B\u0E25\u0E31\u0E07\u0E40\u0E1B\u0E34\u0E14\u0E08\u0E32\u0E01\u0E40\u0E21\u0E19\u0E39",
+          !!document.querySelector("#maps-body .map-wrap")
+        );
+        check2(
+          "#18 \u0E41\u0E1C\u0E07 Kanban \u0E21\u0E35\u0E40\u0E19\u0E37\u0E49\u0E2D\u0E2B\u0E32\u0E2B\u0E25\u0E31\u0E07\u0E40\u0E1B\u0E34\u0E14\u0E08\u0E32\u0E01\u0E40\u0E21\u0E19\u0E39",
+          !!document.querySelector("#kanban-body .kb-wrap")
+        );
+        const p1 = renderFeaturePanel("dashboard"), p2 = renderFeaturePanel("dashboard");
+        check2("#18 \u0E2A\u0E31\u0E48\u0E07\u0E27\u0E32\u0E14\u0E41\u0E1C\u0E07\u0E0B\u0E49\u0E2D\u0E19\u0E01\u0E31\u0E19 \u2192 \u0E43\u0E0A\u0E49\u0E23\u0E2D\u0E1A\u0E40\u0E14\u0E35\u0E22\u0E27\u0E01\u0E31\u0E19 (\u0E44\u0E21\u0E48\u0E27\u0E32\u0E14\u0E0B\u0E49\u0E33)", p1 === p2);
+        await p1;
+        for (const [id] of FEAT) {
+          hidePanel(id);
+          check2("#18 \u0E1B\u0E34\u0E14\u0E41\u0E1C\u0E07 " + id + " \u0E44\u0E14\u0E49", !isPanelOpen(id));
+        }
+        clearFeaturePanels();
+        check2(
+          "#18 clearFeaturePanels \u0E25\u0E49\u0E32\u0E07\u0E40\u0E19\u0E37\u0E49\u0E2D\u0E41\u0E1C\u0E07\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14",
+          FEAT.every(([, sel]) => !$(sel) || $(sel).children.length === 0)
+        );
+        renderPanels(true);
+      }
       out.push("ALL OK");
     } catch (e) {
       out.push("STOP: " + e.message + "\n" + (e.stack || ""));
@@ -71862,7 +72888,7 @@ ${sc.body || ""}
     await kapi.writeFile("/tmp/k2result.txt", out.join("\n"));
     document.title = out[out.length - 1] === "ALL OK" ? "TESTOK" : "TESTFAIL";
   }
-  var import_md10, tr, pageScale, autosaveTimer, treeScope, _treeBuilding, _treeQueued, INV_C, FLOAT_Z_MIN, FLOAT_Z_MAX, _floatZ, mapsState_C, _menuTogSig, _readEsc, APP_VERSION, propsTarget_C, _propsGen, propsFlush_C, SECTION_STATUSES, plugins, TPL_CATS, FIELD_TYPES, _cmMigrated, uniqList, imgURLBase, FMTS, countJob, outlineJob, navShowBeats, navTrunc, _logTimer, TB_SC_MAP, floatBar, TIP_GAP, _tipEl, _tipHost, _tipSaved, _tipJob, _tipKt;
+  var import_md10, tr, pageScale, autosaveTimer, treeScope, _treeBuilding, _treeQueued, INV_C, FLOAT_Z_MIN, FLOAT_Z_MAX, _floatZ, mapsState_C, _menuTogSig, _readEsc, APP_VERSION, propsTarget_C, _propsGen, propsFlush_C, SECTION_STATUSES, plugins, TPL_CATS, FIELD_TYPES, _cmMigrated, uniqList, imgURLBase, FMTS, countJob, outlineJob, navShowBeats, navTrunc, _logTimer, FEATURE_PANELS, _featInFlight, TB_SC_MAP, floatBar, TIP_GAP, _tipEl, _tipHost, _tipSaved, _tipJob, _tipKt;
   var init_app = __esm({
     "src/app.js"() {
       init_editor();
@@ -71974,6 +73000,17 @@ ${sc.body || ""}
       _logTimer = null;
       window.__k2test = (p) => runTest(p);
       window.__k2menu = null;
+      FEATURE_PANELS = {
+        dashboard: () => renderDashboard($("#dash-body")),
+        kanban: () => renderKanbanPanel(),
+        books: () => renderBookManager($("#books-body")),
+        timeline: () => renderTimeline($("#tl-body")),
+        maps: () => renderMapsPanel()
+      };
+      _featInFlight = /* @__PURE__ */ new Map();
+      setPanelShowHook((pid) => {
+        renderFeaturePanel(pid);
+      });
       kapi.onMenu(handleCommand);
       window.addEventListener("keydown", onShortcut, true);
       window.addEventListener("keydown", (e) => {
@@ -72018,7 +73055,8 @@ ${sc.body || ""}
         "tb-close": "close-tab",
         "tb-focus": "focus-mode",
         "tb-typewriter": "typewriter",
-        "tb-quickopen": "quick-open"
+        "tb-quickopen": "quick-open",
+        "tb-gallery": "gallery"
       };
       floatBar = null;
       TIP_GAP = 6;
@@ -72046,6 +73084,7 @@ ${sc.body || ""}
         tb("#tb-align-right", "align", "right");
         tb("#tb-align-justify", "align", "justify");
         $("#tb-img").onclick = insertImage;
+        $("#tb-gallery").onclick = () => openGallery();
         $("#tb-mode").onclick = (e) => {
           const tab = state.active;
           if (!tab || !(tab.editor || tab.sp)) return;
@@ -72119,9 +73158,25 @@ ${sc.body || ""}
           e.preventDefault();
           showAllNotes();
         };
-        $("#tb-kanban").onclick = () => openKanban();
+        $("#tb-kanban").onclick = () => togglePanel("kanban");
         $("#tb-ai").onclick = () => openAIAssistant();
         $("#tb-ai-chat").onclick = () => openAIChat();
+        $("#tb-tree-panel").onclick = () => {
+          togglePanel("tree");
+          refreshToolbar();
+        };
+        $("#tb-outline-panel").onclick = () => {
+          togglePanel("outline");
+          refreshToolbar();
+        };
+        $("#tb-props-panel").onclick = () => {
+          togglePanel("props");
+          refreshToolbar();
+        };
+        $("#tb-search-panel").onclick = () => {
+          togglePanel("search");
+          refreshToolbar();
+        };
         $("#tb-panels").onclick = () => togglePanelDialog();
         $("#tb-split").onclick = () => handleCommand("split-view");
         $("#tb-close").onclick = () => {
@@ -72142,8 +73197,7 @@ ${sc.body || ""}
         startAutoBackup();
         $("#save-all-btn").onclick = () => saveAllTabs();
         $("#home-btn").onclick = () => {
-          showPanel("home");
-          Promise.resolve().then(() => (init_home_ui(), home_ui_exports)).then((m) => m.renderHomePanel($("#home-body")));
+          Promise.resolve().then(() => (init_home_ui(), home_ui_exports)).then((m) => m.showHomeDialog());
         };
         window.addEventListener("keydown", (e) => {
           if (e.code === "KeyS" && e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey) {
@@ -72176,8 +73230,9 @@ ${sc.body || ""}
         $("#tree-search").oninput = (e) => filterTree(e.target.value);
         setupFloatingFormatBar();
         initPanelSystem();
+        onPanelLayoutChange(refreshToolbar);
         startLogAutoRefresh();
-        initSplitSystem({ activate, onRender: () => refreshToolbar() });
+        initSplitSystem({ activate, closeTab, onRender: () => refreshToolbar() });
         const refreshBtn = el("span", "k-panel-btn k-tree-refresh-btn", "\u{1F504}");
         refreshBtn.title = "\u0E23\u0E35\u0E40\u0E1F\u0E23\u0E0A \u2014 \u0E2D\u0E48\u0E32\u0E19\u0E44\u0E1F\u0E25\u0E4C/\u0E42\u0E1F\u0E25\u0E40\u0E14\u0E2D\u0E23\u0E4C\u0E43\u0E2B\u0E21\u0E48\u0E08\u0E32\u0E01\u0E14\u0E34\u0E2A\u0E01\u0E4C";
         refreshBtn.onclick = async (e) => {
@@ -72315,8 +73370,7 @@ ${sc.body || ""}
         if (!location.search.includes("k2test")) kapi.listRecent().then((r) => {
           if (r[0]) loadProject(r[0]);
           else {
-            showPanel("home");
-            Promise.resolve().then(() => (init_home_ui(), home_ui_exports)).then((m) => m.renderHomePanel($("#home-body")));
+            Promise.resolve().then(() => (init_home_ui(), home_ui_exports)).then((m) => m.showHomeDialog());
           }
         });
         restartAutosave();

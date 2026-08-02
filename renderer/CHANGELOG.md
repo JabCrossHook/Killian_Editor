@@ -1,3 +1,269 @@
+v2.0.0-alpha.55
+---------------
+**กู้คืนสาย .49–.52 กลับมารวมกับ .53/.54 + แก้บั๊กที่โผล่ตอนรวม**
+
+เกิดอุบัติเหตุ: งาน .53/.54 (ฟีเจอร์บทหนัง) ถูกเขียนต่อจากฐาน **.48** แทนที่จะเป็น **.52**
+งานแก้บั๊กทั้งชุดของ .49–.52 จึงหายไป รอบนี้ต่อสายโซ่ `.48 → +.49 → +.50-52 → +.53-54` กลับมาใหม่
+แล้วไล่แก้จุดที่ชนกันด้วยมือ · เนื้อในต่างจาก `Killian2-2.0.0-alpha.54-portable.exe` ที่ปล่อยไปแล้ว จึงขึ้นเลขใหม่
+
+### บั๊กที่แก้ระหว่างรวมสาย
+- `app.js` — ตัดบล็อก `revertTab`/`removeElementsDialog`/`showCharMap` ที่ประกาศซ้ำ (71 บรรทัด)
+- `panels/panel-ui.js` — เพิ่ม `onPanelLayoutChange` + ถอด `syncMinTray()` ออกจาก `renderPanels`
+- `app.js` `case 'fmt'` — Ctrl+1/2/3 ในบทหนัง redirect เป็น scene/action/character
+- `app.js` `switchFormat` (บั๊ก #7) — `innerHTML=''` ลบ `.workspace` ทิ้ง ทำให้ซูมหน้ากระดาษพัง → สร้างคืนก่อน mount
+- `dashboard.js` — เพิ่ม `renderFeaturePanel` เข้า import
+- `layout/split-layout.js` — เพิ่ม `SplitManager.focusLeafId` / `addTab` / `activateInLeaf` / `closeInLeaf`
+- `style.css` — ใช้ของ .52 เป็นฐาน (workspace model + `.k-mtab` + `.k-split-tabs`) แล้วเติมของ .53/.54
+
+### บั๊กที่เจอเพิ่มรอบนี้
+- **หน้า Home แสดงรายการโปรเจกต์แบบไม่มีสไตล์** — `loadPanelProjects()` วาดเป็น `.home-panel-item`
+  ซึ่งไม่มี CSS อยู่เลยสักบรรทัด → เปลี่ยนไปใช้ `createProjectCard()` ชุดเดียวกับหน้า Home
+  (มีปก/สถิติ/วันที่ครบ และปุ่มสลับมุมมองการ์ด↔รายการทำงานจริง)
+- **เปิดโปรเจกต์จากกล่อง Home แล้ว overlay ไม่ปิด** ค้างทับหน้าจอ → ส่ง `onOpen` เข้าไปปิดกล่องก่อนโหลด
+- **ปุ่ม "สร้างโปรเจกต์ใหม่" ในแผง Home กดไม่ได้** — `const { newProject } = import('./app.js')`
+  ได้ `undefined` (ไม่ได้ await) แล้วบัง `newProject` ที่ import ไว้แล้ว → TypeError
+- **แผงแผนที่/Kanban เปิดจากเมนู "มุมมอง → แผง" แล้วได้กล่องเปล่า** — `FEATURE_PANELS` เรียก
+  `renderMapsPanel()` / `renderKanbanPanel()` แต่ `app.js` ไม่ได้ import สองตัวนี้เข้ามา
+  esbuild ปล่อยผ่านเป็น global reference → ReferenceError ตอนรัน แล้วถูก `.catch` ของ `renderFeaturePanel` กลืนเงียบ ๆ
+  (เข้าทางเดิมผ่าน `openMaps()`/`openKanban()` ยังทำงานปกติ จึงไม่มีใครเห็น)
+
+### e2e ที่ยังเช็คแบบสถาปัตยกรรมเก่า
+- `Kanban` เป็น **แผง** แล้วไม่ใช่แท็บ → `#kanban-pane` + `state.tabs.has('::kanban::')`
+  เปลี่ยนเป็น `#kanban-body` + `isPanelOpen('kanban')` (ปิดด้วย `hidePanel`)
+- Split View: โครงจริงตั้งแต่ .52 คือ `.k-split-pane > .k-split-tabs + .k-split-body > .pane` (บั๊ก #12 แถบแท็บย่อยต่อช่อง)
+  → เลิกใช้ `.k-split-pane > .pane`
+- โหมดแยกจอ: `.pane > .ProseMirror` ไม่มีจริงตั้งแต่ .47 — มี `.workspace` (ชั้นที่รับ CSS zoom) คั่นอยู่
+
+**Files**: `home-ui.js` · `app.js` · `AGENTS.md` · `package.json` · `CHANGELOG.md`
+**e2e**: 893 checks · ALL OK — **unit**: 731 checks · ALL OK
+
+v2.0.0-alpha.54
+---------------
+**Batch 2 — Element System + Auto-Cap + Revert + Remove Elements + Char Map (5 features)**
+
+### [50] Element System (9 types)
+- เพิ่ม `shot` และ `act-break` ใน `SP_ELEMS`, `TAB_CYCLE`, `NEXT_ELEM`
+- `classify`: จับ `$shot text` → shot, `$act text` → act-break (ก่อน `raw`)
+- `lineFor`: serialize shot/act-break กลับเป็น `$shot`/`$act`
+- `DEFAULT_SP_CYCLE` ปรับ key `actBreak` → `act-break` ให้ตรงกับ SP_ELEMS
+- CSS: `.sp-shot` (uppercase), `.sp-act-break` (centered/bold), `.sp-note` (highlight style)
+
+### [93] Auto-Capitalize
+- `state.settings.spAutoCapitalize` / `spAutoCorrectI` (ค่าเริ่มต้น true)
+- `SPEditor.handleTextInput` + `_handleAutoText` — ขึ้นต้นประโยค/บล็อกด้วยตัวใหญ่ + แก้ตรงไหน
+- ตรวจจับหลัง `.`/`!`/`?` + ช่องว่าง หรือต้นบล็อก → capitalize ตัวถัดไป
+
+### [80] Revert
+- `revertTab(file)` — โหลดเนื้อหาจากดิสก์ ทิ้งการแก้ไขที่ยังไม่บันทึกทั้งหมด
+- `confirmBox` ก่อน revert · รองรับทั้ง prose/sp/wiki/plain
+- เมนู File → ↩ กลับไปเวอร์ชันล่าสุด (Revert) · `case 'revert'`
+
+### [76] Remove Elements by Type
+- `removeElementsDialog()` — เลือกประเภท element (เช็คบ็อกซ์) → ลบทั้งหมด
+- snapshot อัตโนมัติก่อนลบ · เลือกทั้งหมด/ไม่เลือก
+- เมนู View → 🧹 ลบ element ตามประเภท… · `case 'remove-elements'`
+
+### [75] Character Map
+- `showCharMap()` — ตาราง Latin-1 พิเศษ (À-ÿ, ¡-¿) 3 แถว
+- คลิกแทรกที่ cursor ใน editor ใด ๆ (prose/sp/wiki)
+- เมนู View → 🔤 แผนที่อักขระพิเศษ… · `case 'char-map'`
+- ปุ่มมี tooltip แสดง Unicode code point
+
+**Files**: `fountain.js` (+8) · `screenplay.js` (+30) · `core.js` (+2) · `app.js` (+120) · `dialogs.js` (+2) · `style.css` (+14) · `main.js` (+4) · `CHANGELOG.md`
+**e2e**: 842 checks · ALL OK
+
+v2.0.0-alpha.53
+---------------
+**Batch 1 — Screenplay Auto-Cycle + Detect + Shortcuts (6 features)**
+
+### [51] Tab/Enter Auto-Cycle (Configurable)
+- `DEFAULT_SP_CYCLE` ใหม่ใน `core.js` — ควบคุมว่า Tab/Enter/Shift+Tab ในแต่ละ element จะสร้างหรือสลับเป็น element ใด
+- `SPEditor.enter()` ใช้ spCycle แทน `NEXT_ELEM` แบบตายตัว
+- `SPEditor._tabCycle(dir)` — Tab/Shift+Tab สลับ element ตาม spCycle (เมื่อ SmartType ไม่ทำงาน)
+- เก็บ `state.settings.spCycle` (null = ใช้ค่าเริ่มต้น) — ปรับได้ในตั้งค่า → แท็บ "🎬 บทหนัง"
+- Ctrl+↑/↓ ยังใช้ `TAB_CYCLE` เดิมอยู่ (เป็นทางเลือกเสริม)
+
+### [52] Auto-Detect INT./EXT.
+- `SPEditor._autoDetect()` — หลังพิมพ์ทุกครั้ง ตรวจว่าข้อความขึ้นต้นด้วย `int.`, `ext.`, `int/ext.`, `i/e.`, `est.`, หรือ `ฉาก` → auto-switch เป็น scene element
+
+### [53] Parenthetical Auto-Wrap
+- กด `(` ใน character/dialogue block → auto-switch เป็น parenthetical พร้อม `()` และ cursor อยู่ตรงกลาง
+- จัดการใน `SPEditor.handleKeyDown`
+
+### [95] Per-Element Shortcuts
+- Ctrl+1/2/3 → scene/action/character ในบทหนัง (redirect จาก heading ใน prose)
+- Ctrl+4/5/6/7/8/9 → parenthetical/dialogue/transition/shot/act-break/note
+- `SPEditor.switchTo(el)` + `case 'sp-element'` ใน handleCommand
+
+### [79] Select Scene
+- Ctrl+Shift+A → เลือกทั้งฉาก (ตั้งแต่หัวฉากปัจจุบันถึงก่อนหัวฉากถัดไป)
+- กดซ้ำ → select all ทั้งบท
+- `SPEditor.selectScene()` ใช้ `doc.forEach` หาขอบเขตหัวฉาก
+
+### [77] Non-Breaking Space
+- Ctrl+Shift+Space → แทรก `\u00A0` (ป้องกัน line break)
+- ทำงานทั้งบทหนัง (ผ่าน `SPEditor.handleKeyDown`) และโหมดนิยาย (ผ่าน `case 'nbsp'` ใน handleCommand)
+
+**Files**: `core.js` (+96 lines) · `screenplay.js` (+82 lines) · `app.js` (+80 lines) · `dialogs.js` (+40 lines) · `CHANGELOG.md`
+**e2e**: 915 checks · ALL OK
+
+v2.0.0-alpha.52
+---------------
+**Sweep 4 บั๊ก — Zoom, Toggle, Kanban, Home**
+
+### Zoom min-width — dynamic ตาม scale
+- CSS: เอา `min-width:100%` ออกจาก `.workspace` (scale ไม่ได้ = ไม่ overflow)
+- JS: `applyZoomVars()` set `ws.style.minWidth = (pageScale * 100) + '%'` → zoom 1.5 = min-width:150%
+- ผล: zoom 1.5 → workspace 940px × 1.5 = 1410px → overflow pane → horizontal scroll ✅
+
+### Toolbar Toggle — close ไม่ใช่ collapse + จำตำแหน่ง
+- `togglePanel()`: `isOpen` → `hidePanel` / `showPanel` (ไม่ใช้ collapsePanel)
+- จำ `lastSide` (ซ้าย/ขวา) จาก DOM position ก่อนปิด → เปิดกลับที่ฝั่งเดิม
+
+### Kanban Toggle
+- `openKanban()`: `isPanelOpen('kanban')` → `hidePanel` (toggle แทน open-only)
+- `$('#tb-kanban').onclick` / `case 'kanban'` → `togglePanel('kanban')`
+
+### Home wider + grid 4 คอลัมน์ + list view
+- Home dialog: `maxWidth: 1100px` · `minWidth: 720px`
+- Settings dialog: `width: 680px`
+- Grid: `minmax(190px, 1fr)` → ได้ 4 คอลัมน์ที่ 830px
+- ปุ่ม 📱/📋 สลับมุมมองการ์ด ↔ รายการ + `.home-grid.list` CSS
+
+v2.0.0-alpha.51
+---------------
+**Sweep UX 12 ข้อ — Panel Drag, Zoom, Indicators, Home, Kanban, Toggle State**
+
+### Panel Drag Zones — title-vs-bar + accept all zones
+- `makeFloatDraggable` เพิ่ม title-vs-bar check (`e.target.closest('.k-panel-head-title')`)
+- ลาก float ที่ title → แสดงทุก drop zone (ฟ้า=edge, เขียว=center) → dock ได้ทุกทิศทาง
+- ลาก float ที่ bar → ไม่แสดง drop zone → แค่ย้ายตำแหน่ง
+
+### Zoom Word Wrapping — width:fit-content
+- `.pane > .workspace` เพิ่ม `width:fit-content; min-width:100%` → shrink-wrap ตาม content จริง
+- zoom=1.5 → workspace 940px → zoomed 1410px → overflow pane → horizontal scroll ✅
+
+### Active Tab/Editor Indicator — Full Frame
+- `.pane.on`: `box-shadow:inset 0 0 0 3px var(--accent)` (4 ด้าน แทนแค่ขอบซ้าย)
+- `.k-tab.active`: `box-shadow:inset 0 0 0 2px var(--accent-hi)` (full frame)
+- `.tab.on`: `box-shadow:inset 0 0 0 2px var(--accent)` (เพิ่ม frame)
+
+### Reading/Focus Mode — !important + cleanup
+- CSS: `#toolbar`, `#statusbar`, `#topbar` ใน reading-mode เพิ่ม `!important`
+- `toggleReading()` cleanup loop เพิ่ม `#toolbar`, `#titlebar`, `#tabs`
+
+### Home → Overlay Dialog
+- `showHomeDialog()` — overlay `.k-overlay > .k-dialog.k-wide` (z-index:90)
+- ใช้ `createProjectCard()` ใน `.home-grid`
+- 'home' ออกจาก `PANEL_DEFS` · `showPanel('home')` → `showHomeDialog()`
+
+### Panel Toggle Persistence
+- `togglePanel()` → `collapsePanel(pid, true/false)` แทน `hidePanel/showPanel`
+- แผงคงตำแหน่งใน tree — แค่ซ่อน/แสดง body (ไม่ย้ายกลับ defaultSide)
+
+### Kanban Without Document
+- `openKanban()` แสดง empty state ("เปิดโปรเจกต์และสร้างฉบับร่างก่อน") แทน return เฉยๆ
+
+### Toolbar Toggle State
+- `toggleFocus()` / case `line-numbers` / case `typewriter` เพิ่ม `refreshToolbar()`
+
+v2.0.0-alpha.50
+---------------
+**Panel UX + Zoom Fix + Home Page**
+
+### Workspace Canvas Model — ซูมแล้วได้ scrollbar แนวนอน
+ต้นเหตุ: `zoom` อยู่บน `.ProseMirror` โดยตรง → container width คงที่ → คำถูกตัดบรรทัดแทนที่จะมี scrollbar
+
+- แทรก `.workspace` (display:flow-root · zoom) กั้นกลาง `.pane` (overflow:auto) กับ `.ProseMirror`
+- `.workspace` กว้างตาม content จริง (940px × zoom) → overflow ที่ `.pane` ให้ scrollbar แนวนอน
+- `openScene()` / `switchFormat()` สร้าง `.workspace` · `mountEditor()` mount ลง `.workspace`
+- CSS: 25 selectors `> .ProseMirror` → `> .workspace > .ProseMirror` (paper-mode/reading-mode/split-view)
+- ProseMirror ยัง 940px CSS width → ตัวหนังสือไม่ถูกตัด · selection/cursor ทำงานถูกผ่าน zoom
+
+### Panel UX — Toolbar Toggle แทน Min-Tray (Issue A)
+- เลิก `syncMinTray()` (chip ▣ มุมจอ) → ปุ่ม `.tb-toggle` 4 ตัวบน toolbar:
+  `#tb-tree-panel` / `#tb-outline-panel` / `#tb-props-panel` / `#tb-search-panel`
+- มีจุด ● บอกสถานะเหมือน focus/paper/reading mode
+- `onPanelLayoutChange` hook → `refreshToolbar()` sync อัตโนมัติหลังทุก layout change
+- ยกเว้นจาก `canEdit` disable loop
+
+### Panel Drag — แยก "ลากชื่อ" vs "ลากแท็บ" (Issue B)
+- `makePanelDraggable` เช็ค `e.target.closest('.k-panel-head-title')` → `floatOnly`
+- ลาก title text → float เท่านั้น (กัน group โดยไม่ตั้งใจ)
+- ลาก head padding/icon → snap/dock ได้ (ตั้งใจจัดเลย์เอาต์)
+- `makeFloatDraggable` — float panel dock กลับได้เฉพาะ center zone (tab) ไม่ใช่ขอบ (split)
+
+### Home Page — ใช้ createProjectCard() แทน list เปล่า
+- `renderHomePanel()` → เรียก `createProjectCard()` (การ์ดสวย: cover image, stats, hover effect)
+- `class="home-grid"` แทน `id="home-grid"` · `home-wrap` แทน `home-panel-list` (คลาสที่ไม่มี CSS)
+
+### FloatBar ใน Wiki
+- `syncFloatBarVisible()` แสดง floatBar ใน Wiki editor ด้วย (เช็ค `state.active?.wiki?.secEditors`)
+
+v2.0.0-alpha.49
+---------------
+**Phase 7 — ฟีเจอร์ใหญ่ + ขัดเงา: บั๊ก #10 · #28 · #2 · #3 · #18 · #12**
+
+### บั๊ก #10 — พิมพ์แล้วได้ทุกแท็บที่เปิดอยู่ ไม่ใช่หน้าที่ดูอยู่
+ต้นเหตุ: `style.css` มี `@media print` **สองบล็อก** — บล็อกแรกซ่อน `.pane:not(.on)` ถูกแล้ว
+แต่บล็อกที่สองเขียน `.pane { display:block !important }` ทับกลับหมด → ทุก .pane ถูกส่งเข้าเครื่องพิมพ์
+
+- จำกัดเป็น `.pane.on` + เพิ่ม `.pane:not(.on) { display:none !important }`
+- ตาข่ายกันพลาดฝั่ง JS: `hideInactivePanes()` / `restoreInactivePanes()` ครอบทั้ง `print` และ `export-pdf`
+  (จำ `style.display` เดิมไว้ใน `data-k2hide` แล้วคืนให้ครบหลังพิมพ์เสร็จ)
+
+### บั๊ก #28 — คลังรูปเข้าถึงได้ทางเดียวคือคลิกขวาใน Explorer
+- **มุมมอง → 🖼 คลังรูปภาพ (Gallery)** + คีย์ลัด **Ctrl+Shift+G** (เข้าตาราง `SHORTCUTS` ตามกฎ)
+- ปุ่ม `#tb-gallery` บนแถบเครื่องมือ — ใช้ได้ตลอด ไม่ถูกปิดตอนไม่มีตัวแก้ไขเปิดอยู่
+- `case 'gallery'` ใน `handleCommand`
+
+### บั๊ก #2 — ตั้งฟอนต์บทหนังไม่ได้
+ต้นเหตุ: `fontFamily` ในตั้งค่าไปที่ `--ed-font` (นิยาย) อย่างเดียว ส่วน `.sp` ฮาร์ดโค้ด Courier New
+
+- `spFontFamily` ใน `DEFAULT_SETTINGS` → `--sp-font` (ว่าง = fallback Courier New ตามมาตรฐานบท)
+- `.sp` และกฎ `@media print` ของบทหนังอ่านจาก `var(--sp-font, …)`
+- **ตั้งค่า → การเขียน → แบบอักษรบทหนัง** ใช้รายการฟอนต์ชุดเดียวกับฟอนต์นิยาย (รวมฟอนต์ในโฟลเดอร์ `Fonts/`)
+  · เลือกแล้วเห็นผลทันที · กดยกเลิกคืนค่าเดิม
+
+### บั๊ก #3 — "บันทึกทั้งหมด" บอกแค่จำนวน ไม่บอกว่าไฟล์ไหน
+- `saveAllDialog()` ใน `ui.js` — รายการเลื่อนได้ แสดง **ชื่อแท็บ + พาธเต็ม** ของทุกไฟล์ที่ค้าง
+  ติ๊กเลือกได้ (ติ๊กครบ = "บันทึกทั้งหมด" · ติ๊กบางส่วน = "บันทึกที่เลือก (N)")
+- ใช้ทั้ง 3 ทาง: `saveAllTabs()` (Ctrl+Shift+S / ปุ่ม 💾) · `confirmQuit()` · `closeProjectIfAny()`
+  → ไม่มีทางกดปิดโปรแกรมทิ้งงานโดยไม่เห็นว่ากำลังทิ้งอะไร
+
+### บั๊ก #18 — ฟีเจอร์ที่ไม่ใช่เอกสารไปแย่งแถบแท็บกับฉากที่กำลังเขียน
+ต้นเหตุ: แดชบอร์ด/Kanban/จัดการเล่ม/เส้นเวลา/แผนที่ ใช้กลไกเดียวกับเอกสาร —
+สร้าง `.pane` ใน `#panes` + `.tab` ใน `#tabs` ทุกตัว
+
+- ทั้ง 5 กลายเป็น **แผงจริง** (`dashboard`/`kanban`/`books`/`timeline`/`maps` ใน `PANEL_DEFS`)
+  → dock ซ้าย/ขวา · ทำเป็นแท็บของแผง · ลอยออกมา · ปิดแล้วมี chip กลับ เหมือนแผงอื่นทุกอย่าง
+- `openDashboard/openKanban/openBookManager/openTimeline/openMaps` ยังชื่อเดิม แต่เป็น
+  `showPanel(id)` + วาดลง `#dash-body`/`#kanban-body`/`#books-body`/`#tl-body`/`#maps-body`
+- **hook ใน `showPanel`** วาดเนื้อแผงให้ทุกทางเข้า (เมนู · ถาดแผงที่ปิดไว้ · คำสั่ง · เลย์เอาต์ที่กู้มา)
+  พร้อม dedupe รอบที่กำลังวาดค้าง — เดิมเปิดจากเมนูแล้วได้กล่องเปล่า
+- **มุมมอง → แผง** มีทั้ง 5 พร้อมเครื่องหมายถูกตามสถานะจริง · ปิดโปรเจกต์แล้วล้างเนื้อแผงทิ้ง
+- Wiki entity **ยังเป็นแท็บเหมือนเดิม** (มันคือเอกสารประเภทหนึ่ง ไม่ใช่ singleton)
+
+### บั๊ก #12 — ใน Split View เลือกแท็บให้ช่องขวาแยกจากช่องซ้ายไม่ได้
+ต้นเหตุ: `#tabs` มีแถบเดียวทั้งหน้าต่าง และ `leaf` ถือแท็บได้ตัวเดียว (`leaf.tabId`)
+→ คลิกแท็บทีไรก็ไป **แทนที่** ในช่องที่โฟกัสอยู่
+
+- **โครงข้อมูลใหม่**: `leaf.tabs[] + leaf.active` (กลุ่มแท็บต่อช่อง) โดยคง `leaf.tabId`
+  ไว้เป็นกระจกเงาของ `tabs[active]` → โค้ดเดิมที่อ่าน `tabId` ใช้ได้หมด · เลย์เอาต์เก่าที่บันทึกไว้
+  ถูกยกเป็นกลุ่มแท็บอัตโนมัติตอนโหลด
+- API ใหม่ใน `split-layout.js`: `addLeafTab` · `activateLeafTab` · `removeLeafTab` · `leafTabs` ·
+  `allTabIds` · `leafTab` (+ `SplitManager.addTab/activateInLeaf/closeInLeaf/focusLeafId`)
+- **แถบแท็บย่อยในทุกช่อง** (`.k-split-tabs`) — คลิกสลับได้เฉพาะช่องนั้น ช่องอื่นไม่ขยับเลย
+  · จุด ● บอกงานค้าง · × = เอาออกจากช่องนี้ (สำเนาในช่องอื่นยังอยู่ · ไม่เหลือช่องไหนเลยจึงปิดแท็บจริง)
+  · ลากแท็บข้ามช่องได้จากแถบย่อย (ขอบ = แบ่งช่องใหม่ · กลาง = ย้ายเข้าช่องนั้น)
+- **`#tabs` ถูกซ่อนตอนแยกจอ** — ทุกช่องมีแถบของตัวเองแล้ว · `ensureAllTabsInSplit()` การันตีว่า
+  ทุกแท็บที่เปิดอยู่มีที่อยู่ในสักช่องเสมอ ไม่มีแท็บลอยเข้าถึงไม่ได้
+- `syncActiveSplit()` เลิก "ย้ายแท็บไปช่องที่โฟกัส" — ไปหาช่องที่แท็บนั้นอยู่แล้วสลับให้ในช่องนั้น
+- ปิดแท็บที่ช่องมีหลายตัว → ช่องไม่ยุบ กลับไปแสดงตัวก่อนหน้า (เดิมยุบทั้งช่อง)
+- ถาดแผงที่ปิดไว้จำกัดความสูง 46vh แล้วเลื่อนเอา (มีแผงปิดได้เพิ่มอีก 5 ตัวจากบั๊ก #18)
+
+**เทส: e2e 901 checks · ALL OK · unit 731 checks (split 60)**
+
 v2.0.0-alpha.48
 ---------------
 **Phase 6 — คอมเมนต์เป็นแผง (บั๊ก #25) · ค้นหาเอนทิตี้ Wiki ในฉาก (บั๊ก #21)**

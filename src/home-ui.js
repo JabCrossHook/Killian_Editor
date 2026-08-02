@@ -163,8 +163,8 @@ async function loadProjects(grid) {
   }
 }
 
-// สร้างการ์ดโปรเจกต์หนึ่งใบ
-export function createProjectCard(project) {
+// สร้างการ์ดโปรเจกต์หนึ่งใบ · onOpen = เรียกก่อนโหลด (กล่อง Home ใช้ปิด overlay ตัวเอง)
+export function createProjectCard(project, onOpen) {
   const card = el('div', 'home-card');
   
   // ส่วนปก (แสดง cover หรือ placeholder)
@@ -211,6 +211,7 @@ export function createProjectCard(project) {
   openBtn.onclick = async (e) => {
     e.stopPropagation();
     await kapi.pushRecent(project.root).catch(() => {});
+    onOpen?.();
     await loadProject(project.root);
   };
   body.append(openBtn);
@@ -223,6 +224,42 @@ export function createProjectCard(project) {
   return card;
 }
 
+// เปิด Home เป็น overlay dialog (แทน panel)
+export async function showHomeDialog() {
+  const ov = el('div', 'k-overlay');
+  ov.style.zIndex = '90';
+  const box = el('div', 'k-dialog k-wide');
+  box.style.maxWidth = '1100px';
+  box.style.minWidth = '720px';
+  const head = el('div', 'home-head');
+  head.append(el('h2', 'home-title', 'Killian 2'));
+  const actions = el('div', 'home-actions');
+  const newBtn = el('button', 'k-ok', '+ สร้างโปรเจกต์ใหม่');
+  const openBtn = el('button', null, '📂 เปิด');
+  const viewBtn = el('button', null, '📋');
+  viewBtn.title = 'สลับมุมมอง (การ์ด / รายการ)';
+  actions.append(newBtn, openBtn, viewBtn);
+  const grid = el('div', 'home-grid');
+  box.append(head, actions, grid);
+  ov.append(box);
+  document.body.append(ov);
+  ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
+
+  newBtn.onclick = () => { ov.remove(); newProject(); };
+  openBtn.onclick = async () => {
+    const projectPath = await kapi.openProjectDialog?.();
+    if (projectPath) { ov.remove(); const { loadProject } = await import('./app.js'); await loadProject(projectPath); }
+  };
+  document.addEventListener('keydown', function esc(e) { if (e.key === 'Escape') { ov.remove(); document.removeEventListener('keydown', esc); } });
+
+  viewBtn.onclick = () => {
+    grid.classList.toggle('list');
+    viewBtn.textContent = grid.classList.contains('list') ? '📱' : '📋';
+  };
+  await loadPanelProjects(grid, () => ov.remove());   // เปิดโปรเจกต์แล้วต้องปิดกล่อง ไม่งั้นค้างทับหน้าจอ
+  return ov;
+}
+
 export async function renderHomePanel(host) {
   if (!host || host.dataset.ready === '1') return;
   host.dataset.ready = '1';
@@ -233,15 +270,11 @@ export async function renderHomePanel(host) {
   const newBtn = el('button', 'k-ok', '+ สร้างโปรเจกต์ใหม่');
   const openBtn = el('button', null, '📂 เปิด');
   actions.append(newBtn, openBtn);
-  const list = el('div', 'home-panel-list');
-  list.id = 'home-grid';
+  const list = el('div', 'home-grid');
   wrap.append(head, actions, list);
   host.append(wrap);
 
-  newBtn.onclick = () => {
-    const { newProject } = import('./app.js');
-    newProject();
-  };
+  newBtn.onclick = () => newProject();   // (เดิม `const {newProject}=import(...)` = undefined → TypeError)
   openBtn.onclick = async () => {
     const projectPath = await kapi.openProjectDialog?.();
     if (projectPath) { const { loadProject } = await import('./app.js'); await loadProject(projectPath); }
@@ -251,7 +284,7 @@ export async function renderHomePanel(host) {
   return wrap;
 }
 
-async function loadPanelProjects(grid) {
+async function loadPanelProjects(grid, onOpen) {
   grid.innerHTML = '';
   try {
     const recent = await kapi.listRecent().catch(() => []);
@@ -310,24 +343,10 @@ async function loadPanelProjects(grid) {
       return;
     }
     projects.sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0));
-    for (const p of projects) {
-      const item = el('div', 'home-panel-item');
-      const info = el('div', 'home-panel-info');
-      info.append(el('span', 'home-panel-name', p.title));
-      info.append(el('span', 'home-panel-detail', `${p.totalScenes} ฉาก · ${p.totalWords.toLocaleString()} คำ · ${p.dateStr}`));
-      const openB = el('button', 'k-ok', 'เปิด');
-      openB.onclick = async (e) => {
-        e.stopPropagation();
-        await kapi.pushRecent(p.root).catch(() => {});
-        const { loadProject } = await import('./app.js');
-        await loadProject(p.root);
-      };
-      item.append(info, openB);
-      item.addEventListener('click', () => openB.click());
-      grid.append(item);
-    }
+    // ใช้การ์ดชุดเดียวกับหน้า Home (.home-card) — มีสไตล์จริงและสลับมุมมองการ์ด/รายการได้
+    for (const p of projects) grid.append(createProjectCard(p, onOpen));
   } catch (e) {
     log('error', 'home-panel: โหลดล้มเหลว', e);
-    grid.append(el('div', 'dim', 'เกิดข้อผิดพลาด'));
+    grid.append(el('div', 'home-empty', 'เกิดข้อผิดพลาดในการโหลดโปรเจกต์'));
   }
 }

@@ -87,9 +87,11 @@ function startPanelDrag(e, panelId, pm, ctx = {}) {
       document.body.appendChild(ghost);
     }
     if (ghost) { ghost.style.left = (ev.clientX + 12) + 'px'; ghost.style.top = (ev.clientY + 14) + 'px'; }
-    hit = detectSnapTarget(ev.clientX, ev.clientY, host, panelId);
-    if (hit) ov.show(zoneRect(hit.rect, hit.zone), hit.zone);
-    else ov.hide();
+    if (!ctx.floatOnly) {
+      hit = detectSnapTarget(ev.clientX, ev.clientY, host, panelId);
+      if (hit) ov.show(zoneRect(hit.rect, hit.zone), hit.zone);
+      else ov.hide();
+    }
   };
 
   const up = (ev) => {
@@ -101,14 +103,17 @@ function startPanelDrag(e, panelId, pm, ctx = {}) {
     if (!moved) return;                              // คลิกเฉย ๆ → ปล่อยให้ onclick ทำงาน
     // จัดลำดับแท็บภายในกลุ่มเดิม (ถ้า caller รองรับ) มาก่อน
     if (ctx.onReorder && ctx.onReorder(ev.clientX, ev.clientY)) return;
-    if (hit) {
+    if (!ctx.floatOnly && hit) {
       if (hit.targetId === panelId) return;
       pm.dockPanel(panelId, hit.zone, hit.targetId);
       return;
     }
-    // ปล่อยนอกทุกแผง → ลอยอิสระตรงตำแหน่งเมาส์
-    pm.floatPanel(panelId, { x: Math.max(0, ev.clientX - 60), y: Math.max(0, ev.clientY - 12),
-                             w: ctx.floatW || 320, h: ctx.floatH || 300 });
+    // ปล่อยนอกทุกแผง (หรือ floatOnly ที่ไม่มี hit) → ลอยอิสระตรงตำแหน่งเมาส์
+    if (!hit) {
+      pm.floatPanel(panelId, { x: Math.max(0, ev.clientX - 60), y: Math.max(0, ev.clientY - 12),
+                               w: ctx.floatW || 320, h: ctx.floatH || 300 });
+    }
+    // floatOnly && hit → no-op (ไม่ group, ไม่ float)
   };
 
   document.addEventListener('mousemove', move);
@@ -120,7 +125,8 @@ function startPanelDrag(e, panelId, pm, ctx = {}) {
 export function makePanelDraggable(header, panelId, pm, ctx = {}) {
   header.addEventListener('mousedown', (e) => {
     if (e.target.closest('.k-panel-btn') || e.target.closest('.k-panel-ctrls')) return;
-    startPanelDrag(e, panelId, pm, ctx);
+    const onTitle = !!e.target.closest('.k-panel-head-title');
+    startPanelDrag(e, panelId, pm, { ...ctx, floatOnly: onTitle });
   });
 }
 
@@ -167,7 +173,9 @@ export function makeFloatDraggable(header, popup, panelId, pm, ctx = {}) {
       popup.style.left = (x0 + ev.clientX - sx) + 'px';
       popup.style.top = (y0 + ev.clientY - sy) + 'px';
       hit = detectSnapTarget(ev.clientX, ev.clientY, host, panelId);
-      if (hit) ov.show(zoneRect(hit.rect, hit.zone), hit.zone); else ov.hide();
+      // float panels only snap to center zone (tab) — not edges (split)
+      if (hit && hit.zone === 'center') ov.show(zoneRect(hit.rect, hit.zone), hit.zone);
+      else { hit = null; ov.hide(); }
     };
     const up = () => {
       document.removeEventListener('mousemove', move);

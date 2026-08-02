@@ -6,25 +6,21 @@ import { getWordHistory, calcStreak } from './word-history.js';
 import { renderChoicePanel, showPlayerHistory } from './player-choices.js';
 import { findScenePath } from './project-scan.js';
 // ฟังก์ชันที่ยังอยู่ใน app.js (เรียกตอน runtime เท่านั้น — circular import ปลอดภัยกับ esbuild bundle)
-import { activate, closeTab, loadAllEntities, catIconHtml, catLabel, openScene } from './app.js';
+import { loadAllEntities, catIconHtml, catLabel, openScene, renderFeaturePanel } from './app.js';
 import { guid } from './app.js';
+import { showPanel, isPanelOpen } from './panels/panel-ui.js';
 
+/**
+ * บั๊ก #18: แดชบอร์ดเป็น "แผง" ไม่ใช่แท็บเอกสารอีกต่อไป
+ * เดิมสร้าง .pane ใน #panes + .tab ใน #tabs ไปแย่งที่กับฉากที่กำลังเขียน
+ */
 export async function openDashboard() {
-  const key = '::dash::';
-  if (state.tabs.has(key)) { activate(key); return renderDashboard(state.tabs.get(key).pane); }
-  const pane = el('div', 'pane');
-  $('#panes').append(pane);
-  const tabBtn = el('div', 'tab');
-  tabBtn.append(el('span', 'tab-title', 'แดชบอร์ด'));
-  const x = el('span', 'tab-x', '×'); tabBtn.append(x);
-  $('#tabs').append(tabBtn);
-  const tab = { file: key, title: 'แดชบอร์ด', pane, tabBtn, dirty: false,
-                editor: null, plain: null, wiki: null, gal: null, dash: true };
-  tabBtn.onclick = (e) => { if (e.target !== x) activate(key); };
-  x.onclick = () => closeTab(key);
-  state.tabs.set(key, tab);
-  activate(key);
-  renderDashboard(pane);
+  showPanel('dashboard');              // hook ใน app.js เริ่มวาดให้ · await รอบเดียวกันต่อ
+  return renderFeaturePanel('dashboard');
+}
+/** วาดใหม่ถ้าแผงเปิดค้างอยู่ (เรียกหลังบันทึกตั้งค่า/แก้ข้อมูล) */
+export function refreshDashboardIfOpen() {
+  if (isPanelOpen('dashboard') && $('#dash-body')) renderDashboard($('#dash-body'));
 }
 
 export async function renderDashboard(pane) {

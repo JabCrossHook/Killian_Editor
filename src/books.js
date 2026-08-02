@@ -1,27 +1,19 @@
 // books.js — ตัวจัดการเล่ม/ร่าง (Book Manager): เพิ่ม/แก้/ลบ/เรียงเล่มและร่าง
-import { SECTION_STATUSES, activate, buildTree, closeTab, openCompileDialog, openFirstSceneOf, resolveImg } from './app.js';
+import { SECTION_STATUSES, buildTree, openCompileDialog, openFirstSceneOf, resolveImg } from './app.js';
+import { showPanel, isPanelOpen } from './panels/panel-ui.js';
 import { addSection, deleteSection, listSections, reorderSections, saveSectionMeta, sectionStats } from './section-ops.js';
 import { $, el, setStatus, state } from './core.js';
 import { pickImage } from './gallery.js';
 import { popupMenu, ask } from './ui.js';
 import { listDraftsForSection, createDraft, deleteDraft, renameDraft, setPrimaryDraft } from './drafts.js';
 
+// บั๊ก #18: จัดการเล่มเป็นแผง ไม่ใช่แท็บเอกสาร
 export async function openBookManager() {
-  const key = '::books::';
-  if (state.tabs.has(key)) { activate(key); return renderBookManager(state.tabs.get(key).pane); }
-  const pane = el('div', 'pane');
-  $('#panes').append(pane);
-  const tabBtn = el('div', 'tab');
-  tabBtn.append(el('span', 'tab-title', 'จัดการเล่ม'));
-  const x = el('span', 'tab-x', '×'); tabBtn.append(x);
-  $('#tabs').append(tabBtn);
-  const tab = { file: key, title: 'จัดการเล่ม', pane, tabBtn, dirty: false,
-                editor: null, plain: null, wiki: null, gal: null, books: true };
-  tabBtn.onclick = (e) => { if (e.target !== x) activate(key); };
-  x.onclick = () => closeTab(key);
-  state.tabs.set(key, tab);
-  activate(key);
-  renderBookManager(pane);
+  showPanel('books');
+  return renderBookManager($('#books-body'));
+}
+export function refreshBooksIfOpen() {
+  if (isPanelOpen('books') && $('#books-body')) renderBookManager($('#books-body'));
 }
 
 export async function renderBookManager(pane) {

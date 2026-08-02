@@ -68,7 +68,7 @@ button:hover { background:#3a3936; }
   border-radius:7px 7px 0 0; color:var(--dim); font-size:calc(11.5px * var(--ui-scale, 1)); white-space:nowrap;
   max-width:150px; user-select:none; }
 .k-tab:hover { background:#2b2a27; color:var(--fg); }
-.k-tab.active { background:var(--bg); color:var(--bright); box-shadow:inset 0 -2px 0 var(--accent-hi); }
+.k-tab.active { background:var(--bg); color:var(--bright); box-shadow:inset 0 0 0 2px var(--accent-hi); }
 .k-tab-title { overflow:hidden; text-overflow:ellipsis; }
 .k-tab-icon { display:flex; align-items:center; opacity:.85; }
 .k-strip-btn { margin-left:auto; }
@@ -175,20 +175,21 @@ body.k-panel-dragging, body.k-resizing { user-select:none; }
   border-bottom:1px solid var(--border); overflow-x:auto; }
 .tab { display:flex; align-items:center; gap:8px; padding:6px 12px;
   background:#2b2a27; border-radius:8px 8px 0 0; cursor:pointer; white-space:nowrap; }
-.tab.on { background:var(--bg); color:var(--bright); }
+.tab.on { background:var(--bg); color:var(--bright); box-shadow:inset 0 0 0 2px var(--accent); }
 .tab-x { color:var(--dim); padding:0 2px; } .tab-x:hover { color:#e5695e; }
 
 #panes { flex:1; position:relative; min-height:0; }
 .pane { position:absolute; inset:0; display:none; overflow:auto; }
-.pane.on { display:block; box-shadow:inset 3px 0 0 0 var(--accent); }
+.pane.on { display:block; box-shadow:inset 0 0 0 3px var(--accent) !important; }
 
 /* ---------- ตัวแก้ไข (หน้ากระดาษ) ---------- */
-/* ซูมหน้ากระดาษ (บั๊ก #7) = CSS `zoom` บนตัวหน้ากระดาษเอง — ไม่ใช่การขยายฟอนต์อย่างเดียว
+/* ซูมหน้ากระดาษ (บั๊ก #7) = CSS `zoom` บนตัว workspace — ไม่ใช่การขยายฟอนต์อย่างเดียว
    ฟอนต์ + padding + margin + max-width ขยายพร้อมกันทั้งชุด สัดส่วนหน้าจึงคงเดิมทุกระดับซูม
    ใช้ `zoom` (ไม่ใช่ transform:scale) เพราะเบราว์เซอร์ remap พิกัดคลิก/selection/scroll ให้เอง
    → ProseMirror, decoration ตรวจคำผิด และ dropdown SmartType ทำงานถูกโดยไม่ต้องแก้โค้ด
-   (Electron = Chromium เท่านั้น จึงใช้ zoom ได้เต็มที่) */
-.pane > .ProseMirror { zoom:var(--page-scale, 1); }
+   (Electron = Chromium เท่านั้น จึงใช้ zoom ได้เต็มที่)
+   workspace เป็น display:flow-root → กว้างตาม content จริง (ไม่ inherit parent) → zoom แล้ว overflow ที่ .pane */
+.pane > .workspace { zoom:var(--page-scale, 1); display:flow-root; width:fit-content; }
 .ProseMirror { outline:none; max-width:940px; margin:24px auto 40vh; padding:0 72px;
   font-size:var(--ed-fs, 15.5px); line-height:1.75; caret-color:var(--accent-hi); }
 .ProseMirror p { margin:0 0 .35em; }
@@ -312,8 +313,21 @@ body.printing #tabs, body.printing #statusbar { visibility:hidden; }
   border-radius:6px; padding:7px 9px; font-size:calc(14px * var(--ui-scale, 1)); cursor:pointer; }
 .k-dlg-select:focus { outline:none; border-color:var(--accent-hi); }
 .k-dlg-btns { display:flex; gap:8px; justify-content:flex-end; margin-top:14px; }
+/* ---- กล่อง "บันทึกทั้งหมด" พร้อมรายการไฟล์ที่ค้าง (บั๊ก #3) ---- */
+.k-dialog.k-saveall { width:480px; max-width:92vw; }
+.k-saveall-list { max-height:44vh; overflow-y:auto; border:1px solid var(--border);
+  border-radius:8px; background:var(--bg); padding:4px; }
+.k-saveall-row { display:flex; align-items:flex-start; gap:10px; padding:7px 9px;
+  border-radius:6px; cursor:pointer; }
+.k-saveall-row:hover { background:var(--bar); }
+.k-saveall-row input { margin:2px 0 0; accent-color:var(--accent-hi); flex:0 0 auto; cursor:pointer; }
+.k-saveall-txt { min-width:0; flex:1; }
+.k-saveall-name { color:var(--bright); font-size:calc(13.5px * var(--ui-scale, 1));
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.k-saveall-path { color:var(--dim); font-size:calc(11px * var(--ui-scale, 1)); direction:rtl;
+  text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* ---- ฟอร์มตั้งค่าโปรเจกต์ ---- */
-.k-dialog.k-settings { width:520px; max-width:92vw; height:82vh; min-height:420px;
+.k-dialog.k-settings { width:680px; max-width:92vw; height:82vh; min-height:420px;
   display:flex; flex-direction:column; overflow:hidden; }
 .k-set-tabs { display:flex; gap:6px; margin-bottom:14px; border-bottom:1px solid var(--border); }
 .k-set-tab { padding:7px 14px; cursor:pointer; color:var(--dim); border-bottom:2px solid transparent;
@@ -653,11 +667,11 @@ body.printing #tabs, body.printing #statusbar { visibility:hidden; }
 /* ---------- บทหนัง WYSIWYG แบบ Final Draft (หน้ากระดาษ courier + ระยะมาตรฐาน) ---------- */
 /* พื้นที่แก้บทหนังทำเป็น "หน้ากระดาษ" กว้างคงที่ กึ่งกลาง อ่านง่ายเหมือนสคริปต์จริง
    ระยะเยื้องใช้หน่วย ch (ความกว้างตัวอักษร courier) = ตรงตามมาตรฐานสคริปต์จริง
-   และไม่เพี้ยนเมื่อซูมด้วย Ctrl+ล้อเมาส์ (ซูมทั้งหน้าผ่าน CSS zoom ที่ .pane > .ProseMirror) */
+   และไม่เพี้ยนเมื่อซูมด้วย Ctrl+ล้อเมาส์ (ซูมทั้งหน้าผ่าน CSS zoom ที่ .pane > .workspace > .ProseMirror) */
 .pane.sp-pane .ProseMirror { max-width:940px; background:var(--side);
   border:1px solid var(--border); border-radius:4px; padding:64px 96px 40vh;
   margin:24px auto 40vh; box-shadow:0 2px 18px rgba(0,0,0,.28); }
-.sp { font-family:"Courier New", "TH Sarabun New", monospace; font-size:var(--sp-fs, 14.5px);
+.sp { font-family:var(--sp-font, "Courier New", "TH Sarabun New", monospace); font-size:var(--sp-fs, 14.5px);
   line-height:1.5; margin:0 0 2px; min-height:1.5em; white-space:pre-wrap; }
 .sp-scene { font-weight:700; color:var(--link); margin-top:1.4em; margin-bottom:.4em;
   text-transform:uppercase; letter-spacing:.5px; }
@@ -672,7 +686,9 @@ body.printing #tabs, body.printing #statusbar { visibility:hidden; }
   text-transform:uppercase; letter-spacing:.5px; }
 .sp-outline1,.sp-outline2,.sp-outline3 { color:var(--accent-hi); font-weight:700; margin-top:1em; }
 .sp-summary { color:var(--green); font-style:italic; }
-.sp-note { color:var(--warn); font-style:italic; }
+.sp-shot { text-transform:uppercase; margin-top:.5em; }    /* [50] 9-element system */
+.sp-act-break { text-align:center; text-transform:uppercase; font-weight:bold; font-size:1.1em; margin-top:1.2em; }
+.sp-note { background:#fff3cd; border-left:3px solid #ffc107; color:#856404; padding:4px 8px; font-style:italic; border-radius:0 4px 4px 0; margin:0; }
 .sp-raw { color:var(--dim); }
 /* รูปในบทหนัง — จัดกลาง คลิกเลือกได้ (atom) ไม่กลายเป็น markdown */
 figure.sp-image { margin:1em auto; text-align:center; }
@@ -807,8 +823,10 @@ body.focus-mode .k-tab-group .k-tab-bar { display:none !important; }
 /* ---------- ถาดแผงที่ย่อไว้ (ข้อ 4) ---------- */
 /* บั๊ก #17: แยกถาดซ้าย/ขวา — แผงฝั่งขวา (คุณสมบัติ) ที่ปิดไว้ต้องมี chip อยู่ขอบขวา
    ไม่ใช่กระโดดไปมุมซ้ายล่างทั้งหมดเหมือนตอนมีถาดเดียว */
+/* บั๊ก #18 เพิ่มแผงที่ปิดได้อีก 5 ตัว → ถาดยาวจนบังต้นไม้โปรเจกต์ ต้องจำกัดความสูงแล้วเลื่อนเอา */
 #k-min-tray, #k-min-tray-l, #k-min-tray-r { position:fixed; bottom:34px; z-index:62;
-  display:none; flex-direction:column; gap:6px; }
+  display:none; flex-direction:column; gap:6px; max-height:46vh; overflow-y:auto;
+  padding:2px; scrollbar-width:thin; }
 #k-min-tray, #k-min-tray-l { left:14px; align-items:flex-start; }
 #k-min-tray-r { right:14px; align-items:flex-end; }
 #k-min-tray.on, #k-min-tray-l.on, #k-min-tray-r.on { display:flex; }
@@ -869,26 +887,53 @@ body.focus-mode .k-tab-group .k-tab-bar { display:none !important; }
 #split-root > * { flex:1 1 0%; min-width:0; min-height:0; }
 /* .pane ที่ไม่ได้ถูกยืมไปอยู่ในช่องไหน = ซ่อน (ช่องต่าง ๆ คุมการแสดงผลเอง ไม่ใช่คลาส .on) */
 #panes.split > .pane { display:none !important; }
-.k-split-pane > .pane { display:block !important; position:absolute; inset:0; }
+.k-split-body > .pane { display:block !important; position:absolute; inset:0; }
 .k-split-pane { position:relative; overflow:hidden; background:var(--bg);
-  box-shadow:inset 0 0 0 1px var(--border); }
+  box-shadow:inset 0 0 0 1px var(--border); display:flex; flex-direction:column; }
 .k-split-pane.focus { box-shadow:inset 0 0 0 2px var(--accent); }
+/* กล่องเนื้อหาใต้แถบแท็บย่อย (บั๊ก #12) — .pane วางทับเต็มกล่องนี้แทนเต็มช่อง */
+.k-split-body { position:relative; flex:1; min-height:0; min-width:0; overflow:hidden; }
 .k-split-empty { position:absolute; inset:0; display:flex; flex-direction:column;
   align-items:center; justify-content:center; gap:6px; color:var(--dim); font-size:calc(12.5px * var(--ui-scale, 1));
   text-align:center; padding:16px; user-select:none; }
 .k-split-empty-icon { font-size:calc(30px * var(--ui-scale, 1)); opacity:.45; }
+
+/* ====== แถบแท็บย่อยต่อช่อง (บั๊ก #12) ======
+   เดิมมี #tabs แถบเดียวทั้งหน้าต่าง → เลือกแท็บให้ช่องขวาแยกจากช่องซ้ายไม่ได้
+   ตอนนี้ทุกช่องมีแถบของตัวเอง และ #tabs ถูกซ่อนตอนแยกจอ */
+body.k-split-on #tabs { display:none !important; }
+.k-split-tabs { flex:0 0 auto; display:flex; align-items:stretch; gap:2px; overflow-x:auto;
+  overflow-y:hidden; background:var(--bar); border-bottom:1px solid var(--border);
+  padding:2px 2px 0; min-height:calc(24px * var(--ui-scale, 1)); scrollbar-width:thin; }
+.k-split-tabs::-webkit-scrollbar { height:4px; }
+.k-mtab { display:flex; align-items:center; gap:5px; max-width:170px; flex:0 0 auto;
+  padding:2px 6px 2px 9px; border-radius:6px 6px 0 0; cursor:pointer; user-select:none;
+  color:var(--dim); font-size:calc(11.5px * var(--ui-scale, 1));
+  border:1px solid transparent; border-bottom:none; }
+.k-mtab:hover { background:var(--side); color:var(--fg); }
+.k-mtab.on { background:var(--bg); color:var(--bright);
+  border-color:var(--border); box-shadow:inset 0 2px 0 0 var(--accent); }
+.k-mtab-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.k-mtab.dirty .k-mtab-title::after { content:" ●"; color:var(--accent-hi); }
+.k-mtab-x { opacity:0; padding:0 2px; border-radius:4px; line-height:1; }
+.k-mtab:hover .k-mtab-x, .k-mtab.on .k-mtab-x { opacity:.55; }
+.k-mtab-x:hover { opacity:1; background:var(--border); }
+.k-split-tabs-empty { color:var(--dim); font-size:calc(11px * var(--ui-scale, 1));
+  padding:4px 8px; user-select:none; }
 /* โหมดหน้ากระดาษ + แยกจอ (บั๊กข้อ 7): หน้ากระดาษกว้างคงที่ 940px*zoom
    พอถูกบีบเหลือครึ่งจอจะล้นออกนอกช่อง → กระดาษแต่ละช่องดูไม่ตรงกัน
    ให้ตัวกระดาษหดตามความกว้างจริงของช่อง แล้วระยะขอบลดลงตาม */
-.k-split-pane > .pane > .ProseMirror { max-width:min(940px, 100%); }
-body.paper-mode .k-split-pane > .pane:not(.sp-pane):not(.wiki-pane) > .ProseMirror,
-body.paper-mode .k-split-pane > .pane.sp-pane > .ProseMirror {
+.k-split-body > .pane > .workspace > .ProseMirror { max-width:min(940px, 100%); }
+body.paper-mode .k-split-body > .pane:not(.sp-pane):not(.wiki-pane) > .workspace > .ProseMirror,
+body.paper-mode .k-split-body > .pane.sp-pane > .workspace > .ProseMirror {
   padding-left:clamp(18px, 6%, 84px); padding-right:clamp(18px, 6%, 84px);
 }
 .cmp-close { position:absolute; top:0; right:12px; z-index:6; cursor:pointer;
   background:var(--accent); color:#fff; font-size:calc(11px * var(--ui-scale, 1)); padding:2px 10px; border-radius:0 0 8px 8px; }
 .cmp-close:hover { background:var(--accent-hi); }
-.k-split-pane > .cmp-close { opacity:.35; transition:opacity .12s; }
+/* ปุ่มปิดช่องต้องอยู่ใต้แถบแท็บย่อย ไม่ทับแท็บตัวขวาสุด (บั๊ก #12) */
+.k-split-pane > .cmp-close { opacity:.35; transition:opacity .12s;
+  top:calc(24px * var(--ui-scale, 1)); }
 .k-split-pane:hover > .cmp-close, .k-split-pane.focus > .cmp-close { opacity:1; }
 
 /* แถบล็อก + เวอร์ชัน ในแผงคุณสมบัติ */
@@ -1001,7 +1046,7 @@ body.paper-mode .pane { background:var(--paper-surround); }
 /* หน้ากระดาษ — ใช้กรอบเดียวกันทั้งโหมดนิยายและบทหนัง (กว้างเท่ากัน สีเดียวกัน)
    สำคัญ: จับเฉพาะ .ProseMirror ที่เป็น "ลูกตรง" ของ pane (นิยาย/บทหนัง)
    ไม่ลงไปโดน wiki (ProseMirror ซ้อนลึกใน .wiki-wrap) — กันบั๊กกระดาษขาวบัง field wiki */
-body.paper-mode .pane:not(.wiki-pane) > .ProseMirror {
+body.paper-mode .pane:not(.wiki-pane) > .workspace > .ProseMirror {
   background:var(--paper); color:var(--paper-ink);
   max-width:940px;
   border:1px solid var(--paper-edge);
@@ -1009,26 +1054,26 @@ body.paper-mode .pane:not(.wiki-pane) > .ProseMirror {
   box-shadow:0 4px 26px rgba(0,0,0,.45);
   caret-color:var(--paper-ink);
 }
-body.paper-mode .pane:not(.sp-pane):not(.wiki-pane) > .ProseMirror { padding:72px 84px 40vh; margin:28px auto 40vh; }
-body.paper-mode .pane.sp-pane > .ProseMirror { padding:80px 96px 40vh; margin:28px auto 40vh; }
+body.paper-mode .pane:not(.sp-pane):not(.wiki-pane) > .workspace > .ProseMirror { padding:72px 84px 40vh; margin:28px auto 40vh; }
+body.paper-mode .pane.sp-pane > .workspace > .ProseMirror { padding:80px 96px 40vh; margin:28px auto 40vh; }
 
 /* นิยาย: หัวข้อ/ยกคำพูด/ลิงก์ ให้อ่านชัดบนกระดาษนวล */
-body.paper-mode .pane:not(.wiki-pane) > .ProseMirror h1,
-body.paper-mode .pane:not(.wiki-pane) > .ProseMirror h2,
-body.paper-mode .pane:not(.wiki-pane) > .ProseMirror h3,
-body.paper-mode .pane:not(.wiki-pane) > .ProseMirror h4,
-body.paper-mode .pane:not(.wiki-pane) > .ProseMirror h5,
-body.paper-mode .pane:not(.wiki-pane) > .ProseMirror h6 { color:#111; }
-body.paper-mode .pane:not(.wiki-pane) > .ProseMirror blockquote { border-left-color:#c15f3c; color:#7a3d24; }
-body.paper-mode .pane:not(.wiki-pane) > .ProseMirror a,
-body.paper-mode .pane:not(.wiki-pane) > .ProseMirror .k-mention,
+body.paper-mode .pane:not(.wiki-pane) > .workspace > .ProseMirror h1,
+body.paper-mode .pane:not(.wiki-pane) > .workspace > .ProseMirror h2,
+body.paper-mode .pane:not(.wiki-pane) > .workspace > .ProseMirror h3,
+body.paper-mode .pane:not(.wiki-pane) > .workspace > .ProseMirror h4,
+body.paper-mode .pane:not(.wiki-pane) > .workspace > .ProseMirror h5,
+body.paper-mode .pane:not(.wiki-pane) > .workspace > .ProseMirror h6 { color:#111; }
+body.paper-mode .pane:not(.wiki-pane) > .workspace > .ProseMirror blockquote { border-left-color:#c15f3c; color:#7a3d24; }
+body.paper-mode .pane:not(.wiki-pane) > .workspace > .ProseMirror a,
+body.paper-mode .pane:not(.wiki-pane) > .workspace > .ProseMirror .k-mention,
 body.paper-mode .pane.sp-pane .k-mention { color:#1b5fa8; background:#e8eef7; }
-body.paper-mode .pane:not(.wiki-pane) > .ProseMirror ::selection,
-body.paper-mode .pane.sp-pane > .ProseMirror ::selection { background:#c9dcf2; color:#000; }
-body.paper-mode.k-ln .pane:not(.wiki-pane) > .ProseMirror > *::before,
-body.paper-mode.k-ln .pane.sp-pane > .ProseMirror > *::before { color:#b0a992; }
-body.paper-mode.k-ln .pane:not(.sp-pane):not(.wiki-pane) > .ProseMirror { padding-left:64px; }
-body.paper-mode.k-ln .pane.sp-pane > .ProseMirror { padding-left:64px; }
+body.paper-mode .pane:not(.wiki-pane) > .workspace > .ProseMirror ::selection,
+body.paper-mode .pane.sp-pane > .workspace > .ProseMirror ::selection { background:#c9dcf2; color:#000; }
+body.paper-mode.k-ln .pane:not(.wiki-pane) > .workspace > .ProseMirror > *::before,
+body.paper-mode.k-ln .pane.sp-pane > .workspace > .ProseMirror > *::before { color:#b0a992; }
+body.paper-mode.k-ln .pane:not(.sp-pane):not(.wiki-pane) > .workspace > .ProseMirror { padding-left:64px; }
+body.paper-mode.k-ln .pane.sp-pane > .workspace > .ProseMirror { padding-left:64px; }
 
 /* บทหนัง: ธาตุต่าง ๆ เป็นหมึกดำแบบสคริปต์จริง */
 body.paper-mode .sp { color:var(--paper-ink); }
@@ -1054,7 +1099,7 @@ body.paper-mode .sp-raw { color:#888; }
 .home-sub { color:var(--dim); font-size:calc(15px * var(--ui-scale, 1)); margin:0; }
 .home-actions { display:flex; justify-content:center; gap:12px; margin-bottom:36px; }
 .home-new-btn { font-size:calc(15px * var(--ui-scale, 1)); padding:10px 24px; }
-.home-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:18px; }
+.home-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:18px; }
 .home-card { background:var(--side); border:1px solid var(--border); border-radius:12px;
   overflow:hidden; cursor:pointer; transition:transform .15s, box-shadow .15s; }
 .home-card:hover { transform:translateY(-3px); box-shadow:0 8px 30px rgba(0,0,0,.35); }
@@ -1073,6 +1118,14 @@ body.paper-mode .sp-raw { color:#888; }
 .home-empty-icon { font-size:calc(64px * var(--ui-scale, 1)); margin-bottom:16px; }
 .home-empty h2 { color:var(--fg); margin-bottom:8px; }
 .home-empty p { max-width:400px; margin:0 auto; line-height:1.7; }
+/* list view toggle */
+.home-grid.list { display:flex; flex-direction:column; gap:8px; }
+.home-grid.list .home-card { display:flex; flex-direction:row; align-items:center;
+  padding:12px 16px; border-radius:8px; height:auto; }
+.home-grid.list .home-card-cover { width:48px; height:48px; border-radius:6px; flex-shrink:0; }
+.home-grid.list .home-card-body { flex:1; flex-direction:row; gap:16px; padding:0; }
+.home-grid.list .home-card-title { font-size:calc(15px * var(--ui-scale, 1)); }
+.home-grid.list .home-card-cover-ph { font-size:calc(24px * var(--ui-scale, 1)); }
 
 /* ====== กลุ่ม 2: Tag Pane ====== */
 .tag-wrap { max-width:900px; margin:0 auto; padding:24px 32px; overflow-y:auto; height:100%; }
@@ -1220,7 +1273,7 @@ html, body, .k-panel-body, .pane, #panes { scroll-behavior:smooth; }
 
 /* ====== กลุ่ม 7: โหมดอ่าน (Reading Mode) ====== */
 body.reading-mode #titlebar { display:none !important; }
-body.reading-mode #toolbar { display:none; }
+body.reading-mode #toolbar { display:none !important; }
 body.reading-mode .k-fmtbar { display:none !important; }
 /* โหมดอ่าน: ซ่อนทุกแผงที่ไม่ได้อยู่บนสายของแผงเอกสาร (แทนกฎ #sidebar เดิม) */
 body.reading-mode .k-dock > *:not(.k-holds-docs),
@@ -1228,10 +1281,10 @@ body.reading-mode .k-float-panel,
 body.reading-mode .k-resize-handle,
 body.reading-mode .k-panel-head,
 body.reading-mode .k-tab-group .k-tab-bar { display:none !important; }
-body.reading-mode #statusbar { display:none; }
-body.reading-mode #topbar { display:none; }
+body.reading-mode #statusbar { display:none !important; }
+body.reading-mode #topbar { display:none !important; }
 body.reading-mode #k-fab { display:none; }
-body.reading-mode .pane.on > .ProseMirror,
+body.reading-mode .pane.on > .workspace > .ProseMirror,
 body.reading-mode .pane.on .sp-wrap {
   max-width:960px !important; margin:40px auto 20vh !important;
   padding:40px 60px !important; background:var(--bg); color:var(--fg); border:none;
@@ -1241,11 +1294,11 @@ body.reading-mode #panes { background:var(--bg); }
 /* โหมดอ่าน + โหมดหน้ากระดาษพร้อมกัน — ต้องคงกระดาษ (พื้นสว่าง/หมึกเข้ม) ไว้
    ไม่งั้นพื้นกลายเป็นสีมืดของธีมแต่หมึกยังเป็น --paper-ink → ตัวหนังสือดำบนพื้นดำ (บั๊กข้อ 1) */
 body.reading-mode.paper-mode #panes { background:var(--paper-surround); }
-body.reading-mode.paper-mode .pane.on > .ProseMirror,
+body.reading-mode.paper-mode .pane.on > .workspace > .ProseMirror,
 body.reading-mode.paper-mode .pane.on .sp-wrap {
   background:var(--paper); color:var(--paper-ink);
   border:1px solid var(--paper-edge); box-shadow:0 4px 26px rgba(0,0,0,.45); }
-body.reading-mode.paper-mode .pane.on > .ProseMirror .sp { color:var(--paper-ink); }
+body.reading-mode.paper-mode .pane.on > .workspace > .ProseMirror .sp { color:var(--paper-ink); }
 #tb-read.on { background:var(--sel); color:var(--bright); }
 
 /* ====== กลุ่ม 8: Global Search ====== */
@@ -1343,8 +1396,12 @@ body.reading-mode.paper-mode .pane.on > .ProseMirror .sp { color:var(--paper-ink
   #titlebar,#topbar,#toolbar,#statusbar,#k-fab,#tabs { display:none !important; }
   .k-dock > *:not(.k-holds-docs), .k-resize-handle, .k-tab-bar, .k-panel-head { display:none !important; }
   #panes { position:static !important; }
-  .pane { position:static !important; display:block !important; }
-  .pane .sp { background:#fff; color:#000; font:12pt "Courier New",monospace; }
+  /* บั๊ก #10: เดิมเป็น `.pane { display:block !important }` → override กฎซ่อนของบล็อกแรก
+     ทำให้พิมพ์ออกมาทุกแท็บที่เปิดอยู่ ต้องจำกัดเฉพาะแท็บที่ active เท่านั้น */
+  .pane.on { position:static !important; display:block !important; }
+  .pane:not(.on) { display:none !important; }
+  .pane .sp { background:#fff; color:#000;
+    font:12pt var(--sp-font, "Courier New", "TH Sarabun New", monospace); }
   .pane .sp-scene,.pane .sp-character,.pane .sp-transition { font-weight:bold; }
   .pane .sp-dialogue { max-width:15cm; margin:0 auto 0 3.8cm; }
 }
@@ -1802,7 +1859,7 @@ button, select { padding:calc(4px * var(--uis)) calc(10px * var(--uis)); border-
 /* --- กล่องโต้ตอบ --- */
 .k-dialog { padding:calc(18px * var(--uis)) calc(20px * var(--uis));
   min-width:calc(340px * var(--uis)); border-radius:calc(12px * var(--uis)); }
-.k-dialog.k-settings { width:calc(520px * var(--uis)); }
+.k-dialog.k-settings { width:calc(680px * var(--uis)); }
 /* กล่องรุ่นกว้างพิเศษ — ต้องเขียนคู่กันตรงนี้ ไม่งั้น .k-dialog ด้านบนไป override min-width ของมัน
    (.k-ai-settings ความจำเพาะเท่ากันแต่อยู่ก่อน → เดิมหด 420px เหลือ 340px) */
 .k-dialog.k-wide { min-width:calc(640px * var(--uis)); }
@@ -1825,6 +1882,14 @@ button, select { padding:calc(4px * var(--uis)) calc(10px * var(--uis)); border-
 #k-fab { width:calc(52px * var(--uis)); height:calc(52px * var(--uis)); }
 #k-fab-menu { min-width:calc(180px * var(--uis)); padding:calc(6px * var(--uis)); }
 #k-fab-menu .k-menu-item { padding:calc(8px * var(--uis)) calc(14px * var(--uis)); }
+
+/* ====== แผงฟีเจอร์ที่ไม่ใช่เอกสาร (บั๊ก #18) ======
+   แดชบอร์ด/Kanban/จัดการเล่ม/เส้นเวลา/แผนที่ — เดิมเป็น .pane ในแถบแท็บเอกสาร
+   ตอนนี้เป็นแผงจริง จึงต้องยืดเต็มช่องที่ Panel System ให้มา แล้วเลื่อนในตัวเอง */
+.k-featpanel { display:flex; flex-direction:column; flex:1; min-height:0; min-width:0; }
+.k-featpanel > div { flex:1; min-height:0; min-width:0; overflow:auto; }
+/* กระดาน Kanban เลื่อนแนวนอนเองอยู่แล้ว — อย่าให้ห่อซ้อนอีกชั้น */
+#kanban-body { overflow:hidden; display:flex; flex-direction:column; }
 
 /* ====== แผงคอมเมนต์ (บั๊ก #25) ====== */
 #comments-panel { display:flex; flex-direction:column; height:100%; min-height:0; }
@@ -1876,3 +1941,11 @@ button, select { padding:calc(4px * var(--uis)) calc(10px * var(--uis)); border-
 /* สมอคอมเมนต์ในตัวแก้ไข */
 .k-cm-anchor { background:rgba(217,149,95,.20); border-bottom:2px solid rgba(217,149,95,.6); }
 .k-cm-anchor.on { background:rgba(217,149,95,.45); border-bottom-color:var(--accent-hi); }
+
+/* [75] Character Map — grid ปุ่มอักขระพิเศษ */
+.k-charmap { text-align:center; }
+.k-cm-row { display:flex; justify-content:center; gap:2px; margin:2px 0; }
+.k-cm-btn { width:32px; height:32px; font-size:16px; padding:0; border:1px solid var(--border); background:var(--bg2); color:var(--fg); cursor:pointer; border-radius:3px; font-family:inherit; }
+.k-cm-btn:hover { background:var(--accent); color:#fff; border-color:var(--accent); }
+/* [76] Remove Elements dialog */
+#rm-el-list label { display:flex; align-items:center; gap:6px; padding:3px 0; cursor:pointer; }

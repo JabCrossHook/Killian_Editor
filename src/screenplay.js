@@ -7,6 +7,7 @@ import { history, undo, redo } from 'prosemirror-history';
 import { keymap } from 'prosemirror-keymap';
 import { baseKeymap, toggleMark, chainCommands } from 'prosemirror-commands';
 import { parseScript, lineFor, SP_ELEMS, TAB_CYCLE, NEXT_ELEM } from './fountain.js';
+import { state, DEFAULT_SP_CYCLE } from './core.js';
 
 const marks = {
   strong: { parseDOM: [{ tag: 'strong' }], toDOM: () => ['strong', 0] },
@@ -88,8 +89,8 @@ export class SPEditor {
         plugins: [
           ...(getNames ? [mentionPlugin(getNames)] : []),
           keymap({
-            Tab: () => true,           // สงวนให้ SmartType — ไม่สลับ element ด้วย Tab อีกต่อไป
-            'Shift-Tab': () => true,
+            Tab: () => self._tabCycle('tab'),
+            'Shift-Tab': () => self._tabCycle('shiftTab'),
             'Mod-ArrowDown': () => { self.cycle(1); return true; },   // สลับรูปแบบถัดไป
             'Mod-ArrowUp': () => { self.cycle(-1); return true; },    // สลับรูปแบบก่อนหน้า
             Enter: () => self.enter(),
@@ -101,7 +102,36 @@ export class SPEditor {
           commentAnchorPlugin(),
         ],
       }),
-      handleKeyDown(view, ev) { return onKeyDown ? onKeyDown(ev) : false; },
+      handleKeyDown(view, ev) {
+        // [53] Parenthetical auto-wrap: กด ( ใน character/dialogue → parenthetical
+        if (ev.key === '(' && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+          const el = self.curElement();
+          if (el === 'character' || el === 'dialogue') {
+            ev.preventDefault();
+            const { node, pos } = self.curBlock();
+            const from = view.state.selection.from;
+            let tr = view.state.tr;
+            tr = tr.setNodeMarkup(pos, null, { el: 'parenthetical', align: node.attrs.align || null });
+            tr = tr.insertText('()', from);
+            tr = tr.setSelection(TextSelection.create(tr.doc, from + 1));
+            view.dispatch(tr);
+            if (self.onElement) self.onElement('parenthetical');
+            return true;
+          }
+        }
+        // [77] Non-breaking space — Ctrl+Shift+Space
+        if (ev.code === 'Space' && (ev.ctrlKey || ev.metaKey) && ev.shiftKey) {
+          ev.preventDefault();
+          view.dispatch(view.state.tr.insertText('\u00A0'));
+          return true;
+        }
+        return onKeyDown ? onKeyDown(ev) : false;
+      },
+      // [93] Auto-capitalize: ขึ้นต้นประโยคด้วยตัวใหญ่ + i→I
+      handleTextInput(view, from, to, text) {
+        if (text.length > 20) return false;  // กัน paste ใหญ่ ๆ
+        return self._handleAutoText(view, from, to, text);
+      },
       handleDOMEvents: {
         // Ctrl/Cmd+คลิก หรือคลิกกลาง บนชื่อ Wiki → เปิดหน้า Wiki (เหมือนโหมดนิยาย)
         mousedown(view, ev) {
@@ -120,7 +150,11 @@ export class SPEditor {
       dispatchTransaction(tr) {
         const st = self.view.state.apply(tr);
         self.view.updateState(st);
-        if (tr.docChanged && self.onChange) self.onChange();
+        if (tr.docChanged) {
+          if (self.onChange) self.onChange();
+          // [52] Auto-detect INT./EXT. → switch to scene
+          self._autoDetect();
+        }
         if (self.onElement) self.onElement(self.curElement());
       },
     });
@@ -163,10 +197,67 @@ export class SPEditor {
     this.setElement(next);
   }
 
+  // [95] Per-element switch — Ctrl+1..9
+  switchTo(el) { this.setElement(el); }
+
+  // [51] Tab/Shift-Tab cycle ตาม spCycle
+  _tabCycle(dir) {
+    const cur = this.curElement();
+    const spCycle = state.settings?.spCycle || DEFAULT_SP_CYCLE;
+    const cfg = spCycle[cur];
+    if (!cfg) return true;
+    const nextEl = cfg[dir];
+    if (nextEl) this.setElement(nextEl);
+    return true;
+  }
+
+  // [52] Auto-detect INT./EXT. — ตรวจหลังพิมพ์ทุกครั้ง
+  _autoDetect() {
+    const el = this.curElement();
+    if (el === 'scene') return;
+    const text = this.curBlock().node.textContent.trim();
+    if (/^(int\.|ext\.|int\/ext\.|i\/e\.|est\.|ฉาก)\s/i.test(text)) {
+      const { node, pos } = this.curBlock();
+      this.view.dispatch(this.view.state.tr.setNodeMarkup(pos, null, {
+        el: 'scene', align: node.attrs.align || null
+      }));
+      if (this.onElement) this.onElement('scene');
+    }
+  }
+
+  // [79] เลือกทั้งฉาก (ทุกบรรทัดระหว่างหัวฉาก) + กดซ้ำ = select all
+  selectScene() {
+    const v = this.view;
+    const curPos = v.state.selection.$from.before(1);
+    let start = curPos + 1, end = v.state.doc.content.size;
+    // หาหัวฉากก่อนหน้า (รวมบล็อกปัจจุบันถ้าเป็น scene)
+    let lastScene = 0;
+    v.state.doc.forEach((node, pos) => {
+      if (pos > curPos) return false;
+      if (node.type.name === 'sp' && node.attrs.el === 'scene') lastScene = pos;
+    });
+    if (lastScene > 0) start = lastScene + 1;
+    // หาหัวฉากถัดไป (หลัง curPos) — จบที่ก่อนบล็อกถัดไป
+    v.state.doc.forEach((node, pos) => {
+      if (pos <= curPos) return;
+      if (node.type.name === 'sp' && node.attrs.el === 'scene') { end = pos; return false; }
+    });
+    // กดซ้ำ = select all
+    const sel = v.state.selection;
+    if (sel.from === start && sel.to === end && start > 1 && end !== v.state.doc.content.size) {
+      // เลือกทั้งเอกสาร: เริ่มหลัง doc โหนด, จบท้ายสุด
+      const firstPos = v.state.doc.firstChild ? 2 : 0;
+      start = firstPos; end = v.state.doc.content.size;
+    }
+    v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, start, end)));
+    v.focus();
+  }
+
   enter() {
     const v = this.view;
     const cur = this.curElement();
-    const nextEl = NEXT_ELEM[cur] || 'action';
+    const spCycle = state.settings?.spCycle || DEFAULT_SP_CYCLE;
+    const nextEl = (spCycle[cur]?.enter) || NEXT_ELEM[cur] || 'action';
     const sp = spSchema.nodes.sp.create({ el: nextEl });
     const { $from } = v.state.selection;
     const insertAt = $from.after(1);
@@ -212,6 +303,37 @@ export class SPEditor {
     const node = spSchema.nodes.spimage.create({ src, alt, md, resolved: this.resolveSrc(src) });
     this.view.dispatch(this.view.state.tr.replaceSelectionWith(node).scrollIntoView());
     this.view.focus();
+  }
+
+  // [93] Auto-capitalize sentences + i→I ในบทหนัง
+  _handleAutoText(view, from, to, text) {
+    const s = state.settings;
+    if (!s.spAutoCapitalize && !s.spAutoCorrectI) return false;
+    let modified = text;
+    if (s.spAutoCapitalize) {
+      const $from = view.state.doc.resolve(from);
+      // ขึ้นต้นบล็อก → ตัวใหญ่
+      if ($from.parentOffset === 0) {
+        modified = modified.replace(/^[a-z]/, (c) => c.toUpperCase());
+      } else if ($from.parentOffset >= 2) {
+        const before = $from.parent.textBetween($from.parentOffset - 2, $from.parentOffset);
+        if (/[.!?]\s$/.test(before)) {
+          modified = modified.replace(/^[a-z]/, (c) => c.toUpperCase());
+        }
+      }
+    }
+    if (s.spAutoCorrectI && modified.length <= 2) {
+      const $from = view.state.doc.resolve(from);
+      const solo = $from.parentOffset === 0 || $from.parent.textBetween($from.parentOffset - 1, $from.parentOffset).endsWith(' ');
+      if (solo && /^i$/i.test(modified.trim())) {
+        modified = 'I' + modified.slice(1);
+      }
+    }
+    if (modified !== text) {
+      view.dispatch(view.state.tr.insertText(modified, from, to));
+      return true;
+    }
+    return false;
   }
 
   getText() { return this.view.state.doc.textBetween(0, this.view.state.doc.content.size, '\n'); }

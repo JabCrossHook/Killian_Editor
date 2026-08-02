@@ -2,9 +2,10 @@
 import { $, el, setStatus, state, SCENE_COLORS } from '../core.js';
 import { KanbanBoard, getKanbanData, addColumn as addCol, removeColumn as removeCol } from './kanban-core.js';
 import { allStatuses, statusColor } from '../custom-status.js';
-import { activate, closeTab, markDirty, saveProjectMeta } from '../app.js';
+import { markDirty, saveProjectMeta } from '../app.js';
 import { chapterFolders, scenePath, syncIo } from '../project-scan.js';
 import { ask } from '../ui.js';
+import { showPanel, isPanelOpen } from '../panels/panel-ui.js';
 
 let board = null;   // KanbanBoard instance
 
@@ -27,29 +28,23 @@ async function getBoard() {
   return board;
 }
 
-let uiPane = null, uiTabBtn = null;
+let uiPane = null;
 
+// บั๊ก #18: Kanban เป็นแผง ไม่ใช่แท็บเอกสาร
 export async function openKanban() {
-  const key = '::kanban::';
-  if (state.tabs.has(key)) { activate(key); return; }
   const b = await getBoard();
   if (!b) { setStatus('สร้างฉบับร่างก่อนจึงจะใช้ Kanban ได้'); return; }
+  showPanel('kanban');                 // hook ใน app.js เริ่มวาดให้ · await ตัวเดียวกันต่อ
+  return renderKanbanPanel();
+}
 
-  const pane = el('div', 'pane kanban-pane');
-  pane.id = 'kanban-pane';
-  $('#panes').append(pane);
-  const tabBtn = el('div', 'tab');
-  tabBtn.append(el('span', 'tab-title', '📋 Kanban'));
-  const x = el('span', 'tab-x', '×'); tabBtn.append(x);
-  $('#tabs').append(tabBtn);
-
-  const tab = { file: key, title: '📋 Kanban', pane, tabBtn, dirty: false,
-                editor: null, plain: null, wiki: null, gal: null, net: null, planner: null, kanban: true };
-  tabBtn.onclick = (e) => { if (e.target !== x) activate(key); };
-  x.onclick = () => closeTab(key);
-  state.tabs.set(key, tab);
-  activate(key);
-  uiPane = pane; uiTabBtn = tabBtn;
+/** วาดเนื้อกระดานลง #kanban-body — ห้ามเรียก showPanel ในนี้ (วนซ้ำกับ hook) */
+export async function renderKanbanPanel() {
+  const b = await getBoard();
+  if (!b) { setStatus('สร้างฉบับร่างก่อนจึงจะใช้ Kanban ได้'); return; }
+  uiPane = $('#kanban-body');
+  if (!uiPane) return;
+  uiPane.classList.add('kanban-pane');
   renderKanban(b);
 }
 
@@ -168,13 +163,16 @@ function renderKanban(b) {
 }
 
 function refreshKanbanUI() {
-  if (!uiPane || !board) return;
+  if (!board) return;
+  // แผงอาจถูกวาดใหม่ (ย้าย dock/ลอย) → หยิบ element ปัจจุบันเสมอ ไม่ยึดตัวที่ค้างไว้
+  if (isPanelOpen('kanban')) uiPane = $('#kanban-body');
+  if (!uiPane) return;
   renderKanban(board);
 }
 
 export function closeKanban() {
-  board = null; uiPane = null; uiTabBtn = null;
+  board = null; uiPane = null;
 }
 
 // โหลดซ้ำเมื่อเปลี่ยนโปรเจกต์
-export function resetKanban() { board = null; uiPane = null; uiTabBtn = null; }
+export function resetKanban() { board = null; uiPane = null; }

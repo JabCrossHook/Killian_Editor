@@ -55,12 +55,34 @@ export const DEFAULT_SETTINGS = {
   autoSaveMinutes: 5, maxBackups: 10, autoBackup: true, lineNumbers: false,
   uiFontSize: 0, uiScale: 1, spellCheck: true, spellCheckDict: true, autoMention: true, recycleDays: 30,
   paperMode: true, shortcuts: {}, fontFamily: '', language: 'th',   // ไทยเป็นค่าเริ่มต้น (ไทย 100%)
+  spFontFamily: '',                // ฟอนต์บทหนัง (บั๊ก #2) — ว่าง = Courier New ตามมาตรฐานบท
   autoSync: false,                 // auto-task: อัปเดตชื่อเอนทิตี้ทุกไฟล์อัตโนมัติ (ข้อ 88)
   // ค้นคำพ้องอังกฤษผ่าน datamuse.com — ปิดไว้ก่อน (ส่งคำที่เลือกออกอินเทอร์เน็ต)
   thesaurus: false,
   focusDim: 0.3,                   // ความจางของบรรทัดอื่นในโหมดโฟกัส (0.05–0.8)
+  spCycle: null,                   // ตารางควบคุม Tab/Enter/Shift+Tab ในบทหนัง (null=ใช้ค่าเริ่มต้น)
+  spAutoCapitalize: true,          // [93] ขึ้นต้นประโยคด้วยตัวใหญ่ในบทหนังอัตโนมัติ
+  spAutoCorrectI: true,            // [93] แก้ i เป็น I เมื่ออยู่เดี่ยว ๆ
 };
 export const DEFAULT_GOALS = { dailyWords: 500, projectWords: 50000 };
+// ตารางควบคุม Tab/Enter/Shift+Tab ในบทหนัง — ผู้ใช้ปรับได้ในตั้งค่า
+export const DEFAULT_SP_CYCLE = {
+  scene:         { enter: 'action',    tab: 'action',    shiftTab: 'transition' },
+  action:        { enter: 'scene',     tab: 'character', shiftTab: 'scene' },
+  character:     { enter: 'dialogue',  tab: 'parenthetical', shiftTab: 'action' },
+  parenthetical: { enter: 'dialogue',  tab: 'dialogue',  shiftTab: 'character' },
+  dialogue:      { enter: 'character', tab: 'parenthetical', shiftTab: 'parenthetical' },
+  transition:    { enter: 'scene',     tab: 'scene',     shiftTab: 'dialogue' },
+  shot:          { enter: 'action',    tab: 'action',    shiftTab: 'scene' },
+  'act-break':   { enter: 'action',    tab: 'action',    shiftTab: 'transition' },
+  note:          { enter: 'action',    tab: 'action',    shiftTab: 'scene' },
+  summary:       { enter: 'action',    tab: 'action',    shiftTab: 'scene' },
+  outline1:      { enter: 'outline2',  tab: 'action',    shiftTab: 'scene' },
+  outline2:      { enter: 'outline3',  tab: 'action',    shiftTab: 'scene' },
+  outline3:      { enter: 'action',    tab: 'action',    shiftTab: 'scene' },
+  image:         { enter: 'action',    tab: 'action',    shiftTab: 'scene' },
+  raw:           { enter: 'action',    tab: 'action',    shiftTab: 'scene' },
+};
 export const BASE_ED_FS = 15.5; // px — ขนาดฟอนต์ตัวแก้ไขพื้นฐาน (ตรงกับ .ProseMirror ใน style.css)
 export const BASE_SP_FS = 14.5; // px — ขนาดฟอนต์บทหนังพื้นฐาน (ตรงกับ .sp ใน style.css)
 // ซูมหน้ากระดาษ = ย่อ/ขยาย "ทั้งหน้า" ด้วย CSS zoom (ฟอนต์+ระยะขอบ+ความกว้าง ไปพร้อมกัน)
@@ -119,6 +141,7 @@ const BUILTIN_EN = {
       "maxBackupsHint": "Named versions are not deleted", "dailyGoal": "Daily word goal",
       "projectGoal": "Project word goal",       "fontSize": "Editor font size",
       "fontSizeHint": "Adjust from default size", "uiScale": "UI size", "uiScaleHint": "Scale toolbar, panels, tabs and dialogs (75-200%)", "fontFamily": "Font Family", "fontFamilyHint": "Select a font for the editor",
+      "spFontFamily": "Screenplay Font", "spFontFamilyHint": "Font used only in screenplay mode (default: Courier New)",
       "lineNumbers": "Show line numbers",
       "lineNumbersHint": "Count by paragraph/block", "spellCheck": "Spell check",
       "spellCheckHint": "Underline misspelled words", "spellCheckDict": "Spell check with dictionary (Thai+English)",
@@ -130,7 +153,7 @@ const BUILTIN_EN = {
     },
     "errors": { "noProject": "No project open", "noFile": "File not found", "saveFailed": "Save failed", "loadFailed": "Load failed", "aiNoKey": "Please set AI API key", "aiFailed": "AI request failed", "openProjectFirst": "Open a project first", "notKillianProject": "This folder is not a Killian project", "needScene": "Open a scene first", "moveCrossDraft": "Moving across drafts not supported", "requiresCtrl": "Ctrl/⌘ required", "pressShortcut": "Press shortcut..." },
     "status": { "ready": "Ready", "saving": "Saving...", "saved": "Saved", "loading": "Loading...", "searching": "Searching...", "settingsSaved": "Settings saved", "zoom": "Zoom", "zoomReset": "Zoom reset to 100%", "uiScale": "UI size", "copied": "Markdown copied", "movedScene": "Moved scene to", "typewriterOn": "Typewriter: ON", "typewriterOff": "Typewriter: OFF", "focusOn": "Focus mode: ON", "focusOff": "Focus mode: OFF", "paperOn": "Paper mode: ON", "paperOff": "Paper mode: OFF", "dirtyClose": "tabs with unsaved changes", "saveAllAndClose": "Save all and close", "closeWithoutSaving": "Close without saving" },
-    "shortcuts": { "save": "Save", "saveAll": "Save All", "saveAs": "Save As...", "newProject": "New Project", "openProject": "Open Project", "print": "Print", "closeTab": "Close Tab", "find": "Find", "settings": "Settings", "undo": "Undo", "redo": "Redo", "bold": "Bold", "italic": "Italic", "underline": "Underline", "strikethrough": "Strikethrough", "heading1": "Heading 1", "heading2": "Heading 2", "heading3": "Heading 3", "bodyText": "Body Text", "bulletList": "Bullet List", "numberedList": "Numbered List", "clearFormatting": "Clear Formatting", "alignLeft": "Align Left", "alignCenter": "Align Center", "alignRight": "Align Right", "justify": "Justify", "toggleFormat": "Toggle Mode", "paperMode": "Paper Mode", "globalSearch": "Search Project", "focusMode": "Focus Mode", "quickOpen": "Quick Open", "typewriter": "Typewriter Mode", "compile": "Compile", "splitView": "Split View", "kanban": "Kanban Board", "exportBlog": "Export as Blog HTML" }
+    "shortcuts": { "save": "Save", "saveAll": "Save All", "saveAs": "Save As...", "newProject": "New Project", "openProject": "Open Project", "print": "Print", "closeTab": "Close Tab", "find": "Find", "settings": "Settings", "undo": "Undo", "redo": "Redo", "bold": "Bold", "italic": "Italic", "underline": "Underline", "strikethrough": "Strikethrough", "heading1": "Heading 1", "heading2": "Heading 2", "heading3": "Heading 3", "bodyText": "Body Text", "bulletList": "Bullet List", "numberedList": "Numbered List", "clearFormatting": "Clear Formatting", "alignLeft": "Align Left", "alignCenter": "Align Center", "alignRight": "Align Right", "justify": "Justify", "toggleFormat": "Toggle Mode", "paperMode": "Paper Mode", "globalSearch": "Search Project", "focusMode": "Focus Mode", "quickOpen": "Quick Open", "typewriter": "Typewriter Mode", "compile": "Compile", "splitView": "Split View", "kanban": "Kanban Board", "exportBlog": "Export as Blog HTML", "gallery": "Gallery", "spScene": "SP: Scene", "spAction": "SP: Action", "spCharacter": "SP: Character", "spParenthetical": "SP: Parenthetical", "spDialogue": "SP: Dialogue", "spTransition": "SP: Transition", "spShot": "SP: Shot", "spActBreak": "SP: Act Break", "spNote": "SP: Note", "selectScene": "Select Scene", "nbsp": "Non-Breaking Space" }
   }
 };
 
@@ -262,6 +285,18 @@ export const SHORTCUTS = [
   ['KeyB', true, true, 'export-blog'],
   ['Backslash', true, true, 'split-view'],
   ['KeyK', true, false, 'kanban'],
+  ['KeyG', true, true, 'gallery'],
+  // [95] Per-element shortcuts — Ctrl+4..9 (Ctrl+1/2/3 จัดการใน handleCommand)
+  ['Digit4', true, false, 'sp-element', 'parenthetical'],
+  ['Digit5', true, false, 'sp-element', 'dialogue'],
+  ['Digit6', true, false, 'sp-element', 'transition'],
+  ['Digit7', true, false, 'sp-element', 'shot'],
+  ['Digit8', true, false, 'sp-element', 'act-break'],
+  ['Digit9', true, false, 'sp-element', 'note'],
+  // [79] เลือกทั้งฉาก
+  ['KeyA', true, true, 'select-scene'],
+  // [77] Non-breaking space
+  ['Space', true, true, 'nbsp'],
 ];
 
 export const shortcutId = (s) => s.slice(3).join(':');
@@ -282,6 +317,11 @@ export const SHORTCUT_LABELS = {
   'split-view': 'shortcuts.splitView', 'kanban': 'shortcuts.kanban',
   'export-blog': 'shortcuts.exportBlog', 'close-all-tabs': 'shortcuts.closeAllTabs',
   'line-numbers': 'shortcuts.lineNumbers',
+  'gallery': 'shortcuts.gallery',
+  'sp-element:parenthetical': 'shortcuts.spParenthetical', 'sp-element:dialogue': 'shortcuts.spDialogue',
+  'sp-element:transition': 'shortcuts.spTransition', 'sp-element:shot': 'shortcuts.spShot',
+  'sp-element:act-break': 'shortcuts.spActBreak', 'sp-element:note': 'shortcuts.spNote',
+  'select-scene': 'shortcuts.selectScene', 'nbsp': 'shortcuts.nbsp',
 };
 
 const isMac = (() => { try { return navigator.platform.toLowerCase().includes('mac'); } catch { return false; } })();

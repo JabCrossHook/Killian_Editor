@@ -1,32 +1,20 @@
 // timeline-ui.js — เส้นเวลา (UI): เปิด/วาดเส้นเวลา (การ์ด·Gantt)
-import { activate, closeTab, eventDialog, loadTimeline, openRef, openScene, saveTimeline, sceneEventsFromProject } from './app.js';
+import { eventDialog, loadTimeline, openRef, openScene, saveTimeline, sceneEventsFromProject } from './app.js';
 import { $, el, state } from './core.js';
 import { findClashes, ganttBar, ganttData, ganttTicks, groupByTrack, mergeTimeline, newEvent, sortEvents, trackNames } from './timeline.js';
 import { renderFutureNotes, notesForScene } from './session-notes.js';
 import { findScenePath } from './project-scan.js';
+import { showPanel, isPanelOpen } from './panels/panel-ui.js';
 
-/** วาดเส้นเวลาใหม่ถ้าแท็บเปิดอยู่ (เรียกหลังเพิ่มโน้ต "ไว้ทำภายหลัง") */
+/** วาดเส้นเวลาใหม่ถ้าแผงเปิดอยู่ (เรียกหลังเพิ่มโน้ต "ไว้ทำภายหลัง") */
 export function refreshOpenTimeline() {
-  const t = state.tabs.get('::timeline::');
-  if (t) renderTimeline(t.pane);
+  if (isPanelOpen('timeline') && $('#tl-body')) renderTimeline($('#tl-body'));
 }
 
+// บั๊ก #18: เส้นเวลาเป็นแผง ไม่ใช่แท็บเอกสาร
 export async function openTimeline() {
-  const key = '::timeline::';
-  if (state.tabs.has(key)) { activate(key); return renderTimeline(state.tabs.get(key).pane); }
-  const pane = el('div', 'pane');
-  $('#panes').append(pane);
-  const tabBtn = el('div', 'tab');
-  tabBtn.append(el('span', 'tab-title', 'เส้นเวลา'));
-  const x = el('span', 'tab-x', '×'); tabBtn.append(x);
-  $('#tabs').append(tabBtn);
-  const tab = { file: key, title: 'เส้นเวลา', pane, tabBtn, dirty: false,
-                editor: null, plain: null, wiki: null, gal: null, timeline: true };
-  tabBtn.onclick = (e) => { if (e.target !== x) activate(key); };
-  x.onclick = () => closeTab(key);
-  state.tabs.set(key, tab);
-  activate(key);
-  renderTimeline(pane);
+  showPanel('timeline');
+  return renderTimeline($('#tl-body'));
 }
 
 export async function renderTimeline(pane) {

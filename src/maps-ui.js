@@ -1,29 +1,30 @@
 // maps-ui.js — แผนที่ (UI): เปิด/วาดแผนที่ · หมุด · ลำดับชั้นโลก→เมือง→ห้อง
-import { activate, addMapFlow, closeTab, loadMaps, mapImgURL, mapsState_C, pinDialog, saveMaps } from './app.js';
+import { addMapFlow, loadMaps, mapImgURL, mapsState_C, pinDialog, saveMaps } from './app.js';
 import { $, el, state } from './core.js';
 import { pickImage } from './gallery.js';
 import { PIN_KIND, breadcrumb, clamp, deleteMap, findMap, newPin, pinStats, sortMaps } from './maps.js';
 import { confirmBox } from './ui.js';
 import { openEntity } from './wiki-ui.js';
+import { showPanel, isPanelOpen } from './panels/panel-ui.js';
 
+// บั๊ก #18: แผนที่เป็นแผง ไม่ใช่แท็บเอกสาร
 export async function openMaps() {
-  const key = '::maps::';
-  if (state.tabs.has(key)) { activate(key); return renderMaps(state.tabs.get(key).pane); }
-  const pane = el('div', 'pane');
-  $('#panes').append(pane);
-  const tabBtn = el('div', 'tab');
-  tabBtn.append(el('span', 'tab-title', 'แผนที่'));
-  const x = el('span', 'tab-x', '×'); tabBtn.append(x);
-  $('#tabs').append(tabBtn);
-  const tab = { file: key, title: 'แผนที่', pane, tabBtn, dirty: false,
-                editor: null, plain: null, wiki: null, gal: null, maps: true };
-  tabBtn.onclick = (e) => { if (e.target !== x) activate(key); };
-  x.onclick = () => { mapsState_C.s = null; closeTab(key); };
-  state.tabs.set(key, tab);
-  activate(key);
+  showPanel('maps');                   // hook ใน app.js เริ่มวาดให้ · await ตัวเดียวกันต่อ
+  return renderMapsPanel();
+}
+
+/** โหลด maps.json + วาดลง #maps-body — ห้ามเรียก showPanel ในนี้ (วนซ้ำกับ hook) */
+export async function renderMapsPanel() {
+  // โหลดใหม่ทุกครั้ง (ไฟล์แก้นอกโปรแกรมได้) แต่คงแผนที่ที่ดูค้างไว้ถ้ายังมีอยู่
+  const keepId = mapsState_C.s?.currentId || null;
   mapsState_C.s = { data: await loadMaps(), currentId: null };
-  if (mapsState_C.s.data.maps.length) mapsState_C.s.currentId = sortMaps(mapsState_C.s.data.maps)[0].id;
-  renderMaps(pane);
+  const all = mapsState_C.s.data.maps;
+  mapsState_C.s.currentId = (keepId && all.some((m) => m.id === keepId)) ? keepId
+                          : (all.length ? sortMaps(all)[0].id : null);
+  return renderMaps($('#maps-body'));
+}
+export function refreshMapsIfOpen() {
+  if (isPanelOpen('maps') && mapsState_C.s && $('#maps-body')) renderMaps($('#maps-body'));
 }
 
 export async function renderMaps(pane) {

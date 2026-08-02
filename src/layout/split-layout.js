@@ -3,23 +3,52 @@
 // split-ui.js (opencode) เอาไปวาด · ทำงานร่วมกับ Panel System ผ่าน leaf.tabId (อ้างแท็บเดียวกัน)
 //
 // โหนด (recursive):
-//   { type:'leaf',  id, tabId }                                  — pane ที่แสดงแท็บ/เอกสาร 1 ตัว
+//   { type:'leaf',  id, tabs:[tabId,…], active, tabId }          — pane ที่มี "กลุ่มแท็บ" ของตัวเอง
 //   { type:'split', id, dir:'row'|'col', children:[...], sizes:[...] } — แบ่ง row(ซ้าย-ขวา)/col(บน-ล่าง)
 // spec: docs/40-split-view.md
+//
+// บั๊ก #12: เดิม leaf ถือแท็บเดียว (leaf.tabId) → แต่ละช่องเลือกแท็บของตัวเองไม่ได้
+// ตอนนี้ leaf ถือ tabs[] + active (แถบแท็บย่อยต่อช่อง) โดย **คง `leaf.tabId` ไว้เป็นกระจกเงา**
+// ของ `tabs[active]` เสมอ — โค้ด/เทสเดิมที่อ่าน leaf.tabId จึงยังใช้ได้ ไม่ต้องแก้ทั้งระบบ
+// ทุกฟังก์ชันที่แตะ tabs ต้องเรียก syncLeaf() ปิดท้ายเสมอ
 
 let _uid = 0;
 const nid = (p = 's') => `${p}${Date.now().toString(36)}${(_uid++).toString(36)}`;
 
-export function leaf(tabId, id = nid('l')) { return { type: 'leaf', id, tabId }; }
+export function leaf(tabId, id = nid('l')) {
+  return syncLeaf({ type: 'leaf', id, tabs: tabId == null ? [] : [tabId], active: 0 });
+}
 export function split(dir, children, sizes, id = nid('sp')) {
   return { type: 'split', id, dir, children, sizes: sizes || even(children.length) };
 }
 const even = (n) => Array.from({ length: n }, () => +(1 / n).toFixed(4));
 
+/** ทำให้ tabs/active/tabId ของ leaf ตรงกันเสมอ (รับโครงเก่าที่มีแต่ tabId ได้ด้วย) */
+function syncLeaf(l) {
+  if (!Array.isArray(l.tabs)) l.tabs = (l.tabId == null ? [] : [l.tabId]);
+  l.tabs = l.tabs.filter((x) => x != null);
+  if (!Number.isInteger(l.active)) l.active = 0;
+  l.active = l.tabs.length ? Math.max(0, Math.min(l.active, l.tabs.length - 1)) : 0;
+  l.tabId = l.tabs.length ? l.tabs[l.active] : null;
+  return l;
+}
+/** แท็บที่ pane นี้กำลังแสดง */
+export function leafTab(l) { return l && l.tabs && l.tabs.length ? (l.tabs[l.active] ?? null) : null; }
+/** อัปเกรดโครงเก่า (leaf.tabId เดี่ยว ๆ) ให้เป็นกลุ่มแท็บ — เรียกตอนโหลดจาก storage */
+export function normalizeLeaves(root) {
+  if (root) walk(root, (n) => { if (n.type === 'leaf') syncLeaf(n); });
+  return root;
+}
+
 // ───────── ท่อง/ค้น ─────────
 export function walk(node, fn, parent = null) { fn(node, parent); if (node.children) for (const c of node.children) walk(c, fn, node); }
 export function leafIds(root) { const o = []; walk(root, (n) => { if (n.type === 'leaf') o.push(n.id); }); return o; }
-export function tabIds(root) { const o = []; walk(root, (n) => { if (n.type === 'leaf') o.push(n.tabId); }); return o; }
+/** แท็บที่ "กำลังแสดง" ในแต่ละ pane (1 ตัวต่อ pane) */
+export function tabIds(root) { const o = []; walk(root, (n) => { if (n.type === 'leaf') o.push(leafTab(n)); }); return o; }
+/** แท็บทั้งหมดในทุก pane รวมตัวที่ซ่อนอยู่หลังแถบแท็บย่อย */
+export function allTabIds(root) {
+  const o = []; walk(root, (n) => { if (n.type === 'leaf') o.push(...(n.tabs || [])); }); return o;
+}
 function locate(root, id) {
   let res = null;
   walk(root, (n) => { if (n.children) { const i = n.children.findIndex((c) => c.id === id); if (i >= 0) res = { parent: n, index: i }; } });
@@ -28,8 +57,11 @@ function locate(root, id) {
 export function findLeaf(root, leafId) {
   let f = null; walk(root, (n) => { if (n.type === 'leaf' && n.id === leafId) f = n; }); return f;
 }
+/** หา pane ที่ "มีแท็บนี้อยู่ในกลุ่ม" (ไม่จำเป็นต้องเป็นตัวที่แสดงอยู่) */
 export function findLeafByTab(root, tabId) {
-  let f = null; walk(root, (n) => { if (n.type === 'leaf' && n.tabId === tabId) f = n; }); return f;
+  let f = null;
+  walk(root, (n) => { if (!f && n.type === 'leaf' && (n.tabs || []).includes(tabId)) f = n; });
+  return f;
 }
 export function paneCount(root) { return root ? leafIds(root).length : 0; }
 // ความลึกของการแบ่ง (root leaf = 0) — ไว้ตรวจว่า recursive split ทำงานจริง
@@ -76,12 +108,47 @@ export function splitPane(root, targetLeafId, side, newTabId) {
   return root;
 }
 
-// เปลี่ยนแท็บที่ pane หนึ่งแสดง (ปล่อยกลาง pane)
+// ───────── กลุ่มแท็บในแต่ละ pane (บั๊ก #12) ─────────
+/** เอาแท็บมาแสดงใน pane นี้ — ยังไม่มีในกลุ่มก็เพิ่มให้ แล้วตั้งเป็นตัวที่แสดง */
 export function setLeafTab(root, leafId, tabId) {
+  return addLeafTab(root, leafId, tabId, true);
+}
+/** เพิ่มแท็บเข้ากลุ่มของ pane (activate=false = เพิ่มไว้เฉย ๆ ไม่สลับไปแสดง) */
+export function addLeafTab(root, leafId, tabId, activate = true) {
   root = clone(root);
   const l = findLeaf(root, leafId);
-  if (l) l.tabId = tabId;
+  if (!l || tabId == null) return root;
+  let i = l.tabs.indexOf(tabId);
+  if (i < 0) { l.tabs.push(tabId); i = l.tabs.length - 1; }
+  if (activate) l.active = i;
+  return syncLeaf(l), root;
+}
+/** สลับไปแสดงแท็บอื่นใน pane เดียวกัน — ไม่กระทบ pane อื่นเลย (หัวใจของบั๊ก #12) */
+export function activateLeafTab(root, leafId, tabId) {
+  root = clone(root);
+  const l = findLeaf(root, leafId);
+  if (!l) return root;
+  const i = l.tabs.indexOf(tabId);
+  if (i >= 0) l.active = i;
+  return syncLeaf(l), root;
+}
+/** เอาแท็บออกจากกลุ่มของ pane เดียว (pane ว่างแล้วจะยุบทิ้งถ้ายังมี pane อื่นเหลือ) */
+export function removeLeafTab(root, leafId, tabId) {
+  root = clone(root);
+  const l = findLeaf(root, leafId);
+  if (!l) return root;
+  const i = l.tabs.indexOf(tabId);
+  if (i < 0) return root;
+  l.tabs.splice(i, 1);
+  if (l.active >= i) l.active = Math.max(0, l.active - 1);
+  syncLeaf(l);
+  if (!l.tabs.length && leafIds(root).length > 1) return removeLeaf(root, l.id);
   return root;
+}
+/** แท็บทั้งหมดของ pane หนึ่ง (ตามลำดับในแถบแท็บย่อย) */
+export function leafTabs(root, leafId) {
+  const l = root && findLeaf(root, leafId);
+  return l ? [...l.tabs] : [];
 }
 
 // ───────── ลากแท็บที่เปิดอยู่แล้วไปอีก pane ─────────
@@ -92,7 +159,8 @@ export function moveTabToPane(root, tabId, targetLeafId, side = 'right') {
   if (src && src.id === targetLeafId && side !== 'center') return clone(root);  // ลากกลับที่เดิม
   let out = clone(root);
   if (src) {
-    out = removeLeaf(out, src.id);
+    // เอาออกจากกลุ่มของ pane ต้นทางเท่านั้น — แท็บอื่นใน pane เดียวกันต้องไม่หายไปด้วย (บั๊ก #12)
+    out = removeLeafTab(out, src.id, tabId);
     if (!out) return leaf(tabId);                       // ถอดแล้วไม่เหลืออะไร → เป็น pane เดียว
     if (!findLeaf(out, targetLeafId)) return out;       // pane ปลายทางยุบหายไปพร้อมกัน
   }
@@ -129,18 +197,51 @@ export function removeLeaf(root, leafId) {
   };
   return collapse(prune(root));
 }
-// ปิดแท็บ (หา pane จาก tabId ให้เอง)
+// ปิดแท็บ — เอาออกจากกลุ่มของทุก pane · pane ที่ว่างเพราะการนี้จึงยุบทิ้ง
+// (แท็บอื่นใน pane เดียวกันยังอยู่ → pane ไม่หาย แค่สลับไปแสดงตัวถัดไป — บั๊ก #12)
 export function closeTab(root, tabId) {
-  const l = root && findLeafByTab(root, tabId);
-  return l ? removeLeaf(root, l.id) : (root ? clone(root) : null);
+  if (!root) return null;
+  const out = clone(root);
+  const emptied = [];
+  walk(out, (n) => {
+    if (n.type !== 'leaf') return;
+    const i = n.tabs.indexOf(tabId);
+    if (i < 0) return;
+    n.tabs.splice(i, 1);
+    if (n.active >= i) n.active = Math.max(0, n.active - 1);
+    syncLeaf(n);
+    if (!n.tabs.length) emptied.push(n.id);
+  });
+  return dropEmpty(out, emptied);
 }
-// ตัด pane ที่อ้างแท็บซึ่งถูกปิดไปแล้ว (ซิงก์กับ Panel System / แท็บเอกสาร)
+// ตัดแท็บที่ถูกปิดไปแล้วออกจากทุก pane (ซิงก์กับ Panel System / แท็บเอกสาร)
 export function pruneTabs(root, validTabIds) {
   if (!root) return null;
   const ok = new Set(validTabIds);
-  let out = clone(root);
-  for (const l of leavesOf(out)) if (!ok.has(l.tabId)) { out = removeLeaf(out, l.id); if (!out) return null; }
-  return out;
+  const out = clone(root);
+  const emptied = [];
+  walk(out, (n) => {
+    if (n.type !== 'leaf' || !n.tabs.length) return;
+    const keep = n.tabs.filter((tid) => ok.has(tid));
+    if (keep.length === n.tabs.length) return;
+    const wasActive = leafTab(n);
+    n.tabs = keep;
+    n.active = Math.max(0, keep.indexOf(wasActive));
+    syncLeaf(n);
+    if (!n.tabs.length) emptied.push(n.id);
+  });
+  return dropEmpty(out, emptied, ok.has(null));
+}
+/** ยุบ pane ที่เพิ่งกลายเป็นว่าง — เหลือ pane เดียวก็ปล่อยว่างไว้ (หรือคืน null ถ้าห้ามว่าง) */
+function dropEmpty(out, emptied, allowEmpty = false) {
+  let r = out;
+  for (const id of emptied) {
+    if (leafIds(r).length <= 1) break;
+    r = removeLeaf(r, id);
+    if (!r) return null;
+  }
+  if (r.type === 'leaf' && !r.tabs.length && !allowEmpty) return null;
+  return r;
 }
 function leavesOf(root) {
   const o = []; walk(root, (n) => { if (n.type === 'leaf') o.push(n); }); return o;
@@ -166,7 +267,8 @@ export function deserializeSplit(str) {
   let d; try { d = JSON.parse(str); } catch { return null; }
   d = migrate(d);
   if (!d || d.version !== SPLIT_VERSION) return null;
-  return d.root ?? null;
+  // เลย์เอาต์ที่บันทึกก่อนบั๊ก #12 มีแต่ leaf.tabId → ยกเป็นกลุ่มแท็บให้ก่อนใช้งาน
+  return normalizeLeaves(d.root ?? null);
 }
 function migrate(d) {
   if (!d || typeof d !== 'object') return null;
@@ -232,6 +334,30 @@ export class SplitManager {
   focus(leafId) {
     if (!this.root || !findLeaf(this.root, leafId)) return false;
     this.focusId = leafId; return true;
+  }
+
+  // ───── บั๊ก #12: กลุ่มแท็บต่อช่อง — ห่อฟังก์ชันโมดูลไว้ให้ UI เรียกผ่าน manager ─────
+  /** id ของช่องที่โฟกัสอยู่ (null ถ้ายังไม่แยกจอ) */
+  focusLeafId() { const l = this._focusLeaf(); return l ? l.id : null; }
+  /** เพิ่มแท็บเข้าช่อง — ไม่ระบุช่อง = ช่องที่โฟกัสอยู่ */
+  addTab(tabId, leafId) {
+    const id = leafId || this.focusLeafId();
+    if (!id || !this.root) return false;
+    this._set(addLeafTab(this.root, id, tabId));
+    return true;
+  }
+  /** สลับแท็บที่แสดงในช่องนั้น โดยไม่ไปยุ่งกับช่องอื่น */
+  activateInLeaf(leafId, tabId) {
+    if (!this.root || !findLeaf(this.root, leafId)) return false;
+    this._set(activateLeafTab(this.root, leafId, tabId));
+    this.focusId = leafId;
+    return true;
+  }
+  /** เอาแท็บออกจากช่องนี้ (สำเนาในช่องอื่นยังอยู่) */
+  closeInLeaf(leafId, tabId) {
+    if (!this.root || !findLeaf(this.root, leafId)) return false;
+    this._set(removeLeafTab(this.root, leafId, tabId));
+    return true;
   }
   activeTabId() { const l = this._focusLeaf(); return l ? l.tabId : null; }
   resize(splitId, index, ratio, snapTol) {

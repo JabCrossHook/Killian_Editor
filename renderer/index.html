@@ -71,9 +71,15 @@
   <button id="tb-align-justify" class="tb" title="เต็มบรรทัด (Ctrl+Shift+J)" data-icon="align-justify"></button>
   <span class="sep"></span>
   <button id="tb-img" class="tb" title="แทรกรูป" data-icon="image-add"></button>
+  <button id="tb-gallery" class="tb" title="คลังรูปภาพ (Ctrl+Shift+G)" data-icon="image"></button>
   <button id="tb-source" class="tb" title="ดู Markdown ดิบของฉากนี้" data-icon="code-alt"></button>
   <button id="tb-read" class="tb tb-toggle" title="โหมดอ่าน (เต็มจอ)" data-icon="book-open"></button>
   <button id="tb-gsearch" class="tb" title="ค้นหาทั้งโปรเจกต์ (Ctrl+Shift+F)" data-icon="search"></button>
+  <button id="tb-tree-panel"    class="tb tb-toggle" title="โปรเจกต์ (Explorer)" data-icon="book-content"></button>
+  <button id="tb-outline-panel" class="tb tb-toggle" title="Navigation" data-icon="list-ul"></button>
+  <button id="tb-props-panel"   class="tb tb-toggle" title="คุณสมบัติ" data-icon="clipboard"></button>
+  <button id="tb-search-panel"  class="tb tb-toggle" title="ค้นหา" data-icon="search"></button>
+  <span class="sep"></span>
   <button id="tb-note" class="tb" title="โน้ตด่วน — จดความคิดตอนนี้ไว้ก่อน" data-icon="note"></button>
   <button id="tb-panels" class="tb" title="จัดการแผง" data-icon="layout"></button>
   <button id="tb-split" class="tb tb-toggle" title="แยกหน้าจอ (Split View)" data-icon="dock-right"></button>
@@ -139,6 +145,13 @@
     <div id="notes-panel"><div id="notes-body"></div></div>
     <div id="home-panel"><div id="home-body"></div></div>
     <div id="comments-panel"><div id="comments-body"></div></div>
+    <!-- บั๊ก #18: 5 ฟีเจอร์ที่ไม่ใช่ "เอกสาร" ย้ายจากแท็บ (#tabs/#panes) มาเป็นแผงของตัวเอง
+         → เลิกแย่งแถบแท็บกับฉาก/บทที่กำลังเขียนอยู่ -->
+    <div id="dash-panel" class="k-featpanel"><div id="dash-body"></div></div>
+    <div id="kanban-panel" class="k-featpanel"><div id="kanban-body"></div></div>
+    <div id="books-panel" class="k-featpanel"><div id="books-body"></div></div>
+    <div id="tl-panel" class="k-featpanel"><div id="tl-body"></div></div>
+    <div id="maps-panel" class="k-featpanel"><div id="maps-body"></div></div>
 </div>
 <div id="statusbar"><span id="status" data-i18n="app.ready">พร้อม</span>
   <span id="status-center"></span>

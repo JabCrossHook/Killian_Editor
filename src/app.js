@@ -2,7 +2,7 @@
 import { KEditor } from './editor.js';
 import { parseMdFile, dumpMdFile, countWords } from './md.js';
 import { setQuery, gotoMatch, replaceCurrent, replaceAll } from './search.js';
-import { ask, confirmBox, popupMenu, choose, closeMenu } from './ui.js';
+import { ask, confirmBox, popupMenu, choose, closeMenu, saveAllDialog } from './ui.js';
 import { WikiEditor, CAT_TH, imageLightbox } from './wiki.js';
 import { SPEditor } from './screenplay.js';
 import { Gallery, pickImage } from './gallery.js';
@@ -19,14 +19,14 @@ import { STEP_DEFS, PRESETS, stepDef, mkStep, newWorkflow, cloneWorkflow, runWor
 import { TIMELINE_VERSION, mergeTimeline, groupByTrack, trackNames, newEvent, findClashes, sortEvents, ganttData, ganttBar, ganttTicks, normalizeRefs } from './timeline.js';
 import { MAPS_VERSION, PIN_COLORS, PIN_KIND, newMap, newPin, clamp, findMap, sortMaps, breadcrumb, rootMaps, pinStats, deleteMap } from './maps.js';
 import { $, el, state, smart, LOG_BUF, log, setStatus,
-         DEFAULT_SETTINGS, DEFAULT_GOALS, BASE_ED_FS, BASE_SP_FS,
+         DEFAULT_SETTINGS, DEFAULT_GOALS, DEFAULT_SP_CYCLE, BASE_ED_FS, BASE_SP_FS,
          SCALE_MIN, SCALE_MAX, UI_SCALE_MIN, UI_SCALE_MAX,
          SCENE_STATUSES, SCENE_COLORS, STATUS_COLORS, BUILTIN_CATS, CAT_ICON,
          REL_TYPES, REL_COLOR, REL_LABEL, categorizeRole, categorizeWith,
          t, i18n, loadLanguage, applyDataI18n, onLanguageChanged, SHORTCUTS, SHORTCUT_LABELS, shortcutId,
          formatShortcut, accelText, withShortcut } from './core.js';
 import { sceneProps } from './scene-props.js';
-import { openMaps, renderMaps } from './maps-ui.js';
+import { openMaps, renderMaps, renderMapsPanel } from './maps-ui.js';
 import { openTimeline, renderTimeline } from './timeline-ui.js';
 import { renameSection, deleteSection, addSection, listSections, sectionStats, saveSectionMeta, reorderSections } from './section-ops.js';
 import { renameScene, deleteScene, addScene, setSceneMeta, toggleSceneFlag, duplicateScene, moveSceneOrder, moveSceneToChapter, moveSceneBefore, sceneStatusMenu, sceneColorMenu, renameChapter, deleteChapter, addChapter, moveChapterBefore, renumberChapters,
@@ -65,11 +65,12 @@ import { manageVisualTags, renderAllTagChips, applyVisualTagStyle, visualTagFor 
 import { quickNote, showAllNotes, getSessionNotes, addSessionNote, saveSessionNotes } from './session-notes.js';
 import { openCentralizeUI, markCentralizeStale, onCentralizeShown, resetCentralize } from './centralize-ui.js';
 // ---- Part 1+2 integrations ----
-import { openKanban, resetKanban } from './kanban/kanban-ui.js';
+import { openKanban, resetKanban, renderKanbanPanel } from './kanban/kanban-ui.js';
 import * as PL from './panels/panel-layout.js';
 import { initPanelSystem, getPanelManager, togglePanelDialog, showPanel, hidePanel, togglePanel,
          resetPanels, panelMenuItems, panelToggleState, addPanelButton, renderPanels,
-         isPanelOpen, resetPanelSystem, PANEL_DEFS } from './panels/panel-ui.js';
+         isPanelOpen, resetPanelSystem, PANEL_DEFS, panelId, setPanelShowHook,
+         onPanelLayoutChange } from './panels/panel-ui.js';
 import { toggleSplit, createSplit, closeSplit, isSplit, syncSplitPanes, resetSplitSystem,
          initSplitSystem, syncActiveSplit, openInSplit, closeTabInSplit, splitDir,
          getSplitManager, paneCount as splitPaneCount } from './layout/split-ui.js';
@@ -110,6 +111,12 @@ export function applySettings() {
   } else {
     document.documentElement.style.removeProperty('--ed-font');
   }
+  // ฟอนต์บทหนังแยกจากนิยาย (บั๊ก #2) — ว่าง = ปล่อยให้ CSS fallback เป็น Courier New
+  if (state.settings.spFontFamily) {
+    document.documentElement.style.setProperty('--sp-font', state.settings.spFontFamily);
+  } else {
+    document.documentElement.style.removeProperty('--sp-font');
+  }
   applySpellcheck();
   refreshAllSpell();
   restartAutosave();
@@ -127,6 +134,9 @@ export function applyZoomVars(off) {
   R.setProperty('--ed-fs', edfs + 'px');
   R.setProperty('--sp-fs', spfs + 'px');
   R.setProperty('--page-scale', pageScale.toFixed(3));
+  document.querySelectorAll('.pane > .workspace').forEach(ws => {
+    ws.style.minWidth = (pageScale * 100) + '%';
+  });
   const slider = $('#zoom-slider'); if (slider) slider.value = String(Math.round(pageScale * 100));
   const lbl = $('#zoom-label'); if (lbl) lbl.textContent = Math.round(pageScale * 100) + '%';
 }
@@ -276,6 +286,7 @@ async function closeProjectIfAny() {
   resetAutoLink(); resetTaskEngine(); clearKeyCache(); resetAI(); resetSplitSystem(); resetKanban();
   resetCentralize(); resetCommentStore(); _cmMigrated.clear(); clearCommentAnchors();
   imgURLBase.clear();
+  clearFeaturePanels();                 // บั๊ก #18: เนื้อแผงฟีเจอร์เป็นของโปรเจกต์เดิม ต้องล้าง
   $('#tree').innerHTML = ''; $('#outline').innerHTML = '';
   refreshToolbar(); scheduleCount();
   return true;
@@ -311,9 +322,12 @@ export async function loadProject(root) {
   loadSpellDict(root);                               // โหลดคลังคำตรวจคำผิด (async, ไม่บล็อก)
   await loadTemplates();                            // default templates ถูกฝังลงโปรเจกต์ทันที
   warmInverse(); loadPlugins();
-  if (!state.tabs.size) openDashboard();
   // ---- เริ่มระบบใหม่ (Part 1+2) ----
   initPanelSystem();                                 // Panel System
+  onPanelLayoutChange(refreshToolbar);               // sync toolbar toggle .on states
+  // แผงฟีเจอร์ (บั๊ก #18) ต้องเรียกหลัง initPanelSystem ไม่งั้น showPanel ยังไม่รู้จักแผง
+  await renderOpenFeaturePanels();                   // เลย์เอาต์ที่กู้มาอาจมีแผงเปิดค้าง = กล่องเปล่า
+  if (!state.tabs.size) openDashboard();
   initThesaurus().catch(() => {});                   // Thesaurus engine
   ensureAutoLink().catch(() => {});                  // Backlinks index
   if (state.settings.autoSync) setAutoSync(true);    // auto-task: คืนสถานะที่ผู้ใช้เปิดไว้
@@ -1692,7 +1706,7 @@ export async function addMapFlow() {
   mapsState_C.s.data.maps.push(m);
   mapsState_C.s.currentId = m.id;
   await saveMaps(mapsState_C.s.data);
-  renderMaps(state.tabs.get('::maps::').pane);
+  renderMaps($('#maps-body'));                 // บั๊ก #18: แผนที่อยู่ในแผง ไม่ใช่แท็บแล้ว
 }
 
 // กล่องแก้หมุด — คืน pin object, 'DELETE', หรือ null
@@ -1779,6 +1793,7 @@ function toggleFocus(on) {
   document.body.classList.toggle('focus-mode', v);
   toggleFocusMode2(v);          // หรี่บรรทัดอื่นไปพร้อมกัน (โมดูล focus-mode.js)
   syncMenuToggles();
+  refreshToolbar();
   setStatus(v ? 'โหมดโฟกัส — Esc หรือ Ctrl+Shift+D เพื่อออก' : 'ออกจากโหมดโฟกัส');
 }
 
@@ -1834,7 +1849,7 @@ function toggleReading(on) {
   if (t?.editor) t.editor.view.dom.setAttribute('contenteditable', ce);
   if (t?.sp) t.sp.view.dom.setAttribute('contenteditable', ce);
   // เก็บกวาด inline style ที่เวอร์ชันก่อนหน้าเคยเขียนค้างไว้
-  for (const id of ['#app-root', '#topbar', '#statusbar', '#k-fab']) {
+  for (const id of ['#app-root', '#topbar', '#statusbar', '#toolbar', '#titlebar', '#tabs', '#k-fab']) {
     const elx = $(id); if (elx) elx.style.display = '';
   }
   if (_readEsc) { document.removeEventListener('keydown', _readEsc); _readEsc = null; }
@@ -2896,6 +2911,8 @@ export async function openScene(file, title) {
   const raw = await kapi.readFile(file);
   const { meta, body } = parseMdFile(raw);
   const pane = el('div', 'pane');
+  const ws = el('div', 'workspace');
+  pane.appendChild(ws);
   $('#panes').append(pane);
   const tabBtn = el('div', 'tab');
   tabBtn.append(el('span', 'tab-title', title));
@@ -2918,8 +2935,9 @@ export async function openScene(file, title) {
 // สร้างตัวแก้ไขให้ตรงกับ meta.format ของ tab แล้วผูกอีเวนต์ (ใช้ทั้งตอนเปิดฉากและตอนสลับโหมด)
 function mountEditor(tab, dir, body) {
   const pane = tab.pane;
+  const mount = pane.querySelector('.workspace') || pane;
   if ((tab.meta.format || 'prose') === 'screenplay') {
-    tab.sp = new SPEditor(pane, {
+    tab.sp = new SPEditor(mount, {
       markdown: body,
       onChange: () => { markDirty(tab); scheduleCount(); scheduleOutline();
                         setTimeout(() => spSmartCheck(tab), 0); },
@@ -2934,7 +2952,7 @@ function mountEditor(tab, dir, body) {
     pane.addEventListener('click', () => { smart.hide(); setElementBadge(tab.sp.curElement()); refreshToolbar(); });
     pane.addEventListener('keyup', () => refreshToolbar());
   } else {
-    tab.editor = new KEditor(pane, {
+    tab.editor = new KEditor(mount, {
       markdown: body,
       onChange: () => { markDirty(tab); scheduleCount(); scheduleOutline();
                         setTimeout(() => smart.check(tab.editor.view), 0); },
@@ -2970,6 +2988,9 @@ async function switchFormat(target) {
   tab.editor?.destroy(); tab.sp?.destroy();
   tab.editor = null; tab.sp = null;
   tab.pane.innerHTML = '';
+  // บั๊ก #7: .workspace คือชั้นที่รับ CSS zoom — innerHTML='' ลบทิ้งไป ต้องสร้างคืนก่อน mountEditor
+  // ไม่งั้น mountEditor จะ fallback ไป mount ตรงเข้า .pane แล้วซูมไม่มีผล
+  tab.pane.appendChild(el('div', 'workspace'));
   tab.meta.format = to;
   tab.body = body;
   mountEditor(tab, dir, body);
@@ -3176,9 +3197,26 @@ export async function saveTab(tab) {
 }
 
 // บันทึกทุกแท็บที่ยังมีงานค้าง (Ctrl+Alt+S / เมนู ไฟล์ → บันทึกทั้งหมด)
-async function saveAllTabs() {
-  const dirty = [...state.tabs.values()].filter((t) => t.dirty);
+/** รายการไฟล์ค้างสำหรับกล่อง saveAllDialog (บั๊ก #3) */
+function dirtyTabList() {
+  return [...state.tabs.values()].filter((t) => t.dirty)
+    .map((t) => ({ key: t.file, title: t.title || t.file, file: t.file }));
+}
+
+/**
+ * บันทึกทั้งหมด — ขึ้นกล่องรายการไฟล์ก่อนเสมอ (บั๊ก #3)
+ * @param {boolean} silent ข้ามกล่อง (ใช้ตอน autosave/เทส)
+ */
+async function saveAllTabs(silent = false) {
+  let dirty = [...state.tabs.values()].filter((t) => t.dirty);
   if (!dirty.length) { setStatus('ไม่มีงานค้างให้บันทึก'); return 0; }
+  if (!silent) {
+    const { action, keys } = await saveAllDialog(dirtyTabList());
+    if (action !== 'save') { if (action === null) setStatus('ยกเลิกการบันทึก'); return 0; }
+    const pick = new Set(keys);
+    dirty = dirty.filter((t) => pick.has(t.file));
+    if (!dirty.length) return 0;
+  }
   let n = 0;
   for (const t of dirty) {
     try { await saveTab(t); n++; }
@@ -3351,6 +3389,119 @@ export function closeTab(file) {
   if (t.dirty) saveTab(t).then(done); else done();
 }
 
+// [80] Revert — ยกเลิกการเปลี่ยนแปลงทั้งหมด โหลดใหม่จากดิสก์
+export async function revertTab(file) {
+  const t = state.tabs.get(file);
+  if (!t) return;
+  if (!(await confirmBox('ยกเลิกการเปลี่ยนแปลงทั้งหมดในแท็บนี้?\nเนื้อหาจะกลับไปเป็นเวอร์ชันล่าสุดที่บันทึกไว้', 'Revert'))) return;
+  const content = await kapi.readFile(file);
+  const { meta, body } = parseMdFile(content);
+  if (t.editor) { t.editor.setMarkdown(body); refreshMentions(t.editor.view); }
+  else if (t.sp) {
+    t.sp.destroy();
+    t.sp = new SPEditor(t.pane.querySelector('.pane.on') || t.pane, {
+      markdown: body, onChange: () => { markDirty(t); smartDirty(); },
+      onElement: (el) => { spSmartCheck(t); setElementBadge(el); },
+      onKeyDown: (ev) => smart.onKey(ev),
+      getChecker: getSpellchecker, resolveSrc: (p) => resolvePath(file, p),
+      getNames: () => smart.names,
+      onMention: (n) => t.wiki ? openWikiEntity(n) : openEntity(n),
+    });
+    t.sp.view.dom.classList.add('on');
+  }
+  else if (t.wiki) { t.wiki.destroy(); openEntity(t.title); return; }
+  else if (t.plain) { t.plain = false; openPlainFile(file, t.title); return; }
+  t.dirty = false;
+  refreshAllSpell(); refreshAllMentions();
+  setStatus('↩ กลับไปยังเวอร์ชันล่าสุดที่บันทึก');
+}
+
+// [76] Remove Elements by Type — ลบ element ทั้งหมดของประเภทที่เลือก
+async function removeElementsDialog() {
+  const sp = state.active?.sp;
+  if (!sp) { setStatus('เปิดบทหนังก่อน'); return; }
+  const v = sp.view;
+  const counts = {};
+  v.state.doc.forEach((n) => {
+    if (n.type.name === 'sp') counts[n.attrs.el] = (counts[n.attrs.el] || 0) + 1;
+  });
+  const types = Object.keys(counts).filter((k) => SP_ELEMS[k]);
+  if (!types.length) { setStatus('ไม่มี element ให้ลบ'); return; }
+  const ov = el('div', 'k-overlay');
+  const box = el('div', 'k-dialog');
+  box.innerHTML = `<div class="k-dlg-title">ลบ element ตามประเภท</div>
+    <div class="k-hint" style="margin-bottom:10px">เลือกประเภท element ที่ต้องการลบทั้งหมดออกจากบท</div>
+    <div id="rm-el-list"></div>
+    <div style="margin-top:8px"><a href="#" id="rm-el-all">เลือกทั้งหมด</a> · <a href="#" id="rm-el-none">ไม่เลือก</a></div>
+    <div class="k-dlg-btns"><button class="k-cancel">${t('dialogs.cancel')}</button><button class="k-ok k-danger-btn">ลบ</button></div>`;
+  ov.append(box); document.body.append(ov);
+  const list = box.querySelector('#rm-el-list');
+  const chks = [];
+  for (const ty of types) {
+    const label = el('label', 'k-row');
+    const cb = el('input'); cb.type = 'checkbox'; cb.value = ty; chks.push(cb);
+    label.append(cb, ' ' + (SP_ELEMS[ty]?.th || ty) + ` (${counts[ty]} รายการ)`);
+    list.append(label);
+  }
+  box.querySelector('#rm-el-all').onclick = (e) => { e.preventDefault(); chks.forEach((c) => c.checked = true); };
+  box.querySelector('#rm-el-none').onclick = (e) => { e.preventDefault(); chks.forEach((c) => c.checked = false); };
+  box.querySelector('.k-cancel').onclick = () => ov.remove();
+  ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
+  box.querySelector('.k-ok').onclick = async () => {
+    const sel = chks.filter((c) => c.checked).map((c) => c.value);
+    if (!sel.length) { ov.remove(); return; }
+    if (!(await confirmBox(`ลบ element ${sel.map((t) => SP_ELEMS[t]?.th || t).join(', ')} ทั้งหมด (${sel.reduce((s, t) => s + (counts[t] || 0), 0)} รายการ)?`, 'ลบ'))) return;
+    // เก็บ snapshot ก่อนลบ
+    const t = state.active;
+    if (t) await snapshotFile(t.file, 'ก่อนลบ ' + sel.map((x) => SP_ELEMS[x]?.th).join(','));
+    let tr = v.state.tr;
+    const delSet = new Set(sel);
+    const toRemove = [];
+    v.state.doc.forEach((n, pos) => {
+      if (n.type.name === 'sp' && delSet.has(n.attrs.el)) toRemove.push({ pos, size: n.nodeSize });
+    });
+    for (const { pos, size } of toRemove.reverse()) tr = tr.delete(pos, pos + size);
+    v.dispatch(tr);
+    if (t) { markDirty(t); smartDirty(); }
+    ov.remove();
+    setStatus('ลบ ' + toRemove.length + ' element แล้ว');
+  };
+}
+
+// [75] Character Map — Latin-1 special characters dialog
+async function showCharMap() {
+  const LATIN1 = [
+    'ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß',
+    'àáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ',
+    '¡¢£¤¥¦§¨©ª«¬­®¯°±²³´µ¶·¸¹º»¼½¾¿',
+  ];
+  const ov = el('div', 'k-overlay');
+  const box = el('div', 'k-dialog');
+  box.innerHTML = `<div class="k-dlg-title">แผนที่อักขระพิเศษ</div>
+    <div class="k-charmap"></div>
+    <div class="k-dlg-btns"><button class="k-ok">${t('dialogs.close')}</button></div>`;
+  ov.append(box); document.body.append(ov);
+  const grid = box.querySelector('.k-charmap');
+  for (const row of LATIN1) {
+    const r = el('div', 'k-cm-row');
+    for (const ch of row) {
+      const btn = el('button', 'k-cm-btn', ch);
+      btn.title = 'U+' + ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0');
+      btn.onclick = () => {
+        const ed = getActiveEditor();
+        if (ed?.view) {
+          ed.view.dispatch(ed.view.state.tr.insertText(ch));
+          ed.view.focus();
+        }
+      };
+      r.append(btn);
+    }
+    grid.append(r);
+  }
+  box.querySelector('.k-ok').onclick = () => ov.remove();
+  ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
+}
+
 async function closeAllTabs() {
   const files = [...state.tabs.keys()];
   for (const f of files) {
@@ -3502,7 +3653,10 @@ function refreshToolbar() {
     // ปิด/ปิดทุกแท็บ / โฟกัส / typewriter / เลขบรรทัด / quick-open / sp-elem → ใช้ได้เสมอ ไม่ขึ้นกับ canEdit
     if (b.id === 'tb-close' || b.id === 'tb-close-all' || b.id === 'tb-focus' ||
         b.id === 'tb-typewriter' || b.id === 'tb-linenum' || b.id === 'tb-quickopen' ||
-        b.id === 'tb-sp-elem') return;
+        b.id === 'tb-gallery' || b.id === 'tb-sp-elem') return;
+    // ปุ่ม toggle แผง — ใช้ได้เสมอ ไม่ขึ้นกับ canEdit
+    if (b.id === 'tb-tree-panel' || b.id === 'tb-outline-panel' ||
+        b.id === 'tb-props-panel' || b.id === 'tb-search-panel') return;
     b.classList.toggle('dis', !canEdit);
   });
   $('#tb-paper').classList.toggle('on', state.settings.paperMode !== false);
@@ -3512,6 +3666,10 @@ function refreshToolbar() {
   $('#tb-focus')?.classList.toggle('on', document.body.classList.contains('focus-mode'));
   $('#tb-typewriter')?.classList.toggle('on', isTypewriter());
   $('#tb-linenum')?.classList.toggle('on', !!state.settings.lineNumbers);
+  $('#tb-tree-panel')?.classList.toggle('on', isPanelOpen('tree'));
+  $('#tb-outline-panel')?.classList.toggle('on', isPanelOpen('outline'));
+  $('#tb-props-panel')?.classList.toggle('on', isPanelOpen('props'));
+  $('#tb-search-panel')?.classList.toggle('on', isPanelOpen('search'));
   syncFloatBarVisible();
   syncMenuToggles();          // เมนู native ติ๊กถูกตามสถานะจริง (ส่งเฉพาะตอนค่าเปลี่ยน)
 }
@@ -3679,6 +3837,66 @@ function stopLogAutoRefresh() {
 }
 window.__k2test = (p) => runTest(p);
 window.__k2menu = null;
+
+// ── บั๊ก #18: แผงฟีเจอร์ที่ไม่ใช่เอกสาร ─────────────────────────────────────
+// showPanel วางแค่กล่องเปล่าให้ — เนื้อหาต้องวาดเอง ทั้งตอนสั่งเปิดจากเมนู
+// และตอนกู้เลย์เอาต์จาก localStorage (ไม่งั้นเปิดโปรแกรมมาเจอแผงว่าง)
+// ฟังก์ชันในนี้ "วาดอย่างเดียว" ห้ามเรียก showPanel เอง (ไม่งั้นวนซ้ำกับ hook ข้างล่าง)
+const FEATURE_PANELS = {
+  dashboard: () => renderDashboard($('#dash-body')),
+  kanban:    () => renderKanbanPanel(),
+  books:     () => renderBookManager($('#books-body')),
+  timeline:  () => renderTimeline($('#tl-body')),
+  maps:      () => renderMapsPanel(),
+};
+export function isFeaturePanel(id) { return !!FEATURE_PANELS[panelId(id)]; }
+// วาดค้างอยู่ = ใช้รอบเดียวกัน — openX() เรียก showPanel (hook เริ่มวาด) แล้ว await ต่อ
+// ถ้าไม่ dedupe จะวาดสองรอบทุกครั้งที่สั่งเปิด (แดชบอร์ดอ่านไฟล์ทั้งโปรเจกต์ = แพง)
+const _featInFlight = new Map();
+export function renderFeaturePanel(id) {
+  const pid = panelId(id);
+  const f = FEATURE_PANELS[pid];
+  if (!f) return Promise.resolve(false);
+  if (_featInFlight.has(pid)) return _featInFlight.get(pid);
+  const p = Promise.resolve().then(f)
+    .catch((e) => { log('error', 'วาดแผง ' + pid + ' ล้มเหลว', e); })
+    .finally(() => _featInFlight.delete(pid))
+    .then(() => true);
+  _featInFlight.set(pid, p);
+  return p;
+}
+// ทุกทางเข้าที่ทำให้แผงเปิด (เมนู · ถาดแผงที่ปิดไว้ · คำสั่ง) วิ่งผ่าน showPanel → hook นี้
+setPanelShowHook((pid) => { renderFeaturePanel(pid); });
+/** ล้างเนื้อแผงฟีเจอร์ (ตอนปิดโปรเจกต์ — ไม่งั้นโปรเจกต์ใหม่เห็นสถิติ/กระดานของเก่า) */
+export function clearFeaturePanels() {
+  for (const sel of ['#dash-body', '#kanban-body', '#books-body', '#tl-body', '#maps-body']) {
+    const n = $(sel); if (n) n.innerHTML = '';
+  }
+  mapsState_C.s = null;
+}
+/** วาดแผงฟีเจอร์ทุกตัวที่เปิดค้างอยู่ (เรียกหลัง initPanelSystem ตอนเปิดโปรเจกต์) */
+export async function renderOpenFeaturePanels() {
+  for (const id of Object.keys(FEATURE_PANELS)) {
+    if (isPanelOpen(id)) await renderFeaturePanel(id);
+  }
+}
+
+// ── บั๊ก #10: พิมพ์/ส่งออก PDF ต้องได้เฉพาะหน้าที่เปิดอยู่ ───────────────────
+// CSS @media print จัดการหลักแล้ว (.pane.on เท่านั้น) — สองตัวนี้เป็นตาข่ายกันพลาด
+// เผื่อ inline style/ปลั๊กอินอื่นไปดัน display ของ pane ที่ไม่ active
+function hideInactivePanes() {
+  document.querySelectorAll('#panes .pane:not(.on)').forEach((p) => {
+    p.dataset.k2hide = p.style.display || '';
+    p.style.display = 'none';
+  });
+}
+function restoreInactivePanes() {
+  document.querySelectorAll('#panes .pane[data-k2hide]').forEach((p) => {
+    p.style.display = p.dataset.k2hide;
+    delete p.dataset.k2hide;
+  });
+}
+
 async function handleCommand(ch, ...a) {
   const t = state.active;
   switch (ch) {
@@ -3699,23 +3917,38 @@ async function handleCommand(ch, ...a) {
       break;
     }
     case 'print': document.body.classList.add('printing');
-                  await kapi.print(); 
+                  hideInactivePanes();
+                  await kapi.print();
+                  restoreInactivePanes();
                   setTimeout(() => document.body.classList.remove('printing'), 800); break;
     case 'export-pdf': {
       if (!t) break;
       const p = await kapi.savePdfDialog(t.title + '.pdf');
       if (p) { document.body.classList.add('printing');
+               hideInactivePanes();
                await kapi.printToPdf(p);
+               restoreInactivePanes();
                document.body.classList.remove('printing');
                setStatus('ส่งออก PDF: ' + p); }
       break;
     }
     case 'close-tab': if (t) closeTab(t.file); break;
     case 'close-all-tabs': closeAllTabs(); break;
-    case 'fmt': getActiveEditor()?.cmd(a[0], a[1]); refreshToolbar(); if (t) markDirty(t); break;
+    // [95] ในบทหนัง Ctrl+1/2/3 = scene/action/character (คีย์เดียวกับหัวข้อ 1-3 ของนิยาย)
+    case 'fmt': {
+      const spFmt = state.active?.sp;
+      const SP_HEAD = { 1: 'scene', 2: 'action', 3: 'character' };
+      if (spFmt && a[0] === 'heading' && SP_HEAD[a[1]]) {
+        spFmt.switchTo(SP_HEAD[a[1]]);
+      } else {
+        getActiveEditor()?.cmd(a[0], a[1]);
+      }
+      refreshToolbar(); if (t) markDirty(t); break;
+    }
     case 'editor-undo': getActiveEditor()?.cmd('undo'); refreshToolbar(); break;
     case 'editor-redo': getActiveEditor()?.cmd('redo'); refreshToolbar(); break;
     case 'insert-image': insertImage(); break;
+    case 'gallery': await openGallery(); break;
     case 'find': openFind(); break;
     case 'dashboard': openDashboard(); break;
     case 'books': openBookManager(); break;
@@ -3728,11 +3961,11 @@ async function handleCommand(ch, ...a) {
     case 'reading-mode': toggleReading(); break;
     case 'line-numbers':
       state.settings.lineNumbers = !state.settings.lineNumbers;
-      applySettings(); saveProjectMeta(); syncMenuToggles();
+      applySettings(); saveProjectMeta(); syncMenuToggles(); refreshToolbar();
       setStatus(state.settings.lineNumbers ? 'เลขบรรทัด: เปิด' : 'เลขบรรทัด: ปิด');
       break;
     // ---- ฟีเจอร์ที่เคยไม่มีทางเข้าถึง (import ไว้แต่ไม่มีเมนู/ปุ่ม) ----
-    case 'typewriter': setStatus(toggleTypewriter() ? 'โหมดเครื่องพิมพ์ดีด: เปิด' : 'โหมดเครื่องพิมพ์ดีด: ปิด');
+    case 'typewriter': setStatus(toggleTypewriter() ? 'โหมดเครื่องพิมพ์ดีด: เปิด' : 'โหมดเครื่องพิมพ์ดีด: ปิด'); refreshToolbar();
                        syncMenuToggles(); break;
     case 'quick-open': openQuickOpen(); break;
     case 'global-search': showPanel('search'); renderSearchPanel($('#search-body')); syncMenuToggles(); break;
@@ -3764,6 +3997,7 @@ async function handleCommand(ch, ...a) {
     case 'comments': await openCommentsPanel(); syncMenuToggles(); break;
     case 'show-panel': showPanel(a[0]); syncMenuToggles(); break;
     // สลับแสดง/ซ่อนแผง — เมนูเป็นสวิตช์ (มีเครื่องหมายถูก) จึงต้องปิดได้ด้วย ไม่ใช่แค่เปิด
+    // แผงฟีเจอร์ (บั๊ก #18) วาดเนื้อหาผ่าน hook ใน showPanel แล้ว
     case 'toggle-panel': togglePanel(a[0]); syncMenuToggles(); break;
     case 'reset-panels': resetPanels(); syncMenuToggles(); break;
     case 'export-draft': exportDraft(); break;
@@ -3775,8 +4009,30 @@ async function handleCommand(ch, ...a) {
     case 'set-format': switchFormat(a[0]); break;
     case 'about': alert('Killian 2 (alpha)\nโปรแกรมเขียนนิยาย/บทหนัง — Electron + ProseMirror\nไฟล์เป็น Markdown เปิดร่วมกับ Killian v1 ได้'); break;
     case 'test-run': runTest(a[0]); break;
+    // [95] Per-element shortcuts + [79] Select scene + [77] Non-breaking space
+    case 'sp-element': {
+      const sp = state.active?.sp;
+      if (sp) sp.switchTo(a[0]);
+      refreshToolbar();
+      if (t) markDirty(t);
+      break;
+    }
+    case 'select-scene': {
+      const spAct = state.active?.sp;
+      if (spAct) spAct.selectScene();
+      break;
+    }
+    case 'nbsp': {
+      const ed = getActiveEditor();
+      if (ed?.view) ed.view.dispatch(ed.view.state.tr.insertText('\u00A0'));
+      ed?.focus();
+      break;
+    }
+    case 'revert': if (t) await revertTab(t.file); break;
+    case 'remove-elements': removeElementsDialog(); break;
+    case 'char-map': showCharMap(); break;
     // ---- Part 1+2: ฟีเจอร์ใหม่ (Kanban, Panel, Split, AI, Thesaurus, Auto-sync) ----
-    case 'kanban': openKanban(); break;
+    case 'kanban': togglePanel('kanban'); break;
     case 'split-view': toggleSplit(state.active?.file || '', a[0] || undefined); break;
     case 'split-add': createSplit(state.active?.file || '', a[0] || undefined); break;   // เพิ่มอีกช่อง (ซ้อนได้)
     case 'split-close': closeSplit(); break;
@@ -3935,6 +4191,7 @@ const TB_SC_MAP = {
   'tb-paper': 'paper-mode', 'tb-gsearch': 'global-search', 'tb-mode': 'toggle-format',
   'tb-close': 'close-tab', 'tb-focus': 'focus-mode',
   'tb-typewriter': 'typewriter', 'tb-quickopen': 'quick-open',
+  'tb-gallery': 'gallery',
 };
 export function applyToolbarShortcutTitles() {
   for (const [id, sid] of Object.entries(TB_SC_MAP)) {
@@ -4015,7 +4272,10 @@ function getActiveEditor() {
 // แสดงแถบลอยเฉพาะตอนมีตัวแก้ไขข้อความเปิดอยู่ (นิยาย/บทหนัง/wiki) — ไม่งั้นซ่อน
 function syncFloatBarVisible() {
   if (!floatBar) return;
-  floatBar.style.display = getActiveEditor() ? 'flex' : 'none';
+  const ed = getActiveEditor();
+  const wk = state.active?.wiki?.secEditors?.some(({k}) => k?.view?.hasFocus())
+          || (state.active?.wiki?.secEditors?.length > 0);
+  floatBar.style.display = (ed || wk) ? 'flex' : 'none';
 }
 
 // ระบบแผงย้ายไป src/panels/* ทั้งหมดแล้ว (alpha.46 — Photoshop-style dock/tab/float)
@@ -4115,7 +4375,7 @@ function setupHoverTips() {
     document.addEventListener(ev, hideTip, true);
 }
 
-// (ถาดแผงที่ปิดไว้ #k-min-tray ย้ายไป panels/panel-ui.js — syncMinTray() หลัง render ทุกครั้ง)
+// (ถาดแผงที่ปิดไว้ #k-min-tray เลิกใช้แล้ว — ใช้ปุ่ม toggle บน toolbar แทน)
 
 // (ความกว้างแถบข้างปรับด้วยที่จับของ dock ใน Panel System แล้ว — .k-resize-handle)
 
@@ -4135,6 +4395,7 @@ window.addEventListener('DOMContentLoaded', () => {
   tb('#tb-align-left', 'align', 'left'); tb('#tb-align-center', 'align', 'center');
   tb('#tb-align-right', 'align', 'right'); tb('#tb-align-justify', 'align', 'justify');
   $('#tb-img').onclick = insertImage;
+  $('#tb-gallery').onclick = () => openGallery();
   $('#tb-mode').onclick = (e) => {
     const tab = state.active;
     if (!tab || !(tab.editor || tab.sp)) return;
@@ -4196,9 +4457,13 @@ window.addEventListener('DOMContentLoaded', () => {
   $('#tb-note').onclick = async () => { const c = await sceneCtx(); quickNote(c?.row?.id, c?.row?.title); };
   $('#tb-note').oncontextmenu = (e) => { e.preventDefault(); showAllNotes(); };
   // ---- ปุ่ม Kanban + AI ----
-  $('#tb-kanban').onclick = () => openKanban();
+  $('#tb-kanban').onclick = () => togglePanel('kanban');
   $('#tb-ai').onclick = () => openAIAssistant();
   $('#tb-ai-chat').onclick = () => openAIChat();
+  $('#tb-tree-panel').onclick = () => { togglePanel('tree'); refreshToolbar(); };
+  $('#tb-outline-panel').onclick = () => { togglePanel('outline'); refreshToolbar(); };
+  $('#tb-props-panel').onclick = () => { togglePanel('props'); refreshToolbar(); };
+  $('#tb-search-panel').onclick = () => { togglePanel('search'); refreshToolbar(); };
   $('#tb-panels').onclick = () => togglePanelDialog();
   $('#tb-split').onclick = () => handleCommand('split-view');
   $('#tb-close').onclick = () => { const t = state.active; if (t) closeTab(t.file); };
@@ -4221,7 +4486,7 @@ window.addEventListener('DOMContentLoaded', () => {
   // (จับใน saveAllTabs แทน)
   // ---- ปุ่มบันทึกทั้งหมด + หน้าแรก ----
   $('#save-all-btn').onclick = () => saveAllTabs();
-  $('#home-btn').onclick = () => { showPanel('home'); import('./home-ui.js').then(m => m.renderHomePanel($('#home-body'))); };
+  $('#home-btn').onclick = () => { import('./home-ui.js').then(m => m.showHomeDialog()); };
   window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyS' && e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey) {
       e.preventDefault(); saveAllTabs();
@@ -4258,9 +4523,12 @@ window.addEventListener('DOMContentLoaded', () => {
   setupFloatingFormatBar();
   // ---- Panel System (Photoshop-style) — วาดทุกแผงลง #app-root ----
   initPanelSystem();
+  onPanelLayoutChange(refreshToolbar);
   startLogAutoRefresh();
   // ---- Split View — ผูก SplitManager เข้ากับ #panes + ลากหัวแท็บไปวางในช่องได้ ----
-  initSplitSystem({ activate, onRender: () => refreshToolbar() });
+  // closeTab: บั๊ก #12 — × บนแท็บย่อยของช่อง เอาแท็บออกจากช่องนั้น
+  // ถ้าไม่เหลืออยู่ช่องไหนเลยก็ต้องปิดแท็บจริง (แถบแท็บรวมถูกซ่อนตอนแยกจอ — ไม่งั้นแท็บลอยหาย)
+  initSplitSystem({ activate, closeTab, onRender: () => refreshToolbar() });
 
   // ปุ่ม 🔄 บนหัวแผงโปรเจกต์ = อ่านโฟลเดอร์ใหม่ (ข้อ 11)
   // จำเป็นเพราะไฟล์ถูกแก้จากนอกโปรแกรมได้ (Explorer/Finder) แล้วต้นไม้ไม่รู้
@@ -4370,7 +4638,7 @@ window.addEventListener('DOMContentLoaded', () => {
                                     markDirty(state.active); doFind(); };
   $('#find-repall').onclick = () => { const n = replaceAll(state.active?.editor?.view, $('#find-r').value);
                                       setStatus('แทนที่ ' + n + ' แห่ง'); markDirty(state.active); doFind(); };
-  if (!location.search.includes('k2test')) kapi.listRecent().then((r) => { if (r[0]) loadProject(r[0]); else { showPanel('home'); import('./home-ui.js').then(m => m.renderHomePanel($('#home-body'))); } });
+  if (!location.search.includes('k2test')) kapi.listRecent().then((r) => { if (r[0]) loadProject(r[0]); else { import('./home-ui.js').then(m => m.showHomeDialog()); } });
   // autosave ตั้งค่าได้ผ่านตั้งค่าโปรเจกต์ (restartAutosave เรียกจาก applySettings เมื่อเปิดโปรเจกต์)
   restartAutosave();
 });
@@ -4978,6 +5246,98 @@ async function runTest(projectPath) {
     await saveTab(t);
     activate(t.file);
 
+    // ---- [51][52][53][95][79][77] Batch 1: Screenplay auto-cycle + auto-detect + shortcuts ----
+    {
+      // เปิดบทหนังทดสอบ
+      const spEl = [...document.querySelectorAll('.scene')].find((x) => x.textContent.includes('บทหนังทดสอบ'));
+      if (spEl) spEl.click();
+      await new Promise((r) => setTimeout(r, 300));
+      const sp = state.active?.sp;
+      check('[Batch1] มี sp editor อยู่', !!sp);
+
+      // [95] switchTo เปลี่ยน element ได้
+      sp.switchTo('action');
+      check('[95] switchTo → action', sp.curElement() === 'action');
+      sp.switchTo('scene');
+      check('[95] switchTo → scene', sp.curElement() === 'scene');
+
+      // [51] Enter ใช้ spCycle สร้าง element ถัดไป
+      const cur1 = sp.curElement();
+      sp.enter();
+      const nextAfterEnter = sp.curElement();
+      check('[51] Enter สร้าง element ตาม spCycle', nextAfterEnter !== cur1,
+            cur1 + ' → ' + nextAfterEnter);
+
+      // [51] Tab cycle เปลี่ยน element ปัจจุบัน
+      const cur2 = sp.curElement();
+      sp._tabCycle('tab');
+      const nextAfterTab = sp.curElement();
+      check('[51] Tab เปลี่ยน element ตาม spCycle', nextAfterTab !== cur2,
+            cur2 + ' → ' + nextAfterTab);
+
+      // [52] Auto-detect INT. → scene
+      sp.switchTo('action');
+      const v = sp.view;
+      v.dispatch(v.state.tr.insertText('INT. ตลาดสด', v.state.selection.from));
+      sp._autoDetect();
+      check('[52] พิมพ์ INT. ใน action → auto-switch เป็น scene',
+            sp.curElement() === 'scene',
+            sp.curElement());
+
+      // [53] Parenthetical auto-wrap: กด ( ใน character → parenthetical
+      sp.switchTo('character');
+      const charBlock = sp.curBlock();
+      const charPos = charBlock.pos;
+      v.dispatch(v.state.tr.insertText('ลุงสมหมาย', charPos + 1));
+      const from2 = v.state.selection.from;
+      let tr2 = v.state.tr;
+      tr2 = tr2.setNodeMarkup(charPos, null, { el: 'parenthetical', align: sp.curBlock().node.attrs.align || null });
+      tr2 = tr2.insertText('()', from2);
+      tr2 = tr2.setSelection(TextSelection.create(tr2.doc, from2 + 1));
+      v.dispatch(tr2);
+      check('[53] กด ( ใน character → parenthetical พร้อม ()',
+            sp.curElement() === 'parenthetical' && sp.curBlock().node.textContent.includes('()'),
+            sp.curElement() + ' : ' + sp.curBlock().node.textContent);
+
+      // [79] Select scene
+      sp.switchTo('scene');
+      sp.selectScene();
+      const sel = v.state.selection;
+      check('[79] SelectScene เลือกช่วง > 0',
+            sel.from < sel.to && sel.to > 0,
+            'from=' + sel.from + ' to=' + sel.to);
+
+      // [77] Non-breaking space
+      sp.switchTo('action');
+      v.dispatch(v.state.tr.insertText('\u00A0'));
+      check('[77] แทรก \u00A0 ได้', sp.curBlock().node.textContent.includes('\u00A0'));
+
+      // [95] Ctrl+1/2/3 ผ่าน handleCommand ในบทหนัง
+      sp.switchTo('action');
+      await handleCommand('fmt', 'heading', 1);
+      check('[95] Ctrl+1 ในบทหนัง → scene', sp.curElement() === 'scene');
+      sp.switchTo('action');
+      await handleCommand('fmt', 'heading', 2);
+      check('[95] Ctrl+2 ในบทหนัง → action', sp.curElement() === 'action');
+      sp.switchTo('action');
+      await handleCommand('fmt', 'heading', 3);
+      check('[95] Ctrl+3 ในบทหนัง → character', sp.curElement() === 'character');
+
+      // [95] sp-element command
+      sp.switchTo('scene');
+      await handleCommand('sp-element', 'dialogue');
+      check('[95] sp-element → dialogue', sp.curElement() === 'dialogue');
+
+      // DEFAULT_SP_CYCLE ครบทุก key
+      check('[51] DEFAULT_SP_CYCLE มี scene/action/character/dialogue/transition',
+            ['scene', 'action', 'character', 'parenthetical', 'dialogue', 'transition']
+              .every((k) => DEFAULT_SP_CYCLE[k]?.enter && DEFAULT_SP_CYCLE[k]?.tab && DEFAULT_SP_CYCLE[k]?.shiftTab));
+
+      // ปิดแท็บบทหนังทิ้ง คืนสภาพเดิม (ทดสอบถัดไปจะเปิดใหม่สด)
+      const spFile = state.active?.file;
+      if (spFile) closeTab(spFile);
+    }
+
     // dialog ของเราเอง (แทน prompt ที่ Electron ไม่รองรับ — เหตุที่กด + แล้วเงียบ)
     const dlgTest = ask('ทดสอบ dialog');
     await new Promise((r) => setTimeout(r, 60));
@@ -5094,11 +5454,12 @@ async function runTest(projectPath) {
 
       await openBookManager();
       await new Promise((r) => setTimeout(r, 250));
+      // บั๊ก #18: จัดการเล่มเป็นแผงแล้ว — ไม่ใช่แท็บเอกสาร จึงเช็คที่ #books-body ไม่ใช่ .pane.on
       check('เปิดตัวจัดการเล่มได้ + มีการ์ดเล่ม',
-            !!state.active?.books &&
-            document.querySelectorAll('.pane.on .book-card').length >= 2);
+            isPanelOpen('books') &&
+            document.querySelectorAll('#books-body .book-card').length >= 2);
       check('การ์ดเล่มมีสถิติ (บท/ฉาก/คำ) โหลดเข้ามา',
-            [...document.querySelectorAll('.pane.on .book-stats')]
+            [...document.querySelectorAll('#books-body .book-stats')]
               .some((e) => /คำ/.test(e.textContent) && e.textContent !== '…'));
       await kapi.testShot('/tmp/k2_books.png');
 
@@ -5174,27 +5535,27 @@ async function runTest(projectPath) {
       // เปิดแท็บเส้นเวลา
       await openTimeline();
       await new Promise((r) => setTimeout(r, 250));
-      check('แท็บเส้นเวลาเปิด + มีการ์ดเหตุการณ์',
-            !!state.active?.timeline &&
-            document.querySelectorAll('.pane.on .tl-event').length >= 3);
+      check('แผงเส้นเวลาเปิด + มีการ์ดเหตุการณ์',
+            isPanelOpen('timeline') &&
+            document.querySelectorAll('#tl-body .tl-event').length >= 3);
       check('เส้นเวลาจัดกลุ่มเป็นเลน (track)',
-            document.querySelectorAll('.pane.on .tl-lane').length >= 1);
+            document.querySelectorAll('#tl-body .tl-lane').length >= 1);
       check('ฉากบนเส้นเวลาเปิดคลิกได้ (มี tl-event-scene)',
-            !!document.querySelector('.pane.on .tl-event-scene'));
+            !!document.querySelector('#tl-body .tl-event-scene'));
       await kapi.testShot('/tmp/k2_timeline.png');
 
       // สลับเป็นมุมมอง Gantt (ต้องมีเหตุการณ์ที่ระบุเลข → มีแท่ง)
       state._tlView = 'gantt';
-      await renderTimeline(state.tabs.get('::timeline::').pane);
+      await renderTimeline($('#tl-body'));
       await new Promise((r) => setTimeout(r, 150));
       check('มุมมอง Gantt: มีแท่งเหตุการณ์ (gantt-bar)',
-            document.querySelectorAll('.pane.on .gantt-bar').length >= 2);
+            document.querySelectorAll('#tl-body .gantt-bar').length >= 2);
       check('มุมมอง Gantt: มีขีดแกนเวลา (gantt-tick)',
-            document.querySelectorAll('.pane.on .gantt-tick').length >= 2);
+            document.querySelectorAll('#tl-body .gantt-tick').length >= 2);
       check('มุมมอง Gantt: แท่งกว้างตามช่วงเวลา (event มี whenEnd)',
-            [...document.querySelectorAll('.pane.on .gantt-bar')]
+            [...document.querySelectorAll('#tl-body .gantt-bar')]
               .some((b) => parseFloat(b.style.width) > 5),
-            [...document.querySelectorAll('.pane.on .gantt-bar')].map((b) => b.style.width).join(','));
+            [...document.querySelectorAll('#tl-body .gantt-bar')].map((b) => b.style.width).join(','));
       await kapi.testShot('/tmp/k2_gantt.png');
       state._tlView = 'cards';
       closeTab('::timeline::');
@@ -5230,13 +5591,13 @@ async function runTest(projectPath) {
       await openMaps();
       await new Promise((r) => setTimeout(r, 250));
       check('แท็บแผนที่เปิด + มี chip เลือกแผนที่',
-            !!state.active?.maps && document.querySelectorAll('.pane.on .map-chip').length === 2);
+            isPanelOpen('maps') && document.querySelectorAll('#maps-body .map-chip').length === 2);
       check('มีหมุดวาดบนแผนที่ (portal + entity)',
-            document.querySelectorAll('.pane.on .map-pin').length >= (someEnt ? 2 : 1));
+            document.querySelectorAll('#maps-body .map-pin').length >= (someEnt ? 2 : 1));
       check('หมุด portal มีไอคอนประตู',
-            !!document.querySelector('.pane.on .map-pin-portal'));
+            !!document.querySelector('#maps-body .map-pin-portal'));
       // สลับไปแผนที่เมืองผ่าน chip
-      const cityChip = [...document.querySelectorAll('.pane.on .map-chip')].find((c) => c.textContent.includes('เมืองทดสอบ'));
+      const cityChip = [...document.querySelectorAll('#maps-body .map-chip')].find((c) => c.textContent.includes('เมืองทดสอบ'));
       if (cityChip) { cityChip.click(); await new Promise((r) => setTimeout(r, 120)); }
       check('สลับแผนที่ผ่าน chip ได้', mapsState_C.s.currentId === 'ctest');
       await kapi.testShot('/tmp/k2_maps.png');
@@ -5722,17 +6083,18 @@ async function runTest(projectPath) {
     await new Promise((r) => setTimeout(r, 30));
     check('กดผนึก → แผงกลับเข้าต้นไม้',
           !PMG.isFloating('tree') && PMG.isDocked('tree') && !!pEl('tree'));
-    // ปิด → ถาดปุ่มลอย → เปิดกลับ
+    // ปิด → กดปุ่ม toggle บน toolbar → เปิดกลับ
     pBtn('tree', 'close').click();
     await new Promise((r) => setTimeout(r, 30));
     check('ปิดแผง → หายจากต้นไม้', !PMG.isOpen('tree') && !pEl('tree'));
-    const trayChip = document.querySelector('#k-min-tray-l .k-min-chip[data-key="tree"]');
-    check('ปิดแผงแล้วมีปุ่มในถาดไว้เรียกกลับ (ไม่หายถาวร)', !!trayChip);
-    trayChip.click();
+    check('ปิดแผงแล้วปุ่ม toggle บน toolbar ไม่ติด .on',
+          $('#tb-tree-panel') && !$('#tb-tree-panel').classList.contains('on'));
+    await new Promise((r) => setTimeout(r, 60));
+    $('#tb-tree-panel').click();
     await new Promise((r) => setTimeout(r, 30));
-    check('คลิกปุ่มในถาด → แผงกลับมา',
+    check('กดปุ่ม toggle toolbar → แผงกลับมา',
           PMG.isOpen('tree') && !!pEl('tree') &&
-          !document.querySelector('#k-min-tray-l .k-min-chip[data-key="tree"]'));
+          $('#tb-tree-panel') && $('#tb-tree-panel').classList.contains('on'));
 
     // ---- บั๊ก #5: ที่จับปรับขนาดของ "แผงลอย" ต้องเห็นและลากได้จริง ----
     {
@@ -5760,27 +6122,26 @@ async function runTest(projectPath) {
       await new Promise((r) => setTimeout(r, 40));
     }
 
-    // ---- บั๊ก #17: ถาดแผงที่ปิดไว้ต้องอยู่ฝั่งเดียวกับแผง (ซ้าย/ขวา ไม่ใช่ซ้ายอย่างเดียว) ----
+    // ---- บั๊ก #17 (อัปเดต): ปุ่ม toggle บน toolbar ทำงานถูกต้องทั้งซ้าย/ขวา ----
     {
       showPanel('props'); await new Promise((r) => setTimeout(r, 40));
       hidePanel('props'); await new Promise((r) => setTimeout(r, 40));
-      const rChip = document.querySelector('#k-min-tray-r .k-min-chip[data-key="props"]');
-      check('#17 ปิดแผงฝั่งขวา → chip อยู่ถาดขวา', !!rChip);
-      check('#17 chip ฝั่งขวาไม่ไปโผล่ถาดซ้าย',
-            !document.querySelector('#k-min-tray-l .k-min-chip[data-key="props"]'));
-      const rr = document.getElementById('k-min-tray-r').getBoundingClientRect();
-      check('#17 ถาดขวาวางชิดขอบขวาจริง', rr.right > innerWidth - 60, `right=${Math.round(rr.right)} vw=${innerWidth}`);
+      check('#17 ปิดแผงฝั่งขวา → ปุ่ม toggle toolbar ไม่ติด .on',
+            $('#tb-props-panel') && !$('#tb-props-panel').classList.contains('on'));
       hidePanel('tree'); await new Promise((r) => setTimeout(r, 40));
-      check('#17 แผงฝั่งซ้ายยังลงถาดซ้ายเหมือนเดิม',
-            !!document.querySelector('#k-min-tray-l .k-min-chip[data-key="tree"]'));
-      check('#17 สองถาดอยู่คนละฝั่งจริง (ไม่ทับกัน)',
-            document.getElementById('k-min-tray-l').getBoundingClientRect().left <
-            document.getElementById('k-min-tray-r').getBoundingClientRect().left);
-      rChip.click(); await new Promise((r) => setTimeout(r, 40));
-      check('#17 คลิก chip ฝั่งขวา → แผงกลับไปอยู่ฝั่งขวาตามเดิม',
-            PMG.isDocked('props') &&
-            pEl('props').getBoundingClientRect().left > pEl('docs').getBoundingClientRect().left,
-            `props=${Math.round(pEl('props')?.getBoundingClientRect().left)} docs=${Math.round(pEl('docs').getBoundingClientRect().left)}`);
+      check('#17 ปิดแผงฝั่งซ้าย → ปุ่ม toggle toolbar ไม่ติด .on',
+            $('#tb-tree-panel') && !$('#tb-tree-panel').classList.contains('on'));
+      check('#17 ทั้งสองปุ่ม toggle แยกจากกัน (คนละ element)',
+            $('#tb-tree-panel') !== $('#tb-props-panel'));
+      check('#17 ปุ่ม toggle ของแผงที่ยังเปิดอยู่ติด .on แต่ของที่ปิดแล้วไม่ติด',
+            !$('#tb-tree-panel').classList.contains('on') &&
+            !$('#tb-props-panel').classList.contains('on') &&
+            $('#tb-outline-panel').classList.contains('on'));
+      $('#tb-props-panel').click(); await new Promise((r) => setTimeout(r, 40));
+      check('#17 กดปุ่ม toggle → แผงกลับมา',
+            PMG.isOpen('props') && $('#tb-props-panel').classList.contains('on'));
+      check('#17 เปิดแผงหนึ่งไม่ไปเปิดอีกแผงโดยไม่ได้ตั้งใจ',
+            !PMG.isOpen('tree') && !$('#tb-tree-panel').classList.contains('on'));
       resetPanels(); await new Promise((r) => setTimeout(r, 40));
     }
 
@@ -5991,9 +6352,9 @@ async function runTest(projectPath) {
           ` dlg=${(document.querySelector('.k-dialog')?.textContent || '').slice(0, 80)}`);
     warnBtn.click();                               // บันทึกทั้งหมดแล้วปิด
     await pNew;
-    check('สร้าง+สลับโปรเจกต์แล้วแท็บเก่าถูกปิดหมด (เหลือแดชบอร์ดของโปรเจกต์ใหม่)',
-          state.title === 'โปรเจกต์ทดสอบปิดเก่า' && state.tabs.size === 1 &&
-          state.tabs.has('::dash::'),
+    // บั๊ก #18: แดชบอร์ดเป็นแผงแล้ว ไม่กินที่ในแถบแท็บ → สลับโปรเจกต์แล้วต้องไม่เหลือแท็บเลย
+    check('สร้าง+สลับโปรเจกต์แล้วแท็บเก่าถูกปิดหมด (แดชบอร์ดเป็นแผง ไม่ใช่แท็บ)',
+          state.title === 'โปรเจกต์ทดสอบปิดเก่า' && state.tabs.size === 0,
           `${state.title} tabs=${state.tabs.size} (ก่อน=${beforeTabs})`);
     check('โปรเจกต์ใหม่มี templates.json ตั้งแต่เกิด',
           await kapi.exists(await kapi.join(state.root, 'templates.json')));
@@ -6141,14 +6502,14 @@ async function runTest(projectPath) {
     await openDashboard();
     await new Promise((r) => setTimeout(r, 600));
     check('แดชบอร์ดเปิด + ตัวเลขสถิติมา',
-          !!state.active?.dash &&
-          document.querySelector('.pane.on .dash-num')?.textContent !== '…');
+          isPanelOpen('dashboard') &&
+          document.querySelector('#dash-body .dash-num')?.textContent !== '…');
     check('แดชบอร์ดมีแผงสถิติเชิงลึก (analytics)',
-          !!document.querySelector('.pane.on .dash-analytics'));
+          !!document.querySelector('#dash-body .dash-analytics'));
     check('มีแถบความคืบหน้าตามสถานะฉาก',
-          !!document.querySelector('.pane.on .dash-apanel .dash-stat-fill'));
+          !!document.querySelector('#dash-body .dash-apanel .dash-stat-fill'));
     check('มีแผงความยาวแต่ละบท',
-          [...document.querySelectorAll('.pane.on .dash-apanel-title')]
+          [...document.querySelectorAll('#dash-body .dash-apanel-title')]
             .some((e) => e.textContent.includes('ความยาวแต่ละบท')));
     await kapi.testShot('/tmp/k2_analytics.png');
     closeTab('::dash::');
@@ -7217,8 +7578,26 @@ async function runTest(projectPath) {
             (document.querySelector('.tb-menu[data-m="File"] .tb-menu-badge') || {}).textContent >= '1');
       check('mark dirty → จุด 💾 บน titlebar แสดง',
             $('#tb-dirty-dot') && $('#tb-dirty-dot').style.display !== 'none');
-      const nSaved = await saveAllTabs();
+      // บั๊ก #3: saveAllTabs ต้องขึ้นกล่องที่ "แสดงรายชื่อไฟล์" ก่อนบันทึก
+      const pSave = saveAllTabs();
+      await new Promise((r) => setTimeout(r, 60));
+      const saDlg = document.querySelector('.k-dialog.k-saveall');
+      check('บันทึกทั้งหมด → ขึ้นกล่องรายการไฟล์', !!saDlg);
+      const saRows = saDlg ? saDlg.querySelectorAll('.k-saveall-row') : [];
+      check('กล่องบันทึกทั้งหมดแสดงชื่อ+พาธของไฟล์ค้าง',
+            saRows.length >= 1 &&
+            !!saRows[0].querySelector('.k-saveall-name')?.textContent &&
+            (saRows[0].querySelector('.k-saveall-path')?.textContent || '').includes('.md'),
+            saRows.length + ' rows');
+      check('ทุกแถวติ๊กไว้ตั้งแต่แรก',
+            [...saRows].every((r) => r.querySelector('input').checked));
+      check('หัวกล่องบอกจำนวนไฟล์ที่ค้าง',
+            (saDlg.querySelector('.k-dlg-title').textContent || '').includes(String(saRows.length)),
+            saDlg.querySelector('.k-dlg-title').textContent);
+      saDlg.querySelector('.k-dlg-btns .k-ok').click();
+      const nSaved = await pSave;
       check('saveAllTabs บันทึกแท็บค้าง', nSaved >= 1, 'saved=' + nSaved);
+      check('กล่องบันทึกทั้งหมดปิดหลังกดบันทึก', !document.querySelector('.k-saveall'));
       check('หลัง saveAll ไม่มีแท็บ dirty', [...state.tabs.values()].every((x) => !x.dirty));
       updateDirtyBadge();
       check('หลัง saveAll → badge เมนูไฟล์หาย',
@@ -7239,7 +7618,7 @@ async function runTest(projectPath) {
       check('มีปุ่มสร้างโปรเจกต์ใหม่ในแผง Home',
             !!hb?.querySelector('.home-actions button'));
       check('แผง Home มีรายการโปรเจกต์',
-            !!hb?.querySelector('.home-panel-item') ||
+            !!hb?.querySelector('.home-card') ||
             !!hb?.querySelector('.home-empty'));
       await kapi.testShot('/tmp/k2_home.png');
       hidePanel('home');
@@ -7281,9 +7660,15 @@ async function runTest(projectPath) {
       const ndirty = [...state.tabs.values()].filter((t) => t.dirty).length;
       check('markDirty แล้วมีแท็บ dirty', ndirty > dirtyBefore, 'dirty=' + ndirty);
       window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyS', ctrlKey: true, shiftKey: true, bubbles: true }));
-      await new Promise((r) => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, 120));
+      // บั๊ก #3: คีย์ลัดขึ้นกล่องรายการไฟล์ก่อน แล้วค่อยบันทึกเมื่อยืนยัน
+      const scDlg = document.querySelector('.k-dialog.k-saveall');
+      check('Ctrl+Shift+S → ขึ้นกล่องรายการไฟล์ที่ยังไม่บันทึก', !!scDlg);
+      scDlg.querySelector('.k-dlg-btns .k-ok').click();
+      await new Promise((r) => setTimeout(r, 250));
       check('Ctrl+Shift+S → บันทึกทั้งหมด (ไม่มีแท็บ dirty)',
-            [...state.tabs.values()].every((t) => !t.dirty));
+            [...state.tabs.values()].every((t) => !t.dirty),
+            [...state.tabs.values()].filter((t) => t.dirty).map((t) => t.title).join('|'));
     }
 
     // ---- ข้อ 41+45: Status bar + Progress bar ----
@@ -8028,8 +8413,8 @@ async function runTest(projectPath) {
     // ---- Kanban (ข้อ 12): อ่าน/เขียน scenes.json + ลากเปลี่ยนสถานะ ----
     {
       await openKanban();
-      const kbPane = document.querySelector('#kanban-pane');
-      check('เปิดกระดาน Kanban เป็นแท็บได้', !!kbPane && state.tabs.has('::kanban::'));
+      const kbPane = document.querySelector('#kanban-body');   // Kanban เป็น "แผง" แล้ว ไม่ใช่แท็บ
+      check('เปิดกระดาน Kanban เป็นแผงได้', !!kbPane && isPanelOpen('kanban'));
       const cards = kbPane ? [...kbPane.querySelectorAll('.kb-card')] : [];
       check('Kanban อ่านฉากจาก scenes.json มาเป็นการ์ด', cards.length >= 2, 'cards=' + cards.length);
       const cols = kbPane ? [...kbPane.querySelectorAll('.kb-col')] : [];
@@ -8049,7 +8434,7 @@ async function runTest(projectPath) {
               !!sc2 && sc2.row.status === target.dataset.status,
               (sc2 && sc2.row.status) + ' vs ' + target.dataset.status);
       }
-      closeTab('::kanban::');
+      hidePanel('kanban');
     }
 
     // ---- i18n: เปลี่ยนภาษาแล้ว UI เปลี่ยนตามจริง ----
@@ -8085,7 +8470,8 @@ async function runTest(projectPath) {
         check('ได้ 2 ช่องบนจอจริง',
               document.querySelectorAll('#split-root .k-split-pane').length === 2 && splitPaneCount() === 2);
         check('ทั้งสองช่องยืม .pane ของแท็บจริงมาแสดง (ไม่ใช่กล่องเปล่า)',
-              document.querySelectorAll('#split-root .k-split-pane > .pane').length === 2);
+              // .52+ : .k-split-pane > .k-split-tabs + .k-split-body > .pane (บั๊ก #12 แถบแท็บย่อย)
+              document.querySelectorAll('#split-root .k-split-pane .k-split-body > .pane').length === 2);
         check('เนื้อเอดิเตอร์ยังอยู่หลังถูกย้ายเข้าช่อง (ProseMirror ไม่ถูกทำลาย)',
               !!document.querySelector('#split-root .k-split-pane .ProseMirror'));
         check('มีที่จับลากปรับสัดส่วน (.k-split-handle)', !!panes.querySelector('.k-split-handle'));
@@ -8273,7 +8659,7 @@ async function runTest(projectPath) {
       togglePaper(true);
       toggleReading(true);
       await new Promise((r) => setTimeout(r, 120));
-      const pm = document.querySelector('.pane.on > .ProseMirror');
+      const pm = document.querySelector('.pane.on .ProseMirror');
       const csRead = pm ? getComputedStyle(pm) : null;
       const rgb = (s) => (String(s).match(/\d+/g) || [0, 0, 0]).slice(0, 3).map(Number);
       const lum = (s) => { const [r, g, b] = rgb(s); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
@@ -8332,17 +8718,17 @@ async function runTest(projectPath) {
       treeBtn('collapse').click();
       await new Promise((r) => setTimeout(r, 60));
       check('กดพับซ้ำ = คลี่กลับ', !treePanelEl().classList.contains('k-collapsed'));
-      // ปิด → ต้องได้ปุ่มในถาดไว้เรียกกลับ
+      // ปิด → ต้องมีปุ่ม toggle บน toolbar เรียกกลับ
       treeBtn('close').click();
       await new Promise((r) => setTimeout(r, 60));
-      const chip = document.querySelector('#k-min-tray-l .k-min-chip[data-key="tree"]');
       check('ปิดแผง → แผงถูกเก็บออกจากต้นไม้', !treePanelEl());
-      check('ปิดแผง → มีปุ่มในถาดไว้เรียกกลับ (ไม่หายถาวร)', !!chip);
-      chip.click();
+      check('ปิดแผง → ปุ่ม toggle toolbar ไม่ติด .on',
+            $('#tb-tree-panel') && !$('#tb-tree-panel').classList.contains('on'));
+      $('#tb-tree-panel').click();
       await new Promise((r) => setTimeout(r, 60));
-      check('คลิกปุ่มในถาด → แผงกลับมา',
+      check('คลิกปุ่ม toggle toolbar → แผงกลับมา',
             !!treePanelEl() &&
-            !document.querySelector('#k-min-tray-l .k-min-chip[data-key="tree"]'));
+            $('#tb-tree-panel') && $('#tb-tree-panel').classList.contains('on'));
 
       // ---- ข้อ 9: FAB ต้องอยู่เหนือแผงลอย/หน้าต่างลอย ----
       const zf = parseInt(getComputedStyle($('#k-fab')).zIndex, 10);
@@ -8597,9 +8983,10 @@ async function runTest(projectPath) {
                 $('#panes').classList.contains('split') && state.compareFile === files[0],
                 'compareFile=' + state.compareFile);
           check('สลับข้างแล้วช่องที่ไม่ใช่แท็บปัจจุบันถูกทำเครื่องหมายใบเดียว',
-                document.querySelectorAll('.k-split-pane > .pane.compare-on').length === 1,
-                String(document.querySelectorAll('.k-split-pane > .pane.compare-on').length));
-          const paneOn = document.querySelector('#split-root .k-split-pane > .pane > .ProseMirror');
+                document.querySelectorAll('.k-split-body > .pane.compare-on').length === 1,
+                String(document.querySelectorAll('.k-split-body > .pane.compare-on').length));
+          // .47+ : .workspace คือชั้นที่รับ CSS zoom คั่นระหว่าง .pane กับ .ProseMirror (style.css:926)
+          const paneOn = document.querySelector('#split-root .k-split-body > .pane > .workspace > .ProseMirror');
           check('โหมดแยกจอ: หน้ากระดาษหดตามช่องที่แคบลง (sync กับมุมมองกระดาษ)',
                 !!paneOn && getComputedStyle(paneOn).maxWidth.includes('px'),
                 paneOn && getComputedStyle(paneOn).maxWidth);
@@ -8670,7 +9057,7 @@ async function runTest(projectPath) {
 
       // ---- ข้อ 66: เครื่องพิมพ์ดีดต้องหา "ตัวที่เลื่อนได้" เจอ แม้ตัวแก้ไขไม่ได้อยู่ใน .pane ----
       {
-        const pmNow = document.querySelector('.pane.on > .ProseMirror');
+        const pmNow = document.querySelector('.pane.on .ProseMirror');
         check('เครื่องพิมพ์ดีด: ตัวแก้ไขใน pane → ใช้ .pane เป็นตัวเลื่อน',
               !!pmNow && scrollHost(pmNow) === pmNow.closest('.pane'));
         const box = el('div'); box.style.cssText = 'overflow-y:auto;height:50px';
@@ -8913,6 +9300,157 @@ async function runTest(projectPath) {
       // เก็บกวาดกล่อง/เมนูที่อาจค้าง (บทเรียนข้อ 16: กล่องค้างทำสกรีนช็อตเทสถัดไปเพี้ยน)
       document.querySelectorAll('.k-overlay').forEach((o) => o.remove());
       closeMenu();
+    }
+
+    // ================= Phase 7: บั๊ก #10 / #28 / #2 / #18 =================
+
+    // ---- บั๊ก #10: พิมพ์ต้องได้เฉพาะหน้าที่เปิดอยู่ ----
+    {
+      // อ่านกฎ @media print จริงจาก CSSOM — บั๊กเดิมคือกฎ `.pane { display:block !important }`
+      // ในบล็อกที่สอง ไป override กฎซ่อนของบล็อกแรก → พิมพ์ออกมาทุกแท็บ
+      let onRule = null, offRule = null, bareBlock = null;
+      for (const ss of document.styleSheets) {
+        let rules; try { rules = ss.cssRules; } catch { continue; }
+        for (const r of rules) {
+          if (!r.media || !String(r.conditionText || r.media.mediaText).includes('print')) continue;
+          for (const q of r.cssRules || []) {
+            if (q.selectorText === '.pane.on' && q.style.display === 'block') onRule = q;
+            if (q.selectorText === '.pane:not(.on)' && q.style.display === 'none') offRule = q;
+            if (q.selectorText === '.pane' && q.style.display === 'block') bareBlock = q;
+          }
+        }
+      }
+      check('#10 @media print สั่ง display:block เฉพาะ .pane.on', !!onRule);
+      check('#10 @media print ซ่อน .pane ที่ไม่ active ด้วย !important', !!offRule &&
+            offRule.style.getPropertyPriority('display') === 'important');
+      check('#10 ไม่มีกฎ `.pane { display:block }` เหมาเข่งใน @media print แล้ว',
+            !bareBlock, bareBlock && bareBlock.cssText);
+      // ตาข่ายกันพลาดฝั่ง JS: ต้องซ่อน pane ที่ไม่ active แล้วคืนค่าเดิมได้ครบ
+      const panesAll = [...document.querySelectorAll('#panes .pane')];
+      const inactive = panesAll.filter((p) => !p.classList.contains('on'));
+      check('มี pane ที่ไม่ active ให้ทดสอบ', inactive.length >= 1, 'panes=' + panesAll.length);
+      const beforeDisp = panesAll.map((p) => p.style.display);
+      hideInactivePanes();
+      check('#10 hideInactivePanes ซ่อน pane ที่ไม่ active ทั้งหมด',
+            inactive.every((p) => p.style.display === 'none'));
+      check('#10 hideInactivePanes ไม่แตะ pane ที่ active',
+            panesAll.filter((p) => p.classList.contains('on')).every((p) => p.style.display !== 'none'));
+      restoreInactivePanes();
+      check('#10 restoreInactivePanes คืน display เดิมครบทุกตัว',
+            panesAll.every((p, i) => p.style.display === beforeDisp[i]) &&
+            !document.querySelector('#panes .pane[data-k2hide]'));
+    }
+
+    // ---- บั๊ก #28: คลังรูปต้องเข้าถึงได้จากเมนู/ปุ่ม/คีย์ลัด ไม่ใช่ซ่อนในคลิกขวา ----
+    {
+      check('#28 มีปุ่มคลังรูปบนแถบเครื่องมือ', !!$('#tb-gallery'));
+      check('#28 ปุ่มคลังรูปใช้ได้แม้ไม่มีตัวแก้ไข (ไม่ถูกปิดตาย)',
+            !$('#tb-gallery').classList.contains('dis'));
+      const scGal = SHORTCUTS.find((s) => shortcutId(s) === 'gallery');
+      check('#28 มีคีย์ลัด Ctrl+Shift+G ในตาราง SHORTCUTS',
+            !!scGal && scGal[0] === 'KeyG' && scGal[1] === true && scGal[2] === true,
+            JSON.stringify(scGal));
+      check('#28 คีย์ลัดคลังรูปมีป้ายชื่อ (โผล่ในแท็บปุ่มลัด)', !!SHORTCUT_LABELS['gallery']);
+      // คำสั่ง gallery ต้องเปิดคลังรูปได้จริง
+      await handleCommand('gallery');
+      await new Promise((r) => setTimeout(r, 400));
+      check('#28 คำสั่ง gallery เปิดคลังรูปได้', !!state.active?.gal &&
+            document.querySelectorAll('.pane.on .gal-cell').length >= 1);
+      closeTab('::gallery::');
+      activate(t.file);
+    }
+
+    // ---- บั๊ก #2: ฟอนต์บทหนังตั้งค่าได้แยกจากนิยาย ----
+    {
+      check('#2 DEFAULT_SETTINGS มี spFontFamily', 'spFontFamily' in DEFAULT_SETTINGS);
+      const origSp = state.settings.spFontFamily || '';
+      // ค่าว่าง = ไม่ตั้ง var → CSS fallback เป็น Courier New
+      state.settings.spFontFamily = '';
+      applySettings();
+      check('#2 ไม่ตั้งฟอนต์บทหนัง → ไม่มี --sp-font (ใช้ Courier New ตามค่าเริ่มต้น)',
+            !document.documentElement.style.getPropertyValue('--sp-font'));
+      state.settings.spFontFamily = '"TH Sarabun New", sans-serif';
+      applySettings();
+      check('#2 ตั้งฟอนต์บทหนัง → --sp-font ถูกเซ็ต',
+            getComputedStyle(document.documentElement).getPropertyValue('--sp-font').trim()
+              === '"TH Sarabun New", sans-serif',
+            getComputedStyle(document.documentElement).getPropertyValue('--sp-font'));
+      // ต้องมีผลกับ .sp จริง และต้องไม่ไปเปลี่ยนฟอนต์ฝั่งนิยาย
+      const spProbe = el('div', 'sp sp-action', 'ทดสอบ');
+      document.body.appendChild(spProbe);
+      check('#2 บล็อกบทหนังใช้ฟอนต์ที่ตั้ง',
+            getComputedStyle(spProbe).fontFamily.includes('TH Sarabun New'),
+            getComputedStyle(spProbe).fontFamily);
+      spProbe.remove();
+      check('#2 ฟอนต์บทหนังไม่ไปทับ --ed-font ของนิยาย',
+            (document.documentElement.style.getPropertyValue('--ed-font') || '')
+              !== '"TH Sarabun New", sans-serif');
+      // กล่องตั้งค่าต้องมีช่องเลือกฟอนต์บทหนังจริง (ไม่ใช่มีแต่ setting ลอย ๆ)
+      settingsDialog();
+      await new Promise((r) => setTimeout(r, 120));
+      [...document.querySelectorAll('.k-set-tab')].find((x) => x.dataset.p === 'write').click();
+      const spSel = document.querySelector('#st-spfontfamily');
+      check('#2 แท็บ "การเขียน" มีช่องเลือกแบบอักษรบทหนัง', !!spSel);
+      check('#2 ช่องเลือกฟอนต์บทหนังมีรายการฟอนต์ให้เลือก', spSel && spSel.options.length >= 8,
+            spSel && String(spSel.options.length));
+      check('#2 ช่องเลือกโชว์ค่าที่ตั้งไว้ปัจจุบัน',
+            spSel && spSel.value === '"TH Sarabun New", sans-serif', spSel && spSel.value);
+      document.querySelector('.k-dialog .k-cancel').click();   // ยกเลิก = คืนค่าเดิม
+      await new Promise((r) => setTimeout(r, 40));
+      check('#2 กดยกเลิกแล้วฟอนต์บทหนังคืนค่าที่บันทึกไว้',
+            state.settings.spFontFamily === '"TH Sarabun New", sans-serif',
+            state.settings.spFontFamily);
+      state.settings.spFontFamily = origSp; applySettings();
+    }
+
+    // ---- บั๊ก #18: 5 ฟีเจอร์เป็นแผง ไม่ใช่แท็บเอกสาร ----
+    {
+      const FEAT = [['dashboard', '#dash-body'], ['kanban', '#kanban-body'],
+                    ['books', '#books-body'], ['timeline', '#tl-body'], ['maps', '#maps-body']];
+      for (const [id, sel] of FEAT) {
+        check('#18 ลงทะเบียนแผง ' + id + ' ใน PANEL_DEFS แล้ว',
+              PANEL_DEFS.some((d) => d.id === id && d.closable !== false && d.floatable !== false));
+        check('#18 มีกล่องเนื้อหา ' + sel + ' ใน DOM', !!$(sel));
+        check('#18 แผง ' + id + ' โผล่ในเมนู "มุมมอง → แผง"',
+              panelMenuItems().some((m) => m.click && PANEL_DEFS.find((d) => d.id === id) &&
+                                           m.label.includes(PANEL_DEFS.find((d) => d.id === id).title)));
+      }
+      // ไม่มี feature ไหนสร้างแท็บเอกสารอีกแล้ว
+      const tabsBefore = state.tabs.size;
+      for (const [id] of FEAT) {
+        if (isPanelOpen(id)) hidePanel(id);
+        await handleCommand('toggle-panel', id);
+        await new Promise((r) => setTimeout(r, 300));
+        check('#18 toggle-panel เปิดแผง ' + id + ' ได้', isPanelOpen(id));
+      }
+      await new Promise((r) => setTimeout(r, 400));
+      check('#18 เปิดครบ 5 แผงแล้วยังไม่มีแท็บเอกสารเพิ่มเลย',
+            state.tabs.size === tabsBefore, `tabs=${state.tabs.size} ก่อน=${tabsBefore}`);
+      check('#18 แถบแท็บไม่มีปุ่มของแดชบอร์ด/Kanban/เล่ม/เส้นเวลา/แผนที่',
+            ![...document.querySelectorAll('#tabs .tab-title')]
+              .some((n) => /แดชบอร์ด|Kanban|จัดการเล่ม|เส้นเวลา|แผนที่/.test(n.textContent)),
+            [...document.querySelectorAll('#tabs .tab-title')].map((n) => n.textContent).join('|'));
+      // เนื้อหาถูกวาดผ่าน hook ของ showPanel จริง (ไม่ใช่กล่องเปล่า)
+      check('#18 แผงแดชบอร์ดมีเนื้อหาหลังเปิดจากเมนู',
+            !!document.querySelector('#dash-body .dash-num'));
+      check('#18 แผงจัดการเล่มมีเนื้อหาหลังเปิดจากเมนู',
+            !!document.querySelector('#books-body .book-card'));
+      check('#18 แผงเส้นเวลามีเนื้อหาหลังเปิดจากเมนู',
+            !!document.querySelector('#tl-body .tl-wrap'));
+      check('#18 แผงแผนที่มีเนื้อหาหลังเปิดจากเมนู',
+            !!document.querySelector('#maps-body .map-wrap'));
+      check('#18 แผง Kanban มีเนื้อหาหลังเปิดจากเมนู',
+            !!document.querySelector('#kanban-body .kb-wrap'));
+      // เปิดซ้ำต้องไม่วาดสองรอบ (renderFeaturePanel dedupe ระหว่างที่ยังวาดค้าง)
+      const p1 = renderFeaturePanel('dashboard'), p2 = renderFeaturePanel('dashboard');
+      check('#18 สั่งวาดแผงซ้อนกัน → ใช้รอบเดียวกัน (ไม่วาดซ้ำ)', p1 === p2);
+      await p1;
+      // ปิดได้ทุกตัว + ล้างเนื้อหาตอนปิดโปรเจกต์
+      for (const [id] of FEAT) { hidePanel(id); check('#18 ปิดแผง ' + id + ' ได้', !isPanelOpen(id)); }
+      clearFeaturePanels();
+      check('#18 clearFeaturePanels ล้างเนื้อแผงทั้งหมด',
+            FEAT.every(([, sel]) => !$(sel) || $(sel).children.length === 0));
+      renderPanels(true);
     }
 
     out.push('ALL OK');

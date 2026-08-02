@@ -77,7 +77,7 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
 
 ## E2E test workflow (สำคัญ — ทำทุกครั้งก่อนเชื่อว่าแก้สำเร็จ)
 
-Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **818 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
+Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **893 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
 
 **Unit test โมดูลบริสุทธิ์ (alpha.39, รันเร็ว ไม่ต้องเปิด electron):**
 ```bash
@@ -265,7 +265,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ---
 
-## เวอร์ชัน (ล่าสุด alpha.48 · e2e 818 + unit 715)
+## เวอร์ชัน (ล่าสุด alpha.55 · e2e 893 + unit 731)
 
 .13–.22 (v1→v2 พื้นฐาน): snapshot, line numbers, spellcheck ไทย+Chromium, ปุ่มลัดตั้งเอง, mac build, บทหนัง Ctrl+arrow, relationship sync, floating format bar, sidebar resize, SmartType Final Draft, wiki gallery/lightbox, explorer search+tags, panel docking, tree float+snap
 .24 batch 8 (drag-move explorer, panel snap, split compare, version tracking, scene lock, screenplay Final Draft look, screenplay images, wiki links) · .25–.27 **Planner board** (fabric.js) · .28 **floating windows** · .29 memo-in-chapter + scoped search
@@ -355,6 +355,11 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
   ลบ `src/comments.js` (ระบบเก่า) · บทเรียนใหม่ → ข้อ 30–31
 
 **Storyteller Suite ครบแล้ว**: compile workflows · custom wiki categories · analytics · book manager · timeline (การ์ด+Gantt) · maps (portals) · branch tree · floor plan · centralize
+
+.49 **Panel UX 2 เรื่อง** — เลิก min-tray → **Toolbar Toggle** (ปุ่ม `tb-toggle` 4 ตัวบน toolbar: tree/outline/props/search · มีจุด ● บอกสถานะ · sync ผ่าน `onPanelLayoutChange`) · **Panel Drag** แยก "ลากชื่อ" vs "ลากแท็บ" (`makePanelDraggable` เช็ค `.k-panel-head-title` → `floatOnly`; `makeFloatDraggable` dock เฉพาะ center zone)
+.50 **Workspace Canvas Model** — แก้ซูมตัดบรรทัด: แทรก `.workspace {zoom; flow-root}` กั้นกลาง `.pane` กับ `.ProseMirror` → zoom แล้วได้ scrollbar แนวนอนแทนคำถูกตัด · **Home Page** ใช้ `createProjectCard()` (การ์ดสวย) แทน list เปล่า · **FloatBar ใน Wiki** (`syncFloatBarVisible` เช็ค `secEditors`) · **Panel Drag** กลับ logic: ลาก title=float เท่านั้น, ลาก head padding/icon=snap ได้
+.51 **Sweep UX 12 ข้อ** — makeFloatDraggable title-vs-bar (ลาก title=ทุก zone, bar=ย้ายอย่างเดียว) · zoom width:fit-content + min-width · pane.on/k-tab.active full-frame box-shadow · reading-mode !important · reading cleanup ครบทุก element · Home → overlay dialog (ออกจาก PANEL_DEFS) · togglePanel → collapsePanel (คงตำแหน่ง) · Kanban empty state · refreshToolbar หลัง focus/typewriter/line-numbers
+.52 **Sweep 4 บั๊ก** — zoom `min-width` dynamic ตาม scale (JS: `pageScale*100%` → overflow จริง) · togglePanel กลับเป็น hidePanel/showPanel + จำ `lastSide` · Kanban toggle (`isPanelOpen` check) · Home wider (1100px) + settings 680px · grid 4 คอลัมน์ (`minmax(190px,1fr)`) · ปุ่ม 📱/📋 list view toggle + CSS
 
 **ยังเหลือ**: `search-engine.js` ยังเป็น orphan — Global Search (`global-search.js`) ยังสแกนไฟล์ตรง ๆ ไม่ได้ใช้ inverted index (ควรสลับมาใช้เพื่อความเร็ว) · multiple-drafts-per-book UI (โครงรองรับแล้ว), screenplay align persistence, Campaign/D&D mode, electron-builder + code signing, .icns/.ico icon, native arm64 build. Top เคยบอก paper/indent "อาจต้องปรับปรุง ไว้ก่อน"
 

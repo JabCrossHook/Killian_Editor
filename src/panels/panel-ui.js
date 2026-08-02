@@ -36,8 +36,13 @@ export const PANEL_DEFS = [
   { id: 'log',       title: 'บันทึก',         icon: 'history',      adopt: '#log-panel',     defaultSide: 'right', closable: true, floatable: true, i18n: 'panel.logTitle' },
   { id: 'search',    title: 'ค้นหา',          icon: 'search',       adopt: '#search-panel',  defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.searchTitle' },
   { id: 'notes',     title: 'สมุดโน้ตด่วน',    icon: 'note',         adopt: '#notes-panel',   defaultSide: 'right', closable: true, floatable: true, i18n: 'panel.notesTitle' },
-  { id: 'home',      title: 'หน้าแรก',         icon: 'home',         adopt: '#home-panel',    defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.homeTitle' },
   { id: 'comments',  title: 'คอมเมนต์',        icon: 'chat',         adopt: '#comments-panel', defaultSide: 'right', closable: true, floatable: true, i18n: 'panel.commentsTitle' },
+  // ── บั๊ก #18: ฟีเจอร์ที่ไม่ใช่เอกสาร เป็นแผง ไม่ใช่แท็บ ──
+  { id: 'dashboard', title: 'แดชบอร์ด',        icon: 'grid',         adopt: '#dash-panel',    defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.dashboardTitle' },
+  { id: 'kanban',    title: 'Kanban',          icon: 'grid',         adopt: '#kanban-panel',  defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.kanbanTitle' },
+  { id: 'books',     title: 'จัดการเล่ม',       icon: 'book-content', adopt: '#books-panel',   defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.booksTitle' },
+  { id: 'timeline',  title: 'เส้นเวลา',         icon: 'history',      adopt: '#tl-panel',      defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.timelineTitle' },
+  { id: 'maps',      title: 'แผนที่',           icon: 'layout',       adopt: '#maps-panel',    defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.mapsTitle' },
 ];
 // ชื่อแผงตามภาษาที่โหลดอยู่ (fallback = ชื่อไทยในตาราง) — เรียกใหม่ทุกครั้งที่ render
 function titleOf(d) { return d.i18n ? t(d.i18n, d.title) : d.title; }
@@ -127,8 +132,13 @@ export function renderPanels(force) {
   // เนื้อแผงที่ไม่ได้ถูกวาง → เก็บกลับที่พัก (ต้องอยู่ใน DOM เสมอ ไม่งั้น $('#props-body') คืน null)
   const h = host(), holder = srcHolder();
   for (const [, node] of adopted) if (!h.contains(node)) holder.appendChild(node);
-  syncMinTray();
+  if (_onLayoutChange) _onLayoutChange();
 }
+
+// alpha.50: เลิก chip ▣ มุมจอ → ปุ่ม .tb-toggle บน toolbar แทน
+// hook นี้ให้ app.js สั่ง refreshToolbar() ทุกครั้งที่เลย์เอาต์แผงเปลี่ยน (ปุ่มจะได้ sync เอง)
+let _onLayoutChange = null;
+export function onPanelLayoutChange(fn) { _onLayoutChange = fn; }
 
 // ───────── ถาดแผงที่ปิดไว้ — ปิดแผงแล้วต้อง "เห็นทางกลับ" เสมอ (บทเรียนข้อ 20) ─────────
 // บั๊ก #17: มีถาดเดียวปักซ้ายตายตัว → ปิดแผงฝั่งขวา (คุณสมบัติ) แล้ว chip ไปโผล่มุมซ้ายล่าง
@@ -203,20 +213,37 @@ export function initPanelSystem() {
 
 // ───────── คำสั่งที่ app.js/เมนูเรียก ─────────
 export function isPanelOpen(id) { return !!pm && pm.isOpen(panelId(id)); }
+
+// บั๊ก #18: แผงฟีเจอร์ (แดชบอร์ด/Kanban/…) ต้องวาดเนื้อหาทุกครั้งที่ถูกเปิด
+// app.js ฝากฟังก์ชันวาดไว้ที่นี่ → ครอบคลุมทุกทางเข้า (เมนู · ถาดแผงที่ปิดไว้ · คำสั่ง)
+let onShowHook = null;
+export function setPanelShowHook(fn) { onShowHook = fn; }
+
 export function showPanel(id, opts = {}) {
   const m = getPanelManager();
   const pid = panelId(id);
-  if (m.isDocked(pid) && !m.isCollapsed(pid)) { m.activatePanel(pid); return true; }
-  // เป้าหมายผนึกเริ่มต้น = แผงเอกสาร (ไม่งั้น _target() หยิบ panel ตัวแรก = แถบเครื่องมือ)
-  const o = { ...opts };
-  if (!o.targetId && m.isDocked('docs') && pid !== 'docs') o.targetId = 'docs';
-  return m.showPanel(pid, o);
+  let ok;
+  if (m.isDocked(pid) && !m.isCollapsed(pid)) { m.activatePanel(pid); ok = true; }
+  else {
+    // เป้าหมายผนึกเริ่มต้น = แผงเอกสาร (ไม่งั้น _target() หยิบ panel ตัวแรก = แถบเครื่องมือ)
+    const o = { ...opts };
+    if (!o.targetId && m.isDocked('docs') && pid !== 'docs') o.targetId = 'docs';
+    ok = m.showPanel(pid, o);
+  }
+  if (ok && onShowHook) { try { onShowHook(pid); } catch {} }
+  return ok;
 }
 export function hidePanel(id) { return getPanelManager().hidePanel(panelId(id)); }
 export function togglePanel(id, opts) {
   const m = getPanelManager();
   const pid = panelId(id);
-  return m.isOpen(pid) ? m.hidePanel(pid) : showPanel(pid, opts);
+  if (m.isOpen(pid) && !m.isCollapsed(pid)) {
+    return m.collapsePanel(pid, true);
+  }
+  if (m.isCollapsed(pid)) {
+    return m.collapsePanel(pid, false);
+  }
+  return showPanel(pid, opts);
 }
 export function resetPanels() {
   const m = getPanelManager();

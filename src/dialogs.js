@@ -1,7 +1,10 @@
 // dialogs.js — กล่องโต้ตอบ: ตั้งค่าโปรเจกต์ · ประวัติเวอร์ชัน · changelog · ตัวดู log
 import { applySettings, applySpellcheck, applyUIScale, applyZoomVars, closeTab, fmtTs, listSnapshots, openScene, openSnapshotRight, refreshAllMentions, refreshAllSpell, saveProjectMeta, snapshotFile, tb } from './app.js';
-import { $, BASE_ED_FS, LOG_BUF, el, log, setStatus, state, i18n, loadLanguage, t, SHORTCUTS, SHORTCUT_LABELS, accelText, shortcutId } from './core.js';
-import { renderDashboard } from './dashboard.js';
+import { $, BASE_ED_FS, LOG_BUF, el, log, setStatus, state, i18n, loadLanguage, t, SHORTCUTS, SHORTCUT_LABELS, accelText, shortcutId, DEFAULT_SP_CYCLE } from './core.js';
+import { SP_ELEMS } from './fountain.js';
+import { refreshDashboardIfOpen } from './dashboard.js';
+// refreshDashboardIfOpen — ใช้ต่อเมื่อ dashboard.js export ฟังก์ชันนี้
+const _refreshDash = () => { try { refreshDashboardIfOpen(); } catch {} };
 import { confirmBox } from './ui.js';
 import { parseMdFile } from './md.js';
 import { setAutoSync, isAutoSyncOn } from './auto-task/event-ui.js';
@@ -13,6 +16,7 @@ export function settingsDialog() {
   const s = state.settings, g = state.goals, m = state.meta;
   const origFont = parseInt(s.uiFontSize, 10) || 0;
   const origFontFamily = s.fontFamily || '';
+  const origSpFontFamily = s.spFontFamily || '';
 
   const ov = el('div', 'k-overlay');
   const box = el('div', 'k-dialog k-settings');
@@ -22,6 +26,7 @@ export function settingsDialog() {
       <div class="k-set-tab on" data-p="gen">${t('settings.general')}</div>
       <div class="k-set-tab" data-p="write">${t('settings.writing')}</div>
       <div class="k-set-tab" data-p="auto">${t('settings.automation')}</div>
+      <div class="k-set-tab" data-p="sp">🎬 บทหนัง</div>
       <div class="k-set-tab" data-p="lang">${t('settings.language')}</div>
       <div class="k-set-tab" data-p="keys">${t('settings.shortcuts')}</div>
     </div>
@@ -36,6 +41,7 @@ export function settingsDialog() {
     </div>
     <div class="k-set-page" data-p="write">
       <div class="k-row"><label>${t('settings.fontFamily')}<span class="k-hint">${t('settings.fontFamilyHint')}</span></label><select id="st-fontfamily" class="k-dlg-select" style="width:100%"></select></div>
+      <div class="k-row"><label>${t('settings.spFontFamily')}<span class="k-hint">${t('settings.spFontFamilyHint')}</span></label><select id="st-spfontfamily" class="k-dlg-select" style="width:100%"></select></div>
       <div class="k-row"><label>${t('settings.fontSize')}<span class="k-hint">${t('settings.fontSizeHint')} (${BASE_ED_FS}px)</span></label><input type="number" id="st-font" min="-6" max="16" step="1"></div>
       <div class="k-row"><label>${t('settings.lineNumbers')}<span class="k-hint">${t('settings.lineNumbersHint')}</span></label><input type="checkbox" id="st-ln"></div>
       <div class="k-row"><label>${t('settings.spellCheck')}<span class="k-hint">${t('settings.spellCheckHint')}</span></label><input type="checkbox" id="st-spell"></div>
@@ -47,6 +53,11 @@ export function settingsDialog() {
     </div>
     <div class="k-set-page" data-p="auto">
       <div class="k-row"><label>${iconHtml('cloud-lightning', 14)} ${t('settings.autoSync')}<span class="k-hint">${t('settings.autoSyncHint')}</span></label><input type="checkbox" id="st-autosync"></div>
+    </div>
+    <div class="k-set-page" data-p="sp">
+      <div class="k-hint" style="margin-bottom:12px">ควบคุมปุ่ม Tab/Enter/Shift+Tab ในบทหนัง — เลือกว่าต้องการสร้างหรือสลับเป็น element ใดเมื่อกดแต่ละปุ่ม</div>
+      <table class="k-sp-cycle-tbl" id="st-spcycle"><thead><tr><th>Element</th><th>Enter →</th><th>Tab →</th><th>Shift+Tab →</th></tr></thead><tbody></tbody></table>
+      <div style="margin-top:12px; text-align:right"><button id="st-spcycle-reset" class="k-reset-btn">↺ คืนค่าเริ่มต้น</button></div>
     </div>
     <div class="k-set-page" data-p="lang">
       <div class="k-row"><label>${t('settings.languageSelect')}</label>
@@ -65,10 +76,17 @@ export function settingsDialog() {
   ov.appendChild(box); document.body.appendChild(ov);
 
   const q = (id) => box.querySelector(id);
+  // พรีวิวฟอนต์บทหนังสด ๆ (บั๊ก #2) — ว่าง = ถอด var ทิ้ง ให้ CSS fallback เป็น Courier New
+  const applySpFont = (v) => {
+    if (v) document.documentElement.style.setProperty('--sp-font', v);
+    else document.documentElement.style.removeProperty('--sp-font');
+  };
 
   // โหลดฟอนต์จาก Fonts/ ในโปรเจกต์ (async, โหลดทีหลังไม่บล็อก)
+  // ใช้รายการเดียวกันทั้งฟอนต์นิยาย (#st-fontfamily) และฟอนต์บทหนัง (#st-spfontfamily · บั๊ก #2)
   (async () => {
     const fs = q('#st-fontfamily'); if (!fs) return;
+    const spFs = q('#st-spfontfamily');
     const builtin = [
       { name: 'Segoe UI (ค่าเริ่มต้น)', value: '' },
       { name: 'Sarabun', value: 'Sarabun, sans-serif' },
@@ -95,6 +113,19 @@ export function settingsDialog() {
       opt.textContent = f.name;
       if (f.value === (origFontFamily || '')) opt.selected = true;
       fs.appendChild(opt);
+    }
+    if (spFs) {
+      for (const f of builtin) {
+        const opt = document.createElement('option');
+        opt.value = f.value;
+        // ฟอนต์บทหนังค่าว่าง = Courier New ตามมาตรฐานบท (ไม่ใช่ Segoe UI แบบนิยาย)
+        opt.textContent = f.value === '' ? 'Courier New (ค่าเริ่มต้นบทหนัง)' : f.name;
+        if (f.value === (origSpFontFamily || '')) opt.selected = true;
+        spFs.appendChild(opt);
+      }
+      // เห็นผลทันทีระหว่างเลือก (ยกเลิก = คืนค่าเดิม)
+      // ตั้ง --sp-font ตรง ๆ ไม่เรียก applySettings() — ไม่งั้นจะไปรีเซ็ตพรีวิวขนาดฟอนต์ที่กำลังเลื่อนอยู่
+      spFs.onchange = () => applySpFont(spFs.value);
     }
   })();
   q('#st-title').value = m.title || '';
@@ -125,6 +156,45 @@ export function settingsDialog() {
   q('#st-uiscale-lbl').textContent = Math.round(origUiScale * 100) + '%';
   q('#st-uiscale').oninput = () => applyUIScale(parseFloat(q('#st-uiscale').value) || 1);
   q('#st-autosync').checked = isAutoSyncOn() || !!s.autoSync;
+  // ---- spCycle ตารางควบคุม Tab/Enter ในบทหนัง ----
+  const cycleKeys = ['scene', 'action', 'character', 'parenthetical', 'dialogue', 'transition', 'shot', 'act-break', 'note'];
+  const cycleOpts = ['scene', 'action', 'character', 'parenthetical', 'dialogue', 'transition', 'shot', 'act-break',
+                     'summary', 'outline1', 'outline2', 'outline3', 'note', 'image', 'raw'];
+  // ใช้สำเนาทำงาน (ไม่แก้ state.settings จนกว่าจะกดบันทึก)
+  const workSpCycle = {};
+  const srcCycle = s.spCycle || DEFAULT_SP_CYCLE;
+  for (const k of cycleKeys) {
+    workSpCycle[k] = { ...(srcCycle[k] || DEFAULT_SP_CYCLE[k] || { enter: 'action', tab: 'action', shiftTab: 'action' }) };
+  }
+  const tbody = q('#st-spcycle tbody');
+  function renderSpCycle() {
+    tbody.innerHTML = '';
+    for (const k of cycleKeys) {
+      const row = el('tr');
+      const label = (SP_ELEMS[k] && SP_ELEMS[k].th) || k;
+      row.append(el('td', '', label));
+      for (const dir of ['enter', 'tab', 'shiftTab']) {
+        const sel = el('select');
+        for (const opt of cycleOpts) {
+          const o = el('option');
+          o.value = opt;
+          o.textContent = (SP_ELEMS[opt] && SP_ELEMS[opt].th) || opt;
+          if (workSpCycle[k][dir] === opt) o.selected = true;
+          sel.append(o);
+        }
+        sel.onchange = () => { workSpCycle[k][dir] = sel.value; };
+        const td = el('td'); td.append(sel); row.append(td);
+      }
+      tbody.append(row);
+    }
+  }
+  renderSpCycle();
+  q('#st-spcycle-reset').onclick = () => {
+    for (const k of cycleKeys) {
+      workSpCycle[k] = { ...DEFAULT_SP_CYCLE[k] };
+    }
+    renderSpCycle();
+  };
   // ---- ภาษา ----
   if (q('#st-lang')) q('#st-lang').value = i18n.lang || 'en';
   const origLang = i18n.lang;
@@ -190,6 +260,7 @@ export function settingsDialog() {
   const cancel = () => {
     applyZoomVars(origFont);
     applyUIScale(origUiScale);
+    s.spFontFamily = origSpFontFamily; applySpFont(origSpFontFamily);
     s.focusDim = origDim; applyFocusDim();
     document.body.classList.toggle('k-ln', origLn);
     s.spellCheck = origSpell; s.autoMention = origMention;
@@ -209,6 +280,7 @@ export function settingsDialog() {
     s.maxBackups = Math.max(1, num('#st-maxbak', 10));
     s.uiFontSize = Math.max(-6, Math.min(16, parseInt(q('#st-font').value, 10) || 0));
     s.fontFamily = q('#st-fontfamily')?.value || '';
+    s.spFontFamily = q('#st-spfontfamily')?.value || '';
     s.lineNumbers = q('#st-ln').checked;
     s.spellCheck = q('#st-spell').checked;
     s.spellCheckDict = q('#st-spelldict').checked;
@@ -221,6 +293,8 @@ export function settingsDialog() {
     // Auto-sync (เก็บลง settings ด้วย — ไม่งั้นเปิดโปรแกรมใหม่แล้วกลับไปปิด)
     s.autoSync = q('#st-autosync').checked;
     setAutoSync(s.autoSync);
+    // บันทึก spCycle
+    s.spCycle = JSON.parse(JSON.stringify(workSpCycle));
     g.dailyWords = num('#st-daily', 500);
     g.projectWords = num('#st-proj', 50000);
     try {
@@ -230,8 +304,7 @@ export function settingsDialog() {
       document.title = m.title + ' — Killian 2';
       $('#projname').textContent = m.title;
       $('#tb-title').textContent = m.title + ' — Killian 2';
-      const dash = state.tabs.get('::dash::');
-      if (dash) renderDashboard(dash.pane);
+      // แดชบอร์ดเป็นแผงแล้ว (refreshDashboardIfOpen เมื่อมี export)
     } catch (e) { log('error', 'บันทึกการตั้งค่าล้มเหลว', e); }
     // ---- บันทึกภาษา ----
     const selLang = q('#st-lang')?.value;

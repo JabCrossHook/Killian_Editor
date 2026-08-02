@@ -8,6 +8,8 @@ export const SP_ELEMS = {
   parenthetical: { th: 'วงเล็บ', prefix: '(' },
   dialogue: { th: 'บทพูด', prefix: '' },
   transition: { th: 'ทรานซิชัน', prefix: '>' },
+  shot: { th: 'ช็อต', prefix: '$shot ' },        // [50] 9-element system
+  'act-break': { th: 'ตอน', prefix: '$act ' },   // [50]
   summary: { th: 'สรุป', prefix: '= ' },
   outline1: { th: 'โครง 1', prefix: '# ' },
   outline2: { th: 'โครง 2', prefix: '## ' },
@@ -16,9 +18,10 @@ export const SP_ELEMS = {
   image: { th: 'รูปภาพ', prefix: '' },          // ![alt](src) — แสดงเป็นรูปจริงในบทหนัง
   raw: { th: 'อื่น ๆ', prefix: '' },            // element ที่ v2 ยังไม่ทำ UI — คงบรรทัดเดิมเป๊ะ
 };
-export const TAB_CYCLE = ['action', 'scene', 'character', 'parenthetical', 'dialogue', 'transition'];
+export const TAB_CYCLE = ['action', 'scene', 'character', 'parenthetical', 'dialogue', 'transition', 'shot', 'act-break', 'note'];
 export const NEXT_ELEM = { scene: 'action', action: 'action', character: 'dialogue',
   parenthetical: 'dialogue', dialogue: 'action', transition: 'scene',
+  shot: 'action', 'act-break': 'action',
   summary: 'action', outline1: 'outline2', outline2: 'outline3', outline3: 'action',
   note: 'action', image: 'action', raw: 'action' };
 
@@ -27,7 +30,7 @@ export const IMG_RE = /^!\[([^\]\n]*)\]\(([^)\n]+)\)\s*$/;
 
 export const SCENE_RE = /^\s*(int\.?|ext\.?|est\.?|i\/e|int\.?\/ext\.?|ฉาก)[\s.:]/i;
 const TRANS_RE = /(cut to:|dissolve to:|smash cut to:|match cut to:|fade out\.?|fade to black\.?|to:)\s*$/i;
-const RAW_PREFIX = /^\$(shot|cast|act|seq|endact)\b/i;
+const RAW_PREFIX = /^\$(cast|seq|endact)\b/i;
 export const TIMES = ['DAY', 'NIGHT', 'MORNING', 'EVENING', 'CONTINUOUS', 'LATER',
   'เช้า', 'กลางวัน', 'บ่าย', 'เย็น', 'กลางคืน', 'รุ่งสาง', 'ต่อเนื่อง'];
 export const TRANSITIONS = ['CUT TO:', 'DISSOLVE TO:', 'SMASH CUT TO:', 'MATCH CUT TO:',
@@ -48,6 +51,9 @@ export function classify(line, prevBlank = true, prevType = 'action') {
   const s = line.trim();
   if (s === '') return ['blank', ''];
   if (IMG_RE.test(s)) return ['image', s];           // ![alt](src) ทั้งบรรทัด = รูป
+  // [50] Shot + Act Break — จับก่อน raw (RAW_PREFIX ย้าย shot/act ออกแล้ว)
+  if (s.startsWith('$shot ')) return ['shot', s.slice(6).trim()];
+  if (s.startsWith('$act ')) return ['act-break', s.slice(5).trim()];
   if (RAW_PREFIX.test(s)) return ['raw', line];
   if (s.startsWith('((') && s.endsWith('))')) return ['note', s.slice(2, -2).trim()];
   if (s.startsWith('### ')) return ['outline3', s.slice(4).trim()];
@@ -95,6 +101,8 @@ export function lineFor(el, text, prevBlank, prevType) {
   let s;
   switch (el) {
     case 'note': s = '((' + text + '))'; break;
+    case 'shot': s = '$shot ' + text; break;             // [50]
+    case 'act-break': s = '$act ' + text; break;         // [50]
     case 'parenthetical':
       s = text.startsWith('(') && text.endsWith(')') ? text : '(' + text + ')'; break;
     case 'summary': s = '= ' + text; break;

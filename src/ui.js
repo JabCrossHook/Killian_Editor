@@ -90,3 +90,67 @@ export function choose(title, options) {
     ov.onclick = (e) => { if (e.target === ov) done(null); };
   });
 }
+
+/**
+ * บั๊ก #3: กล่อง "บันทึกทั้งหมด" ที่บอกด้วยว่าไฟล์ไหนบ้างค้างอยู่
+ * เดิมใช้ choose() บอกแค่จำนวนแท็บ → ผู้ใช้ต้องเดาว่ากำลังจะทิ้งงานอะไร
+ *
+ * @param {Array<{key:string,title:string,file:string}>} files รายการไฟล์ที่ยังไม่บันทึก
+ * @returns {Promise<{action:'save'|'discard'|null, keys:string[]}>} keys = เฉพาะที่ติ๊กไว้
+ */
+export function saveAllDialog(files, {
+  title = '', saveLabel = 'บันทึกทั้งหมด',
+  discardLabel = 'ไม่บันทึก', cancelLabel = 'ยกเลิก',
+} = {}) {
+  return new Promise((resolve) => {
+    const ov = document.createElement('div'); ov.className = 'k-overlay';
+    const box = document.createElement('div'); box.className = 'k-dialog k-saveall';
+    const head = document.createElement('div');
+    head.className = 'k-dlg-title';
+    head.textContent = title || `มี ${files.length} ไฟล์ที่ยังไม่ได้บันทึก`;
+
+    const list = document.createElement('div'); list.className = 'k-saveall-list';
+    const boxes = [];
+    for (const f of files) {
+      const row = document.createElement('label'); row.className = 'k-saveall-row';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.checked = true; cb.dataset.key = f.key;
+      const txt = document.createElement('div'); txt.className = 'k-saveall-txt';
+      const nm = document.createElement('div'); nm.className = 'k-saveall-name';
+      nm.textContent = f.title || f.key;
+      const pt = document.createElement('div'); pt.className = 'k-saveall-path';
+      pt.textContent = f.file || '';
+      pt.title = f.file || '';
+      txt.append(nm, pt);
+      row.append(cb, txt); list.append(row);
+      boxes.push(cb);
+    }
+
+    const btns = document.createElement('div'); btns.className = 'k-dlg-btns';
+    const bSave = document.createElement('button'); bSave.className = 'k-ok';
+    const bDiscard = document.createElement('button'); bDiscard.className = 'k-ok k-danger';
+    bDiscard.textContent = discardLabel;
+    const bCancel = document.createElement('button'); bCancel.className = 'k-cancel';
+    bCancel.textContent = cancelLabel;
+    btns.append(bSave, bDiscard, bCancel);
+
+    // ป้ายปุ่มบันทึกสะท้อนจำนวนที่ติ๊กไว้จริง (ติ๊กครบ = "บันทึกทั้งหมด" ตามเดิม)
+    const sel = () => boxes.filter((c) => c.checked).map((c) => c.dataset.key);
+    const sync = () => {
+      const n = sel().length;
+      bSave.textContent = n === boxes.length ? saveLabel : `บันทึกที่เลือก (${n})`;
+      bSave.disabled = n === 0;
+    };
+    boxes.forEach((c) => { c.onchange = sync; });
+    sync();
+
+    box.append(head, list, btns); ov.appendChild(box); document.body.appendChild(ov);
+    const done = (action) => { ov.remove(); resolve({ action, keys: action === 'save' ? sel() : [] }); };
+    bSave.onclick = () => done('save');
+    bDiscard.onclick = () => done('discard');
+    bCancel.onclick = () => done(null);
+    ov.onclick = (e) => { if (e.target === ov) done(null); };
+    box.addEventListener('keydown', (e) => { if (e.key === 'Escape') done(null); });
+    bSave.focus();
+  });
+}

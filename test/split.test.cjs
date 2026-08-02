@@ -128,12 +128,66 @@ check('splitWith → 2 pane + โฟกัสไปตัวใหม่', sm.pa
 sm.splitWith('sc3', 'bottom');
 check('splitWith ต่อจาก pane ที่โฟกัส → 3 pane', sm.paneCount() === 3, sm.tabs().join());
 sm.open('sc9');
-check('open ในขณะมี pane → แทนที่แท็บใน pane ที่โฟกัส', sm.paneCount() === 3 && sm.tabs().includes('sc9') && !sm.tabs().includes('sc3'));
+check('open ในขณะมี pane → แสดง sc9 ใน pane ที่โฟกัส', sm.paneCount() === 3 && sm.tabs().includes('sc9') && !sm.tabs().includes('sc3'));
+// บั๊ก #12: sc3 ไม่ได้ถูก "แทนที่ทิ้ง" แล้ว — มันยังอยู่ในกลุ่มแท็บของ pane เดิม
+check('#12 แท็บเดิมของ pane ยังอยู่ในกลุ่ม (แค่ถูกซ่อนหลังแถบแท็บย่อย)',
+      SL.allTabIds(sm.root).includes('sc3'), SL.allTabIds(sm.root).join());
 sm.close('sc9');
-check('close → ยุบเหลือ 2 pane', sm.paneCount() === 2, sm.tabs().join());
+check('#12 ปิดแท็บที่ pane มีหลายตัว → pane ไม่ยุบ กลับไปแสดงตัวเดิม',
+      sm.paneCount() === 3 && sm.tabs().includes('sc3'), sm.tabs().join());
 check('โฟกัสถูกย้ายไป pane ที่ยังอยู่', !!sm.activeTabId() && sm.tabs().includes(sm.activeTabId()));
 sm.syncWithPanels(['sc1']);
 check('syncWithPanels ตัดแท็บที่ถูกปิดจากระบบอื่น', sm.tabs().join() === 'sc1', sm.tabs().join());
+
+// ── บั๊ก #12: กลุ่มแท็บต่อ pane ──
+{
+  let g = SL.leaf('a');
+  g = SL.splitPane(g, g.id, 'right', 'b');
+  const la = SL.findLeafByTab(g, 'a').id, lb = SL.findLeafByTab(g, 'b').id;
+  g = SL.addLeafTab(g, la, 'a2');
+  check('#12 addLeafTab เพิ่มแท็บเข้ากลุ่มของ pane', SL.leafTabs(g, la).join() === 'a,a2', SL.leafTabs(g, la).join());
+  check('#12 เพิ่มแล้วสลับไปแสดงตัวใหม่', SL.leafTab(SL.findLeaf(g, la)) === 'a2');
+  check('#12 leaf.tabId ยังเป็นกระจกเงาของ tabs[active]', SL.findLeaf(g, la).tabId === 'a2');
+  check('#12 pane อื่นไม่กระทบ', SL.leafTabs(g, lb).join() === 'b' && SL.findLeaf(g, lb).tabId === 'b');
+  g = SL.addLeafTab(g, la, 'a3', false);
+  check('#12 addLeafTab(activate=false) เพิ่มแต่ไม่สลับ',
+        SL.leafTabs(g, la).join() === 'a,a2,a3' && SL.findLeaf(g, la).tabId === 'a2');
+  g = SL.activateLeafTab(g, la, 'a');
+  check('#12 activateLeafTab สลับแท็บใน pane เดียว', SL.findLeaf(g, la).tabId === 'a');
+  check('#12 สลับแท็บใน pane ซ้าย ไม่กระทบ pane ขวา', SL.findLeaf(g, lb).tabId === 'b');
+  check('#12 tabIds คืนเฉพาะตัวที่แสดง · allTabIds คืนครบทุกตัว',
+        SL.tabIds(g).join() === 'a,b' && SL.allTabIds(g).sort().join() === 'a,a2,a3,b',
+        SL.tabIds(g).join() + ' | ' + SL.allTabIds(g).join());
+  const g2 = SL.removeLeafTab(g, la, 'a');
+  check('#12 removeLeafTab เอาออกทีละตัว pane ยังอยู่',
+        SL.paneCount(g2) === 2 && SL.leafTabs(g2, la).join() === 'a2,a3', SL.leafTabs(g2, la).join());
+  let g3 = SL.removeLeafTab(g2, la, 'a2');
+  g3 = SL.removeLeafTab(g3, la, 'a3');
+  check('#12 เอาแท็บสุดท้ายออก → pane ยุบทิ้ง', SL.paneCount(g3) === 1 && SL.tabIds(g3).join() === 'b',
+        SL.tabIds(g3).join());
+  // แท็บเดียวกันอยู่ได้สอง pane · ปิดฝั่งหนึ่งไม่ลบอีกฝั่ง
+  let dup = SL.leaf('x');
+  dup = SL.splitPane(dup, dup.id, 'right', 'y');
+  const lx = SL.findLeaf(dup, SL.leafIds(dup)[0]).id, ly = SL.leafIds(dup)[1];
+  dup = SL.addLeafTab(dup, ly, 'x');
+  check('#12 แท็บเดียวกันอยู่ได้สอง pane', SL.leafTabs(dup, ly).join() === 'y,x');
+  dup = SL.removeLeafTab(dup, ly, 'x');
+  check('#12 ปิดแท็บใน pane หนึ่ง ไม่กระทบสำเนาใน pane อื่น',
+        SL.leafTabs(dup, lx).join() === 'x' && SL.leafTabs(dup, ly).join() === 'y');
+  // ปิดแท็บจริง (closeTab) ต้องเอาออกจากทุก pane
+  let cl = SL.leaf('p'); cl = SL.splitPane(cl, cl.id, 'right', 'q');
+  cl = SL.addLeafTab(cl, SL.leafIds(cl)[1], 'p');
+  cl = SL.closeTab(cl, 'p');
+  check('#12 closeTab เอาแท็บออกจากทุก pane', !SL.allTabIds(cl).includes('p'), SL.allTabIds(cl).join());
+  check('#12 closeTab แล้ว pane ที่ยังมีแท็บอื่นไม่หาย', SL.paneCount(cl) === 1 && SL.tabIds(cl).join() === 'q');
+  // เลย์เอาต์เก่า (leaf.tabId เดี่ยว) ต้องอ่านได้
+  const old = SL.deserializeSplit(JSON.stringify({ version: SL.SPLIT_VERSION,
+    root: { type: 'split', id: 's1', dir: 'row', sizes: [0.5, 0.5],
+            children: [{ type: 'leaf', id: 'l1', tabId: 'o1' }, { type: 'leaf', id: 'l2', tabId: 'o2' }] } }));
+  check('#12 กู้เลย์เอาต์เก่า (tabId เดี่ยว) → กลายเป็นกลุ่มแท็บอัตโนมัติ',
+        SL.leafTabs(old, 'l1').join() === 'o1' && SL.tabIds(old).join() === 'o1,o2',
+        JSON.stringify(SL.tabIds(old)));
+}
 
 const sm2 = new SL.SplitManager({ storage: mockS, key: 'sm-test' });
 check('SplitManager.load กู้เลย์เอาต์', sm2.load() && sm2.tabs().join() === 'sc1');
