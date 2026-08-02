@@ -1,10 +1,15 @@
 // dialogs.js — กล่องโต้ตอบ: ตั้งค่าโปรเจกต์ · ประวัติเวอร์ชัน · changelog · ตัวดู log
-import { applySettings, applySpellcheck, applyUIScale, applyZoomVars, applyPageVars, closeTab, fmtTs, listSnapshots, openScene, openSnapshotRight, refreshAllMentions, refreshAllSpell, saveProjectMeta, snapshotFile, tb } from './app.js';
+import { applySettings, applySpellcheck, applyUIScale, applyZoomVars, applyPageVars, closeTab, fmtTs, listSnapshots, openScene, openSnapshotRight, refreshAllMentions, refreshAllSpell, saveProjectMeta, snapshotFile, tb,
+         applyProjectLangFonts, preloadLangFontUrls, langFontUrl, refreshSpView, updatePageNumberHint } from './app.js';
 import { $, BASE_ED_FS, LOG_BUF, el, log, setStatus, state, i18n, loadLanguage, t, SHORTCUTS, SHORTCUT_LABELS, accelText, shortcutId, DEFAULT_SP_CYCLE,
          DEFAULT_SP_CYCLE_KEYS, spCycleKeys, spKeyLabel, DEFAULT_SCRIPT_FONT,
          PAPER_SIZES, MARGIN_DEFAULTS, SP_ELEMENT_KEYS, SP_ELEMENT_CONFIG, SP_ELEMENT_STYLES,
-         PAGE_BREAK_RULES, SP_STRINGS, mergeSpFormat, linesPerPage } from './core.js';
-import { SP_ELEMS } from './fountain.js';
+         PAGE_BREAK_RULES, SP_STRINGS, mergeSpFormat, linesPerPage,
+         SCENE_NUMBER_DEFAULTS, PAGE_NUMBER_DEFAULTS,
+         LANG_FAMILY, SCRIPT_PRESETS, BUILTIN_FONT_FILES, defaultLangFonts, normalizeLangFonts,
+         normalizeRange, buildLangFontCss, applyLangFonts } from './core.js';
+import { setTypeVolume, playType } from './typewriter-sound.js';
+import { SP_ELEMS, TAB_CYCLE } from './fountain.js';
 import { refreshDashboardIfOpen } from './dashboard.js';
 // refreshDashboardIfOpen — ใช้ต่อเมื่อ dashboard.js export ฟังก์ชันนี้
 const _refreshDash = () => { try { refreshDashboardIfOpen(); } catch {} };
@@ -31,6 +36,11 @@ export function settingsDialog(openTab) {
     strings: { ...SP_STRINGS, ...(s.spStrings || {}) },
     keys: spCycleKeys(s),
     cycleOn: s.spCycleEnabled !== false,
+    // [alpha.57a ข้อ 2] เลขฉาก + เลขหน้า
+    sceneNumbers: { ...SCENE_NUMBER_DEFAULTS, ...(s.spSceneNumbers || {}) },
+    pageNumbers: { ...PAGE_NUMBER_DEFAULTS, ...(s.spPageNumbers || {}) },
+    // [alpha.57a ข้อ 5] ฟอนต์ตามภาษา (สำเนาทำงาน)
+    langFonts: normalizeLangFonts(s.langFonts),
   };
 
   const ov = el('div', 'k-overlay');
@@ -45,6 +55,7 @@ export function settingsDialog(openTab) {
       <div class="k-set-tab" data-p="page">📐 หน้ากระดาษ</div>
       <div class="k-set-tab" data-p="spfmt">🎬 รูปแบบบท</div>
       <div class="k-set-tab" data-p="sp">⌨ ปุ่มบทหนัง</div>
+      <div class="k-set-tab" data-p="fonts">🔤 ฟอนต์ตามภาษา</div>
       <div class="k-set-tab" data-p="lang">${t('settings.language')}</div>
       <div class="k-set-tab" data-p="keys">${t('settings.shortcuts')}</div>
     </div>
@@ -71,6 +82,11 @@ export function settingsDialog(openTab) {
       <div class="k-row"><label>${t('settings.recycleDays')}<span class="k-hint">${t('settings.recycleDaysHint')}</span></label><input type="number" id="st-recycle" min="0" max="3650"></div>
       <div class="k-row"><label>${t('settings.focusDim')}<span class="k-hint">${t('settings.focusDimHint')}</span></label><input type="range" id="st-fmdim" min="0.05" max="0.8" step="0.05"><span id="st-fmdim-lbl" class="k-hint"></span></div>
       <div class="k-row"><label>${t('settings.uiScale', 'ขนาด UI')}<span class="k-hint">${t('settings.uiScaleHint', 'ย่อ/ขยายแถบเครื่องมือ แผง แท็บ และกล่องโต้ตอบ (75–200%)')}</span></label><input type="range" id="st-uiscale" min="0.75" max="2" step="0.05"><span id="st-uiscale-lbl" class="k-hint"></span></div>
+      <div class="k-set-sub k-full">🔊 เสียงเครื่องพิมพ์ดีด</div>
+      <div class="k-row"><label>เปิดเสียงขณะพิมพ์<span class="k-hint">เคาะแป้น · วรรค · ลบ · กระดิ่งตอนขึ้นบรรทัด</span></label><input type="checkbox" id="st-typesnd"></div>
+      <div class="k-row"><label>เล่นแม้ไม่ได้เปิดโหมดเครื่องพิมพ์ดีด<span class="k-hint">ปิด = ได้ยินเฉพาะตอนเปิดโหมด (Ctrl+Shift+T)</span></label><input type="checkbox" id="st-typesnd-always"></div>
+      <div class="k-row"><label>ระดับเสียง</label><input type="range" id="st-typesnd-vol" min="0" max="1" step="0.05"><span id="st-typesnd-lbl" class="k-hint"></span></div>
+      <div class="k-row"><label>ลองฟัง</label><span><button id="st-typesnd-test" class="k-key-btn">เคาะ</button> <button id="st-typesnd-test2" class="k-key-btn">ขึ้นบรรทัด</button></span></div>
     </div>
     <div class="k-set-page" data-p="auto">
       <div class="k-row"><label>${iconHtml('cloud-lightning', 14)} ${t('settings.autoSync')}<span class="k-hint">${t('settings.autoSyncHint')}</span></label><input type="checkbox" id="st-autosync"></div>
@@ -107,6 +123,17 @@ export function settingsDialog(openTab) {
         <div class="k-row"><label>ขวา (Right)</label><input type="number" id="st-mg-right" class="k-narrow" min="0" max="5" step="0.05"></div>
       </div>
       <div class="k-hint k-full" id="st-page-info" style="margin-top:8px"></div>
+      <div class="k-set-sub k-full">เลขฉาก (Scene Number)</div>
+      <div class="k-row"><label>แสดงเลขฉากข้างหัวฉาก<span class="k-hint">เลขจะอยู่ทั้งซ้ายและขวาของบรรทัดหัวฉาก</span></label><input type="checkbox" id="st-sn-show"></div>
+      <div class="k-row"><label>ท้ายเลข<span class="k-hint">เช่น ว่าง หรือ "."</span></label><input type="text" id="st-sn-suffix" class="k-narrow"></div>
+      <div class="k-row"><label>ซ้าย: ระยะจากขอบกระดาษซ้าย (นิ้ว)</label><input type="number" id="st-sn-left" class="k-narrow" min="0" max="5" step="0.05"></div>
+      <div class="k-row"><label>ขวา: ระยะจากขอบกระดาษขวา (นิ้ว)</label><input type="number" id="st-sn-right" class="k-narrow" min="0" max="5" step="0.05"></div>
+      <div class="k-set-sub k-full">เลขหน้า (Page Number)</div>
+      <div class="k-row"><label>แสดงเลขหน้า<span class="k-hint">มีเฉพาะไฟล์ที่เป็นฉาก · เลขเริ่มต้นตั้งรายไฟล์ที่ "คุณสมบัติฉาก"</span></label><input type="checkbox" id="st-pn-show"></div>
+      <div class="k-row"><label>ใส่เลขบนหน้าแรกด้วย<span class="k-hint">ธรรมเนียมบท: หน้าแรกไม่ใส่เลข</span></label><input type="checkbox" id="st-pn-first"></div>
+      <div class="k-row"><label>ระยะจากขอบขวา (นิ้ว)</label><input type="number" id="st-pn-right" class="k-narrow" min="0" max="5" step="0.05"></div>
+      <div class="k-row"><label>ระยะจากขอบบน (นิ้ว)</label><input type="number" id="st-pn-top" class="k-narrow" min="0" max="5" step="0.05"></div>
+      <div class="k-row"><label>ท้ายเลข</label><input type="text" id="st-pn-suffix" class="k-narrow"></div>
       <div class="k-set-sub">[84] กฎการตัดหน้า (widow / orphan)</div>
       <div class="k-set-grid2">
         <div class="k-row"><label>บรรยาย: เหลือท้ายหน้าอย่างน้อย</label><input type="number" id="st-pb-ab" class="k-narrow" min="0" max="20"></div>
@@ -149,6 +176,19 @@ export function settingsDialog(openTab) {
       <table class="k-sp-cycle-tbl" id="st-spcycle"><thead><tr><th>Element</th><th id="st-hd-enter">Enter →</th><th id="st-hd-tab">Tab →</th><th id="st-hd-stab">Shift+Tab →</th></tr></thead><tbody></tbody></table>
       <div style="margin-top:12px; text-align:right"><button id="st-spcycle-reset" class="k-reset-btn">↺ คืนค่าเริ่มต้น</button></div>
     </div>
+    <div class="k-set-page" data-p="fonts">
+      <div class="k-hint" style="margin-bottom:10px">
+        ฟอนต์บทมาตรฐาน (Courier) ไม่มีอักษรไทย — กำหนดเองได้ว่า "ช่วงอักขระไหน ใช้ฟอนต์อะไร"
+        เพิ่มได้ไม่จำกัด · ใช้ได้ทั้งโหมดนิยายและบทภาพยนตร์ · แถวบนสุดมีลำดับก่อน</div>
+      <div id="st-fonts-list"></div>
+      <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap">
+        <button id="st-fonts-add" class="k-key-btn">➕ เพิ่มแถว</button>
+        <button id="st-fonts-import" class="k-key-btn">📁 นำเข้าไฟล์ฟอนต์เข้าโปรเจกต์…</button>
+        <button id="st-fonts-reset" class="k-reset-btn">↺ คืนค่าเริ่มต้น</button>
+      </div>
+      <div class="k-hint" id="st-fonts-preview" style="margin-top:14px"></div>
+      <div id="st-fonts-sample" style="margin-top:6px; font-size:22px; line-height:1.7"></div>
+    </div>
     <div class="k-set-page" data-p="lang">
       <div class="k-row"><label>${t('settings.languageSelect')}</label>
         <select id="st-lang">
@@ -180,6 +220,8 @@ export function settingsDialog(openTab) {
     const builtin = [
       { name: 'ค่าเริ่มต้น (Courier Prime 12pt)', value: '' },
       { name: 'Courier Prime (ฝังมากับโปรแกรม)', value: DEFAULT_SCRIPT_FONT },
+      { name: 'Courier Thai Mono (ไทย · ฝังมากับโปรแกรม)', value: '"Courier Thai Mono", "Courier Prime", monospace' },
+      { name: 'Courier Thai Proportional (ไทย · ฝังมากับโปรแกรม)', value: '"Courier Thai Proportional", "Courier Prime", monospace' },
       { name: 'Segoe UI', value: '"Segoe UI", system-ui, sans-serif' },
       { name: 'Sarabun', value: 'Sarabun, sans-serif' },
       { name: 'Noto Sans Thai', value: '"Noto Sans Thai", sans-serif' },
@@ -311,15 +353,36 @@ export function settingsDialog(openTab) {
     const inp = q(sel); inp.value = W.strings[k];
     inp.oninput = () => { W.strings[k] = inp.value; };
   }
+  // ---- [alpha.57a ข้อ 2] เลขฉาก + เลขหน้า ----
+  const chk = (sel, get, set) => {
+    const c = q(sel); c.checked = !!get();
+    c.onchange = () => { set(c.checked); pageInfo(); previewPage(); };
+    return c;
+  };
+  chk('#st-sn-show', () => W.sceneNumbers.show, (v) => { W.sceneNumbers.show = v; });
+  numIn('#st-sn-left', () => W.sceneNumbers.left, (v) => { W.sceneNumbers.left = v; });
+  numIn('#st-sn-right', () => W.sceneNumbers.right, (v) => { W.sceneNumbers.right = v; });
+  { const i = q('#st-sn-suffix'); i.value = W.sceneNumbers.suffix || '';
+    i.oninput = () => { W.sceneNumbers.suffix = i.value; previewPage(); }; }
+  chk('#st-pn-show', () => W.pageNumbers.show, (v) => { W.pageNumbers.show = v; });
+  chk('#st-pn-first', () => W.pageNumbers.firstPage, (v) => { W.pageNumbers.firstPage = v; });
+  numIn('#st-pn-right', () => W.pageNumbers.right, (v) => { W.pageNumbers.right = v; });
+  numIn('#st-pn-top', () => W.pageNumbers.top, (v) => { W.pageNumbers.top = v; });
+  { const i = q('#st-pn-suffix'); i.value = W.pageNumbers.suffix || '';
+    i.oninput = () => { W.pageNumbers.suffix = i.value; previewPage(); }; }
+
   pageInfo();
 
   // พรีวิวรูปแบบหน้ากระดาษ/บทสด ๆ ระหว่างตั้งค่า (ยกเลิก = คืนค่าเดิมด้วย applyPageVars อีกครั้ง)
   function previewPage() {
     const keep = { paperSize: s.paperSize, customPaper: s.customPaper, pageMargins: s.pageMargins,
-                   spElements: s.spElements, spStyles: s.spStyles };
+                   spElements: s.spElements, spStyles: s.spStyles,
+                   spSceneNumbers: s.spSceneNumbers, spPageNumbers: s.spPageNumbers };
     Object.assign(s, { paperSize: W.paperSize, customPaper: W.customPaper, pageMargins: W.margins,
-                       spElements: W.elements, spStyles: W.styles });
+                       spElements: W.elements, spStyles: W.styles,
+                       spSceneNumbers: W.sceneNumbers, spPageNumbers: W.pageNumbers });
     applyPageVars();
+    try { updatePageNumberHint(); refreshSpView(); } catch {}
     Object.assign(s, keep);   // ค่าจริงยังไม่เปลี่ยนจนกว่าจะกดบันทึก
   }
 
@@ -408,9 +471,11 @@ export function settingsDialog(openTab) {
   renderSpKeys(); syncCycleHeads();
 
   // ---- spCycle ตารางควบคุม Tab/Enter ในบทหนัง ----
-  const cycleKeys = ['scene', 'action', 'character', 'parenthetical', 'dialogue', 'transition', 'shot', 'act-break', 'note'];
-  const cycleOpts = ['scene', 'action', 'character', 'parenthetical', 'dialogue', 'transition', 'shot', 'act-break',
-                     'summary', 'outline1', 'outline2', 'outline3', 'note', 'image', 'raw'];
+  // [alpha.58 บั๊ก 2] element ที่เพิ่มมาใน .57a (ทรานซิชันเข้า/ฉากย่อย/สลับฉาก) เคยตกหล่นจากตารางนี้
+  // → ผู้ใช้ตั้งปุ่มสลับให้มันไม่ได้เลย. รายการต้องมาจาก TAB_CYCLE เพื่อไม่ตกหล่นอีกเมื่อเพิ่ม element ใหม่
+  const cycleKeys = TAB_CYCLE.slice();
+  const cycleOpts = [...TAB_CYCLE, 'summary', 'outline1', 'outline2', 'outline3', 'image', 'raw']
+    .filter((k, i, a) => a.indexOf(k) === i);
   // ใช้สำเนาทำงาน (ไม่แก้ state.settings จนกว่าจะกดบันทึก)
   const workSpCycle = {};
   const srcCycle = s.spCycle || DEFAULT_SP_CYCLE;
@@ -446,6 +511,127 @@ export function settingsDialog(openTab) {
     }
     renderSpCycle();
   };
+  // ---- [alpha.57a ข้อ 1] เสียงเครื่องพิมพ์ดีด ----
+  const origSnd = { on: !!s.typeSound, always: !!s.typeSoundAlways, vol: s.typeSoundVolume ?? 0.5 };
+  q('#st-typesnd').checked = origSnd.on;
+  q('#st-typesnd-always').checked = origSnd.always;
+  q('#st-typesnd-vol').value = String(origSnd.vol);
+  q('#st-typesnd-lbl').textContent = Math.round(origSnd.vol * 100) + '%';
+  q('#st-typesnd-vol').oninput = () => {
+    const v = parseFloat(q('#st-typesnd-vol').value) || 0;
+    q('#st-typesnd-lbl').textContent = Math.round(v * 100) + '%';
+    setTypeVolume(v);                       // ได้ยินผลทันทีตอนกดลองฟัง
+  };
+  q('#st-typesnd-test').onclick = () => playType('key', { force: true });
+  q('#st-typesnd-test2').onclick = () => playType('return', { force: true });
+
+  // ---- [alpha.57a ข้อ 5] ฟอนต์ตามภาษา ----
+  let projectFonts = [];                    // ไฟล์ใน <โปรเจกต์>/Fonts
+  const fontsHost = q('#st-fonts-list');
+  /** ให้ผลลัพธ์เห็นทันทีระหว่างตั้งค่า (ยกเลิก = applySettings คืนของจริง) */
+  const previewFonts = () => {
+    applyLangFonts(W.langFonts, langFontUrl);
+    const usable = W.langFonts.filter((r) => r.enabled !== false && (r.builtin || r.file || r.family));
+    q('#st-fonts-preview').textContent = usable.length
+      ? `ใช้อยู่ ${usable.length} แถว — ตัวอย่าง (ไทยผสมอังกฤษ):`
+      : 'ยังไม่ได้กำหนดแถวไหน — ใช้ฟอนต์ตามค่าในแท็บ "การเขียน"';
+    const sample = q('#st-fonts-sample');
+    sample.textContent = 'INT. ห้องนอน — กลางคืน / ที่นี่คือฉากที่หนึ่ง ABC 123';
+    sample.style.fontFamily = `"${LANG_FAMILY}", ` + (q('#st-spfontfamily')?.value || DEFAULT_SCRIPT_FONT);
+  };
+  function renderFonts() {
+    fontsHost.innerHTML = '';
+    if (!W.langFonts.length) fontsHost.append(el('div', 'cmp-empty', '(ยังไม่มีแถว — กด "เพิ่มแถว")'));
+    W.langFonts.forEach((row, i) => {
+      const r = el('div', 'k-font-row');
+      // เปิด/ปิดแถว
+      const on = el('input'); on.type = 'checkbox'; on.checked = row.enabled !== false;
+      on.title = 'ใช้แถวนี้';
+      on.onchange = () => { row.enabled = on.checked; previewFonts(); };
+      r.append(on);
+      // ภาษา / ช่วงอักขระ
+      const scriptSel = el('select', 'k-dlg-select k-font-script');
+      for (const p of SCRIPT_PRESETS) {
+        const o = el('option', null, p.label); o.value = p.range; scriptSel.append(o);
+      }
+      const custom = el('option', null, 'กำหนดช่วงเอง…'); custom.value = '__custom'; scriptSel.append(custom);
+      const known = SCRIPT_PRESETS.find((p) => p.range === row.range);
+      scriptSel.value = known ? known.range : '__custom';
+      const rangeIn = el('input', 'k-font-range');
+      rangeIn.value = row.range; rangeIn.placeholder = 'U+0E00-0E7F';
+      rangeIn.style.display = known ? 'none' : '';
+      scriptSel.onchange = () => {
+        if (scriptSel.value === '__custom') { rangeIn.style.display = ''; rangeIn.focus(); return; }
+        rangeIn.style.display = 'none';
+        row.range = scriptSel.value;
+        row.label = (SCRIPT_PRESETS.find((p) => p.range === scriptSel.value) || {}).label || '';
+        previewFonts();
+      };
+      rangeIn.oninput = () => {
+        row.range = rangeIn.value;
+        rangeIn.classList.toggle('bad', !!rangeIn.value && !normalizeRange(rangeIn.value));
+        previewFonts();
+      };
+      r.append(scriptSel, rangeIn);
+      // ฟอนต์: ฝังมากับโปรแกรม / ไฟล์ในโปรเจกต์ / ชื่อฟอนต์ที่ลงในเครื่อง
+      const fontSel = el('select', 'k-dlg-select k-font-pick');
+      const addOpt = (val, text) => { const o = el('option', null, text); o.value = val; fontSel.append(o); };
+      addOpt('', '— ใช้ฟอนต์ที่ลงในเครื่อง (พิมพ์ชื่อ) —');
+      for (const b of BUILTIN_FONT_FILES) addOpt('b:' + b.file, b.label);
+      for (const f of projectFonts) addOpt('p:' + f, f + ' (โปรเจกต์)');
+      fontSel.value = row.builtin ? 'b:' + row.builtin : (row.file ? 'p:' + row.file : '');
+      const famIn = el('input', 'k-font-family');
+      famIn.value = row.family; famIn.placeholder = 'เช่น TH Sarabun New';
+      famIn.style.display = fontSel.value ? 'none' : '';
+      fontSel.onchange = () => {
+        const v = fontSel.value;
+        row.builtin = v.startsWith('b:') ? v.slice(2) : '';
+        row.file = v.startsWith('p:') ? v.slice(2) : '';
+        famIn.style.display = v ? 'none' : '';
+        previewFonts();
+      };
+      famIn.oninput = () => { row.family = famIn.value; previewFonts(); };
+      r.append(fontSel, famIn);
+      // ลำดับ + ลบ
+      const up = el('button', 'k-key-btn', '↑'); up.title = 'เลื่อนขึ้น';
+      up.onclick = () => { if (i > 0) { const [x] = W.langFonts.splice(i, 1); W.langFonts.splice(i - 1, 0, x); renderFonts(); previewFonts(); } };
+      const del = el('button', 'k-danger-btn', '✕');
+      del.onclick = () => { W.langFonts.splice(i, 1); renderFonts(); previewFonts(); };
+      r.append(up, del);
+      fontsHost.append(r);
+    });
+    previewFonts();
+  }
+  q('#st-fonts-add').onclick = () => {
+    W.langFonts.push({ id: 'f' + W.langFonts.length, label: 'ไทย', range: 'U+0E00-0E7F',
+                       builtin: 'CourierThaiMono.ttf', file: '', family: '', enabled: true });
+    renderFonts();
+  };
+  q('#st-fonts-reset').onclick = () => { W.langFonts = defaultLangFonts(); renderFonts(); };
+  q('#st-fonts-import').onclick = async () => {
+    try {
+      const src = await kapi.openFileDialog('font');
+      if (!src) return;
+      const dir = await kapi.join(state.root, 'Fonts');
+      await kapi.mkdir(dir);
+      const dst = await kapi.copyInto(src, dir);           // ไบนารี — copyInto คัดลอกไบต์ตรง (บทเรียน 14d)
+      const name = String(dst || src).split(/[\\/]/).pop();
+      if (!projectFonts.includes(name)) projectFonts.push(name);
+      await preloadLangFontUrls();
+      W.langFonts.push({ id: 'f' + W.langFonts.length, label: '', range: '',
+                         builtin: '', file: name, family: '', enabled: true });
+      renderFonts();
+      setStatus('นำเข้าฟอนต์ ' + name + ' แล้ว — เลือกช่วงอักขระที่จะใช้');
+    } catch (e) { log('error', 'นำเข้าฟอนต์ล้มเหลว', e); setStatus('นำเข้าฟอนต์ไม่สำเร็จ'); }
+  };
+  (async () => {
+    try {
+      const dir = await kapi.join(state.root, 'Fonts');
+      if (await kapi.exists(dir)) projectFonts = await kapi.listFiles(dir);
+    } catch {}
+    renderFonts();
+  })();
+
   // ---- ภาษา ----
   if (q('#st-lang')) q('#st-lang').value = i18n.lang || 'en';
   const origLang = i18n.lang;
@@ -515,6 +701,8 @@ export function settingsDialog(openTab) {
     applyPageVars();                       // คืนรูปแบบหน้ากระดาษ/บทตามค่าที่บันทึกไว้จริง
     applyUIScale(origUiScale);
     s.spFontFamily = origSpFontFamily; applySpFont(origSpFontFamily);
+    setTypeVolume(origSnd.vol);
+    applyProjectLangFonts();               // คืน @font-face ตามภาษาที่บันทึกไว้จริง
     s.focusDim = origDim; applyFocusDim();
     document.body.classList.toggle('k-ln', origLn);
     s.spellCheck = origSpell; s.autoMention = origMention;
@@ -563,13 +751,22 @@ export function settingsDialog(openTab) {
     s.spStyles = JSON.parse(JSON.stringify(W.styles));
     s.spPageRules = { ...W.rules };
     s.spStrings = { ...W.strings };
+    // [alpha.57a] เลขฉาก + เลขหน้า + เสียงพิมพ์ + ฟอนต์ตามภาษา
+    s.spSceneNumbers = { ...W.sceneNumbers };
+    s.spPageNumbers = { ...W.pageNumbers };
+    s.typeSound = q('#st-typesnd').checked;
+    s.typeSoundAlways = q('#st-typesnd-always').checked;
+    s.typeSoundVolume = Math.min(1, Math.max(0, parseFloat(q('#st-typesnd-vol').value) || 0));
+    s.langFonts = JSON.parse(JSON.stringify(W.langFonts));
     // [98] ข้อมูลผลงาน
     for (const [sel, key] of SETUP_FIELDS) m[key] = q(sel).value.trim();
     g.dailyWords = num('#st-daily', 500);
     g.projectWords = num('#st-proj', 50000);
     try {
+      await preloadLangFontUrls();         // ฟอนต์ที่เพิ่งนำเข้าต้องมี URL ก่อน applySettings สร้าง CSS
       await saveProjectMeta();
       applySettings();
+      try { updatePageNumberHint(); refreshSpView(); } catch {}
       state.title = m.title;
       document.title = m.title + ' — Killian 2';
       $('#projname').textContent = m.title;

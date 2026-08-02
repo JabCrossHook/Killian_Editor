@@ -93,6 +93,12 @@ export class SmartType {
       d.className = 'smart-item' + (i === this.sel ? ' on' : '');
       d.textContent = n;
       d.onmousedown = (e) => { e.preventDefault(); this.sel = i; this._accept(); };
+      // [alpha.57a ข้อ 4] คลิกขวาที่คำเดา = สั่งไม่ให้จำคำนั้นอีก (app.js ผูก onIgnore ให้)
+      d.oncontextmenu = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        if (typeof this.onIgnore === 'function') this.onIgnore(n);
+        this.hide();
+      };
       this.box.appendChild(d);
     });
   }

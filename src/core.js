@@ -81,6 +81,19 @@ export const DEFAULT_SETTINGS = {
   spShowFormat: false,             // [61] แสดงเส้นขอบ element + เครื่องหมายจบบรรทัด
   spCheckBeforeExport: true,       // [54] ตรวจหาข้อผิดพลาดก่อนพิมพ์/ส่งออก
   spLineLimits: null,              // [54] ความยาวสูงสุดต่อ element (null = ค่ามาตรฐาน)
+  // ---- alpha.57a ----
+  typeSound: false,                // [1] เสียงเครื่องพิมพ์ดีดขณะพิมพ์
+  typeSoundVolume: 0.5,            // [1] ระดับเสียง 0–1
+  typeSoundAlways: false,          // [1] เล่นแม้ไม่ได้เปิดโหมดเครื่องพิมพ์ดีด
+  spSceneNumbers: null,            // [2] เลขฉาก { show, left, right, suffix } (null = ค่ามาตรฐาน = ปิด)
+  spPageNumbers: null,             // [2] เลขหน้า { show, right, top, suffix, firstPage }
+  langFonts: null,                 // [5] ฟอนต์ตามภาษา [{id,label,range,builtin,file,family,enabled}]
+  // ---- alpha.58 ----
+  spContinued: null,               // [55][56] { enabled, scene, dialogue, number, indent } (null = เปิดตามมาตรฐาน)
+  spLineHeight: 1,                 // [บั๊ก 3] ช่วงบรรทัดบทภาพยนตร์ — 1 = 6 บรรทัด/นิ้วตามมาตรฐาน
+  spPageGap: 28,                   // [58] ความสูงช่องว่างระหว่างหน้าในโหมดจัดหน้า (px)
+  smartLearnMin: 2,                // [บั๊ก 1] SmartType จำคำจากบทเมื่อเจอซ้ำกี่บล็อก (1–5)
+  heavyDocBlocks: 400,             // [บั๊ก 4] เกินกี่บล็อกถือว่า "เอกสารหนัก" แล้วหน่วงงานหนักให้ห่างขึ้น
 };
 export const DEFAULT_GOALS = { dailyWords: 500, projectWords: 50000 };
 // ตารางควบคุม Tab/Enter/Shift+Tab ในบทหนัง — ผู้ใช้ปรับได้ในตั้งค่า
@@ -91,6 +104,9 @@ export const DEFAULT_SP_CYCLE = {
   parenthetical: { enter: 'dialogue',  tab: 'dialogue',  shiftTab: 'character' },
   dialogue:      { enter: 'character', tab: 'parenthetical', shiftTab: 'parenthetical' },
   transition:    { enter: 'scene',     tab: 'scene',     shiftTab: 'dialogue' },
+  'transition-in': { enter: 'scene',   tab: 'scene',     shiftTab: 'action' },
+  subheader:     { enter: 'action',    tab: 'action',    shiftTab: 'scene' },
+  intercut:      { enter: 'action',    tab: 'action',    shiftTab: 'scene' },
   shot:          { enter: 'action',    tab: 'action',    shiftTab: 'scene' },
   'act-break':   { enter: 'action',    tab: 'action',    shiftTab: 'transition' },
   note:          { enter: 'action',    tab: 'action',    shiftTab: 'scene' },
@@ -168,7 +184,12 @@ export { REL_TYPES, REL_COLOR, REL_ICON, REL_LABEL, categorizeRole, categorizeWi
 export { PAPER_SIZES, MARGIN_DEFAULTS, SP_ELEMENT_CONFIG, SP_ELEMENT_STYLES, SP_ELEMENT_KEYS,
          PAGE_BREAK_RULES, SP_STRINGS, DEFAULT_SP_FORMAT, mergeSpFormat, pageCssVars, spCss,
          linesPerPage, textWidth, wrapLines, paginate, pageCount, splitText,
-         newRoster, normalizeRoster, rosterToText, ROSTER_VERSION } from './sp-format.js';
+         newRoster, normalizeRoster, rosterToText, ROSTER_VERSION,
+         SCENE_NUMBER_DEFAULTS, PAGE_NUMBER_DEFAULTS, sceneNumberOffsets, pageNumberLabel } from './sp-format.js';
+// ฟอนต์ตามภาษา (alpha.57a ข้อ 5) — โมดูลบริสุทธิ์ ส่งต่อจาก lang-fonts.js
+export { LANG_FAMILY, SCRIPT_PRESETS, BUILTIN_FONT_FILES, defaultLangFonts, normalizeLangFonts,
+         normalizeRange, cssFamilyName, isUsable as isLangFontUsable, buildLangFontCss,
+         withLangFamily, applyLangFonts } from './lang-fonts.js';
 
 // ---- ระบบภาษา (i18n) ----
 export const i18n = { lang: 'en', strings: {}, fallback: null, available: ['en'] };
@@ -181,7 +202,7 @@ export function onLanguageChanged(fn) { langHooks.push(fn); }
 const BUILTIN_EN = {
   "ui": {
     "app": { "title": "Killian 2", "newProject": "New Project...", "openProject": "Open Project...", "saveAll": "Save All", "home": "Home", "ready": "Ready", "project": "Project", "saving": "Saving...", "saved": "Saved", "loading": "Loading...", "searching": "Searching..." },
-    "menu": { "file": "File", "edit": "Edit", "view": "View", "format": "Format", "help": "Help", "ai": "AI" },
+    "menu": { "file": "File", "edit": "Edit", "view": "View", "format": "Format", "script": "Script", "help": "Help", "ai": "AI" },
     "toolbar": {
       "paperMode": "Paper Mode", "toggleMode": "Toggle Mode", "normalText": "Body Text",
       "heading1": "Heading 1", "heading2": "Heading 2", "heading3": "Heading 3",

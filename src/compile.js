@@ -10,8 +10,39 @@
 // ไฟล์นี้ "บริสุทธิ์" (ไม่แตะ DOM/ไฟล์) เพื่อให้เทสตรงๆ ได้
 
 import { resolveVars } from './template-vars.js';
+// [alpha.58 · 55–56] ส่งออกบทภาพยนตร์พร้อมข้อความต่อเนื่อง — ใช้เอนจินจัดหน้าตัวเดียวกับบนจอ
+import { parseScript, lineFor } from './fountain.js';
+import { paginate, mergeSpFormat } from './sp-format.js';
+import { pagesWithContinueds } from './sp-continued.js';
 
 export const PAGE_BREAK = '<!-- ขึ้นหน้าใหม่ -->';
+
+/**
+ * [alpha.58 · 55–56] แทรก (CONTINUED)/CONTINUED:/(MORE)/(cont'd) ลงในข้อความบทที่ประกอบเสร็จแล้ว
+ * ใช้ตอน "ส่งออก" เท่านั้น — ไฟล์งานจริงไม่เก็บข้อความพวกนี้ (บนจอวาดเป็น decoration)
+ * @param {string} text ข้อความบทแบบ fountain
+ * @param {object} fmt  รูปแบบบท (sp-format) — ไม่ส่ง = ค่ามาตรฐาน Letter
+ * @returns {string} ข้อความเดิม + เครื่องหมายต่อเนื่อง + ตัวคั่นหน้า
+ */
+export function insertContinueds(text, fmt) {
+  const f = mergeSpFormat(fmt);
+  const pages = pagesWithContinueds(paginate(parseScript(String(text ?? '')), { fmt: f }), f);
+  const out = [];
+  pages.forEach((pg, i) => {
+    if (i) out.push('', PAGE_BREAK, '');
+    let prevBlank = true, prevType = 'action';
+    for (const b of pg.blocks || []) {
+      if (b.el === 'continued-top' || b.el === 'continued-bottom' || b.el === 'more') {
+        out.push(b.text || ''); prevBlank = false; continue;
+      }
+      const line = lineFor(b.el, b.text || '', prevBlank, prevType);
+      out.push(line);
+      if (!String(line).trim()) prevBlank = true;
+      else { prevBlank = false; prevType = b.el; }
+    }
+  });
+  return out.join('\n');
+}
 
 export const STEP_DEFS = [
   // ---- ช่วงเนื้อหา ----
@@ -42,6 +73,9 @@ export const STEP_DEFS = [
   { key: 'page-break', stage: 'render', label: 'ขึ้นหน้าใหม่ทุกบท' },
   { key: 'stats', stage: 'render', label: 'ต่อท้ายด้วยสรุปสถิติ' },
   // ---- ช่วงข้อความสุดท้าย ----
+  // [alpha.58 · 55–56] เฉพาะบทภาพยนตร์ — ปิดไว้ในทุกพรีเซ็ต (นิยายไม่ต้องใช้)
+  { key: 'sp-continued', stage: 'text',
+    label: 'บทภาพยนตร์: แทรก (CONTINUED)/(MORE) ตามการตัดหน้า' },
   { key: 'to-html', stage: 'text', label: 'แปลงเป็น HTML' },
   { key: 'js', stage: 'text', label: 'สคริปต์ JavaScript เอง',
     opts: { code: '// text = ข้อความที่ประกอบเสร็จ · คืนค่าข้อความใหม่\nreturn text;' },
@@ -185,7 +219,7 @@ function modelStats(model) {
   return { chapters: model.chapters.length, scenes: sc, words: w };
 }
 
-export function runWorkflow(model0, workflow, { allowJs = true, varCtx = {} } = {}) {
+export function runWorkflow(model0, workflow, { allowJs = true, varCtx = {}, spFormat = null } = {}) {
   const warn = [];
   // สำเนาลึกแบบพอเพียง — ไม่แก้ของเดิม
   const model = { title: model0.title, author: model0.author || '', roster: model0.roster || '',
@@ -286,6 +320,11 @@ export function runWorkflow(model0, workflow, { allowJs = true, varCtx = {} } = 
   // ---- 3) ช่วงข้อความสุดท้าย ----
   let ext = workflow.ext || 'md';
   for (const st of at('text')) {
+    if (st.key === 'sp-continued') {
+      try { text = insertContinueds(text, spFormat); }
+      catch (e) { warn.push('แทรกข้อความต่อเนื่องไม่สำเร็จ: ' + e.message); }
+      continue;
+    }
     if (st.key === 'to-html') { text = mdToHtml(text, model.title); ext = 'html'; continue; }
     if (st.key === 'js') {
       if (!allowJs) { warn.push('ข้ามขั้นตอน JavaScript (ปิดไว้)'); continue; }

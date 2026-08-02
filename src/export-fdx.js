@@ -10,6 +10,9 @@ export const FDX_TYPE_MAP = {
   dialogue: 'Dialogue',
   parenthetical: 'Parenthetical',
   transition: 'Transition',
+  'transition-in': 'Transition',      // [alpha.57a] FD มี Transition ชนิดเดียว — ต่างกันที่ระยะเยื้อง
+  subheader: 'Shot',                  // mini-slug ใน FD ลงเป็น Shot
+  intercut: 'Scene Heading',          // "INTERCUT WITH:" นับเป็นหัวฉากในสายการผลิต
   shot: 'Shot',
   'act-break': 'Act Break',
   // element ที่ Final Draft ไม่มีตรง ๆ → ลงเป็น Action เพื่อไม่ให้เนื้อหาหาย

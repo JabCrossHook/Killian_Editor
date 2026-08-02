@@ -32,6 +32,8 @@ const toggles = {
   lineNumbers: false, splitView: false, format: 'prose',
   // alpha.57 — โหมดมุมมองบท (normal/draft/side/overview1/overview4) + สวิตช์ของเมนู "บท"
   spView: 'normal', showFormat: false, checkBeforeExport: true,
+  // alpha.57a — เลขฉาก/เลขหน้า/เสียงพิมพ์
+  sceneNumbers: false, pageNumbers: false, typeSound: false,
   panels: { 'tree-panel': true, 'props-panel': true, 'outline-panel': true },
 };
 // ตัวช่วยสร้างรายการสวิตช์ — ผู้ใช้เห็นชัดว่ากดแล้วเปิด/ปิด ไม่ใช่คำสั่งครั้งเดียว
@@ -70,6 +72,7 @@ function buildMenu() {
       { label: `ตั้งค่าโปรเจกต์… (${C}+,)`, click: () => send('settings') },
       { label: '🎞 ข้อมูลผลงาน (ผู้เขียน · ตัวแทน · ลิขสิทธิ์)…', click: () => send('project-setup') },
       { label: '📐 หน้ากระดาษ · ระยะขอบ · รูปแบบบท…', click: () => send('page-setup') },
+      { label: '🔤 ฟอนต์ตามภาษา (ไทย/ละติน/อื่น ๆ)…', click: () => send('lang-fonts') },
       { label: 'ตั้งค่า AI…', click: () => send('ai-settings') },
       { label: 'จัดการสถานะฉาก…', click: () => send('custom-status') },
       { label: 'จัดการแท็บสี (Visual Tags)…', click: () => send('visual-tags') },
@@ -129,6 +132,8 @@ function buildMenu() {
         { label: `ขยาย (${C}+=)`, click: () => send('zoom', 1) },
         { label: `ย่อ (${C}+-)`, click: () => send('zoom', -1) },
         { label: `รีเซ็ตซูม (${C}+${S}+0)`, click: () => send('zoom', 0) },
+        // alpha.58 (บั๊ก 3) — กระดาษ 8.5 นิ้วจริงกว้างกว่าพื้นที่ทำงาน โปรแกรมบทอื่นเปิดมาที่ fit width
+        { label: 'พอดีความกว้างหน้ากระดาษ', click: () => send('zoom', 'fit') },
       ] },
       chk(`โหมดหน้ากระดาษ (${C}+${S}+P)`, toggles.paperMode, () => send('paper-mode')),
       chk('แสดงเลขบรรทัด', toggles.lineNumbers, () => send('line-numbers')),
@@ -140,6 +145,8 @@ function buildMenu() {
       { label: 'มุมมองบท', submenu: [
         { label: 'ปกติ (หน้ากระดาษ)', type: 'radio', checked: toggles.spView === 'normal',
           click: () => send('sp-view', 'normal') },
+        { label: 'จัดหน้า — เห็นหน้าจริง (Layout)', type: 'radio', checked: toggles.spView === 'layout',
+          click: () => send('sp-view', 'layout') },
         { label: 'ร่าง — ข้อความล้วน (Draft)', type: 'radio', checked: toggles.spView === 'draft',
           click: () => send('sp-view', 'draft') },
         { label: 'เรียงหน้าคู่ (Side-by-Side)', type: 'radio', checked: toggles.spView === 'side',
@@ -151,6 +158,20 @@ function buildMenu() {
       ] },
       chk('แสดงรูปแบบ (เส้นขอบ element + เครื่องหมายจบบรรทัด)', toggles.showFormat,
           () => send('sp-show-format')),
+      // alpha.58 [55][56] — ระบบต่อเนื่อง
+      chk('ข้อความต่อเนื่อง (CONTINUED · MORE · cont\'d)', toggles.continueds,
+          () => send('sp-continued')),
+      { type: 'separator' },
+      // alpha.58 [71][72][73] — รายงาน
+      { label: '📍 รายงานสถานที่ (Location Report)…', click: () => send('sp-report', 'location') },
+      { label: '👥 รายงานตัวละคร (Character Report)…', click: () => send('sp-report', 'character') },
+      { label: '📊 กราฟบทพูดต่อหน้า (Dialogue Chart)…', click: () => send('sp-report', 'chart') },
+      { type: 'separator' },
+      // alpha.57a — เลขฉาก/เลขหน้า/ส่วนเสริม/SmartType
+      chk('เลขฉาก (ข้างหัวฉากทั้งสองฝั่ง)', toggles.sceneNumbers, () => send('scene-numbers')),
+      chk('เลขหน้า (ชิดขวาบนกระดาษ)', toggles.pageNumbers, () => send('page-numbers')),
+      { label: 'ส่วนเสริมท้ายชื่อตัวละคร (V.O. · O.S. · cont\'d)…', click: () => send('sp-extension') },
+      { label: '🧠 จัดการ SmartType (ลบคำที่จำผิด)…', click: () => send('smart-manage') },
       { type: 'separator' },
       { label: `ไปที่หน้า/ฉาก… (${C}+G)`, click: () => send('goto') },
       { label: 'ไปที่ฉาก…', click: () => send('goto', 'scene') },
@@ -216,6 +237,7 @@ function buildMenu() {
       chk('โหมดอ่าน (เต็มจอ)', toggles.readingMode, () => send('reading-mode')),
       chk(`โหมดโฟกัส (${C}+${S}+D)`, toggles.focusMode, () => send('focus-mode')),
       chk(`โหมดเครื่องพิมพ์ดีด (${C}+${S}+T)`, toggles.typewriter, () => send('typewriter')),
+      chk('🔊 เสียงเครื่องพิมพ์ดีดขณะพิมพ์', toggles.typeSound, () => send('type-sound')),
       { type: 'separator' },
       // ห้ามใช้ role:'zoomIn'/'zoomOut'/'resetZoom' ของ Electron — เป็น zoom ระดับ webContents
       // ทั้งหน้าต่าง จะซ้อนทับกับซูมหน้ากระดาษ (--page-scale) และขนาด UI (--ui-scale) จนเพี้ยน
@@ -432,6 +454,8 @@ const SAVE_FILTERS = {
   zip: { name: 'ZIP', extensions: ['zip'] },
   fdx: { name: 'Final Draft', extensions: ['fdx'] },
   rtf: { name: 'Rich Text', extensions: ['rtf'] },
+  // alpha.57a — นำเข้าไฟล์ฟอนต์เข้าโปรเจกต์ (ฟอนต์ตามภาษา)
+  font: { name: 'ฟอนต์', extensions: ['ttf', 'otf', 'woff', 'woff2', 'ttc'] },
 };
 H('dialog:saveAs', async (defName, kind) => {
   const ext = String(defName || '').split('.').pop().toLowerCase();

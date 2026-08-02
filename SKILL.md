@@ -64,7 +64,8 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
   - **`panels/panel-layout.js` + `panel-store.js`** (alpha.39, บริสุทธิ์ · **ห้ามแก้**) — layout tree ของ panel: `snapZone`,`dockPanel`,`addAsTab/moveTab/splitTab`,`resizeDock`,`removePanel`(+collapse) · store: `serializeLayout`/versioning/migrate + `PanelStore`(รับ storage adapter) + `PanelManager`
   - **`panels/panel-renderer.js` + `panel-drag.js` + `panel-ui.js`** (alpha.46) — **UI จริงของ Panel System** (ดูหัวข้อด้านล่าง)
   - **`layout/split-layout.js`** (alpha.39, บริสุทธิ์) — recursive split tree: `splitPane`(ลากขอบ→row/col),`resizeSplit`(+snap 50%),`removeLeaf`(+collapse), `leaf.tabId` เชื่อมกับ Panel System · store: `serializeSplit`/`SplitStore`. UI = `split-ui.js` (`renderSplitTree`/`initSplitSystem` + โหมดเทียบ 2 ช่องแบบเดิม)
-  - `compile.js` — **เอนจินเวิร์กโฟลว์ส่งออก** (บริสุทธิ์ ไม่แตะ DOM/fs): `STEP_DEFS` 3 stage (model/render/text), `PRESETS`×7, `runWorkflow(model,wf)`, `mdToHtml`, strip helpers — มี unit test แยก
+  - `compile.js` — **เอนจินเวิร์กโฟลว์ส่งออก** (บริสุทธิ์ ไม่แตะ DOM/fs): `STEP_DEFS` 3 stage (model/render/text), `PRESETS`×7, `runWorkflow(model,wf,{spFormat})`, `mdToHtml`, strip helpers — มี unit test แยก
+    · **alpha.58**: ขั้นตอน `sp-continued` (stage text · ปิดไว้ทุกพรีเซ็ต) + `insertContinueds(text, fmt)`
   - `timeline.js` — **เอนจินเส้นเวลา + Gantt** (บริสุทธิ์): `extractNum` (ถอดเลขจากข้อความไทย "ปีที่ 1,024"→1024), `sortEvents`, `mergeTimeline(events,sceneEvents)` (**ต้อง copy ทุก field ที่ UI ใช้ รวม whenEnd**), `groupByTrack`, `findClashes`, `ganttData/ganttBar/ganttTicks`, `newEvent`
   - **`sp-format.js`** (alpha.56, บริสุทธิ์ · **ข้อ 81–85, 92, 97**) — รูปแบบบทภาพยนตร์ระดับใช้งานจริง
     `PAPER_SIZES`(letter/a4/legal/custom)/`MARGIN_DEFAULTS`(T1 B1 L1.5 R1)/`linesPerPage`(Letter=54)/`textWidth` ·
@@ -73,21 +74,57 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
     `pageCssVars()` → `--page-w/--mg-*/--text-w` · `spCss()` **สร้าง CSS + `@page` เป็นข้อความ**
     (`@page` ใช้ CSS var ไม่ได้ · `max-width:calc(100%-x)` ก็ใช้ไม่ได้เพราะ 100% รวมเส้นขอบ 2px → หนีบใน JS แทน) ·
     `paginate()` (MORE/cont'd/CONTINUED · ไม่ทิ้งชื่อตัวละครท้ายหน้า) · `rosterToText()` · **unit test 74 ข้อ**
+  - **sp-format.js เพิ่มใน alpha.57a**: `SCENE_NUMBER_DEFAULTS` (ซ้าย 0.75" ขวา 1" · ปิดไว้) ·
+    `PAGE_NUMBER_DEFAULTS` (ขวา 1" บน 0.5" · หน้าแรกไม่ใส่เลข) · `sceneNumberOffsets(fmt)` (คืนระยะ**เทียบกล่องหัวฉาก** —
+    ค่าติดลบ = ล้ำออกนอกกล่อง) · `pageNumberLabel(index, fmt, startPage)` · `spCss()` สร้าง `.k-scene-no-l/-r`
+    · element ใหม่ 3 ตัวใน `SP_ELEMENT_CONFIG/STYLES`: `transition-in` (ซ้าย) · `subheader` · `intercut`
+  - **fountain.js เพิ่มใน alpha.57a**: prefix `$in ` / `$sub ` / `$intercut ` (แนวเดียวกับ `$shot `/`$act ` — round-trip ปิดวง) ·
+    `splitCharacter(text)` / `withExtension(text, ext)` (ส่วนเสริมเว้นจากชื่อ **1 วรรคพอดี** เสมอ) · `TRANSITIONS_IN` · `INTERCUTS`
   - **`roster-ui.js`** (alpha.56, ข้อ 97) — หน้ารายชื่อตัวละคร: หน้าเดี่ยว**ประจำเล่ม** เก็บ `<Section>/roster.json`
     (ไม่อยู่ในฉากเลย) · แท็บ `::roster::<secPath>` · `saveTab()` แยกทางไป `saveRosterTab()` · ไม่มีเลขหน้า
   - **`sp-validator.js`** (alpha.57, บริสุทธิ์ · **ข้อ 54**) — `SP_ERRORS` 8 ชนิด/`SP_SEVERITY`/`DEFAULT_LIMITS` ·
     `validateScreenplay(blocks,{limits,checks})` → `[{type,block,el,msg,severity}]` (`block` = ดัชนีใน array ที่ส่งเข้ามา **รวม blank**) ·
     `errorSummary`/`summaryText`/`nextError` (วนกลับต้น) · **unit test 35 ข้อ**
+  - **sp-view.js เพิ่มใน alpha.58 (ข้อ 58 Layout View)**: โหมด `layout` ใน `SP_VIEWS` (คลาส `sp-view-layout`) ·
+    `isEditView(mode)` (layout ยังพิมพ์ได้ · side/overview อ่านอย่างเดียว) ·
+    **`pageMetrics(fmt)`** → `linesPerPage/charsPerLine/pageWidthPx/bodyHeightPx/lineHeightPx`
+    (Letter = 54 บรรทัด · 60 ตัว/บรรทัด · 816×1056px · เนื้อหน้า 864px · บรรทัดละ 16px) ·
+    `layoutCssVars(fmt,gap)` → `--sp-body-h/--sp-page-gap/--sp-line-h`
   - **`sp-view.js`** (alpha.57, บริสุทธิ์ + ตัววาด DOM · **ข้อ 57/59/60/78**) —
     `SP_VIEWS`/`SP_VIEW_CLASS`/`ALL_VIEW_CLASSES`/`isPageView` · `fitScale(w,pageW,gap)` (≤4 หน้า/แถว · ไม่ย่อต่ำกว่า 0.5) ·
     `overviewScale(px)` (Courier 12pt = 9.6px/ตัว) · **`blocksFromDoc(doc)`** (บล็อกจาก doc จริง พร้อม `pos` — action ว่าง→`blank`) ·
     `pagesOf`/`pageStartPositions`/`findPageStart`/`scenePositions`/`findNthScene` · `renderPageView(host,pages,fmt,opts)` · **unit test 45 ข้อ**
+  - **`sp-continued.js`** (alpha.58, บริสุทธิ์ · **ข้อ 55 + 56**) — ระบบต่อเนื่อง:
+    `CONTINUED_DEFAULTS`(re-export จาก sp-format) · `CONTINUED_TYPES/CLASS/SIDE` ·
+    `computeContinueds(pages, fmt)` → `[{pos,page,type,text,side,cls}]` (pos = ตำแหน่งบล็อกแรกของหน้าถัดไป) ·
+    `pageAnchor` · `continuedsFromBlocks` · `continuedSummary/StatusText` ·
+    `pagesWithContinueds` + `continuedPlainText` (ใช้ตอนส่งออก) · **unit test 45 ข้อ**
+    · **`side` สำคัญ**: ท้ายหน้า (more −40 / continued-bottom −30) ต้อง **น้อยกว่า −1** ของเส้นคั่นหน้า
+      ต้นหน้า (continued-top 10 / contd 20) ต้องมากกว่า — ไม่งั้นเครื่องหมายไปโผล่ผิดฝั่งของเส้น
+  - **`sp-reports.js`** (alpha.58, บริสุทธิ์ · **ข้อ 71/72/73**) — รายงานบท:
+    `parseHeading` (INT./EXT./I/E./EST./ฉากภายใน-ภายนอก + ตัดเวลาหลัง " - ") · `cleanCharacterName` ·
+    `sceneBreakdown` (แผนที่ `b.idx → หน้า` จาก paginate) · `generateLocationReport(groups ตั้งเองได้)` ·
+    `generateCharacterReport` · `generateDialogueChart` + `CHART_KINDS/LABELS` ·
+    `locationReportText/characterReportText/dialogueChartText` · **unit test 54 ข้อ**
+  - **`smart-terms.js`** (alpha.58, บริสุทธิ์ · **บั๊ก SmartType**) — "จำคำไหนดี":
+    `looksLikeTerm` (ตัวกรองระดับตัวอักษร) · `countTerms` · **`learnedTerms(counts,{min,pinned,ignored,known})`** ·
+    `pendingTerms` · `learnMin` (1–5 · ค่าเริ่มต้น 2) · **unit test 55 ข้อ**
+    · **หลักคิด**: ตัวกรองตัวอักษรจับคำพิมพ์สลับตัว ("พมิมพ์") ไม่ได้ตลอดกาล → ใช้ "ต้องเจอซ้ำ" เป็นด่านหลัก
   - **`sp-format-guide.js`** (alpha.57 · **ข้อ 61 + 57**) — PM plugin 2 ตัวใน SPEditor:
     `spFormatGuidePlugin()` (เส้นขอบ element + `¶`/`·` ท้ายบล็อก · `setFormatGuide(on,fmt)`) ·
     `spPageBreakPlugin()` (เส้นคั่นหน้า · **`setPageBreaks(list)` คืน `true` เมื่อเปลี่ยนจริง** → app.js dispatch เฉพาะตอนเปลี่ยน)
   - **`export-fdx.js` / `export-rtf.js` / `export-watermark.js`** (alpha.57, บริสุทธิ์ · **ข้อ 67/68/70**) —
     `generateFdx(blocks,meta)` (FDX_TYPE_MAP · TitlePage) · `generateRtf(blocks,meta,fmt)` (**ไทย → `\uNNNN?`** · twips · `paraCtrl`) ·
     `buildWatermarkHtml(pages,fmt,opts)`+`generateWatermarkedPDFs(api,args)`+`parseRecipients` · **unit test 72 ข้อ**
+  - **`typewriter-sound.js`** (alpha.57a, ข้อ 1) — เสียงเครื่องพิมพ์ดีดสังเคราะห์ด้วย WebAudio (ไม่มีไฟล์เสียง):
+    `playType('key'|'space'|'back'|'return')` · `soundKindFor(ev)` (คีย์ลัด/ลูกศร = null) · `isEditorTarget(ev)` ·
+    `setTypeSound/setTypeVolume` · จำกัดไม่เล่นถี่กว่า 25ms (กดค้างแล้วไม่เป็นเสียงพรืด)
+  - **`lang-fonts.js`** (alpha.57a, ข้อ 5, บริสุทธิ์) — "ภาษาไหนใช้ฟอนต์อะไร": `SCRIPT_PRESETS` 11 ภาษา ·
+    `buildLangFontCss(rows, resolveUrl)` สร้าง `@font-face` **ชื่อวงศ์เดียวกันหลายก้อน ต่างที่ `unicode-range`**
+    (`LANG_FAMILY = 'K2 Lang'`) → เบราว์เซอร์เลือกฟอนต์ให้เองทีละตัวอักษร · `withLangFamily(stack, has)`
+    เอาวงศ์รวมไปนำหน้า `--ed-font`/`--sp-font` · `normalizeRange`/`cssFamilyName` กันสตริงหลุดไปเขียนกฎ CSS อื่น ·
+    ฝั่ง app.js: `preloadLangFontUrls()` (kapi เป็น async แต่ CSS ต้องการ URL แบบ sync) → `applyProjectLangFonts()`
+    · **unit test 39 ข้อ**
   - `maps.js` — **เอนจินแผนที่** (บริสุทธิ์): `newMap/newPin`, `breadcrumb` (ลำดับชั้น world→city→room ตาม portal), `rootMaps`, `pinStats`, `deleteMap` (ล้าง portal ค้าง), `PIN_COLORS/PIN_KIND`
 - **build**: `node build.js` (esbuild bundle src/app.js) — dict แยกไฟล์ไม่ฝัง bundle
 
@@ -99,7 +136,7 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
 
 ## E2E test workflow (สำคัญ — ทำทุกครั้งก่อนเชื่อว่าแก้สำเร็จ)
 
-Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **1,124 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
+Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **1,307 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
 
 **Unit test โมดูลบริสุทธิ์ (alpha.39, รันเร็ว ไม่ต้องเปิด electron):**
 ```bash
@@ -109,6 +146,9 @@ node test/split.test.cjs           # 16 checks — split/resize(snap50)/collapse
 node test/branch.test.cjs          # 53 checks — graph/layout/cycles/unreachable/dangling/paths + [ข้อความ]ทางเลือก
 node test/timeline.test.cjs        # 34 checks — extractNum/sort/merge(whenEnd+refs)/gantt/normalizeRefs
 node test/relationship.test.cjs    # 28 checks — REL_TYPES/สี/ไอคอนมีจริง/categorizeRole/categorizeWith
+node test/sp-continued.test.cjs    # 45 checks — CONTINUED/MORE/cont'd + side + compile (alpha.58)
+node test/sp-reports.test.cjs      # 54 checks — parseHeading/สถานที่/ตัวละคร/กราฟ (alpha.58)
+node test/smart-terms.test.cjs     # 55 checks — looksLikeTerm/เกณฑ์เจอซ้ำ/pin/ignore (alpha.58)
 ```
 `npm run test:unit` รันชุดบริสุทธิ์ทั้งหมดรวดเดียว
 
@@ -255,6 +295,62 @@ grep -E "FAIL|STOP" /tmp/k2result.txt | head -3
 41. **ฟอนต์ฝังในแอป**: วางที่ `renderer/assets/fonts/` + `@font-face` ใน style.css (path สัมพัทธ์กับ css)
    electron-builder เก็บให้อยู่แล้วผ่าน `"renderer/**"` · เทสด้วย `await document.fonts.load(...)` แล้วค่อย `check()`
 
+46. **หน้าต่างเป็น `frame:false` → เมนู native ไม่โผล่เอง** ต้องมี `<span class="tb-menu" data-m="X">` บน `#titlebar`
+   คู่กับทุกเมนูใน `main.js` (renderer เรียก `kapi.menuPopup(data-m)`)
+   alpha.57 สร้างเมนู **"บท"** (id `Script`) ครบทุกรายการ แต่**ลืมใส่ปุ่มบนแถบชื่อ** → ฟีเจอร์ 54/57/59/60/61/78
+   ผู้ใช้กดไม่ได้เลยทั้งชุด (67/68/70 รอดเพราะไปโผล่ในเมนู "ไฟล์" ด้วย) — ตรงกับที่ผู้ใช้รายงานเป๊ะ
+   **เช็คถาวรแล้ว**: e2e ยืนยันว่าทุก `.tb-menu[data-m]` อยู่ในรายชื่อเมนูที่ main.js สร้างจริง
+   (ขยายจากบทเรียน 14b — "มีโค้ด+มี case ใน handleCommand" ยังไม่พอ ต้องมีทางกดด้วย)
+47. **`letter-spacing` ทำสระ/วรรณยุกต์ไทย "ลอย"** — CSS เติมช่องไฟ **หลังทุก glyph** รวม combining mark
+   ที่ความกว้างเป็น 0 → วรรณยุกต์ถูกดันไปทางขวาหลุดจากพยัญชนะ (ยิ่งค่ามาก ยิ่งชัด)
+   `.sp-scene`/`.sp-transition` เคยมี `letter-spacing:.5px` → ผู้ใช้เข้าใจว่าไฟล์ฟอนต์เสีย
+   **กฎ: ห้ามใส่ letter-spacing กับข้อความที่อาจเป็นไทย** (มีเทสคุมแล้ว)
+   · วิธีตรวจว่าเป็นที่ฟอนต์จริงไหม: เขียน HTML ทดสอบแล้ว `capturePage` ด้วย electron สคริปต์เล็ก ๆ
+     (`new BrowserWindow({show:false})` + `loadFile` + `capturePage().toPNG()`) แล้ว crop ดูด้วย PIL
+48. **ฟอนต์ไทยยุคเก่า (ไม่มี GPOS/GSUB) shape ถูกอยู่แล้วใน Chromium** — HarfBuzz ทำ **Thai PUA shaping** ให้เอง
+   (เลือกรูปเลื่อนลง/ซ้ายจากช่วง PUA `F700–F717` ตามมาตรฐาน Windows Thai)
+   **อย่าไปเติม GSUB `ccmp` เอง** — จะซ้อนกับที่ HarfBuzz ทำอยู่แล้ว แล้ววรรณยุกต์จมทับสระ (ลองมาแล้ว เสียเวลาเปล่า)
+   วิธีดูว่าฟอนต์รองรับ: `cmap` ต้องมี `F700–F717` และ mark ต้อง `advance = 0`
+   **แต่ shape ถูก ≠ วางสวย**: ฟอนต์ที่ Top ส่งมา (1998) วางมาร์กห่างพยัญชนะ ~7% ของ em
+   ขณะที่ Courier New/Leelawadee/Tahoma ห่าง ~3.5% → เห็นเป็น "ลอย" จริง
+   **แก้ที่ถูกคือขยับ outline ของ glyph มาร์ก** (`tools/shiftmarks.py` · fonttools):
+   สระบน+วรรณยุกต์+PUA `F701–F717` (ยกเว้น `F70F`) **ลง 74** · สระล่าง **ขึ้น 36** (em 2048)
+   **ห้ามแตะ `F700`/`F70F`** — สองตัวนั้นคือ ฐ/ญ แบบตัดเชิง (advance เต็มตัว ไม่ใช่มาร์ก)
+   กันพลาดด้วยเงื่อนไข "ขยับเฉพาะ glyph ที่ `advance = 0`"
+48b. **วิธีวัดว่า "ลอย" จริงไหม อย่าใช้ตาเปล่า** — เรนเดอร์พยางค์ลง cell ขนาดคงที่แล้ว
+   หา **แถบว่างแนวนอนที่ยาวที่สุดระหว่างขอบบน-ล่างของหมึก** = ระยะที่มาร์กหลุดจากพยัญชนะ
+   เทียบกับฟอนต์อ้างอิงที่รู้ว่าดี (Courier New / Leelawadee UI) เสมอ — **อย่าเทียบเป็นพิกเซลดิบ**
+   เพราะแต่ละฟอนต์ตัวใหญ่ไม่เท่ากันที่ px เดียวกัน ให้คิดเป็น **% ของ em**
+   · ทดสอบเร็ว ๆ นอกแอป: electron สคริปต์เล็ก (`new BrowserWindow({show:false})` + `loadFile` +
+     `capturePage().toPNG()`) แล้ววิเคราะห์ด้วย PIL · **ใส่ `?v=N` ท้าย url ของ @font-face ทุกครั้ง**
+     ไม่งั้น Chromium ใช้ฟอนต์เดิมจาก cache ทั้งที่ไฟล์เปลี่ยนแล้ว (หลงคิดว่าแก้ไม่ติด)
+   · ใน e2e ทำได้โดยไม่ต้องสกรีนช็อต: วาดลง `<canvas>` แล้วอ่าน `getImageData` — ล็อกไว้เป็นเทสถาวร
+51. **`.sp { line-height:1.5 }` = หน้าหนึ่งจุ 36 บรรทัดแทน 54** (alpha.58 บั๊ก 3)
+   บทภาพยนตร์คือ **6 บรรทัด/นิ้ว** → 12pt บนช่วงบรรทัด 12pt = `line-height:1` พอดี (16px)
+   ค่า 1.5 ทำให้ (ก) ตัวหนังสือดู "ใหญ่/ห่าง" กว่า Final Draft ครึ่งเท่า (ข) **เส้นคั่นหน้าบนจอไม่ตรงกับ
+   `paginate()` และไม่ตรงกับ PDF ที่ส่งออก** (`buildWatermarkHtml` ใช้ `line-height:1` มาตลอด)
+   **กฎ: จอกับกระดาษต้องใช้เลขชุดเดียวกัน** — เจอความไม่ตรงเมื่อไร ให้เช็คว่า CSS จอเท่ากับ CSS ตอนพิมพ์ไหมก่อน
+   · หน้ากระดาษ 8.5in = 816px กว้างกว่าพื้นที่ทำงานทั่วไป → มี "พอดีความกว้าง" (`zoomFitWidth`) ให้เลือก
+52. **decoration ที่สแกนทั้ง doc ทุก `docChanged` = O(ความยาวไฟล์) ต่อ 1 keystroke** (alpha.58 บั๊ก 4)
+   ตรวจคำผิด/ชื่อ Wiki/สมอคอมเมนต์ เคยทำแบบนี้หมด → ไฟล์ยาวแล้วพิมพ์กระตุก
+   **แก้: `incrementalDecoState(key, scan)` ใน editor.js** — `prev.map(tr.mapping, tr.doc)` แล้วสแกนใหม่
+   เฉพาะ **บล็อกระดับบนที่ถูกแตะ** (หาช่วงจาก `tr.mapping.maps[i].forEach` + `mapping.slice(i+1)`)
+   ใช้ได้เฉพาะ decoration ที่ **คิดจากข้อความในบล็อกเดียว** — เลขฉาก/เส้นคั่นหน้า/ต่อเนื่อง ต้องดูทั้งเอกสาร ห้ามใช้ทางนี้
+   · อย่าลืมของแพงอื่นในลูปเดียวกัน: regex ที่สร้างใหม่ทุกครั้ง · `getMarkdown()` ที่แปลง inline→md ทีละบล็อก
+53. **ตัวกรอง "คำมั่ว" ระดับตัวอักษรจับคำพิมพ์สลับตัวไม่ได้ตลอดกาล** (alpha.58 บั๊ก 1)
+   "พมิมพ์" ขึ้นต้นด้วยพยัญชนะ ไม่มีวรรณยุกต์ซ้อน = ผ่านทุกกฎ · เพิ่มกฎไปก็ไล่ไม่ทัน
+   **หลักที่ใช้ได้จริงคือ "ต้องเจอซ้ำ"** (ชื่อในบทถูกพิมพ์หลายครั้ง · คำพิมพ์ผิดโผล่ครั้งเดียว)
+   แล้วเปิดทางลัด 3 ทาง: มีใน Wiki / ผู้ใช้กด "จำ" / ผู้ใช้กด "ไม่จำ" — และ **โชว์รายการที่ยังไม่จำ** ให้ตัดสินเอง
+54. **`paginate()` เคยใส่ CONTINUED ให้ทุกคู่หน้าโดยไม่ดูฉาก** (alpha.58 · 55–56)
+   ต้องรู้ว่า "หน้าถัดไปเริ่มด้วยฉากเดิมไหม" → เก็บ `page.sceneStart/sceneEnd` ตอนจัดหน้า
+   · เลขกำกับ `CONTINUED: (2)` ต้อง **รีเซ็ตเมื่อเปลี่ยนฉาก** ไม่งั้นฉากใหม่ที่ข้ามหน้าครั้งแรกได้เลข (2) ทันที
+   · เครื่องหมายพวกนี้ **ห้ามเขียนเป็นข้อความจริง** — ต้องเป็น widget decoration ไม่งั้นหลุดลงไฟล์ .md แล้วลบไม่ออก
+
+49. **`refreshToolbar()` มีลูป `.tb` ที่ตั้ง `dis` จาก `canEdit` อย่างเดียว** → ปุ่มที่ต้องการเงื่อนไขของตัวเอง
+   (เช่น "ใช้ได้เฉพาะบรรทัดตัวละคร") ต้องตั้งคลาส **หลังลูปนั้น** ไม่งั้นถูกลบทิ้งเงียบ ๆ
+50. **เพิ่มช่องในคุณสมบัติฉาก = แก้ index ใน e2e "สองที่"** — มีทั้ง **กล่อง** (`scene-props.js`) และ
+   **แผง** (`renderPropsPanel` ใน app.js) ที่เทสอ้าง `inps[N]` แยกกัน (ขยายจากบทเรียนข้อ 12)
+
 ---
 
 ## Build recipes (app ไม่ต้องมี node_modules ตอน runtime — main/preload ใช้แค่ electron+fs/path/url, bundle.js มี prosemirror ครบ)
@@ -329,7 +425,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ---
 
-## เวอร์ชัน (ล่าสุด alpha.57 · e2e 1,124 + unit 957)
+## เวอร์ชัน (ล่าสุด alpha.58 · e2e 1,307 + unit ครบทุกชุด)
 
 .13–.22 (v1→v2 พื้นฐาน): snapshot, line numbers, spellcheck ไทย+Chromium, ปุ่มลัดตั้งเอง, mac build, บทหนัง Ctrl+arrow, relationship sync, floating format bar, sidebar resize, SmartType Final Draft, wiki gallery/lightbox, explorer search+tags, panel docking, tree float+snap
 .24 batch 8 (drag-move explorer, panel snap, split compare, version tracking, scene lock, screenplay Final Draft look, screenplay images, wiki links) · .25–.27 **Planner board** (fabric.js) · .28 **floating windows** · .29 memo-in-chapter + scoped search
@@ -475,6 +571,35 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
     PDF ลายน้ำใช้ `kapi.pdfFromHtml` (หน้าต่างซ่อน) + ฝัง Courier Prime ผ่าน `file://` · จำค่าที่ `meta.watermark`
   ใหม่ใน SPEditor: `setMarkdown()` / `spDocFromMarkdown()` / `gotoPos()` / `refreshGuides()`
   **เมนูใหม่ "บท"** (id `Script`) + toggles `spView`/`showFormat`/`checkBeforeExport` ใน main.js
+
+.57a **รอบเก็บงานเล็ก 5 ข้อ** (ดู CHANGELOG เต็ม)
+  **1** เสียงเครื่องพิมพ์ดีด (`typewriter-sound.js` · WebAudio สังเคราะห์เอง ไม่มีไฟล์เสียง)
+  **2** รูปแบบบทตามสเปก: เลขฉาก (0.75"/1" · toggle) · เลขหน้า (ขวา 1" บน 0.5" · toggle · **เลขเริ่มต้นรายไฟล์**
+    ใน `scenes.json → startPage` ตั้งได้ทั้งกล่องและแผงคุณสมบัติ) · ทรานซิชันแยกเข้า/ออก · ส่วนเสริม ·
+    หัวข้อย่อย · สลับฉาก · ช็อตเข้าแถบเครื่องมือ
+  **3** **บั๊ก: เมนู "บท" ไม่มีปุ่มบนแถบชื่อ** → ฟีเจอร์ .57 ทั้งชุดเข้าไม่ถึง (ดูบทเรียนข้อ 46)
+  **4** SmartType เลิกจำคำมั่ว: ข้ามบล็อกที่เคอร์เซอร์อยู่ · `looksLikeTerm()` · `meta.smartIgnore`
+    (คลิกขวาที่คำเดา = ไม่จำ · **บท → จัดการ SmartType**)
+  **5** ฟอนต์ตามภาษา (`lang-fonts.js`) + ฝังฟอนต์ไทย `CourierThaiMono/Prop.ttf`
+    **"สระ/วรรณยุกต์ลอย" มี 2 ต้นเหตุ แก้ทั้งคู่**: (ก) `letter-spacing` ของเราเอง — เอาออก (บทเรียน 47)
+    (ข) ตัวฟอนต์วางมาร์กสูงเกินจริง — ขยับ outline ลง 74/ขึ้น 36 ด้วย `tools/shiftmarks.py` (บทเรียน 48)
+    · เทสพิกเซลบน canvas ใน e2e ล็อกไว้แล้ว · ที่มา/สิทธิ์ดู `renderer/assets/fonts/THAI-FONTS.txt`
+
+.58 **โหมดจัดหน้า (58) · ระบบต่อเนื่อง (55/56) · รายงานบท (71/72/73) + บั๊ก human test 4 ข้อ + ฟีเจอร์ที่ขาด 2 ข้อ**
+  โมดูลบริสุทธิ์ใหม่ 3 ตัว (`sp-continued` · `sp-reports` · `smart-terms`) · **unit test เพิ่ม 154 ข้อ**
+  **[58] Layout View** — โหมด `layout` (ยังพิมพ์ได้ · ไม่ใช่ overlay) กระดาษขาวจริง + ระยะขอบจริง +
+    **ช่องว่างคั่นหน้าจริง** (ล้ำออกนอกระยะขอบสองข้าง) + เลขหน้ากลางช่องว่าง · ตัวเลขมาจาก `pageMetrics()`
+  **[55][56] CONTINUED** — `computeContinueds()` แปลงผล `paginate()` เป็น decoration (ไม่ใช่ข้อความจริง)
+    · `paginate` เก็บ `sceneStart/sceneEnd` ต่อหน้า → CONTINUED เกิดเฉพาะตอนฉากข้ามหน้าจริง
+    · `CONTINUED: (2)` รีเซ็ตเมื่อเปลี่ยนฉาก · เมนู บท → ข้อความต่อเนื่อง (เปิด/ปิด) · `insertContinueds` ใน compile
+  **[71][72][73] รายงาน** — กล่องเดียว 3 แท็บ (`openSpReport`) คลิกแถวกระโดดไปฉาก · คัดลอก/บันทึกไฟล์ได้
+  **บั๊ก 1** SmartType → เกณฑ์ "เจอซ้ำ ≥ 2 บล็อก" + pin/ignore + รายการ "ยังไม่จำ" (บทเรียน 53)
+  **บั๊ก 2** ตารางปุ่มสลับ element อ่านจาก `TAB_CYCLE` แทนรายการฮาร์ดโค้ด
+  **บั๊ก 3** `.sp` line-height 1.5 → `--sp-lh` = 1 (54 บรรทัด/หน้า) + `zoomFitWidth()` (บทเรียน 51)
+  **บั๊ก 4** `incrementalDecoState()` + แคช regex/รายชื่อ + เลิกใช้ `getMarkdown()` นับคำบท + หน่วงยืดตามไฟล์ (บทเรียน 52)
+  **ฟีเจอร์ 1** `confirmQuit()` ใช้ `saveAllDialog` (รายชื่อ + เช็คบ็อกซ์)
+  **ฟีเจอร์ 2** `revealFile()` — ปุ่ม "หาในดิสก์" บนหน้า Wiki + คลิกขวาใน Explorer (พร้อมประวัติเวอร์ชัน)
+  **ค่าเริ่มต้นใหม่**: `subheader` = "ฉากย่อย" · ฉากย่อย/ช็อต/สลับฉาก วางตัวเท่าหัวฉาก ตัวหนา **แต่ไม่มีเลขฉาก**
 
 **ยังเหลือ**: `search-engine.js` ยังเป็น orphan — Global Search (`global-search.js`) ยังสแกนไฟล์ตรง ๆ ไม่ได้ใช้ inverted index (ควรสลับมาใช้เพื่อความเร็ว) · multiple-drafts-per-book UI (โครงรองรับแล้ว), screenplay align persistence, Campaign/D&D mode, electron-builder + code signing, .icns/.ico icon, native arm64 build. Top เคยบอก paper/indent "อาจต้องปรับปรุง ไว้ก่อน"
 

@@ -6,7 +6,8 @@ import { EditorView } from 'prosemirror-view';
 import { history, undo, redo } from 'prosemirror-history';
 import { keymap } from 'prosemirror-keymap';
 import { baseKeymap, toggleMark, chainCommands } from 'prosemirror-commands';
-import { parseScript, lineFor, SP_ELEMS, TAB_CYCLE, NEXT_ELEM } from './fountain.js';
+import { parseScript, lineFor, SP_ELEMS, TAB_CYCLE, NEXT_ELEM,
+         splitCharacter, withExtension } from './fountain.js';
 import { state, DEFAULT_SP_CYCLE, spCycleKeys, spKeyMatch } from './core.js';
 
 const marks = {
@@ -49,7 +50,9 @@ export const spSchema = new Schema({
 import { mdToDoc, docToMd } from './md.js';
 import { spellPlugin, mentionPlugin, refreshMentions, focusLinePlugin, commentAnchorPlugin } from './editor.js';
 // [61] แสดงรูปแบบ + [57] เส้นคั่นหน้าในตัวแก้ไข
-import { spFormatGuidePlugin, spPageBreakPlugin, refreshFormatGuide, refreshPageBreaks } from './sp-format-guide.js';
+import { spFormatGuidePlugin, spPageBreakPlugin, spSceneNumberPlugin, spContinuedPlugin,
+         refreshFormatGuide, refreshPageBreaks, refreshSceneNumbers,
+         refreshContinueds } from './sp-format-guide.js';
 import { IMG_RE } from './fountain.js';
 function inlineContent(text) {
   const doc = mdToDoc(text);
@@ -111,6 +114,8 @@ export class SPEditor {
           commentAnchorPlugin(),
           spFormatGuidePlugin(),      // [61] เส้นขอบ element + เครื่องหมายจบบรรทัด
           spPageBreakPlugin(),        // [57] เส้นคั่นหน้า (ตำแหน่งมาจาก paginate ใน app.js)
+          spSceneNumberPlugin(),      // [alpha.57a] เลขฉากสองฝั่งหัวฉาก
+          spContinuedPlugin(),        // [alpha.58 · 55–56] (CONTINUED)/CONTINUED:/(MORE)/(cont'd)
         ],
       }),
       handleKeyDown(view, ev) {
@@ -196,7 +201,31 @@ export class SPEditor {
   }
 
   // [61][57] วาด decoration ของ "แสดงรูปแบบ" / เส้นคั่นหน้าใหม่ (เรียกหลังเปลี่ยนค่าตั้ง)
-  refreshGuides() { refreshFormatGuide(this.view); refreshPageBreaks(this.view); }
+  refreshGuides() {
+    refreshFormatGuide(this.view); refreshPageBreaks(this.view); refreshSceneNumbers(this.view);
+    refreshContinueds(this.view);
+  }
+
+  /** [alpha.57a ข้อ 2] ใส่/ถอด "ส่วนเสริม" ท้ายชื่อตัวละคร — เว้นจากชื่อ 1 วรรคเสมอ */
+  setExtension(ext) {
+    const { node, pos } = this.curBlock();
+    if (!node || node.attrs.el !== 'character') return false;
+    const next = withExtension(node.textContent || '', ext);
+    const v = this.view;
+    const from = pos + 1, to = pos + 1 + node.content.size;
+    let tr = next ? v.state.tr.insertText(next, from, to) : v.state.tr.delete(from, to);
+    tr = tr.setSelection(TextSelection.create(tr.doc, from + next.length));
+    v.dispatch(tr);
+    v.focus();
+    return true;
+  }
+  /** ส่วนเสริมของบล็อกตัวละครที่เคอร์เซอร์อยู่ ('' = ไม่มี) */
+  curExtension() {
+    try {
+      const { node } = this.curBlock();
+      return node.attrs.el === 'character' ? splitCharacter(node.textContent || '').ext : '';
+    } catch { return ''; }
+  }
 
   /** [78] ย้ายเคอร์เซอร์ไปตำแหน่ง pos แล้วเลื่อนจอให้เห็น */
   gotoPos(pos) {

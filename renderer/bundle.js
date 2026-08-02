@@ -13771,6 +13771,40 @@
   });
 
   // src/editor.js
+  function changedRange(tr2) {
+    let from2 = Infinity, to = -Infinity;
+    for (let i2 = 0; i2 < tr2.mapping.maps.length; i2++) {
+      const rest = tr2.mapping.slice(i2 + 1);
+      tr2.mapping.maps[i2].forEach((_os, _oe, ns, ne) => {
+        from2 = Math.min(from2, rest.map(ns, -1));
+        to = Math.max(to, rest.map(ne, 1));
+      });
+    }
+    return from2 <= to ? { from: from2, to } : null;
+  }
+  function blockRange(doc3, from2, to) {
+    const size = doc3.content.size;
+    const clamp2 = (v) => Math.max(0, Math.min(v, size));
+    const $f = doc3.resolve(clamp2(from2));
+    const $t = doc3.resolve(clamp2(to));
+    return { from: $f.depth ? $f.before(1) : 0, to: $t.depth ? $t.after(1) : size };
+  }
+  function incrementalDecoState(key, scan) {
+    const full = (doc3) => DecorationSet.create(doc3, scan(doc3, 0, doc3.content.size));
+    return {
+      init: (_c, st) => full(st.doc),
+      apply(tr2, prev, _o, st) {
+        if (tr2.getMeta(key)) return full(st.doc);
+        if (!tr2.docChanged) return prev.map(tr2.mapping, tr2.doc);
+        const ch = changedRange(tr2);
+        if (!ch) return prev.map(tr2.mapping, tr2.doc);
+        const r = blockRange(st.doc, ch.from, ch.to);
+        const moved = prev.map(tr2.mapping, tr2.doc);
+        const kept = moved.remove(moved.find(r.from, r.to));
+        return kept.add(st.doc, scan(st.doc, r.from, r.to));
+      }
+    };
+  }
   function buildMentionRegex(names) {
     if (!names || !names.length) return null;
     const usable = names.filter((n) => n && n.length >= 2);
@@ -13778,10 +13812,10 @@
     const esc3 = usable.slice().sort((a, b) => b.length - a.length).map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
     return new RegExp("\\[\\[(?:[^\\]]+)\\]\\]|" + esc3.join("|"), "g");
   }
-  function mentionDecos(doc3, rx) {
-    if (!rx) return DecorationSet.empty;
+  function mentionScan(doc3, rx, from2, to) {
+    if (!rx) return [];
     const out = [];
-    doc3.descendants((node, pos) => {
+    doc3.nodesBetween(from2, to, (node, pos) => {
       if (!node.isText) return;
       rx.lastIndex = 0;
       let m;
@@ -13793,18 +13827,22 @@
         ));
       }
     });
-    return DecorationSet.create(doc3, out);
+    return out;
   }
   function mentionPlugin(getNames) {
+    let cacheKey = null, cacheRx = null;
+    const rxOf = () => {
+      const names = getNames() || [];
+      const k = names.length + "|" + names.join("");
+      if (k !== cacheKey) {
+        cacheKey = k;
+        cacheRx = buildMentionRegex(names);
+      }
+      return cacheRx;
+    };
     return new Plugin({
       key: mentionKey,
-      state: {
-        init: (_c, st) => mentionDecos(st.doc, buildMentionRegex(getNames())),
-        apply(tr2, prev, _o, st) {
-          if (!tr2.docChanged && !tr2.getMeta(mentionKey)) return prev.map(tr2.mapping, tr2.doc);
-          return mentionDecos(st.doc, buildMentionRegex(getNames()));
-        }
-      },
+      state: incrementalDecoState(mentionKey, (doc3, from2, to) => mentionScan(doc3, rxOf(), from2, to)),
       props: { decorations(state2) {
         return mentionKey.getState(state2);
       } }
@@ -13813,10 +13851,10 @@
   function refreshMentions(view) {
     view.dispatch(view.state.tr.setMeta(mentionKey, true));
   }
-  function spellDecos(doc3, checkFn) {
-    if (!checkFn) return DecorationSet.empty;
+  function spellScan(doc3, checkFn, from2, to) {
+    if (!checkFn) return [];
     const out = [];
-    doc3.descendants((node, pos) => {
+    doc3.nodesBetween(from2, to, (node, pos) => {
       if (!node.isText || !node.text) {
         if (node.type && node.type.name === "sp" && ["character", "scene", "transition"].includes(node.attrs.el)) return false;
         return;
@@ -13829,18 +13867,15 @@
         ));
       }
     });
-    return DecorationSet.create(doc3, out);
+    return out;
   }
   function spellPlugin(getChecker) {
     return new Plugin({
       key: spellKey,
-      state: {
-        init: (_c, st) => spellDecos(st.doc, getChecker()),
-        apply(tr2, prev, _o, st) {
-          if (!tr2.docChanged && !tr2.getMeta(spellKey)) return prev.map(tr2.mapping, tr2.doc);
-          return spellDecos(st.doc, getChecker());
-        }
-      },
+      state: incrementalDecoState(
+        spellKey,
+        (doc3, from2, to) => spellScan(doc3, getChecker(), from2, to)
+      ),
       props: { decorations(state2) {
         return spellKey.getState(state2);
       } }
@@ -13882,10 +13917,10 @@
   function commentAnchors() {
     return _cmQuotes.slice();
   }
-  function cmDecos(doc3) {
-    if (!_cmQuotes.length) return DecorationSet.empty;
+  function cmScan(doc3, from2, to) {
+    if (!_cmQuotes.length) return [];
     const out = [];
-    doc3.descendants((node, pos) => {
+    doc3.nodesBetween(from2, to, (node, pos) => {
       if (!node.isText || !node.text) return;
       for (const q of _cmQuotes) {
         let i2 = -1;
@@ -13898,18 +13933,12 @@
         }
       }
     });
-    return DecorationSet.create(doc3, out);
+    return out;
   }
   function commentAnchorPlugin() {
     return new Plugin({
       key: cmKey,
-      state: {
-        init: (_c, st) => cmDecos(st.doc),
-        apply(tr2, prev, _o, st) {
-          if (!tr2.docChanged && !tr2.getMeta(cmKey)) return prev.map(tr2.mapping, tr2.doc);
-          return cmDecos(st.doc);
-        }
-      },
+      state: incrementalDecoState(cmKey, cmScan),
       props: { decorations(state2) {
         return cmKey.getState(state2);
       } }
@@ -14728,6 +14757,12 @@
               this.sel = i2;
               this._accept();
             };
+            d.oncontextmenu = (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (typeof this.onIgnore === "function") this.onIgnore(n);
+              this.hide();
+            };
             this.box.appendChild(d);
           });
         }
@@ -14797,6 +14832,26 @@
     const n = parseFloat(v);
     return Number.isFinite(n) ? n : d;
   }
+  function sceneNumberOffsets(fmt) {
+    const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+    const sn = f.sceneNumbers;
+    const cfg = f.elements.scene;
+    const boxLeft = num(cfg.indent, f.margins.left);
+    const boxRight = boxLeft + num(cfg.width, 6);
+    return {
+      left: +(num(sn.left, 0.75) - boxLeft).toFixed(4),
+      right: +(boxRight - (num(f.paper.width, 8.5) - num(sn.right, 1))).toFixed(4)
+    };
+  }
+  function pageNumberLabel(index, fmt, startPage) {
+    const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+    const pn = f.pageNumbers;
+    if (!pn.show) return "";
+    const i2 = Math.max(1, Math.round(+index || 1));
+    if (i2 === 1 && !pn.firstPage) return "";
+    const start = Math.max(1, Math.round(+startPage || 1));
+    return String(start + i2 - 1) + (pn.suffix || "");
+  }
   function mergeSpFormat(user) {
     const u = user || {};
     const paperSize = PAPER_SIZES[u.paperSize] ? u.paperSize : "letter";
@@ -14818,7 +14873,10 @@
       elements,
       styles,
       rules: { ...PAGE_BREAK_RULES, ...u.rules || {} },
-      strings: { ...SP_STRINGS, ...u.strings || {} }
+      strings: { ...SP_STRINGS, ...u.strings || {} },
+      sceneNumbers: { ...SCENE_NUMBER_DEFAULTS, ...u.sceneNumbers || {} },
+      pageNumbers: { ...PAGE_NUMBER_DEFAULTS, ...u.pageNumbers || {} },
+      continued: { ...CONTINUED_DEFAULTS, ...u.continued || {} }
     };
   }
   function pageCssVars(fmt) {
@@ -14831,7 +14889,10 @@
       "--mg-bottom": m.bottom + "in",
       "--mg-left": m.left + "in",
       "--mg-right": m.right + "in",
-      "--text-w": +textWidth(f.paper, m).toFixed(4) + "in"
+      "--text-w": +textWidth(f.paper, m).toFixed(4) + "in",
+      // [alpha.57a] เลขหน้า — ระยะจากขอบกระดาษ (ไม่ใช่จากขอบพื้นที่พิมพ์)
+      "--pg-no-top": (f.pageNumbers?.top ?? 0.5) + "in",
+      "--pg-no-right": (f.pageNumbers?.right ?? 1) + "in"
     };
   }
   function spCss(fmt) {
@@ -14854,6 +14915,16 @@
       const mb = num(c.linesBetween, 10) / 10 - 1;
       out.push(`.sp.sp-${k}{margin-left:${ml}in;width:${w}in;max-width:none;margin-top:${mt}em;margin-bottom:${Math.max(0, mb)}em;${decl(s.screen)}}`);
     }
+    const so = sceneNumberOffsets(f);
+    out.push(".sp.sp-scene{position:relative}");
+    out.push(".k-scene-no{position:absolute;top:0;white-space:nowrap;user-select:none;pointer-events:none;text-transform:none;font-weight:400;font-style:normal;text-decoration:none}");
+    out.push(`.k-scene-no-l{left:${so.left}in}`);
+    out.push(`.k-scene-no-r{right:${so.right}in}`);
+    const ct = { ...CONTINUED_DEFAULTS, ...f.continued || {} };
+    const moreML = Math.max(0, +(num(ct.indent, 3.7) - left).toFixed(4));
+    out.push(`.sp.sp-more{margin-left:${moreML}in;width:auto;max-width:none;margin-top:0;margin-bottom:0;text-transform:none}`);
+    out.push(`.sp-continued-top,.sp-cont-top{margin-left:0;width:${+tw.toFixed(4)}in;text-align:left}`);
+    out.push(`.sp-continued-bottom,.sp-cont-bottom{margin-left:0;width:${+tw.toFixed(4)}in;text-align:right}`);
     const m = f.margins;
     out.push(`@page{size:${f.paper.width}in ${f.paper.height}in;margin:${m.top}in ${m.right}in ${m.bottom}in ${m.left}in;orphans:${Math.max(1, f.rules.minActionLinesAtBottom)};widows:${Math.max(1, f.rules.minActionLinesAtTop)};}`);
     const printRules = SP_ELEMENT_KEYS.map((k) => `.sp.sp-${k}{${decl(f.styles[k].print)}}`).join("");
@@ -14894,12 +14965,28 @@
     const perPage = Math.max(4, opts.lines || linesPerPage(fmt.paper, fmt.margins));
     const R = fmt.rules, S = fmt.strings;
     const cfg = (el3) => fmt.elements[el3] || fmt.elements.action;
+    const CT = { ...CONTINUED_DEFAULTS, ...fmt.continued || {} };
+    const wantDlgMarkers = CT.enabled !== false && CT.dialogue !== false;
     const pages = [];
     let cur = [], used = 0, lastChar = "";
+    let sceneSeq = 0, curScene = 0, pageSceneStart = 0;
+    const addBlock = (blk) => {
+      if (blk.el === "scene" && blk.split !== "tail") {
+        curScene = ++sceneSeq;
+        if (!cur.length) pageSceneStart = curScene;
+      }
+      cur.push(blk);
+    };
     const pushPage = () => {
-      pages.push({ index: pages.length + 1, blocks: cur });
+      pages.push({
+        index: pages.length + 1,
+        blocks: cur,
+        sceneStart: pageSceneStart,
+        sceneEnd: curScene
+      });
       cur = [];
       used = 0;
+      pageSceneStart = curScene;
     };
     const list = (blocks || []).filter((b) => b && b.el !== "blank");
     for (let i2 = 0; i2 < list.length; i2++) {
@@ -14911,7 +14998,7 @@
       const need = before + body;
       const free = perPage - used;
       if (need <= free) {
-        cur.push({ ...b, lines: body });
+        addBlock({ ...b, lines: body });
         used += need;
         continue;
       }
@@ -14922,14 +15009,14 @@
       const canBottom = free - before;
       if ((isDlg || isAct) && canBottom >= minBot && body - canBottom >= minTop) {
         const head = splitText(b.text, c.width, canBottom);
-        cur.push({ ...b, text: head.head, lines: canBottom, split: "head" });
-        if (isDlg) cur.push({ el: "more", text: S.dialogueMore, lines: 1 });
+        addBlock({ ...b, text: head.head, lines: canBottom, split: "head" });
+        if (isDlg && wantDlgMarkers) addBlock({ el: "more", text: S.dialogueMore, lines: 1, more: true });
         pushPage();
-        if (isDlg && lastChar) {
-          cur.push({ el: "character", text: lastChar + " " + S.dialogueContd, lines: 1, contd: true });
+        if (isDlg && wantDlgMarkers && lastChar) {
+          addBlock({ el: "character", text: lastChar + " " + S.dialogueContd, lines: 1, contd: true });
           used += 1;
         }
-        cur.push({ ...b, text: head.rest, lines: body - canBottom, split: "tail" });
+        addBlock({ ...b, text: head.rest, lines: body - canBottom, split: "tail" });
         used += body - canBottom;
         continue;
       }
@@ -14945,16 +15032,43 @@
         cur.push(x);
         used += x.lines || 1;
       }
-      cur.push({ ...b, lines: body });
+      addBlock({ ...b, lines: body });
       used += body;
     }
     if (cur.length) pushPage();
-    if (!pages.length) pages.push({ index: 1, blocks: [] });
-    for (let i2 = 0; i2 < pages.length - 1; i2++) {
-      pages[i2].continuedBottom = S.continuedBottom;
-      pages[i2 + 1].continuedTop = S.continuedTop;
-    }
+    if (!pages.length) pages.push({ index: 1, blocks: [], sceneStart: 0, sceneEnd: 0 });
+    annotateContinued(pages, fmt);
     return { pages, count: pages.length };
+  }
+  function annotateContinued(pages, fmt) {
+    const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+    const S = f.strings;
+    const CT = { ...CONTINUED_DEFAULTS, ...f.continued || {} };
+    const on = CT.enabled !== false && CT.scene !== false;
+    for (const p of pages) {
+      delete p.continuedBottom;
+      delete p.continuedTop;
+      delete p.contdRun;
+    }
+    let run2 = 1, contScene = 0;
+    for (let i2 = 0; i2 < pages.length - 1; i2++) {
+      const p = pages[i2], n = pages[i2 + 1];
+      const spans = on && p.sceneEnd > 0 && n.sceneStart === p.sceneEnd;
+      if (!spans) {
+        run2 = 1;
+        contScene = 0;
+        continue;
+      }
+      if (p.sceneEnd !== contScene) {
+        run2 = 1;
+        contScene = p.sceneEnd;
+      }
+      run2++;
+      p.continuedBottom = S.continuedBottom;
+      n.contdRun = run2;
+      n.continuedTop = CT.number !== false && run2 > 2 ? `${S.continuedTop} (${run2 - 1})` : S.continuedTop;
+    }
+    return pages;
   }
   function splitText(text, widthIn, n) {
     const cols = Math.max(1, Math.floor(num(widthIn, 6) * CHARS_PER_INCH));
@@ -15025,7 +15139,7 @@
     while (out.length && out[out.length - 1] === "") out.pop();
     return out.join("\n");
   }
-  var PAPER_SIZES, MARGIN_DEFAULTS, CHARS_PER_INCH, LINES_PER_INCH, LINE_HEIGHT_IN, SP_ELEMENT_CONFIG, ST, SP_ELEMENT_STYLES, PAGE_BREAK_RULES, SP_STRINGS, DEFAULT_SP_FORMAT, SP_ELEMENT_KEYS, ROSTER_VERSION;
+  var PAPER_SIZES, MARGIN_DEFAULTS, CHARS_PER_INCH, LINES_PER_INCH, LINE_HEIGHT_IN, SP_ELEMENT_CONFIG, ST, SP_ELEMENT_STYLES, PAGE_BREAK_RULES, CONTINUED_DEFAULTS, SP_STRINGS, SCENE_NUMBER_DEFAULTS, PAGE_NUMBER_DEFAULTS, DEFAULT_SP_FORMAT, SP_ELEMENT_KEYS, ROSTER_VERSION;
   var init_sp_format = __esm({
     "src/sp-format.js"() {
       PAPER_SIZES = {
@@ -15044,8 +15158,14 @@
         character: { indent: 3.7, width: 3.8, linesBefore: 10, linesBetween: 10 },
         parenthetical: { indent: 3.1, width: 2.9, linesBefore: 0, linesBetween: 10 },
         dialogue: { indent: 2.5, width: 3.5, linesBefore: 0, linesBetween: 10 },
+        // [alpha.57a ข้อ 2] ทรานซิชันเข้า = ชิดซ้าย · ทรานซิชันออก = ชิดขวา (ของเดิม)
+        "transition-in": { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 },
         transition: { indent: 6, width: 2, linesBefore: 10, linesBetween: 10 },
-        shot: { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 },
+        // [alpha.58 ข้อเสนอ] ฉากย่อย + ช็อต วางตัวเหมือนหัวฉากทุกอย่าง (ระยะเยื้อง/ความกว้าง/ระยะเว้น)
+        // ต่างกันแค่ "ไม่มีเลขฉาก" — เลขฉากผูกกับ el === 'scene' เท่านั้น
+        subheader: { indent: 1.5, width: 6, linesBefore: 20, linesBetween: 10 },
+        intercut: { indent: 1.5, width: 6, linesBefore: 20, linesBetween: 10 },
+        shot: { indent: 1.5, width: 6, linesBefore: 20, linesBetween: 10 },
         "act-break": { indent: 1.5, width: 6, linesBefore: 20, linesBetween: 10 },
         note: { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 },
         summary: { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 },
@@ -15062,8 +15182,12 @@
         character: { screen: ST(true, false, false, false), print: ST(true, false, false, false) },
         parenthetical: { screen: ST(false, false, true, false), print: ST(false, false, false, false) },
         dialogue: { screen: ST(false, false, false, false), print: ST(false, false, false, false) },
+        "transition-in": { screen: ST(true, false, false, false), print: ST(true, false, false, false) },
         transition: { screen: ST(true, false, false, false), print: ST(true, false, false, false) },
-        shot: { screen: ST(true, false, false, false), print: ST(true, false, false, false) },
+        // [alpha.58] ฉากย่อย/สลับฉาก/ช็อต = ตัวหนาพิมพ์ใหญ่เหมือนหัวฉาก (เลิกขีดเส้นใต้)
+        subheader: { screen: ST(true, true, false, false), print: ST(true, true, false, false) },
+        intercut: { screen: ST(true, true, false, false), print: ST(true, true, false, false) },
+        shot: { screen: ST(true, true, false, false), print: ST(true, true, false, false) },
         "act-break": { screen: ST(true, true, false, false), print: ST(true, true, false, true) },
         note: { screen: ST(false, false, true, false), print: ST(false, false, true, false) },
         summary: { screen: ST(false, false, true, false), print: ST(false, false, true, false) },
@@ -15086,6 +15210,13 @@
         keepSceneWithNext: 2
         // หัวฉากท้ายหน้าต้องมีเนื้อตามอย่างน้อยกี่บรรทัด ไม่งั้นยกทั้งก้อน
       };
+      CONTINUED_DEFAULTS = {
+        enabled: true,
+        scene: true,
+        dialogue: true,
+        number: true,
+        indent: 3.7
+      };
       SP_STRINGS = {
         continuedBottom: "(CONTINUED)",
         continuedTop: "CONTINUED:",
@@ -15096,6 +15227,8 @@
         sceneTitle: "Scene",
         timeTitle: "Time"
       };
+      SCENE_NUMBER_DEFAULTS = { show: false, left: 0.75, right: 1, suffix: "" };
+      PAGE_NUMBER_DEFAULTS = { show: false, right: 1, top: 0.5, suffix: ".", firstPage: false };
       DEFAULT_SP_FORMAT = {
         paperSize: "letter",
         paper: { width: 8.5, height: 11 },
@@ -15104,10 +15237,111 @@
         elements: SP_ELEMENT_CONFIG,
         styles: SP_ELEMENT_STYLES,
         rules: PAGE_BREAK_RULES,
-        strings: SP_STRINGS
+        strings: SP_STRINGS,
+        sceneNumbers: SCENE_NUMBER_DEFAULTS,
+        pageNumbers: PAGE_NUMBER_DEFAULTS,
+        continued: CONTINUED_DEFAULTS
       };
       SP_ELEMENT_KEYS = Object.keys(SP_ELEMENT_CONFIG);
       ROSTER_VERSION = 1;
+    }
+  });
+
+  // src/lang-fonts.js
+  function defaultLangFonts() {
+    return [
+      {
+        id: "thai",
+        label: "\u0E44\u0E17\u0E22",
+        range: "U+0E00-0E7F",
+        builtin: "CourierThaiMono.ttf",
+        family: "",
+        file: "",
+        enabled: false
+      }
+    ];
+  }
+  function normalizeRange(range) {
+    const parts = String(range || "").split(",").map((s) => s.trim()).filter(Boolean);
+    const ok = parts.filter((p) => SAFE_RANGE.test(p)).map((p) => p.replace(/\s+/g, "").toUpperCase());
+    return ok.join(", ");
+  }
+  function cssFamilyName(name) {
+    return String(name || "").replace(/["'();{}\\]/g, "").trim();
+  }
+  function isUsable(row) {
+    if (!row || row.enabled === false) return false;
+    const src = row.builtin || row.file || cssFamilyName(row.family);
+    if (!src) return false;
+    return !row.range || !!normalizeRange(row.range);
+  }
+  function buildLangFontCss(rows, resolveUrl) {
+    const out = [];
+    for (const row of rows || []) {
+      if (!isUsable(row)) continue;
+      const range = normalizeRange(row.range);
+      const srcs = [];
+      const url = (row.builtin || row.file) && resolveUrl ? resolveUrl(row) : "";
+      if (url) srcs.push(`url("${String(url).replace(/"/g, "%22")}")`);
+      const fam = cssFamilyName(row.family);
+      if (fam) srcs.push(`local("${fam}")`);
+      if (!srcs.length) continue;
+      out.push(`@font-face{font-family:"${LANG_FAMILY}";font-display:swap;src:${srcs.join(",")};` + (range ? `unicode-range:${range};` : "") + "}");
+    }
+    return out.join("\n");
+  }
+  function withLangFamily(stack, hasRows) {
+    const s = String(stack || "").trim();
+    if (!hasRows) return s;
+    if (s.startsWith(`"${LANG_FAMILY}"`)) return s;
+    return `"${LANG_FAMILY}"` + (s ? ", " + s : "");
+  }
+  function normalizeLangFonts(list) {
+    if (!Array.isArray(list)) return defaultLangFonts();
+    return list.map((r, i2) => ({
+      id: String(r?.id || "f" + i2),
+      label: String(r?.label || ""),
+      range: String(r?.range || ""),
+      builtin: String(r?.builtin || ""),
+      file: String(r?.file || ""),
+      family: String(r?.family || ""),
+      enabled: r?.enabled !== false
+    }));
+  }
+  function applyLangFonts(rows, resolveUrl) {
+    const list = normalizeLangFonts(rows).filter(isUsable);
+    let st = document.getElementById("k-lang-fonts");
+    if (!st) {
+      st = document.createElement("style");
+      st.id = "k-lang-fonts";
+      document.head.appendChild(st);
+    }
+    st.textContent = buildLangFontCss(list, resolveUrl);
+    return list.length;
+  }
+  var LANG_FAMILY, SCRIPT_PRESETS, BUILTIN_FONT_FILES, SAFE_RANGE;
+  var init_lang_fonts = __esm({
+    "src/lang-fonts.js"() {
+      LANG_FAMILY = "K2 Lang";
+      SCRIPT_PRESETS = [
+        { key: "thai", label: "\u0E44\u0E17\u0E22", range: "U+0E00-0E7F" },
+        { key: "latin", label: "\u0E25\u0E30\u0E15\u0E34\u0E19 (\u0E2D\u0E31\u0E07\u0E01\u0E24\u0E29)", range: "U+0000-024F, U+2000-206F" },
+        { key: "lao", label: "\u0E25\u0E32\u0E27", range: "U+0E80-0EFF" },
+        { key: "khmer", label: "\u0E40\u0E02\u0E21\u0E23", range: "U+1780-17FF" },
+        { key: "myanmar", label: "\u0E1E\u0E21\u0E48\u0E32", range: "U+1000-109F" },
+        { key: "cjk", label: "\u0E08\u0E35\u0E19/\u0E0D\u0E35\u0E48\u0E1B\u0E38\u0E48\u0E19 (\u0E04\u0E31\u0E19\u0E08\u0E34)", range: "U+3000-30FF, U+4E00-9FFF, U+FF00-FFEF" },
+        { key: "hangul", label: "\u0E40\u0E01\u0E32\u0E2B\u0E25\u0E35", range: "U+1100-11FF, U+AC00-D7AF" },
+        { key: "cyrillic", label: "\u0E0B\u0E35\u0E23\u0E34\u0E25\u0E25\u0E34\u0E01", range: "U+0400-04FF" },
+        { key: "arabic", label: "\u0E2D\u0E32\u0E2B\u0E23\u0E31\u0E1A", range: "U+0600-06FF" },
+        { key: "devanagari", label: "\u0E40\u0E17\u0E27\u0E19\u0E32\u0E04\u0E23\u0E35", range: "U+0900-097F" },
+        { key: "all", label: "\u0E17\u0E38\u0E01\u0E2D\u0E31\u0E01\u0E02\u0E23\u0E30", range: "" }
+      ];
+      BUILTIN_FONT_FILES = [
+        { file: "CourierPrime-Regular.ttf", label: "Courier Prime (\u0E25\u0E30\u0E15\u0E34\u0E19 \xB7 \u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19\u0E1A\u0E17)" },
+        { file: "CourierThaiMono.ttf", label: "Courier Thai Mono (\u0E44\u0E17\u0E22 \xB7 \u0E04\u0E27\u0E32\u0E21\u0E01\u0E27\u0E49\u0E32\u0E07\u0E40\u0E17\u0E48\u0E32\u0E01\u0E31\u0E19\u0E17\u0E38\u0E01\u0E15\u0E31\u0E27)" },
+        { file: "CourierThaiProp.ttf", label: "Courier Thai Proportional (\u0E44\u0E17\u0E22 \xB7 \u0E04\u0E27\u0E32\u0E21\u0E01\u0E27\u0E49\u0E32\u0E07\u0E15\u0E32\u0E21\u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23)" }
+      ];
+      SAFE_RANGE = /^\s*u\+[0-9a-f]{1,6}(-[0-9a-f]{1,6})?\s*$/i;
     }
   });
 
@@ -15118,6 +15352,7 @@
     BASE_ED_FS: () => BASE_ED_FS,
     BASE_SP_FS: () => BASE_SP_FS,
     BUILTIN_CATS: () => BUILTIN_CATS,
+    BUILTIN_FONT_FILES: () => BUILTIN_FONT_FILES,
     CAT_ICON: () => CAT_ICON,
     DEFAULT_GOALS: () => DEFAULT_GOALS,
     DEFAULT_SCRIPT_FONT: () => DEFAULT_SCRIPT_FONT,
@@ -15126,9 +15361,11 @@
     DEFAULT_SP_CYCLE_KEYS: () => DEFAULT_SP_CYCLE_KEYS,
     DEFAULT_SP_FORMAT: () => DEFAULT_SP_FORMAT,
     DEFAULT_STATUS_COLOR: () => DEFAULT_STATUS_COLOR,
+    LANG_FAMILY: () => LANG_FAMILY,
     LOG_BUF: () => LOG_BUF,
     MARGIN_DEFAULTS: () => MARGIN_DEFAULTS,
     PAGE_BREAK_RULES: () => PAGE_BREAK_RULES,
+    PAGE_NUMBER_DEFAULTS: () => PAGE_NUMBER_DEFAULTS,
     PAPER_SIZES: () => PAPER_SIZES,
     PT_PX: () => PT_PX,
     REL_COLOR: () => REL_COLOR,
@@ -15139,7 +15376,9 @@
     SCALE_MAX: () => SCALE_MAX,
     SCALE_MIN: () => SCALE_MIN,
     SCENE_COLORS: () => SCENE_COLORS,
+    SCENE_NUMBER_DEFAULTS: () => SCENE_NUMBER_DEFAULTS,
     SCENE_STATUSES: () => SCENE_STATUSES,
+    SCRIPT_PRESETS: () => SCRIPT_PRESETS,
     SHORTCUTS: () => SHORTCUTS,
     SHORTCUT_LABELS: () => SHORTCUT_LABELS,
     SP_ELEMENT_CONFIG: () => SP_ELEMENT_CONFIG,
@@ -15151,23 +15390,32 @@
     UI_SCALE_MIN: () => UI_SCALE_MIN,
     accelText: () => accelText,
     applyDataI18n: () => applyDataI18n,
+    applyLangFonts: () => applyLangFonts,
+    buildLangFontCss: () => buildLangFontCss,
     categorizeRole: () => categorizeRole,
     categorizeWith: () => categorizeWith,
+    cssFamilyName: () => cssFamilyName,
+    defaultLangFonts: () => defaultLangFonts,
     el: () => el,
     formatShortcut: () => formatShortcut,
     i18n: () => i18n,
+    isLangFontUsable: () => isUsable,
     linesPerPage: () => linesPerPage,
     loadLanguage: () => loadLanguage,
     log: () => log,
     mergeSpFormat: () => mergeSpFormat,
     newRoster: () => newRoster,
+    normalizeLangFonts: () => normalizeLangFonts,
+    normalizeRange: () => normalizeRange,
     normalizeRoster: () => normalizeRoster,
     onLanguageChanged: () => onLanguageChanged,
     pageCount: () => pageCount,
     pageCssVars: () => pageCssVars,
+    pageNumberLabel: () => pageNumberLabel,
     paginate: () => paginate,
     ptToPx: () => ptToPx,
     rosterToText: () => rosterToText,
+    sceneNumberOffsets: () => sceneNumberOffsets,
     setStatus: () => setStatus,
     shortcutId: () => shortcutId,
     smart: () => smart,
@@ -15179,6 +15427,7 @@
     state: () => state,
     t: () => t,
     textWidth: () => textWidth,
+    withLangFamily: () => withLangFamily,
     withShortcut: () => withShortcut,
     wrapLines: () => wrapLines
   });
@@ -15341,6 +15590,7 @@
       init_smart();
       init_relationship_types();
       init_sp_format();
+      init_lang_fonts();
       $ = (s) => document.querySelector(s);
       el = (tag, cls, text) => {
         const e = document.createElement(tag);
@@ -15430,8 +15680,32 @@
         // [61] แสดงเส้นขอบ element + เครื่องหมายจบบรรทัด
         spCheckBeforeExport: true,
         // [54] ตรวจหาข้อผิดพลาดก่อนพิมพ์/ส่งออก
-        spLineLimits: null
+        spLineLimits: null,
         // [54] ความยาวสูงสุดต่อ element (null = ค่ามาตรฐาน)
+        // ---- alpha.57a ----
+        typeSound: false,
+        // [1] เสียงเครื่องพิมพ์ดีดขณะพิมพ์
+        typeSoundVolume: 0.5,
+        // [1] ระดับเสียง 0–1
+        typeSoundAlways: false,
+        // [1] เล่นแม้ไม่ได้เปิดโหมดเครื่องพิมพ์ดีด
+        spSceneNumbers: null,
+        // [2] เลขฉาก { show, left, right, suffix } (null = ค่ามาตรฐาน = ปิด)
+        spPageNumbers: null,
+        // [2] เลขหน้า { show, right, top, suffix, firstPage }
+        langFonts: null,
+        // [5] ฟอนต์ตามภาษา [{id,label,range,builtin,file,family,enabled}]
+        // ---- alpha.58 ----
+        spContinued: null,
+        // [55][56] { enabled, scene, dialogue, number, indent } (null = เปิดตามมาตรฐาน)
+        spLineHeight: 1,
+        // [บั๊ก 3] ช่วงบรรทัดบทภาพยนตร์ — 1 = 6 บรรทัด/นิ้วตามมาตรฐาน
+        spPageGap: 28,
+        // [58] ความสูงช่องว่างระหว่างหน้าในโหมดจัดหน้า (px)
+        smartLearnMin: 2,
+        // [บั๊ก 1] SmartType จำคำจากบทเมื่อเจอซ้ำกี่บล็อก (1–5)
+        heavyDocBlocks: 400
+        // [บั๊ก 4] เกินกี่บล็อกถือว่า "เอกสารหนัก" แล้วหน่วงงานหนักให้ห่างขึ้น
       };
       DEFAULT_GOALS = { dailyWords: 500, projectWords: 5e4 };
       DEFAULT_SP_CYCLE = {
@@ -15441,6 +15715,9 @@
         parenthetical: { enter: "dialogue", tab: "dialogue", shiftTab: "character" },
         dialogue: { enter: "character", tab: "parenthetical", shiftTab: "parenthetical" },
         transition: { enter: "scene", tab: "scene", shiftTab: "dialogue" },
+        "transition-in": { enter: "scene", tab: "scene", shiftTab: "action" },
+        subheader: { enter: "action", tab: "action", shiftTab: "scene" },
+        intercut: { enter: "action", tab: "action", shiftTab: "scene" },
         shot: { enter: "action", tab: "action", shiftTab: "scene" },
         "act-break": { enter: "action", tab: "action", shiftTab: "transition" },
         note: { enter: "action", tab: "action", shiftTab: "scene" },
@@ -15489,7 +15766,7 @@
       BUILTIN_EN = {
         "ui": {
           "app": { "title": "Killian 2", "newProject": "New Project...", "openProject": "Open Project...", "saveAll": "Save All", "home": "Home", "ready": "Ready", "project": "Project", "saving": "Saving...", "saved": "Saved", "loading": "Loading...", "searching": "Searching..." },
-          "menu": { "file": "File", "edit": "Edit", "view": "View", "format": "Format", "help": "Help", "ai": "AI" },
+          "menu": { "file": "File", "edit": "Edit", "view": "View", "format": "Format", "script": "Script", "help": "Help", "ai": "AI" },
           "toolbar": {
             "paperMode": "Paper Mode",
             "toggleMode": "Toggle Mode",
@@ -16211,11 +16488,13 @@
           onRendered = null,
           onVersions = null,
           onSnapshot = null,
-          onSwapTemplate = null
+          onSwapTemplate = null,
+          onReveal = null
         } = {}) {
           this.onRendered = onRendered;
           this.onVersions = onVersions;
           this.onSnapshot = onSnapshot;
+          this.onReveal = onReveal;
           this.onSwapTemplate = onSwapTemplate;
           this.pane = pane;
           this.file = file;
@@ -16386,6 +16665,14 @@
             snapBtn.title = "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E40\u0E27\u0E2D\u0E23\u0E4C\u0E0A\u0E31\u0E19\u0E19\u0E35\u0E49\u0E44\u0E27\u0E49 (\u0E15\u0E31\u0E49\u0E07\u0E0A\u0E37\u0E48\u0E2D\u0E44\u0E14\u0E49)";
             snapBtn.onclick = () => this.onSnapshot && this.onSnapshot();
             head.append(snapBtn);
+          }
+          if (this.onReveal) {
+            const revBtn = document.createElement("button");
+            revBtn.className = "wiki-ver-btn";
+            revBtn.innerHTML = iconHtml("folder", 14) + " \u0E2B\u0E32\u0E43\u0E19\u0E14\u0E34\u0E2A\u0E01\u0E4C";
+            revBtn.title = "\u0E40\u0E1B\u0E34\u0E14\u0E42\u0E1F\u0E25\u0E40\u0E14\u0E2D\u0E23\u0E4C\u0E17\u0E35\u0E48\u0E40\u0E01\u0E47\u0E1A\u0E44\u0E1F\u0E25\u0E4C\u0E19\u0E35\u0E49 (" + this.file + ")";
+            revBtn.onclick = () => this.onReveal(this.file);
+            head.append(revBtn);
           }
           if (this.onSwapTemplate) {
             const tplBtn = document.createElement("button");
@@ -16806,6 +17093,7 @@
   __export(fountain_exports, {
     CHAR_EXTENSIONS: () => CHAR_EXTENSIONS,
     IMG_RE: () => IMG_RE,
+    INTERCUTS: () => INTERCUTS,
     NEXT_ELEM: () => NEXT_ELEM,
     PARENTHETICALS: () => PARENTHETICALS,
     SCENE_PREFIX: () => SCENE_PREFIX,
@@ -16814,16 +17102,35 @@
     TAB_CYCLE: () => TAB_CYCLE,
     TIMES: () => TIMES,
     TRANSITIONS: () => TRANSITIONS,
+    TRANSITIONS_IN: () => TRANSITIONS_IN,
     classify: () => classify,
     lineFor: () => lineFor,
-    parseScript: () => parseScript
+    parseScript: () => parseScript,
+    splitCharacter: () => splitCharacter,
+    withExtension: () => withExtension
   });
+  function splitCharacter(text) {
+    const s = String(text ?? "").trim();
+    const m = /^(.*?)\s*(\([^()]*\))\s*$/.exec(s);
+    if (!m) return { name: s, ext: "" };
+    return { name: m[1].trim(), ext: m[2].trim() };
+  }
+  function withExtension(text, ext) {
+    const { name } = splitCharacter(text);
+    const e = String(ext ?? "").trim();
+    if (!e) return name;
+    const wrapped = e.startsWith("(") && e.endsWith(")") ? e : "(" + e.replace(/^\(|\)$/g, "") + ")";
+    return name ? name + " " + wrapped : wrapped;
+  }
   function classify(line, prevBlank = true, prevType = "action") {
     const s = line.trim();
     if (s === "") return ["blank", ""];
     if (IMG_RE.test(s)) return ["image", s];
     if (s.startsWith("$shot ")) return ["shot", s.slice(6).trim()];
     if (s.startsWith("$act ")) return ["act-break", s.slice(5).trim()];
+    if (s.startsWith("$in ")) return ["transition-in", s.slice(4).trim()];
+    if (s.startsWith("$sub ")) return ["subheader", s.slice(5).trim()];
+    if (s.startsWith("$intercut ")) return ["intercut", s.slice(10).trim()];
     if (RAW_PREFIX.test(s)) return ["raw", line];
     if (s.startsWith("((") && s.endsWith("))")) return ["note", s.slice(2, -2).trim()];
     if (s.startsWith("### ")) return ["outline3", s.slice(4).trim()];
@@ -16876,6 +17183,16 @@
         s = "$act " + text;
         break;
       // [50]
+      case "transition-in":
+        s = "$in " + text;
+        break;
+      // [alpha.57a]
+      case "subheader":
+        s = "$sub " + text;
+        break;
+      case "intercut":
+        s = "$intercut " + text;
+        break;
       case "parenthetical":
         s = text.startsWith("(") && text.endsWith(")") ? text : "(" + text + ")";
         break;
@@ -16911,7 +17228,7 @@
     }
     return s;
   }
-  var SP_ELEMS, TAB_CYCLE, NEXT_ELEM, IMG_RE, SCENE_RE, TRANS_RE, RAW_PREFIX, TIMES, TRANSITIONS, SCENE_PREFIX, PARENTHETICALS, CHAR_EXTENSIONS;
+  var SP_ELEMS, TAB_CYCLE, NEXT_ELEM, IMG_RE, SCENE_RE, TRANS_RE, RAW_PREFIX, TIMES, TRANSITIONS, SCENE_PREFIX, PARENTHETICALS, CHAR_EXTENSIONS, TRANSITIONS_IN, INTERCUTS;
   var init_fountain = __esm({
     "src/fountain.js"() {
       SP_ELEMS = {
@@ -16921,7 +17238,13 @@
         character: { th: "\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23", prefix: "@" },
         parenthetical: { th: "\u0E27\u0E07\u0E40\u0E25\u0E47\u0E1A", prefix: "(" },
         dialogue: { th: "\u0E1A\u0E17\u0E1E\u0E39\u0E14", prefix: "" },
-        transition: { th: "\u0E17\u0E23\u0E32\u0E19\u0E0B\u0E34\u0E0A\u0E31\u0E19", prefix: ">" },
+        // [alpha.57a ข้อ 2] ทรานซิชันแยกเข้า/ออก — "เข้า" ชิดซ้าย · "ออก" ชิดขวา (ของเดิม)
+        "transition-in": { th: "\u0E17\u0E23\u0E32\u0E19\u0E0B\u0E34\u0E0A\u0E31\u0E19\u0E40\u0E02\u0E49\u0E32 (\u0E0B\u0E49\u0E32\u0E22)", prefix: "$in " },
+        transition: { th: "\u0E17\u0E23\u0E32\u0E19\u0E0B\u0E34\u0E0A\u0E31\u0E19\u0E2D\u0E2D\u0E01 (\u0E02\u0E27\u0E32)", prefix: ">" },
+        // [alpha.58] เรียก "ฉากย่อย" ตามที่ผู้ใช้เข้าใจ (mini-slug) — วางตัวเหมือนหัวฉากแต่ไม่มีเลขฉาก
+        subheader: { th: "\u0E09\u0E32\u0E01\u0E22\u0E48\u0E2D\u0E22", prefix: "$sub " },
+        intercut: { th: "\u0E2A\u0E25\u0E31\u0E1A\u0E09\u0E32\u0E01", prefix: "$intercut " },
+        // [alpha.57a]
         shot: { th: "\u0E0A\u0E47\u0E2D\u0E15", prefix: "$shot " },
         // [50] 9-element system
         "act-break": { th: "\u0E15\u0E2D\u0E19", prefix: "$act " },
@@ -16936,7 +17259,20 @@
         raw: { th: "\u0E2D\u0E37\u0E48\u0E19 \u0E46", prefix: "" }
         // element ที่ v2 ยังไม่ทำ UI — คงบรรทัดเดิมเป๊ะ
       };
-      TAB_CYCLE = ["action", "scene", "character", "parenthetical", "dialogue", "transition", "shot", "act-break", "note"];
+      TAB_CYCLE = [
+        "action",
+        "scene",
+        "subheader",
+        "character",
+        "parenthetical",
+        "dialogue",
+        "transition-in",
+        "transition",
+        "intercut",
+        "shot",
+        "act-break",
+        "note"
+      ];
       NEXT_ELEM = {
         scene: "action",
         action: "action",
@@ -16944,6 +17280,9 @@
         parenthetical: "dialogue",
         dialogue: "action",
         transition: "scene",
+        "transition-in": "scene",
+        subheader: "action",
+        intercut: "action",
         shot: "action",
         "act-break": "action",
         summary: "action",
@@ -17012,11 +17351,49 @@
         "(\u0E08\u0E23\u0E34\u0E07\u0E08\u0E31\u0E07)",
         "(\u0E25\u0E31\u0E07\u0E40\u0E25)"
       ];
-      CHAR_EXTENSIONS = ["(V.O.)", "(O.S.)", "(CONT'D)", "(\u0E15\u0E48\u0E2D)", "(\u0E40\u0E2A\u0E35\u0E22\u0E07)", "(\u0E19\u0E2D\u0E01\u0E08\u0E2D)"];
+      CHAR_EXTENSIONS = ["(V.O.)", "(O.S.)", "(O.C.)", "(CONT'D)", "(\u0E15\u0E48\u0E2D)", "(\u0E40\u0E2A\u0E35\u0E22\u0E07)", "(\u0E19\u0E2D\u0E01\u0E08\u0E2D)", "(\u0E43\u0E19\u0E43\u0E08)"];
+      TRANSITIONS_IN = [
+        "FADE IN:",
+        "FADE UP:",
+        "SMASH IN:",
+        "BACK TO SCENE:",
+        "FLASHBACK TO:",
+        "PRELAP:",
+        "\u0E08\u0E32\u0E07\u0E40\u0E02\u0E49\u0E32:",
+        "\u0E15\u0E31\u0E14\u0E40\u0E02\u0E49\u0E32:",
+        "\u0E22\u0E49\u0E2D\u0E19\u0E2D\u0E14\u0E35\u0E15:"
+      ];
+      INTERCUTS = ["INTERCUT WITH:", "INTERCUT:", "\u0E2A\u0E25\u0E31\u0E1A\u0E09\u0E32\u0E01\u0E01\u0E31\u0E1A:", "\u0E2A\u0E25\u0E31\u0E1A\u0E09\u0E32\u0E01:"];
     }
   });
 
   // src/sp-view.js
+  function pageMetrics(fmt, dpi = 96) {
+    const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+    const m = f.margins;
+    const usableWidth = textWidth(f.paper, m);
+    const usableHeight = Math.max(0.5, +f.paper.height - m.top - m.bottom);
+    const lpp = linesPerPage(f.paper, m);
+    return {
+      linesPerPage: lpp,
+      charsPerLine: Math.floor(usableWidth * CHARS_PER_INCH),
+      usableWidth: +usableWidth.toFixed(4),
+      usableHeight: +usableHeight.toFixed(4),
+      lineHeightIn: LINE_HEIGHT_IN,
+      pageWidthPx: Math.round(+f.paper.width * dpi),
+      pageHeightPx: Math.round(+f.paper.height * dpi),
+      bodyHeightPx: Math.round(usableHeight * dpi),
+      lineHeightPx: +(LINE_HEIGHT_IN * dpi).toFixed(4)
+    };
+  }
+  function layoutCssVars(fmt, gapPx = 28) {
+    const mt = pageMetrics(fmt);
+    return {
+      "--sp-body-h": mt.bodyHeightPx + "px",
+      "--sp-page-gap": Math.max(8, Math.round(gapPx)) + "px",
+      "--sp-line-h": mt.lineHeightPx + "px"
+    };
+  }
   function fitScale(containerW, pageW, gap = 20, opts = {}) {
     const minScale = opts.minScale ?? 0.5;
     const maxScale = opts.maxScale ?? 1;
@@ -17050,7 +17427,7 @@
   function blocksFromDoc(doc3) {
     const out = [];
     if (!doc3 || typeof doc3.forEach !== "function") return out;
-    let i2 = 0;
+    let i2 = 0, scene = 0;
     doc3.forEach((node, offset) => {
       if (node.type && node.type.name === "spimage") {
         out.push({ el: "image", text: node.attrs.alt || "", pos: offset, idx: i2++ });
@@ -17059,7 +17436,9 @@
       const el3 = node.attrs && node.attrs.el || "action";
       const text = node.textContent || "";
       const blank = el3 === "action" && !text.trim();
-      out.push({ el: blank ? "blank" : el3, text, pos: offset, idx: i2++ });
+      const b = { el: blank ? "blank" : el3, text, pos: offset, idx: i2++ };
+      if (b.el === "scene") b.sceneNo = ++scene;
+      out.push(b);
     });
     return out;
   }
@@ -17126,10 +17505,15 @@
       page.style.paddingLeft = cssIn(f.margins.left);
       page.style.paddingRight = cssIn(f.margins.right);
       page.style.transform = "scale(" + scale + ")";
-      if (showNums && pg.index > 1) {
+      const label = f.pageNumbers && f.pageNumbers.show ? pageNumberLabel(pg.index, f, opts.startPage) : showNums && pg.index > 1 ? pg.index + "." : "";
+      if (label) {
         const num4 = document.createElement("div");
         num4.className = "sp-page-num";
-        num4.textContent = pg.index + ".";
+        if (f.pageNumbers && f.pageNumbers.show) {
+          num4.style.top = cssIn(f.pageNumbers.top);
+          num4.style.right = cssIn(f.pageNumbers.right);
+        }
+        num4.textContent = label;
         page.append(num4);
       }
       if (pg.continuedTop) {
@@ -17143,6 +17527,14 @@
         d.className = "sp sp-" + (b.el || "action");
         if (Number.isFinite(b.pos)) d.dataset.pos = String(b.pos);
         d.textContent = b.text || "";
+        if (b.el === "scene" && b.sceneNo && f.sceneNumbers && f.sceneNumbers.show) {
+          for (const side of ["l", "r"]) {
+            const s = document.createElement("span");
+            s.className = "k-scene-no k-scene-no-" + side;
+            s.textContent = String(b.sceneNo) + (f.sceneNumbers.suffix || "");
+            d.append(s);
+          }
+        }
         page.append(d);
       }
       if (pg.continuedBottom) {
@@ -17161,13 +17553,14 @@
     const name = SP_VIEW_LABELS[mode] || SP_VIEW_LABELS.normal;
     return Number.isFinite(pageCount2) ? `\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07: ${name} \xB7 ${pageCount2} \u0E2B\u0E19\u0E49\u0E32` : "\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07: " + name;
   }
-  var SP_VIEWS, SP_VIEW_LABELS, SP_VIEW_CLASS, ALL_VIEW_CLASSES, isPageView, isValidView, LINE_MARK, cssIn;
+  var SP_VIEWS, SP_VIEW_LABELS, SP_VIEW_CLASS, ALL_VIEW_CLASSES, isPageView, isValidView, isEditView, LINE_MARK, cssIn;
   var init_sp_view = __esm({
     "src/sp-view.js"() {
       init_sp_format();
-      SP_VIEWS = ["normal", "draft", "side", "overview1", "overview4"];
+      SP_VIEWS = ["normal", "layout", "draft", "side", "overview1", "overview4"];
       SP_VIEW_LABELS = {
         normal: "\u0E1B\u0E01\u0E15\u0E34 (\u0E2B\u0E19\u0E49\u0E32\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29)",
+        layout: "\u0E08\u0E31\u0E14\u0E2B\u0E19\u0E49\u0E32 \u2014 \u0E40\u0E2B\u0E47\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E08\u0E23\u0E34\u0E07 (Layout)",
         draft: "\u0E23\u0E48\u0E32\u0E07 \u2014 \u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21\u0E25\u0E49\u0E27\u0E19 (Draft)",
         side: "\u0E40\u0E23\u0E35\u0E22\u0E07\u0E2B\u0E19\u0E49\u0E32\u0E04\u0E39\u0E48 (Side-by-Side)",
         overview1: "\u0E20\u0E32\u0E1E\u0E23\u0E27\u0E21 1px/\u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23",
@@ -17175,12 +17568,14 @@
       };
       SP_VIEW_CLASS = {
         normal: "",
+        layout: "sp-view-layout",
         draft: "sp-view-draft",
         side: "sp-view-side",
         overview1: "sp-view-overview sp-view-ov1",
         overview4: "sp-view-overview sp-view-ov4"
       };
       ALL_VIEW_CLASSES = [
+        "sp-view-layout",
         "sp-view-draft",
         "sp-view-side",
         "sp-view-overview",
@@ -17189,6 +17584,7 @@
       ];
       isPageView = (mode) => mode === "side" || mode === "overview1" || mode === "overview4";
       isValidView = (mode) => SP_VIEWS.includes(mode);
+      isEditView = (mode) => !isPageView(mode);
       LINE_MARK = { hard: "\xB6", soft: "\xB7" };
       cssIn = (v) => (+v || 0) + "in";
     }
@@ -17243,6 +17639,51 @@
   function refreshFormatGuide(view) {
     if (view) view.dispatch(view.state.tr.setMeta(guideKey, true));
   }
+  function setSceneNumbers(on, suffix) {
+    const next = !!on, sfx = String(suffix ?? "");
+    const changed = next !== _snOn || sfx !== _snSuffix;
+    _snOn = next;
+    _snSuffix = sfx;
+    return changed;
+  }
+  function snDecos(doc3) {
+    if (!_snOn || !doc3) return DecorationSet.empty;
+    const out = [];
+    let n = 0;
+    doc3.forEach((node, pos) => {
+      if (!node.type || node.type.name !== "sp") return;
+      if ((node.attrs && node.attrs.el || "action") !== "scene") return;
+      const no = String(++n) + _snSuffix;
+      for (const side of ["l", "r"]) {
+        out.push(Decoration.widget(pos + 1, () => {
+          const s = document.createElement("span");
+          s.className = "k-scene-no k-scene-no-" + side;
+          s.textContent = no;
+          s.setAttribute("contenteditable", "false");
+          return s;
+        }, { side: -1, key: "sn" + side + pos + no }));
+      }
+    });
+    return DecorationSet.create(doc3, out);
+  }
+  function spSceneNumberPlugin() {
+    return new Plugin({
+      key: snKey,
+      state: {
+        init: (_c, st) => snDecos(st.doc),
+        apply(tr2, prev, _o, st) {
+          if (!tr2.docChanged && !tr2.getMeta(snKey)) return prev.map(tr2.mapping, tr2.doc);
+          return snDecos(st.doc);
+        }
+      },
+      props: { decorations(state2) {
+        return snKey.getState(state2);
+      } }
+    });
+  }
+  function refreshSceneNumbers(view) {
+    if (view) view.dispatch(view.state.tr.setMeta(snKey, true));
+  }
   function setPageBreaks(list) {
     const next = (list || []).filter((b) => b && Number.isFinite(b.pos) && b.pos > 0);
     const sig = next.map((b) => b.pos + ":" + b.page).join(",");
@@ -17250,6 +17691,9 @@
     _breakSig = sig;
     _breaks = next;
     return true;
+  }
+  function pageBreaks() {
+    return _breaks.slice();
   }
   function pbDecos(doc3) {
     if (!_breaks.length || !doc3) return DecorationSet.empty;
@@ -17289,7 +17733,50 @@
   function refreshPageBreaks(view) {
     if (view) view.dispatch(view.state.tr.setMeta(pbKey, true));
   }
-  var guideKey, _guideOn, _guideFmt, pbKey, _breaks, _breakSig;
+  function setContinueds(list) {
+    const next = (list || []).filter((m) => m && Number.isFinite(m.pos) && m.pos > 0 && m.text);
+    const sig = next.map((m) => m.pos + ":" + m.type + ":" + m.text).join("|");
+    if (sig === _contSig) return false;
+    _contSig = sig;
+    _conts = next;
+    return true;
+  }
+  function ctDecos(doc3) {
+    if (!_conts.length || !doc3) return DecorationSet.empty;
+    const max = doc3.content.size;
+    const out = [];
+    for (const m of _conts) {
+      if (m.pos > max) continue;
+      out.push(Decoration.widget(m.pos, () => {
+        const d = document.createElement("div");
+        d.className = "sp sp-cont-mark " + (m.cls || "");
+        d.dataset.contType = m.type;
+        d.textContent = m.text;
+        d.setAttribute("contenteditable", "false");
+        return d;
+      }, { side: m.side ?? 0, key: "ct" + m.pos + m.type + m.text }));
+    }
+    return DecorationSet.create(doc3, out);
+  }
+  function spContinuedPlugin() {
+    return new Plugin({
+      key: ctKey,
+      state: {
+        init: (_c, st) => ctDecos(st.doc),
+        apply(tr2, prev, _o, st) {
+          if (!tr2.docChanged && !tr2.getMeta(ctKey)) return prev.map(tr2.mapping, tr2.doc);
+          return ctDecos(st.doc);
+        }
+      },
+      props: { decorations(state2) {
+        return ctKey.getState(state2);
+      } }
+    });
+  }
+  function refreshContinueds(view) {
+    if (view) view.dispatch(view.state.tr.setMeta(ctKey, true));
+  }
+  var guideKey, _guideOn, _guideFmt, snKey, _snOn, _snSuffix, pbKey, _breaks, _breakSig, ctKey, _conts, _contSig;
   var init_sp_format_guide = __esm({
     "src/sp-format-guide.js"() {
       init_dist4();
@@ -17298,9 +17785,15 @@
       guideKey = new PluginKey("kspguide");
       _guideOn = false;
       _guideFmt = null;
+      snKey = new PluginKey("kspsceneno");
+      _snOn = false;
+      _snSuffix = "";
       pbKey = new PluginKey("ksppagebreak");
       _breaks = [];
       _breakSig = "";
+      ctKey = new PluginKey("kspcontinued");
+      _conts = [];
+      _contSig = "";
     }
   });
 
@@ -17453,8 +17946,12 @@
                 commentAnchorPlugin(),
                 spFormatGuidePlugin(),
                 // [61] เส้นขอบ element + เครื่องหมายจบบรรทัด
-                spPageBreakPlugin()
+                spPageBreakPlugin(),
                 // [57] เส้นคั่นหน้า (ตำแหน่งมาจาก paginate ใน app.js)
+                spSceneNumberPlugin(),
+                // [alpha.57a] เลขฉากสองฝั่งหัวฉาก
+                spContinuedPlugin()
+                // [alpha.58 · 55–56] (CONTINUED)/CONTINUED:/(MORE)/(cont'd)
               ]
             }),
             handleKeyDown(view, ev) {
@@ -17545,6 +18042,30 @@
         refreshGuides() {
           refreshFormatGuide(this.view);
           refreshPageBreaks(this.view);
+          refreshSceneNumbers(this.view);
+          refreshContinueds(this.view);
+        }
+        /** [alpha.57a ข้อ 2] ใส่/ถอด "ส่วนเสริม" ท้ายชื่อตัวละคร — เว้นจากชื่อ 1 วรรคเสมอ */
+        setExtension(ext) {
+          const { node, pos } = this.curBlock();
+          if (!node || node.attrs.el !== "character") return false;
+          const next = withExtension(node.textContent || "", ext);
+          const v = this.view;
+          const from2 = pos + 1, to = pos + 1 + node.content.size;
+          let tr2 = next ? v.state.tr.insertText(next, from2, to) : v.state.tr.delete(from2, to);
+          tr2 = tr2.setSelection(TextSelection.create(tr2.doc, from2 + next.length));
+          v.dispatch(tr2);
+          v.focus();
+          return true;
+        }
+        /** ส่วนเสริมของบล็อกตัวละครที่เคอร์เซอร์อยู่ ('' = ไม่มี) */
+        curExtension() {
+          try {
+            const { node } = this.curBlock();
+            return node.attrs.el === "character" ? splitCharacter(node.textContent || "").ext : "";
+          } catch {
+            return "";
+          }
         }
         /** [78] ย้ายเคอร์เซอร์ไปตำแหน่ง pos แล้วเลื่อนจอให้เห็น */
         gotoPos(pos) {
@@ -42814,11 +43335,11 @@
               originX: "right",
               originY: "top"
             });
-            const pad = 6;
+            const pad2 = 6;
             kids.push(new import_fabric.fabric.Rect({
-              left: W - 10 - (txt.width + pad * 2),
+              left: W - 10 - (txt.width + pad2 * 2),
               top: 6,
-              width: txt.width + pad * 2,
+              width: txt.width + pad2 * 2,
               height: 16,
               rx: 8,
               ry: 8,
@@ -43083,19 +43604,19 @@
           }
           const ids = members.map((m) => m.nid);
           const nodes = this._nodes.filter((n) => ids.includes(n.id));
-          const pad = 22;
+          const pad2 = 22;
           const g = {
             id: uid("gp-"),
             name: name || "\u0E01\u0E25\u0E38\u0E48\u0E21\u0E43\u0E2B\u0E21\u0E48",
             color: "#d97757",
-            x: Math.min(...nodes.map((n) => n.x)) - pad,
-            y: Math.min(...nodes.map((n) => n.y)) - pad - 12,
+            x: Math.min(...nodes.map((n) => n.x)) - pad2,
+            y: Math.min(...nodes.map((n) => n.y)) - pad2 - 12,
             width: 0,
             height: 0,
             childrenIds: ids
           };
-          g.width = Math.max(...nodes.map((n) => n.x + n.width)) + pad - g.x;
-          g.height = Math.max(...nodes.map((n) => n.y + n.height)) + pad - g.y;
+          g.width = Math.max(...nodes.map((n) => n.x + n.width)) + pad2 - g.x;
+          g.height = Math.max(...nodes.map((n) => n.y + n.height)) + pad2 - g.y;
           this._groups.push(g);
           this.canvas.discardActiveObject();
           this._renderAll();
@@ -43106,11 +43627,11 @@
         _updateGroupBounds(g) {
           const nodes = this._nodes.filter((n) => g.childrenIds.includes(n.id));
           if (!nodes.length) return;
-          const pad = 22;
-          g.x = Math.min(...nodes.map((n) => n.x)) - pad;
-          g.y = Math.min(...nodes.map((n) => n.y)) - pad - 12;
-          g.width = Math.max(...nodes.map((n) => n.x + n.width)) + pad - g.x;
-          g.height = Math.max(...nodes.map((n) => n.y + n.height)) + pad - g.y;
+          const pad2 = 22;
+          g.x = Math.min(...nodes.map((n) => n.x)) - pad2;
+          g.y = Math.min(...nodes.map((n) => n.y)) - pad2 - 12;
+          g.width = Math.max(...nodes.map((n) => n.x + n.width)) + pad2 - g.x;
+          g.height = Math.max(...nodes.map((n) => n.y + n.height)) + pad2 - g.y;
         }
         // ================= Filter =================
         _applyFilter() {
@@ -44142,6 +44663,86 @@
     }
   });
 
+  // src/sp-continued.js
+  function pageAnchor(page) {
+    const b = (page && page.blocks || []).find((x) => x && Number.isFinite(x.pos));
+    return b ? b.pos : null;
+  }
+  function lastBlock(page) {
+    const list = page && page.blocks || [];
+    return list.length ? list[list.length - 1] : null;
+  }
+  function computeContinueds(pages, fmt) {
+    const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+    const CT = { ...CONTINUED_DEFAULTS, ...f.continued || {} };
+    const list = pages && pages.pages || pages || [];
+    const out = [];
+    if (CT.enabled === false) return out;
+    for (let i2 = 0; i2 < list.length - 1; i2++) {
+      const cur = list[i2], next = list[i2 + 1];
+      const pos = pageAnchor(next);
+      if (!Number.isFinite(pos)) continue;
+      const add = (type, text) => {
+        if (!text) return;
+        out.push({
+          pos,
+          page: cur.index,
+          type,
+          text: String(text),
+          side: CONTINUED_SIDE[type],
+          cls: CONTINUED_CLASS[type]
+        });
+      };
+      if (CT.dialogue !== false) {
+        const lb = lastBlock(cur);
+        if (lb && lb.more) add("more", lb.text || f.strings.dialogueMore);
+      }
+      if (CT.scene !== false) {
+        add("continued-bottom", cur.continuedBottom);
+        add("continued-top", next.continuedTop);
+      }
+      if (CT.dialogue !== false) {
+        const fb = (next.blocks || [])[0];
+        if (fb && fb.contd) add("contd", fb.text || "");
+      }
+    }
+    return out;
+  }
+  function pagesWithContinueds(pages, fmt) {
+    const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+    const CT = { ...CONTINUED_DEFAULTS, ...f.continued || {} };
+    const list = pages && pages.pages || pages || [];
+    return list.map((pg) => {
+      const blocks = [];
+      if (CT.enabled !== false && CT.scene !== false && pg.continuedTop) {
+        blocks.push({ el: "continued-top", text: pg.continuedTop, lines: 1 });
+      }
+      for (const b of pg.blocks || []) blocks.push(b);
+      if (CT.enabled !== false && CT.scene !== false && pg.continuedBottom) {
+        blocks.push({ el: "continued-bottom", text: pg.continuedBottom, lines: 1 });
+      }
+      return { ...pg, blocks };
+    });
+  }
+  var CONTINUED_CLASS, CONTINUED_SIDE;
+  var init_sp_continued = __esm({
+    "src/sp-continued.js"() {
+      init_sp_format();
+      CONTINUED_CLASS = {
+        more: "sp-more",
+        "continued-bottom": "sp-continued-bottom",
+        "continued-top": "sp-continued-top",
+        contd: "sp-contd"
+      };
+      CONTINUED_SIDE = {
+        more: -40,
+        "continued-bottom": -30,
+        "continued-top": 10,
+        contd: 20
+      };
+    }
+  });
+
   // src/compile.js
   var compile_exports = {};
   __export(compile_exports, {
@@ -44150,6 +44751,7 @@
     STEP_DEFS: () => STEP_DEFS,
     cloneWorkflow: () => cloneWorkflow,
     escapeHtml: () => escapeHtml,
+    insertContinueds: () => insertContinueds,
     mdToHtml: () => mdToHtml,
     mdToHtmlBody: () => mdToHtmlBody,
     mkStep: () => mkStep,
@@ -44160,6 +44762,30 @@
     stripMarkdown: () => stripMarkdown,
     stripMentions: () => stripMentions
   });
+  function insertContinueds(text, fmt) {
+    const f = mergeSpFormat(fmt);
+    const pages = pagesWithContinueds(paginate(parseScript(String(text ?? "")), { fmt: f }), f);
+    const out = [];
+    pages.forEach((pg, i2) => {
+      if (i2) out.push("", PAGE_BREAK, "");
+      let prevBlank = true, prevType = "action";
+      for (const b of pg.blocks || []) {
+        if (b.el === "continued-top" || b.el === "continued-bottom" || b.el === "more") {
+          out.push(b.text || "");
+          prevBlank = false;
+          continue;
+        }
+        const line = lineFor(b.el, b.text || "", prevBlank, prevType);
+        out.push(line);
+        if (!String(line).trim()) prevBlank = true;
+        else {
+          prevBlank = false;
+          prevType = b.el;
+        }
+      }
+    });
+    return out.join("\n");
+  }
   function mkStep(key, on = true, opts = null) {
     const d = stepDef(key);
     return { key, on, opts: { ...d && d.opts ? d.opts : {}, ...opts || {} } };
@@ -44273,7 +44899,7 @@ ${mdToHtmlBody(md)}
     }
     return { chapters: model.chapters.length, scenes: sc, words: w };
   }
-  function runWorkflow(model0, workflow, { allowJs = true, varCtx = {} } = {}) {
+  function runWorkflow(model0, workflow, { allowJs = true, varCtx = {}, spFormat: spFormat2 = null } = {}) {
     const warn = [];
     const model = {
       title: model0.title,
@@ -44378,6 +45004,14 @@ ${mdToHtmlBody(md)}
     let text = out.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
     let ext = workflow.ext || "md";
     for (const st of at("text")) {
+      if (st.key === "sp-continued") {
+        try {
+          text = insertContinueds(text, spFormat2);
+        } catch (e) {
+          warn.push("\u0E41\u0E17\u0E23\u0E01\u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21\u0E15\u0E48\u0E2D\u0E40\u0E19\u0E37\u0E48\u0E2D\u0E07\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08: " + e.message);
+        }
+        continue;
+      }
       if (st.key === "to-html") {
         text = mdToHtml(text, model.title);
         ext = "html";
@@ -44405,6 +45039,9 @@ ${mdToHtmlBody(md)}
   var init_compile = __esm({
     "src/compile.js"() {
       init_template_vars();
+      init_fountain();
+      init_sp_format();
+      init_sp_continued();
       PAGE_BREAK = "<!-- \u0E02\u0E36\u0E49\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E43\u0E2B\u0E21\u0E48 -->";
       STEP_DEFS = [
         // ---- ช่วงเนื้อหา ----
@@ -44457,6 +45094,12 @@ ${mdToHtmlBody(md)}
         { key: "page-break", stage: "render", label: "\u0E02\u0E36\u0E49\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E43\u0E2B\u0E21\u0E48\u0E17\u0E38\u0E01\u0E1A\u0E17" },
         { key: "stats", stage: "render", label: "\u0E15\u0E48\u0E2D\u0E17\u0E49\u0E32\u0E22\u0E14\u0E49\u0E27\u0E22\u0E2A\u0E23\u0E38\u0E1B\u0E2A\u0E16\u0E34\u0E15\u0E34" },
         // ---- ช่วงข้อความสุดท้าย ----
+        // [alpha.58 · 55–56] เฉพาะบทภาพยนตร์ — ปิดไว้ในทุกพรีเซ็ต (นิยายไม่ต้องใช้)
+        {
+          key: "sp-continued",
+          stage: "text",
+          label: "\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C: \u0E41\u0E17\u0E23\u0E01 (CONTINUED)/(MORE) \u0E15\u0E32\u0E21\u0E01\u0E32\u0E23\u0E15\u0E31\u0E14\u0E2B\u0E19\u0E49\u0E32"
+        },
         { key: "to-html", stage: "text", label: "\u0E41\u0E1B\u0E25\u0E07\u0E40\u0E1B\u0E47\u0E19 HTML" },
         {
           key: "js",
@@ -45001,6 +45644,10 @@ ${mdToHtmlBody(md)}
     const iSyn = mk("\u0E40\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E22\u0E48\u0E2D", row.synopsis, "textarea");
     const iStoryDate = mk("\u0E40\u0E27\u0E25\u0E32\u0E43\u0E19\u0E40\u0E23\u0E37\u0E48\u0E2D\u0E07 (\u0E40\u0E2A\u0E49\u0E19\u0E40\u0E27\u0E25\u0E32)", row.storyDate);
     iStoryDate.placeholder = "\u0E40\u0E0A\u0E48\u0E19 \u0E27\u0E31\u0E19\u0E17\u0E35\u0E48 3 \xB7 \u0E1B\u0E35\u0E17\u0E35\u0E48 1024 \xB7 \u0E40\u0E0A\u0E49\u0E32\u0E27\u0E31\u0E19\u0E08\u0E31\u0E19\u0E17\u0E23\u0E4C";
+    const iStartPage = mk("\u0E40\u0E25\u0E02\u0E2B\u0E19\u0E49\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19 (\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C)", row.startPage || "");
+    iStartPage.type = "number";
+    iStartPage.min = "1";
+    iStartPage.placeholder = '1 \u2014 \u0E43\u0E0A\u0E49\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E40\u0E1B\u0E34\u0E14 "\u0E40\u0E25\u0E02\u0E2B\u0E19\u0E49\u0E32" \u0E43\u0E19\u0E15\u0E31\u0E49\u0E07\u0E04\u0E48\u0E32\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C';
     const iPov = mk("\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07 (POV)", row.pov);
     const iEmotion = mk("\u0E2D\u0E32\u0E23\u0E21\u0E13\u0E4C", row.emotion);
     const iConflict = mk("\u0E04\u0E27\u0E32\u0E21\u0E02\u0E31\u0E14\u0E41\u0E22\u0E49\u0E07", row.conflict);
@@ -45043,6 +45690,11 @@ ${mdToHtmlBody(md)}
       row.pov = iPov.value;
       row.status = iStatus.value;
       row.storyDate = iStoryDate.value.trim();
+      {
+        const sp = parseInt(iStartPage.value, 10);
+        if (Number.isFinite(sp) && sp > 0) row.startPage = sp;
+        else delete row.startPage;
+      }
       row.emotion = iEmotion.value;
       row.conflict = iConflict.value;
       row.color = iColor.value;
@@ -45070,6 +45722,12 @@ ${mdToHtmlBody(md)}
       } catch {
       }
       await buildTree2();
+      const openTab = state.tabs.get(file);
+      if (openTab) {
+        openTab.startPage = row.startPage || 1;
+        updatePageNumberHint();
+        refreshSpView();
+      }
       ov.remove();
       setStatus("\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E04\u0E38\u0E13\u0E2A\u0E21\u0E1A\u0E31\u0E15\u0E34\u0E09\u0E32\u0E01\u0E41\u0E25\u0E49\u0E27");
     };
@@ -45697,6 +46355,168 @@ ${mdToHtmlBody(md)}
         { key: "touch", label: "\u{1F590} \u0E2A\u0E31\u0E21\u0E1C\u0E31\u0E2A", icon: "edit", hint: "\u0E40\u0E0A\u0E48\u0E19 \u0E1E\u0E37\u0E49\u0E19\u0E44\u0E21\u0E49\u0E40\u0E22\u0E47\u0E19\u0E41\u0E25\u0E30\u0E2B\u0E22\u0E32\u0E1A" },
         { key: "taste", label: "\u{1F445} \u0E23\u0E2A\u0E0A\u0E32\u0E15\u0E34", icon: "star", hint: "\u0E40\u0E0A\u0E48\u0E19 \u0E23\u0E2A\u0E1D\u0E38\u0E48\u0E19\u0E15\u0E34\u0E14\u0E1B\u0E25\u0E32\u0E22\u0E25\u0E34\u0E49\u0E19" }
       ];
+    }
+  });
+
+  // src/typewriter-sound.js
+  function isTypeSound() {
+    return _on;
+  }
+  function setTypeVolume(v) {
+    const n = Math.max(0, Math.min(1, Number(v)));
+    _volume = Number.isFinite(n) ? n : 0.5;
+    if (_master) _master.gain.value = _volume;
+    return _volume;
+  }
+  function setTypeSound(on) {
+    _on = !!on;
+    if (_on) ensureAudio();
+    return _on;
+  }
+  function ensureAudio() {
+    if (_ctx) {
+      if (_ctx.state === "suspended") {
+        try {
+          _ctx.resume();
+        } catch {
+        }
+      }
+      return _ctx;
+    }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    try {
+      _ctx = new AC();
+      _master = _ctx.createGain();
+      _master.gain.value = _volume;
+      _master.connect(_ctx.destination);
+      const n = Math.floor(_ctx.sampleRate * 0.25);
+      _noise = _ctx.createBuffer(1, n, _ctx.sampleRate);
+      const d = _noise.getChannelData(0);
+      for (let i2 = 0; i2 < n; i2++) d[i2] = Math.random() * 2 - 1;
+    } catch {
+      _ctx = null;
+    }
+    return _ctx;
+  }
+  function clack(t0, { freq = 2200, q = 1.2, dur = 0.045, gain = 0.5 } = {}) {
+    const src = _ctx.createBufferSource();
+    src.buffer = _noise;
+    src.playbackRate.value = 1;
+    const bp = _ctx.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.value = freq;
+    bp.Q.value = q;
+    const g = _ctx.createGain();
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(gain, t0 + 2e-3);
+    g.gain.exponentialRampToValueAtTime(8e-4, t0 + dur);
+    src.connect(bp);
+    bp.connect(g);
+    g.connect(_master);
+    src.start(t0, Math.random() * 0.2, dur + 0.02);
+    src.stop(t0 + dur + 0.02);
+  }
+  function thock(t0, { freq = 170, dur = 0.05, gain = 0.28 } = {}) {
+    const o = _ctx.createOscillator();
+    o.type = "triangle";
+    o.frequency.setValueAtTime(freq, t0);
+    o.frequency.exponentialRampToValueAtTime(Math.max(40, freq * 0.55), t0 + dur);
+    const g = _ctx.createGain();
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(gain, t0 + 3e-3);
+    g.gain.exponentialRampToValueAtTime(8e-4, t0 + dur);
+    o.connect(g);
+    g.connect(_master);
+    o.start(t0);
+    o.stop(t0 + dur + 0.01);
+  }
+  function bell(t0, gain = 0.16) {
+    for (const [f, mul, dur] of [[1760, 1, 0.55], [2640, 0.5, 0.4]]) {
+      const o = _ctx.createOscillator();
+      o.type = "sine";
+      o.frequency.value = f;
+      const g = _ctx.createGain();
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(gain * mul, t0 + 6e-3);
+      g.gain.exponentialRampToValueAtTime(5e-4, t0 + dur);
+      o.connect(g);
+      g.connect(_master);
+      o.start(t0);
+      o.stop(t0 + dur + 0.02);
+    }
+  }
+  function carriage(t0, dur = 0.22) {
+    const src = _ctx.createBufferSource();
+    src.buffer = _noise;
+    src.loop = true;
+    const bp = _ctx.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.Q.value = 3;
+    bp.frequency.setValueAtTime(3200, t0);
+    bp.frequency.exponentialRampToValueAtTime(700, t0 + dur);
+    const g = _ctx.createGain();
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(0.13, t0 + 0.03);
+    g.gain.exponentialRampToValueAtTime(6e-4, t0 + dur);
+    src.connect(bp);
+    bp.connect(g);
+    g.connect(_master);
+    src.start(t0);
+    src.stop(t0 + dur + 0.02);
+  }
+  function playType(kind = "key", opts = {}) {
+    if (!_on && !opts.force) return false;
+    if (!ensureAudio()) return false;
+    const now = _ctx.currentTime;
+    if (now - _lastAt < 0.025) return false;
+    _lastAt = now;
+    const t0 = now + 1e-3;
+    const jitter = 0.9 + Math.random() * 0.2;
+    try {
+      if (kind === "return") {
+        carriage(t0);
+        bell(t0 + 0.02);
+        clack(t0 + 0.2, { freq: 1500, dur: 0.05, gain: 0.4 });
+      } else if (kind === "space") {
+        clack(t0, { freq: 1200 * jitter, dur: 0.04, gain: 0.32 });
+        thock(t0, { freq: 130, gain: 0.2 });
+      } else if (kind === "back") {
+        clack(t0, { freq: 3e3 * jitter, dur: 0.03, gain: 0.3 });
+      } else {
+        clack(t0, { freq: 2200 * jitter, dur: 0.045, gain: 0.5 });
+        thock(t0, { freq: 170 * jitter });
+      }
+    } catch {
+      return false;
+    }
+    return true;
+  }
+  function soundKindFor(ev) {
+    if (!ev) return null;
+    if (ev.ctrlKey || ev.metaKey || ev.altKey) return null;
+    const k = ev.key;
+    if (k === "Enter") return "return";
+    if (k === " " || ev.code === "Space") return "space";
+    if (k === "Backspace" || k === "Delete") return "back";
+    if (k === "Tab") return "key";
+    if (typeof k === "string" && k.length === 1) return "key";
+    return null;
+  }
+  function isEditorTarget(ev) {
+    const t2 = ev && ev.target;
+    if (!t2 || !t2.closest) return false;
+    return !!t2.closest(".ProseMirror");
+  }
+  var _ctx, _master, _noise, _on, _volume, _lastAt;
+  var init_typewriter_sound = __esm({
+    "src/typewriter-sound.js"() {
+      _ctx = null;
+      _master = null;
+      _noise = null;
+      _on = false;
+      _volume = 0.5;
+      _lastAt = 0;
     }
   });
 
@@ -47685,7 +48505,12 @@ ${mdToHtmlBody(md)}
       rules: { ...PAGE_BREAK_RULES, ...s.spPageRules || {} },
       strings: { ...SP_STRINGS, ...s.spStrings || {} },
       keys: spCycleKeys(s),
-      cycleOn: s.spCycleEnabled !== false
+      cycleOn: s.spCycleEnabled !== false,
+      // [alpha.57a ข้อ 2] เลขฉาก + เลขหน้า
+      sceneNumbers: { ...SCENE_NUMBER_DEFAULTS, ...s.spSceneNumbers || {} },
+      pageNumbers: { ...PAGE_NUMBER_DEFAULTS, ...s.spPageNumbers || {} },
+      // [alpha.57a ข้อ 5] ฟอนต์ตามภาษา (สำเนาทำงาน)
+      langFonts: normalizeLangFonts(s.langFonts)
     };
     const ov = el("div", "k-overlay");
     const box = el("div", "k-dialog k-settings");
@@ -47699,6 +48524,7 @@ ${mdToHtmlBody(md)}
       <div class="k-set-tab" data-p="page">\u{1F4D0} \u0E2B\u0E19\u0E49\u0E32\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29</div>
       <div class="k-set-tab" data-p="spfmt">\u{1F3AC} \u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A\u0E1A\u0E17</div>
       <div class="k-set-tab" data-p="sp">\u2328 \u0E1B\u0E38\u0E48\u0E21\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07</div>
+      <div class="k-set-tab" data-p="fonts">\u{1F524} \u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E15\u0E32\u0E21\u0E20\u0E32\u0E29\u0E32</div>
       <div class="k-set-tab" data-p="lang">${t("settings.language")}</div>
       <div class="k-set-tab" data-p="keys">${t("settings.shortcuts")}</div>
     </div>
@@ -47725,6 +48551,11 @@ ${mdToHtmlBody(md)}
       <div class="k-row"><label>${t("settings.recycleDays")}<span class="k-hint">${t("settings.recycleDaysHint")}</span></label><input type="number" id="st-recycle" min="0" max="3650"></div>
       <div class="k-row"><label>${t("settings.focusDim")}<span class="k-hint">${t("settings.focusDimHint")}</span></label><input type="range" id="st-fmdim" min="0.05" max="0.8" step="0.05"><span id="st-fmdim-lbl" class="k-hint"></span></div>
       <div class="k-row"><label>${t("settings.uiScale", "\u0E02\u0E19\u0E32\u0E14 UI")}<span class="k-hint">${t("settings.uiScaleHint", "\u0E22\u0E48\u0E2D/\u0E02\u0E22\u0E32\u0E22\u0E41\u0E16\u0E1A\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E21\u0E37\u0E2D \u0E41\u0E1C\u0E07 \u0E41\u0E17\u0E47\u0E1A \u0E41\u0E25\u0E30\u0E01\u0E25\u0E48\u0E2D\u0E07\u0E42\u0E15\u0E49\u0E15\u0E2D\u0E1A (75\u2013200%)")}</span></label><input type="range" id="st-uiscale" min="0.75" max="2" step="0.05"><span id="st-uiscale-lbl" class="k-hint"></span></div>
+      <div class="k-set-sub k-full">\u{1F50A} \u0E40\u0E2A\u0E35\u0E22\u0E07\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E14\u0E35\u0E14</div>
+      <div class="k-row"><label>\u0E40\u0E1B\u0E34\u0E14\u0E40\u0E2A\u0E35\u0E22\u0E07\u0E02\u0E13\u0E30\u0E1E\u0E34\u0E21\u0E1E\u0E4C<span class="k-hint">\u0E40\u0E04\u0E32\u0E30\u0E41\u0E1B\u0E49\u0E19 \xB7 \u0E27\u0E23\u0E23\u0E04 \xB7 \u0E25\u0E1A \xB7 \u0E01\u0E23\u0E30\u0E14\u0E34\u0E48\u0E07\u0E15\u0E2D\u0E19\u0E02\u0E36\u0E49\u0E19\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14</span></label><input type="checkbox" id="st-typesnd"></div>
+      <div class="k-row"><label>\u0E40\u0E25\u0E48\u0E19\u0E41\u0E21\u0E49\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E40\u0E1B\u0E34\u0E14\u0E42\u0E2B\u0E21\u0E14\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E14\u0E35\u0E14<span class="k-hint">\u0E1B\u0E34\u0E14 = \u0E44\u0E14\u0E49\u0E22\u0E34\u0E19\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E15\u0E2D\u0E19\u0E40\u0E1B\u0E34\u0E14\u0E42\u0E2B\u0E21\u0E14 (Ctrl+Shift+T)</span></label><input type="checkbox" id="st-typesnd-always"></div>
+      <div class="k-row"><label>\u0E23\u0E30\u0E14\u0E31\u0E1A\u0E40\u0E2A\u0E35\u0E22\u0E07</label><input type="range" id="st-typesnd-vol" min="0" max="1" step="0.05"><span id="st-typesnd-lbl" class="k-hint"></span></div>
+      <div class="k-row"><label>\u0E25\u0E2D\u0E07\u0E1F\u0E31\u0E07</label><span><button id="st-typesnd-test" class="k-key-btn">\u0E40\u0E04\u0E32\u0E30</button> <button id="st-typesnd-test2" class="k-key-btn">\u0E02\u0E36\u0E49\u0E19\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14</button></span></div>
     </div>
     <div class="k-set-page" data-p="auto">
       <div class="k-row"><label>${iconHtml("cloud-lightning", 14)} ${t("settings.autoSync")}<span class="k-hint">${t("settings.autoSyncHint")}</span></label><input type="checkbox" id="st-autosync"></div>
@@ -47761,6 +48592,17 @@ ${mdToHtmlBody(md)}
         <div class="k-row"><label>\u0E02\u0E27\u0E32 (Right)</label><input type="number" id="st-mg-right" class="k-narrow" min="0" max="5" step="0.05"></div>
       </div>
       <div class="k-hint k-full" id="st-page-info" style="margin-top:8px"></div>
+      <div class="k-set-sub k-full">\u0E40\u0E25\u0E02\u0E09\u0E32\u0E01 (Scene Number)</div>
+      <div class="k-row"><label>\u0E41\u0E2A\u0E14\u0E07\u0E40\u0E25\u0E02\u0E09\u0E32\u0E01\u0E02\u0E49\u0E32\u0E07\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01<span class="k-hint">\u0E40\u0E25\u0E02\u0E08\u0E30\u0E2D\u0E22\u0E39\u0E48\u0E17\u0E31\u0E49\u0E07\u0E0B\u0E49\u0E32\u0E22\u0E41\u0E25\u0E30\u0E02\u0E27\u0E32\u0E02\u0E2D\u0E07\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01</span></label><input type="checkbox" id="st-sn-show"></div>
+      <div class="k-row"><label>\u0E17\u0E49\u0E32\u0E22\u0E40\u0E25\u0E02<span class="k-hint">\u0E40\u0E0A\u0E48\u0E19 \u0E27\u0E48\u0E32\u0E07 \u0E2B\u0E23\u0E37\u0E2D "."</span></label><input type="text" id="st-sn-suffix" class="k-narrow"></div>
+      <div class="k-row"><label>\u0E0B\u0E49\u0E32\u0E22: \u0E23\u0E30\u0E22\u0E30\u0E08\u0E32\u0E01\u0E02\u0E2D\u0E1A\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E0B\u0E49\u0E32\u0E22 (\u0E19\u0E34\u0E49\u0E27)</label><input type="number" id="st-sn-left" class="k-narrow" min="0" max="5" step="0.05"></div>
+      <div class="k-row"><label>\u0E02\u0E27\u0E32: \u0E23\u0E30\u0E22\u0E30\u0E08\u0E32\u0E01\u0E02\u0E2D\u0E1A\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E02\u0E27\u0E32 (\u0E19\u0E34\u0E49\u0E27)</label><input type="number" id="st-sn-right" class="k-narrow" min="0" max="5" step="0.05"></div>
+      <div class="k-set-sub k-full">\u0E40\u0E25\u0E02\u0E2B\u0E19\u0E49\u0E32 (Page Number)</div>
+      <div class="k-row"><label>\u0E41\u0E2A\u0E14\u0E07\u0E40\u0E25\u0E02\u0E2B\u0E19\u0E49\u0E32<span class="k-hint">\u0E21\u0E35\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E44\u0E1F\u0E25\u0E4C\u0E17\u0E35\u0E48\u0E40\u0E1B\u0E47\u0E19\u0E09\u0E32\u0E01 \xB7 \u0E40\u0E25\u0E02\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19\u0E15\u0E31\u0E49\u0E07\u0E23\u0E32\u0E22\u0E44\u0E1F\u0E25\u0E4C\u0E17\u0E35\u0E48 "\u0E04\u0E38\u0E13\u0E2A\u0E21\u0E1A\u0E31\u0E15\u0E34\u0E09\u0E32\u0E01"</span></label><input type="checkbox" id="st-pn-show"></div>
+      <div class="k-row"><label>\u0E43\u0E2A\u0E48\u0E40\u0E25\u0E02\u0E1A\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E41\u0E23\u0E01\u0E14\u0E49\u0E27\u0E22<span class="k-hint">\u0E18\u0E23\u0E23\u0E21\u0E40\u0E19\u0E35\u0E22\u0E21\u0E1A\u0E17: \u0E2B\u0E19\u0E49\u0E32\u0E41\u0E23\u0E01\u0E44\u0E21\u0E48\u0E43\u0E2A\u0E48\u0E40\u0E25\u0E02</span></label><input type="checkbox" id="st-pn-first"></div>
+      <div class="k-row"><label>\u0E23\u0E30\u0E22\u0E30\u0E08\u0E32\u0E01\u0E02\u0E2D\u0E1A\u0E02\u0E27\u0E32 (\u0E19\u0E34\u0E49\u0E27)</label><input type="number" id="st-pn-right" class="k-narrow" min="0" max="5" step="0.05"></div>
+      <div class="k-row"><label>\u0E23\u0E30\u0E22\u0E30\u0E08\u0E32\u0E01\u0E02\u0E2D\u0E1A\u0E1A\u0E19 (\u0E19\u0E34\u0E49\u0E27)</label><input type="number" id="st-pn-top" class="k-narrow" min="0" max="5" step="0.05"></div>
+      <div class="k-row"><label>\u0E17\u0E49\u0E32\u0E22\u0E40\u0E25\u0E02</label><input type="text" id="st-pn-suffix" class="k-narrow"></div>
       <div class="k-set-sub">[84] \u0E01\u0E0E\u0E01\u0E32\u0E23\u0E15\u0E31\u0E14\u0E2B\u0E19\u0E49\u0E32 (widow / orphan)</div>
       <div class="k-set-grid2">
         <div class="k-row"><label>\u0E1A\u0E23\u0E23\u0E22\u0E32\u0E22: \u0E40\u0E2B\u0E25\u0E37\u0E2D\u0E17\u0E49\u0E32\u0E22\u0E2B\u0E19\u0E49\u0E32\u0E2D\u0E22\u0E48\u0E32\u0E07\u0E19\u0E49\u0E2D\u0E22</label><input type="number" id="st-pb-ab" class="k-narrow" min="0" max="20"></div>
@@ -47803,6 +48645,19 @@ ${mdToHtmlBody(md)}
       <table class="k-sp-cycle-tbl" id="st-spcycle"><thead><tr><th>Element</th><th id="st-hd-enter">Enter \u2192</th><th id="st-hd-tab">Tab \u2192</th><th id="st-hd-stab">Shift+Tab \u2192</th></tr></thead><tbody></tbody></table>
       <div style="margin-top:12px; text-align:right"><button id="st-spcycle-reset" class="k-reset-btn">\u21BA \u0E04\u0E37\u0E19\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19</button></div>
     </div>
+    <div class="k-set-page" data-p="fonts">
+      <div class="k-hint" style="margin-bottom:10px">
+        \u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E1A\u0E17\u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19 (Courier) \u0E44\u0E21\u0E48\u0E21\u0E35\u0E2D\u0E31\u0E01\u0E29\u0E23\u0E44\u0E17\u0E22 \u2014 \u0E01\u0E33\u0E2B\u0E19\u0E14\u0E40\u0E2D\u0E07\u0E44\u0E14\u0E49\u0E27\u0E48\u0E32 "\u0E0A\u0E48\u0E27\u0E07\u0E2D\u0E31\u0E01\u0E02\u0E23\u0E30\u0E44\u0E2B\u0E19 \u0E43\u0E0A\u0E49\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E2D\u0E30\u0E44\u0E23"
+        \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E44\u0E14\u0E49\u0E44\u0E21\u0E48\u0E08\u0E33\u0E01\u0E31\u0E14 \xB7 \u0E43\u0E0A\u0E49\u0E44\u0E14\u0E49\u0E17\u0E31\u0E49\u0E07\u0E42\u0E2B\u0E21\u0E14\u0E19\u0E34\u0E22\u0E32\u0E22\u0E41\u0E25\u0E30\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C \xB7 \u0E41\u0E16\u0E27\u0E1A\u0E19\u0E2A\u0E38\u0E14\u0E21\u0E35\u0E25\u0E33\u0E14\u0E31\u0E1A\u0E01\u0E48\u0E2D\u0E19</div>
+      <div id="st-fonts-list"></div>
+      <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap">
+        <button id="st-fonts-add" class="k-key-btn">\u2795 \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E41\u0E16\u0E27</button>
+        <button id="st-fonts-import" class="k-key-btn">\u{1F4C1} \u0E19\u0E33\u0E40\u0E02\u0E49\u0E32\u0E44\u0E1F\u0E25\u0E4C\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E40\u0E02\u0E49\u0E32\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C\u2026</button>
+        <button id="st-fonts-reset" class="k-reset-btn">\u21BA \u0E04\u0E37\u0E19\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19</button>
+      </div>
+      <div class="k-hint" id="st-fonts-preview" style="margin-top:14px"></div>
+      <div id="st-fonts-sample" style="margin-top:6px; font-size:22px; line-height:1.7"></div>
+    </div>
     <div class="k-set-page" data-p="lang">
       <div class="k-row"><label>${t("settings.languageSelect")}</label>
         <select id="st-lang">
@@ -47831,6 +48686,8 @@ ${mdToHtmlBody(md)}
       const builtin = [
         { name: "\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19 (Courier Prime 12pt)", value: "" },
         { name: "Courier Prime (\u0E1D\u0E31\u0E07\u0E21\u0E32\u0E01\u0E31\u0E1A\u0E42\u0E1B\u0E23\u0E41\u0E01\u0E23\u0E21)", value: DEFAULT_SCRIPT_FONT },
+        { name: "Courier Thai Mono (\u0E44\u0E17\u0E22 \xB7 \u0E1D\u0E31\u0E07\u0E21\u0E32\u0E01\u0E31\u0E1A\u0E42\u0E1B\u0E23\u0E41\u0E01\u0E23\u0E21)", value: '"Courier Thai Mono", "Courier Prime", monospace' },
+        { name: "Courier Thai Proportional (\u0E44\u0E17\u0E22 \xB7 \u0E1D\u0E31\u0E07\u0E21\u0E32\u0E01\u0E31\u0E1A\u0E42\u0E1B\u0E23\u0E41\u0E01\u0E23\u0E21)", value: '"Courier Thai Proportional", "Courier Prime", monospace' },
         { name: "Segoe UI", value: '"Segoe UI", system-ui, sans-serif' },
         { name: "Sarabun", value: "Sarabun, sans-serif" },
         { name: "Noto Sans Thai", value: '"Noto Sans Thai", sans-serif' },
@@ -47991,6 +48848,53 @@ ${mdToHtmlBody(md)}
         W.strings[k] = inp.value;
       };
     }
+    const chk = (sel, get3, set) => {
+      const c = q(sel);
+      c.checked = !!get3();
+      c.onchange = () => {
+        set(c.checked);
+        pageInfo();
+        previewPage();
+      };
+      return c;
+    };
+    chk("#st-sn-show", () => W.sceneNumbers.show, (v) => {
+      W.sceneNumbers.show = v;
+    });
+    numIn("#st-sn-left", () => W.sceneNumbers.left, (v) => {
+      W.sceneNumbers.left = v;
+    });
+    numIn("#st-sn-right", () => W.sceneNumbers.right, (v) => {
+      W.sceneNumbers.right = v;
+    });
+    {
+      const i2 = q("#st-sn-suffix");
+      i2.value = W.sceneNumbers.suffix || "";
+      i2.oninput = () => {
+        W.sceneNumbers.suffix = i2.value;
+        previewPage();
+      };
+    }
+    chk("#st-pn-show", () => W.pageNumbers.show, (v) => {
+      W.pageNumbers.show = v;
+    });
+    chk("#st-pn-first", () => W.pageNumbers.firstPage, (v) => {
+      W.pageNumbers.firstPage = v;
+    });
+    numIn("#st-pn-right", () => W.pageNumbers.right, (v) => {
+      W.pageNumbers.right = v;
+    });
+    numIn("#st-pn-top", () => W.pageNumbers.top, (v) => {
+      W.pageNumbers.top = v;
+    });
+    {
+      const i2 = q("#st-pn-suffix");
+      i2.value = W.pageNumbers.suffix || "";
+      i2.oninput = () => {
+        W.pageNumbers.suffix = i2.value;
+        previewPage();
+      };
+    }
     pageInfo();
     function previewPage() {
       const keep = {
@@ -47998,16 +48902,25 @@ ${mdToHtmlBody(md)}
         customPaper: s.customPaper,
         pageMargins: s.pageMargins,
         spElements: s.spElements,
-        spStyles: s.spStyles
+        spStyles: s.spStyles,
+        spSceneNumbers: s.spSceneNumbers,
+        spPageNumbers: s.spPageNumbers
       };
       Object.assign(s, {
         paperSize: W.paperSize,
         customPaper: W.customPaper,
         pageMargins: W.margins,
         spElements: W.elements,
-        spStyles: W.styles
+        spStyles: W.styles,
+        spSceneNumbers: W.sceneNumbers,
+        spPageNumbers: W.pageNumbers
       });
       applyPageVars();
+      try {
+        updatePageNumberHint();
+        refreshSpView();
+      } catch {
+      }
       Object.assign(s, keep);
     }
     const fmtBody = q("#st-spfmt tbody");
@@ -48134,24 +49047,8 @@ ${mdToHtmlBody(md)}
     }
     renderSpKeys();
     syncCycleHeads();
-    const cycleKeys = ["scene", "action", "character", "parenthetical", "dialogue", "transition", "shot", "act-break", "note"];
-    const cycleOpts = [
-      "scene",
-      "action",
-      "character",
-      "parenthetical",
-      "dialogue",
-      "transition",
-      "shot",
-      "act-break",
-      "summary",
-      "outline1",
-      "outline2",
-      "outline3",
-      "note",
-      "image",
-      "raw"
-    ];
+    const cycleKeys = TAB_CYCLE.slice();
+    const cycleOpts = [...TAB_CYCLE, "summary", "outline1", "outline2", "outline3", "image", "raw"].filter((k, i2, a) => a.indexOf(k) === i2);
     const workSpCycle = {};
     const srcCycle = s.spCycle || DEFAULT_SP_CYCLE;
     for (const k of cycleKeys) {
@@ -48190,6 +49087,171 @@ ${mdToHtmlBody(md)}
       }
       renderSpCycle();
     };
+    const origSnd = { on: !!s.typeSound, always: !!s.typeSoundAlways, vol: s.typeSoundVolume ?? 0.5 };
+    q("#st-typesnd").checked = origSnd.on;
+    q("#st-typesnd-always").checked = origSnd.always;
+    q("#st-typesnd-vol").value = String(origSnd.vol);
+    q("#st-typesnd-lbl").textContent = Math.round(origSnd.vol * 100) + "%";
+    q("#st-typesnd-vol").oninput = () => {
+      const v = parseFloat(q("#st-typesnd-vol").value) || 0;
+      q("#st-typesnd-lbl").textContent = Math.round(v * 100) + "%";
+      setTypeVolume(v);
+    };
+    q("#st-typesnd-test").onclick = () => playType("key", { force: true });
+    q("#st-typesnd-test2").onclick = () => playType("return", { force: true });
+    let projectFonts = [];
+    const fontsHost = q("#st-fonts-list");
+    const previewFonts = () => {
+      applyLangFonts(W.langFonts, langFontUrl);
+      const usable = W.langFonts.filter((r) => r.enabled !== false && (r.builtin || r.file || r.family));
+      q("#st-fonts-preview").textContent = usable.length ? `\u0E43\u0E0A\u0E49\u0E2D\u0E22\u0E39\u0E48 ${usable.length} \u0E41\u0E16\u0E27 \u2014 \u0E15\u0E31\u0E27\u0E2D\u0E22\u0E48\u0E32\u0E07 (\u0E44\u0E17\u0E22\u0E1C\u0E2A\u0E21\u0E2D\u0E31\u0E07\u0E01\u0E24\u0E29):` : '\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E01\u0E33\u0E2B\u0E19\u0E14\u0E41\u0E16\u0E27\u0E44\u0E2B\u0E19 \u2014 \u0E43\u0E0A\u0E49\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E15\u0E32\u0E21\u0E04\u0E48\u0E32\u0E43\u0E19\u0E41\u0E17\u0E47\u0E1A "\u0E01\u0E32\u0E23\u0E40\u0E02\u0E35\u0E22\u0E19"';
+      const sample = q("#st-fonts-sample");
+      sample.textContent = "INT. \u0E2B\u0E49\u0E2D\u0E07\u0E19\u0E2D\u0E19 \u2014 \u0E01\u0E25\u0E32\u0E07\u0E04\u0E37\u0E19 / \u0E17\u0E35\u0E48\u0E19\u0E35\u0E48\u0E04\u0E37\u0E2D\u0E09\u0E32\u0E01\u0E17\u0E35\u0E48\u0E2B\u0E19\u0E36\u0E48\u0E07 ABC 123";
+      sample.style.fontFamily = `"${LANG_FAMILY}", ` + (q("#st-spfontfamily")?.value || DEFAULT_SCRIPT_FONT);
+    };
+    function renderFonts() {
+      fontsHost.innerHTML = "";
+      if (!W.langFonts.length) fontsHost.append(el("div", "cmp-empty", '(\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E41\u0E16\u0E27 \u2014 \u0E01\u0E14 "\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E41\u0E16\u0E27")'));
+      W.langFonts.forEach((row, i2) => {
+        const r = el("div", "k-font-row");
+        const on = el("input");
+        on.type = "checkbox";
+        on.checked = row.enabled !== false;
+        on.title = "\u0E43\u0E0A\u0E49\u0E41\u0E16\u0E27\u0E19\u0E35\u0E49";
+        on.onchange = () => {
+          row.enabled = on.checked;
+          previewFonts();
+        };
+        r.append(on);
+        const scriptSel = el("select", "k-dlg-select k-font-script");
+        for (const p of SCRIPT_PRESETS) {
+          const o = el("option", null, p.label);
+          o.value = p.range;
+          scriptSel.append(o);
+        }
+        const custom = el("option", null, "\u0E01\u0E33\u0E2B\u0E19\u0E14\u0E0A\u0E48\u0E27\u0E07\u0E40\u0E2D\u0E07\u2026");
+        custom.value = "__custom";
+        scriptSel.append(custom);
+        const known = SCRIPT_PRESETS.find((p) => p.range === row.range);
+        scriptSel.value = known ? known.range : "__custom";
+        const rangeIn = el("input", "k-font-range");
+        rangeIn.value = row.range;
+        rangeIn.placeholder = "U+0E00-0E7F";
+        rangeIn.style.display = known ? "none" : "";
+        scriptSel.onchange = () => {
+          if (scriptSel.value === "__custom") {
+            rangeIn.style.display = "";
+            rangeIn.focus();
+            return;
+          }
+          rangeIn.style.display = "none";
+          row.range = scriptSel.value;
+          row.label = (SCRIPT_PRESETS.find((p) => p.range === scriptSel.value) || {}).label || "";
+          previewFonts();
+        };
+        rangeIn.oninput = () => {
+          row.range = rangeIn.value;
+          rangeIn.classList.toggle("bad", !!rangeIn.value && !normalizeRange(rangeIn.value));
+          previewFonts();
+        };
+        r.append(scriptSel, rangeIn);
+        const fontSel = el("select", "k-dlg-select k-font-pick");
+        const addOpt = (val, text) => {
+          const o = el("option", null, text);
+          o.value = val;
+          fontSel.append(o);
+        };
+        addOpt("", "\u2014 \u0E43\u0E0A\u0E49\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E17\u0E35\u0E48\u0E25\u0E07\u0E43\u0E19\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07 (\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E0A\u0E37\u0E48\u0E2D) \u2014");
+        for (const b of BUILTIN_FONT_FILES) addOpt("b:" + b.file, b.label);
+        for (const f of projectFonts) addOpt("p:" + f, f + " (\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C)");
+        fontSel.value = row.builtin ? "b:" + row.builtin : row.file ? "p:" + row.file : "";
+        const famIn = el("input", "k-font-family");
+        famIn.value = row.family;
+        famIn.placeholder = "\u0E40\u0E0A\u0E48\u0E19 TH Sarabun New";
+        famIn.style.display = fontSel.value ? "none" : "";
+        fontSel.onchange = () => {
+          const v = fontSel.value;
+          row.builtin = v.startsWith("b:") ? v.slice(2) : "";
+          row.file = v.startsWith("p:") ? v.slice(2) : "";
+          famIn.style.display = v ? "none" : "";
+          previewFonts();
+        };
+        famIn.oninput = () => {
+          row.family = famIn.value;
+          previewFonts();
+        };
+        r.append(fontSel, famIn);
+        const up = el("button", "k-key-btn", "\u2191");
+        up.title = "\u0E40\u0E25\u0E37\u0E48\u0E2D\u0E19\u0E02\u0E36\u0E49\u0E19";
+        up.onclick = () => {
+          if (i2 > 0) {
+            const [x] = W.langFonts.splice(i2, 1);
+            W.langFonts.splice(i2 - 1, 0, x);
+            renderFonts();
+            previewFonts();
+          }
+        };
+        const del2 = el("button", "k-danger-btn", "\u2715");
+        del2.onclick = () => {
+          W.langFonts.splice(i2, 1);
+          renderFonts();
+          previewFonts();
+        };
+        r.append(up, del2);
+        fontsHost.append(r);
+      });
+      previewFonts();
+    }
+    q("#st-fonts-add").onclick = () => {
+      W.langFonts.push({
+        id: "f" + W.langFonts.length,
+        label: "\u0E44\u0E17\u0E22",
+        range: "U+0E00-0E7F",
+        builtin: "CourierThaiMono.ttf",
+        file: "",
+        family: "",
+        enabled: true
+      });
+      renderFonts();
+    };
+    q("#st-fonts-reset").onclick = () => {
+      W.langFonts = defaultLangFonts();
+      renderFonts();
+    };
+    q("#st-fonts-import").onclick = async () => {
+      try {
+        const src = await kapi.openFileDialog("font");
+        if (!src) return;
+        const dir = await kapi.join(state.root, "Fonts");
+        await kapi.mkdir(dir);
+        const dst = await kapi.copyInto(src, dir);
+        const name = String(dst || src).split(/[\\/]/).pop();
+        if (!projectFonts.includes(name)) projectFonts.push(name);
+        await preloadLangFontUrls();
+        W.langFonts.push({
+          id: "f" + W.langFonts.length,
+          label: "",
+          range: "",
+          builtin: "",
+          file: name,
+          family: "",
+          enabled: true
+        });
+        renderFonts();
+        setStatus("\u0E19\u0E33\u0E40\u0E02\u0E49\u0E32\u0E1F\u0E2D\u0E19\u0E15\u0E4C " + name + " \u0E41\u0E25\u0E49\u0E27 \u2014 \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E0A\u0E48\u0E27\u0E07\u0E2D\u0E31\u0E01\u0E02\u0E23\u0E30\u0E17\u0E35\u0E48\u0E08\u0E30\u0E43\u0E0A\u0E49");
+      } catch (e) {
+        log("error", "\u0E19\u0E33\u0E40\u0E02\u0E49\u0E32\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E25\u0E49\u0E21\u0E40\u0E2B\u0E25\u0E27", e);
+        setStatus("\u0E19\u0E33\u0E40\u0E02\u0E49\u0E32\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08");
+      }
+    };
+    (async () => {
+      try {
+        const dir = await kapi.join(state.root, "Fonts");
+        if (await kapi.exists(dir)) projectFonts = await kapi.listFiles(dir);
+      } catch {
+      }
+      renderFonts();
+    })();
     if (q("#st-lang")) q("#st-lang").value = i18n.lang || "en";
     const origLang = i18n.lang;
     const origLn = !!s.lineNumbers, origSpell = s.spellCheck !== false, origSpellDict = s.spellCheckDict !== false, origMention = s.autoMention !== false;
@@ -48276,6 +49338,8 @@ ${mdToHtmlBody(md)}
       applyUIScale(origUiScale);
       s.spFontFamily = origSpFontFamily;
       applySpFont(origSpFontFamily);
+      setTypeVolume(origSnd.vol);
+      applyProjectLangFonts();
       s.focusDim = origDim;
       applyFocusDim();
       document.body.classList.toggle("k-ln", origLn);
@@ -48328,12 +49392,24 @@ ${mdToHtmlBody(md)}
       s.spStyles = JSON.parse(JSON.stringify(W.styles));
       s.spPageRules = { ...W.rules };
       s.spStrings = { ...W.strings };
+      s.spSceneNumbers = { ...W.sceneNumbers };
+      s.spPageNumbers = { ...W.pageNumbers };
+      s.typeSound = q("#st-typesnd").checked;
+      s.typeSoundAlways = q("#st-typesnd-always").checked;
+      s.typeSoundVolume = Math.min(1, Math.max(0, parseFloat(q("#st-typesnd-vol").value) || 0));
+      s.langFonts = JSON.parse(JSON.stringify(W.langFonts));
       for (const [sel, key] of SETUP_FIELDS) m[key] = q(sel).value.trim();
       g.dailyWords = num4("#st-daily", 500);
       g.projectWords = num4("#st-proj", 5e4);
       try {
+        await preloadLangFontUrls();
         await saveProjectMeta();
         applySettings();
+        try {
+          updatePageNumberHint();
+          refreshSpView();
+        } catch {
+        }
         state.title = m.title;
         document.title = m.title + " \u2014 Killian 2";
         $("#projname").textContent = m.title;
@@ -48501,6 +49577,7 @@ ${mdToHtmlBody(md)}
     "src/dialogs.js"() {
       init_app();
       init_core();
+      init_typewriter_sound();
       init_fountain();
       init_dashboard();
       init_ui();
@@ -48647,6 +49724,8 @@ ${mdToHtmlBody(md)}
           }
         });
       },
+      // [alpha.58] หาไฟล์ในดิสก์ — เอนทิตี้เป็นไฟล์ .json แก้นอกโปรแกรมได้ ต้องเปิดโฟลเดอร์เจอ
+      onReveal: (f) => revealFile(f),
       onSnapshot: async () => {
         const { snapshotFile: snapshotFile2 } = await Promise.resolve().then(() => (init_app(), app_exports));
         if (tab.wiki.dirty) await tab.wiki.save();
@@ -62922,22 +64001,22 @@ ${s.body}`).join("\n\n");
   }
   function localLookup(word, kind = "syn", extra = null) {
     const w = String(word || "").trim();
-    const lower = w.toLowerCase();
+    const lower2 = w.toLowerCase();
     const banks = kind === "ant" ? [extra && extra.antonyms, TH_ANTONYMS, EN_ANTONYMS] : [extra && extra.synonyms, TH_SYNONYMS, EN_SYNONYMS];
     const out = [];
     for (const bank of banks) {
       if (!bank) continue;
-      for (const key of [w, lower]) if (bank[key]) out.push(...bank[key]);
+      for (const key of [w, lower2]) if (bank[key]) out.push(...bank[key]);
     }
     if (kind === "syn") {
       for (const bank of [extra && extra.synonyms, TH_SYNONYMS, EN_SYNONYMS]) {
         if (!bank) continue;
         for (const [key, list] of Object.entries(bank)) {
-          if (list.includes(w) || list.includes(lower)) out.push(key, ...list.filter((x) => x !== w && x !== lower));
+          if (list.includes(w) || list.includes(lower2)) out.push(key, ...list.filter((x) => x !== w && x !== lower2));
         }
       }
     }
-    return uniq(out).filter((x) => x !== w && x !== lower);
+    return uniq(out).filter((x) => x !== w && x !== lower2);
   }
   function datamuseUrl(word, kind = "syn", max = 15) {
     const rel = kind === "ant" ? "rel_ant" : "ml";
@@ -63865,6 +64944,413 @@ ${sc.body || ""}
     }
   });
 
+  // src/smart-terms.js
+  function learnMin(v) {
+    const n = Math.round(parseFloat(v));
+    if (!Number.isFinite(n)) return DEFAULT_LEARN_MIN;
+    return Math.max(LEARN_MIN_RANGE[0], Math.min(LEARN_MIN_RANGE[1], n));
+  }
+  function looksLikeTerm(txt) {
+    const s = String(txt ?? "").trim();
+    if (s.length < 2 || s.length > 60) return false;
+    if (!/[\p{L}]/u.test(s)) return false;
+    if (/^[\d\s\p{P}]+$/u.test(s)) return false;
+    if (/(.)\1{3,}/u.test(s)) return false;
+    if (TH_NOT_FIRST.test(s)) return false;
+    if (TH_DOUBLE_TONE.test(s)) return false;
+    if (TH_DOUBLE_UPPER.test(s)) return false;
+    if (EN_CONS_RUN.test(s)) return false;
+    if (/^[A-Za-z][A-Za-z'’\-]{3,}$/.test(s) && !/[aeiouy]/i.test(s)) return false;
+    return true;
+  }
+  function countTerms(entries) {
+    const m = /* @__PURE__ */ new Map();
+    for (const e of entries || []) {
+      const w = String(e ?? "").trim();
+      if (!w) continue;
+      m.set(w, (m.get(w) || 0) + 1);
+    }
+    return m;
+  }
+  function learnedTerms(counts, opts = {}) {
+    const min = learnMin(opts.min);
+    const pinned = toSet(opts.pinned);
+    const ignored = toSet(opts.ignored);
+    const known = toSet(opts.known);
+    const out = [];
+    for (const [word, n] of counts || []) {
+      const key = lower(word);
+      if (ignored.has(key)) continue;
+      if (!looksLikeTerm(word)) continue;
+      if (n >= min || pinned.has(key) || known.has(key)) out.push([word, n]);
+    }
+    out.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "th"));
+    return out.map(([w]) => w);
+  }
+  function pendingTerms(counts, opts = {}) {
+    const min = learnMin(opts.min);
+    const pinned = toSet(opts.pinned);
+    const ignored = toSet(opts.ignored);
+    const known = toSet(opts.known);
+    const out = [];
+    for (const [word, n] of counts || []) {
+      const key = lower(word);
+      if (ignored.has(key) || pinned.has(key) || known.has(key)) continue;
+      if (n >= min) continue;
+      out.push({ word, count: n, ok: looksLikeTerm(word) });
+    }
+    out.sort((a, b) => b.count - a.count || a.word.localeCompare(b.word, "th"));
+    return out;
+  }
+  var DEFAULT_LEARN_MIN, LEARN_MIN_RANGE, TH_NOT_FIRST, TH_DOUBLE_TONE, TH_DOUBLE_UPPER, EN_CONS_RUN, lower, toSet;
+  var init_smart_terms = __esm({
+    "src/smart-terms.js"() {
+      DEFAULT_LEARN_MIN = 2;
+      LEARN_MIN_RANGE = [1, 5];
+      TH_NOT_FIRST = /^[ัำิ-ฺ็-๎ะๅๆ]/;
+      TH_DOUBLE_TONE = /[่-์]{2,}/;
+      TH_DOUBLE_UPPER = /[ัิ-ื]{2,}/;
+      EN_CONS_RUN = /[bcdfghjklmnpqrstvwxz]{6,}/i;
+      lower = (s) => String(s ?? "").trim().toLowerCase();
+      toSet = (v) => new Set((Array.isArray(v) ? v : []).map(lower).filter(Boolean));
+    }
+  });
+
+  // src/sp-reports.js
+  function parseHeading(text) {
+    const raw = String(text ?? "").trim();
+    let rest = raw, intExt = "";
+    for (const p of INT_EXT) {
+      if (p.re.test(rest)) {
+        intExt = p.kind;
+        rest = rest.replace(p.re, "");
+        break;
+      }
+    }
+    if (!intExt) {
+      for (const p of SCENE_PREFIX) {
+        const pf = p.trim();
+        if (rest.toUpperCase().startsWith(pf.toUpperCase())) {
+          rest = rest.slice(pf.length);
+          break;
+        }
+      }
+    }
+    const parts = rest.split(/\s+[-–—]\s+|\s+[-–—]$/);
+    const location2 = (parts[0] || "").trim().replace(/[-–—]\s*$/, "").trim();
+    const time = parts.length > 1 ? parts.slice(1).join(" - ").trim() : "";
+    return { raw, intExt, location: location2, time };
+  }
+  function cleanCharacterName(text) {
+    const { name } = splitCharacter(String(text ?? ""));
+    return name.replace(/\s+/g, " ").trim();
+  }
+  function sceneBreakdown(blocks, opts = {}) {
+    const fmt = opts.fmt && opts.fmt.elements ? opts.fmt : mergeSpFormat(opts.fmt);
+    const lines = opts.lines || linesPerPage(fmt.paper, fmt.margins);
+    const startPage = Math.max(1, Math.round(+opts.startPage || 1));
+    const pages = paginate(blocks, { fmt, lines });
+    const pageOf = /* @__PURE__ */ new Map();
+    for (const pg of pages.pages) {
+      for (const b of pg.blocks || []) {
+        if (Number.isFinite(b.idx) && !pageOf.has(b.idx)) pageOf.set(b.idx, pg.index);
+      }
+    }
+    const dlgW = (fmt.elements.dialogue || {}).width || 3.5;
+    const actW = (fmt.elements.action || {}).width || 6;
+    const scenes = [];
+    let cur = null, curChar = "";
+    let seq = 0;
+    const list = (blocks || []).filter((b) => b && b.el !== "blank");
+    for (const b of list) {
+      const page = Number.isFinite(b.idx) && pageOf.get(b.idx) || (cur ? cur.page : 1);
+      if (b.el === "scene") {
+        const h = parseHeading(b.text);
+        cur = {
+          n: ++seq,
+          heading: h.raw,
+          location: h.location || "(\u0E44\u0E21\u0E48\u0E23\u0E30\u0E1A\u0E38\u0E2A\u0E16\u0E32\u0E19\u0E17\u0E35\u0E48)",
+          intExt: h.intExt,
+          time: h.time,
+          page: page + startPage - 1,
+          endPage: page + startPage - 1,
+          pos: Number.isFinite(b.pos) ? b.pos : null,
+          characters: [],
+          charSet: /* @__PURE__ */ new Set(),
+          actionLines: 0,
+          dialogueLines: 0,
+          totalLines: 0
+        };
+        scenes.push(cur);
+        curChar = "";
+        continue;
+      }
+      if (!cur) {
+        cur = {
+          n: ++seq,
+          heading: "(\u0E01\u0E48\u0E2D\u0E19\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01\u0E41\u0E23\u0E01)",
+          location: "(\u0E44\u0E21\u0E48\u0E23\u0E30\u0E1A\u0E38\u0E2A\u0E16\u0E32\u0E19\u0E17\u0E35\u0E48)",
+          intExt: "",
+          time: "",
+          page: page + startPage - 1,
+          endPage: page + startPage - 1,
+          pos: Number.isFinite(b.pos) ? b.pos : null,
+          characters: [],
+          charSet: /* @__PURE__ */ new Set(),
+          actionLines: 0,
+          dialogueLines: 0,
+          totalLines: 0
+        };
+        scenes.push(cur);
+      }
+      cur.endPage = Math.max(cur.endPage, page + startPage - 1);
+      if (b.el === "character") {
+        curChar = cleanCharacterName(b.text);
+        if (curChar && !cur.charSet.has(curChar)) {
+          cur.charSet.add(curChar);
+          cur.characters.push(curChar);
+        }
+      } else if (b.el === "dialogue") {
+        const n = wrapLines(b.text, dlgW);
+        cur.dialogueLines += n;
+        cur.totalLines += n;
+      } else if (b.el === "action") {
+        const n = wrapLines(b.text, actW);
+        cur.actionLines += n;
+        cur.totalLines += n;
+      } else {
+        cur.totalLines += wrapLines(b.text, actW);
+      }
+    }
+    for (const s of scenes) {
+      delete s.charSet;
+      s.pages = Math.max(1, s.endPage - s.page + 1);
+    }
+    return { scenes, pages, totalPages: pages.count };
+  }
+  function generateLocationReport(blocks, opts = {}) {
+    const { scenes, totalPages } = sceneBreakdown(blocks, opts);
+    const groups = opts.groups || null;
+    const nameOf = (loc) => {
+      if (!groups) return loc;
+      for (const g of Object.keys(groups)) {
+        const arr = groups[g] || [];
+        if (arr.some((x) => String(x).trim() === loc)) return g;
+      }
+      return loc;
+    };
+    const map2 = /* @__PURE__ */ new Map();
+    for (const s of scenes) {
+      const key = nameOf(s.location);
+      if (!map2.has(key)) {
+        map2.set(key, {
+          location: key,
+          sceneCount: 0,
+          pages: 0,
+          intExt: /* @__PURE__ */ new Set(),
+          characters: [],
+          charSet: /* @__PURE__ */ new Set(),
+          scenes: []
+        });
+      }
+      const g = map2.get(key);
+      g.sceneCount++;
+      g.pages += s.pages;
+      if (s.intExt) g.intExt.add(s.intExt);
+      for (const c of s.characters) if (!g.charSet.has(c)) {
+        g.charSet.add(c);
+        g.characters.push(c);
+      }
+      g.scenes.push({
+        n: s.n,
+        heading: s.heading,
+        page: s.page,
+        time: s.time,
+        characters: s.characters,
+        pos: s.pos
+      });
+    }
+    const out = [...map2.values()].map((g) => ({
+      location: g.location,
+      sceneCount: g.sceneCount,
+      pages: g.pages,
+      intExt: [...g.intExt].sort(),
+      characters: g.characters,
+      scenes: g.scenes
+    }));
+    out.sort((a, b) => b.sceneCount - a.sceneCount || a.location.localeCompare(b.location, "th"));
+    return { locations: out, totalScenes: scenes.length, totalPages };
+  }
+  function generateCharacterReport(blocks, opts = {}) {
+    const { scenes, totalPages } = sceneBreakdown(blocks, opts);
+    const fmt = opts.fmt && opts.fmt.elements ? opts.fmt : mergeSpFormat(opts.fmt);
+    const dlgW = (fmt.elements.dialogue || {}).width || 3.5;
+    const startPage = Math.max(1, Math.round(+opts.startPage || 1));
+    const chars = /* @__PURE__ */ new Map();
+    const pageOf = /* @__PURE__ */ new Map();
+    const pages = paginate(blocks, { fmt, lines: opts.lines || linesPerPage(fmt.paper, fmt.margins) });
+    for (const pg of pages.pages) {
+      for (const b of pg.blocks || []) {
+        if (Number.isFinite(b.idx) && !pageOf.has(b.idx)) pageOf.set(b.idx, pg.index);
+      }
+    }
+    let sceneNo = 0, curChar = "";
+    for (const b of (blocks || []).filter((x) => x && x.el !== "blank")) {
+      if (b.el === "scene") {
+        sceneNo++;
+        curChar = "";
+        continue;
+      }
+      if (b.el === "character") {
+        curChar = cleanCharacterName(b.text);
+        continue;
+      }
+      if (b.el !== "dialogue" || !curChar) continue;
+      if (!chars.has(curChar)) {
+        chars.set(curChar, {
+          name: curChar,
+          totalLines: 0,
+          speeches: 0,
+          scenes: [],
+          sceneSet: /* @__PURE__ */ new Set(),
+          firstPage: null,
+          lastPage: null
+        });
+      }
+      const c = chars.get(curChar);
+      const page = (Number.isFinite(b.idx) && pageOf.get(b.idx) || 1) + startPage - 1;
+      const n = wrapLines(b.text, dlgW);
+      c.totalLines += n;
+      c.speeches++;
+      c.firstPage = c.firstPage === null ? page : Math.min(c.firstPage, page);
+      c.lastPage = c.lastPage === null ? page : Math.max(c.lastPage, page);
+      if (!c.sceneSet.has(sceneNo)) {
+        c.sceneSet.add(sceneNo);
+        c.scenes.push({ scene: sceneNo, page, lines: n });
+      } else {
+        const row = c.scenes.find((x) => x.scene === sceneNo);
+        if (row) row.lines += n;
+      }
+    }
+    const out = [...chars.values()].map((c) => ({
+      name: c.name,
+      totalLines: c.totalLines,
+      speeches: c.speeches,
+      sceneCount: c.sceneSet.size,
+      scenes: c.scenes,
+      firstPage: c.firstPage ?? 0,
+      lastPage: c.lastPage ?? 0,
+      avgLines: c.sceneSet.size ? +(c.totalLines / c.sceneSet.size).toFixed(2) : 0
+    }));
+    out.sort((a, b) => b.totalLines - a.totalLines || a.name.localeCompare(b.name, "th"));
+    const totalLines = out.reduce((s, c) => s + c.totalLines, 0);
+    for (const c of out) c.share = totalLines ? +(c.totalLines / totalLines * 100).toFixed(1) : 0;
+    return { characters: out, totalScenes: scenes.length, totalPages, totalLines };
+  }
+  function chartKind(el3) {
+    if (el3 === "action") return "action";
+    if (el3 === "dialogue") return "dialogue";
+    if (el3 === "character") return "character";
+    return "other";
+  }
+  function generateDialogueChart(blocks, opts = {}) {
+    const fmt = opts.fmt && opts.fmt.elements ? opts.fmt : mergeSpFormat(opts.fmt);
+    const lines = opts.lines || linesPerPage(fmt.paper, fmt.margins);
+    const startPage = Math.max(1, Math.round(+opts.startPage || 1));
+    const pages = paginate(blocks, { fmt, lines });
+    const dlgW = (fmt.elements.dialogue || {}).width || 3.5;
+    const out = pages.pages.map((pg) => {
+      const stats = { action: 0, dialogue: 0, character: 0, other: 0 };
+      const density = /* @__PURE__ */ new Map();
+      let curChar = "";
+      for (const b of pg.blocks || []) {
+        const n = b.lines || 1;
+        stats[chartKind(b.el)] += n;
+        if (b.el === "character") curChar = cleanCharacterName(b.text);
+        else if (b.el === "dialogue" && curChar) {
+          density.set(curChar, (density.get(curChar) || 0) + wrapLines(b.text, dlgW));
+        }
+      }
+      const total = CHART_KINDS.reduce((s, k) => s + stats[k], 0) || 1;
+      const pct = {};
+      for (const k of CHART_KINDS) pct[k] = +(stats[k] / total * 100).toFixed(1);
+      return {
+        page: pg.index + startPage - 1,
+        lines: stats,
+        total,
+        percentages: pct,
+        charDensity: [...density.entries()].map(([name, n]) => ({ name, lines: n })).sort((a, b) => b.lines - a.lines)
+      };
+    });
+    const sum = { action: 0, dialogue: 0, character: 0, other: 0 };
+    for (const p of out) for (const k of CHART_KINDS) sum[k] += p.lines[k];
+    const grand = CHART_KINDS.reduce((s, k) => s + sum[k], 0) || 1;
+    const overall = {};
+    for (const k of CHART_KINDS) overall[k] = +(sum[k] / grand * 100).toFixed(1);
+    return { pages: out, totals: sum, overall, totalPages: pages.count };
+  }
+  function locationReportText(rep) {
+    const out = [`\u0E23\u0E32\u0E22\u0E07\u0E32\u0E19\u0E2A\u0E16\u0E32\u0E19\u0E17\u0E35\u0E48 \u2014 ${rep.locations.length} \u0E2A\u0E16\u0E32\u0E19\u0E17\u0E35\u0E48 \xB7 ${rep.totalScenes} \u0E09\u0E32\u0E01 \xB7 ${rep.totalPages} \u0E2B\u0E19\u0E49\u0E32`, ""];
+    for (const L of rep.locations) {
+      out.push(`${L.location}  [${L.intExt.join("/") || "\u2014"}]  ${L.sceneCount} \u0E09\u0E32\u0E01 \xB7 ~${L.pages} \u0E2B\u0E19\u0E49\u0E32`);
+      for (const s of L.scenes) {
+        out.push(`   \u0E09\u0E32\u0E01 ${pad(s.n, 4)} \u0E2B\u0E19\u0E49\u0E32 ${pad(s.page, 4)} ${s.heading}` + (s.characters.length ? "   [" + s.characters.join(", ") + "]" : ""));
+      }
+      out.push("");
+    }
+    return out.join("\n").trimEnd();
+  }
+  function characterReportText(rep) {
+    const out = [
+      `\u0E23\u0E32\u0E22\u0E07\u0E32\u0E19\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23 \u2014 ${rep.characters.length} \u0E04\u0E19 \xB7 ${rep.totalLines} \u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E1A\u0E17\u0E1E\u0E39\u0E14`,
+      "",
+      `${pad("\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23", 24)}${pad("\u0E09\u0E32\u0E01", 6)}${pad("\u0E1A\u0E17\u0E1E\u0E39\u0E14", 8)}${pad("\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14", 8)}${pad("\u0E40\u0E09\u0E25\u0E35\u0E48\u0E22/\u0E09\u0E32\u0E01", 12)}\u0E2A\u0E31\u0E14\u0E2A\u0E48\u0E27\u0E19`
+    ];
+    for (const c of rep.characters) {
+      out.push(`${pad(c.name, 24)}${pad(c.sceneCount, 6)}${pad(c.speeches, 8)}${pad(c.totalLines, 8)}${pad(c.avgLines, 12)}${c.share}%`);
+    }
+    return out.join("\n");
+  }
+  function dialogueChartText(rep) {
+    const out = [
+      `\u0E01\u0E23\u0E32\u0E1F\u0E1A\u0E17\u0E1E\u0E39\u0E14 \u2014 ${rep.totalPages} \u0E2B\u0E19\u0E49\u0E32`,
+      `\u0E23\u0E27\u0E21\u0E17\u0E31\u0E49\u0E07\u0E40\u0E23\u0E37\u0E48\u0E2D\u0E07: \u0E1A\u0E23\u0E23\u0E22\u0E32\u0E22 ${rep.overall.action}% \xB7 \u0E1A\u0E17\u0E1E\u0E39\u0E14 ${rep.overall.dialogue}% \xB7 \u0E0A\u0E37\u0E48\u0E2D\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23 ${rep.overall.character}% \xB7 \u0E2D\u0E37\u0E48\u0E19 \u0E46 ${rep.overall.other}%`,
+      ""
+    ];
+    for (const p of rep.pages) {
+      const bar = "\u2588".repeat(Math.round(p.percentages.dialogue / 5)) + "\u2591".repeat(Math.round(p.percentages.action / 5));
+      out.push(`\u0E2B\u0E19\u0E49\u0E32 ${pad(p.page, 5)} ${pad(bar, 22)} \u0E1A\u0E17\u0E1E\u0E39\u0E14 ${p.percentages.dialogue}% \xB7 \u0E1A\u0E23\u0E23\u0E22\u0E32\u0E22 ${p.percentages.action}%`);
+    }
+    return out.join("\n");
+  }
+  var INT_EXT, CHART_KINDS, CHART_LABELS, pad;
+  var init_sp_reports = __esm({
+    "src/sp-reports.js"() {
+      init_sp_format();
+      init_fountain();
+      INT_EXT = [
+        { re: /^\s*(int\.?\/ext\.?|i\/e\.?)\s*/i, kind: "INT/EXT" },
+        { re: /^\s*int\.?\s*/i, kind: "INT" },
+        { re: /^\s*ext\.?\s*/i, kind: "EXT" },
+        { re: /^\s*est\.?\s*/i, kind: "EST" },
+        { re: /^\s*ฉากภายใน\s*/, kind: "INT" },
+        { re: /^\s*ฉากภายนอก\s*/, kind: "EXT" },
+        { re: /^\s*ฉาก\s*/, kind: "" }
+      ];
+      CHART_KINDS = ["action", "dialogue", "character", "other"];
+      CHART_LABELS = {
+        action: "\u0E1A\u0E23\u0E23\u0E22\u0E32\u0E22",
+        dialogue: "\u0E1A\u0E17\u0E1E\u0E39\u0E14",
+        character: "\u0E0A\u0E37\u0E48\u0E2D\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23",
+        other: "\u0E2D\u0E37\u0E48\u0E19 \u0E46"
+      };
+      pad = (s, n) => {
+        s = String(s ?? "");
+        return s + " ".repeat(Math.max(0, n - s.length));
+      };
+    }
+  });
+
   // src/sp-validator.js
   function meaningful(b) {
     if (!b) return false;
@@ -64038,6 +65524,12 @@ ${title.join("\n")}
         dialogue: "Dialogue",
         parenthetical: "Parenthetical",
         transition: "Transition",
+        "transition-in": "Transition",
+        // [alpha.57a] FD มี Transition ชนิดเดียว — ต่างกันที่ระยะเยื้อง
+        subheader: "Shot",
+        // mini-slug ใน FD ลงเป็น Shot
+        intercut: "Scene Heading",
+        // "INTERCUT WITH:" นับเป็นหัวฉากในสายการผลิต
         shot: "Shot",
         "act-break": "Act Break",
         // element ที่ Final Draft ไม่มีตรง ๆ → ลงเป็น Action เพื่อไม่ให้เนื้อหาหาย
@@ -64152,7 +65644,16 @@ ${indent}</Paragraph>`;
       TWIPS_PER_INCH = 1440;
       TWIPS_PER_LINE = 240;
       inTw = (v) => Math.round((+v || 0) * TWIPS_PER_INCH);
-      KEEP_NEXT = ["scene", "character", "parenthetical", "act-break", "shot"];
+      KEEP_NEXT = [
+        "scene",
+        "character",
+        "parenthetical",
+        "act-break",
+        "shot",
+        "subheader",
+        "intercut",
+        "transition-in"
+      ];
     }
   });
 
@@ -64282,16 +65783,19 @@ ${css}
     INV_C: () => INV_C,
     KTooltip: () => KTooltip,
     SECTION_STATUSES: () => SECTION_STATUSES,
+    SP_REPORTS: () => SP_REPORTS,
     activate: () => activate,
     addMapFlow: () => addMapFlow,
     allCatKeys: () => allCatKeys,
     applyPageVars: () => applyPageVars,
+    applyProjectLangFonts: () => applyProjectLangFonts,
     applySettings: () => applySettings,
     applySpellcheck: () => applySpellcheck,
     applyTemplate: () => applyTemplate,
     applyToolbarShortcutTitles: () => applyToolbarShortcutTitles,
     applyUIScale: () => applyUIScale,
     applyZoomVars: () => applyZoomVars,
+    buildSpReport: () => buildSpReport,
     buildTree: () => buildTree2,
     catEditDialog: () => catEditDialog,
     catIcon: () => catIcon,
@@ -64302,12 +65806,15 @@ ${css}
     checkBeforeExport: () => checkBeforeExport,
     checkScreenplay: () => checkScreenplay,
     clearFeaturePanels: () => clearFeaturePanels,
+    clearTermCache: () => clearTermCache,
     closeTab: () => closeTab,
     currentSpView: () => currentSpView,
+    currentStartPage: () => currentStartPage,
     entityCreateDialog: () => entityCreateDialog,
     entitySearchBlob: () => entitySearchBlob,
     eventDialog: () => eventDialog,
     exportScript: () => exportScript,
+    extensionMenu: () => extensionMenu,
     fieldLabels: () => fieldLabels,
     finalizeCompiled: () => finalizeCompiled,
     findEntityInScenes: () => findEntityInScenes,
@@ -64319,6 +65826,7 @@ ${css}
     guid: () => guid,
     invertRole: () => invertRole,
     isFeaturePanel: () => isFeaturePanel,
+    langFontUrl: () => langFontUrl,
     listRefTargets: () => listRefTargets,
     listSnapshots: () => listSnapshots,
     loadAllEntities: () => loadAllEntities,
@@ -64337,9 +65845,11 @@ ${css}
     openRef: () => openRef,
     openScene: () => openScene,
     openSnapshotRight: () => openSnapshotRight,
+    openSpReport: () => openSpReport,
     pickFromList: () => pickFromList,
     pickReference: () => pickReference,
     pinDialog: () => pinDialog,
+    preloadLangFontUrls: () => preloadLangFontUrls,
     refreshAllMentions: () => refreshAllMentions,
     refreshAllSpell: () => refreshAllSpell,
     refreshCommentsPanel: () => refreshCommentsPanel,
@@ -64348,6 +65858,7 @@ ${css}
     renderFeaturePanel: () => renderFeaturePanel,
     renderOpenFeaturePanels: () => renderOpenFeaturePanels,
     resolveImg: () => resolveImg,
+    revealFile: () => revealFile,
     revertTab: () => revertTab,
     rosterTextForDraft: () => rosterTextForDraft,
     safeName: () => safeName,
@@ -64360,22 +65871,41 @@ ${css}
     scriptMeta: () => scriptMeta,
     setSpView: () => setSpView,
     showErrorList: () => showErrorList,
+    smartIgnoreAdd: () => smartIgnoreAdd,
+    smartIgnoreList: () => smartIgnoreList,
+    smartIgnoreRemove: () => smartIgnoreRemove,
+    smartIgnored: () => smartIgnored,
+    smartLearnMin: () => smartLearnMin,
+    smartPinAdd: () => smartPinAdd,
+    smartPinList: () => smartPinList,
+    smartPinRemove: () => smartPinRemove,
+    smartTypeDialog: () => smartTypeDialog,
     snapshotFile: () => snapshotFile,
+    spContinuedOn: () => spContinuedOn,
     spErrors: () => spErrors,
     spFormat: () => spFormat,
     spFormatSettings: () => spFormatSettings,
+    spLineHeight: () => spLineHeight,
     spPageModel: () => spPageModel,
+    spReportInput: () => spReportInput,
+    spReportText: () => spReportText,
     spellChecker: () => spellChecker,
     syncMenuToggles: () => syncMenuToggles,
     syncModeHint: () => syncModeHint,
+    syncTypeSound: () => syncTypeSound,
     tb: () => tb,
+    toggleContinueds: () => toggleContinueds,
+    togglePageNumbers: () => togglePageNumbers,
+    toggleSceneNumbers: () => toggleSceneNumbers,
     toggleShowFormat: () => toggleShowFormat,
     uniqueSceneFileName: () => uniqueSceneFileName,
     updateErrorBadge: () => updateErrorBadge,
+    updatePageNumberHint: () => updatePageNumberHint,
     updateSceneRow: () => updateSceneRow,
     updateToolbarTitles: () => updateToolbarTitles,
     watermarkDialog: () => watermarkDialog,
-    wikiRoot: () => wikiRoot
+    wikiRoot: () => wikiRoot,
+    zoomFitWidth: () => zoomFitWidth
   });
   function loadSettings(meta2) {
     state.meta = meta2;
@@ -64396,16 +65926,13 @@ ${css}
     );
     document.body.classList.toggle("k-ln", !!state.settings.lineNumbers);
     document.body.classList.toggle("paper-mode", state.settings.paperMode !== false);
-    if (state.settings.fontFamily) {
-      document.documentElement.style.setProperty("--ed-font", state.settings.fontFamily);
-    } else {
-      document.documentElement.style.setProperty("--ed-font", DEFAULT_SCRIPT_FONT);
-    }
-    if (state.settings.spFontFamily) {
-      document.documentElement.style.setProperty("--sp-font", state.settings.spFontFamily);
-    } else {
-      document.documentElement.style.setProperty("--sp-font", DEFAULT_SCRIPT_FONT);
-    }
+    const nLang = applyProjectLangFonts();
+    const edStack = state.settings.fontFamily || DEFAULT_SCRIPT_FONT;
+    document.documentElement.style.setProperty("--ed-font", withLangFamily(edStack, nLang > 0));
+    const spStack = state.settings.spFontFamily || DEFAULT_SCRIPT_FONT;
+    document.documentElement.style.setProperty("--sp-font", withLangFamily(spStack, nLang > 0));
+    setTypeVolume(state.settings.typeSoundVolume ?? 0.5);
+    syncTypeSound();
     applySpellcheck();
     refreshAllSpell();
     restartAutosave();
@@ -64437,7 +65964,10 @@ ${css}
       elements: s.spElements,
       styles: s.spStyles,
       rules: s.spPageRules,
-      strings: s.spStrings
+      strings: s.spStrings,
+      sceneNumbers: s.spSceneNumbers,
+      pageNumbers: s.spPageNumbers,
+      continued: s.spContinued
     };
   }
   function spFormat() {
@@ -64455,7 +65985,55 @@ ${css}
       document.head.appendChild(st);
     }
     st.textContent = spCss(fmt);
+    if (setSceneNumbers(!!fmt.sceneNumbers.show, fmt.sceneNumbers.suffix)) {
+      for (const tb2 of state.tabs.values()) if (tb2.sp) refreshSceneNumbers(tb2.sp.view);
+    }
+    document.body.classList.toggle("sp-page-numbers", !!fmt.pageNumbers.show);
+    const lv = layoutCssVars(fmt, state.settings.spPageGap);
+    for (const k of Object.keys(lv)) R.setProperty(k, lv[k]);
+    R.setProperty("--sp-lh", String(spLineHeight()));
     return fmt;
+  }
+  function spLineHeight() {
+    const v = parseFloat(state.settings.spLineHeight);
+    return Number.isFinite(v) && v >= 0.8 && v <= 2.5 ? v : 1;
+  }
+  function langFontUrl(row) {
+    if (row.builtin) return "assets/fonts/" + row.builtin;
+    if (row.file) return _langFontUrls.get(row.file) || "";
+    return "";
+  }
+  async function preloadLangFontUrls() {
+    const rows = normalizeLangFonts(state.settings.langFonts);
+    const need = rows.map((r) => r.file).filter((f) => f && !_langFontUrls.has(f));
+    if (!need.length || !state.root) return _langFontUrls.size;
+    for (const f of need) {
+      try {
+        const p = await kapi.join(state.root, "Fonts", f);
+        if (await kapi.exists(p)) _langFontUrls.set(f, await kapi.toFileURL(p));
+      } catch {
+      }
+    }
+    return _langFontUrls.size;
+  }
+  function applyProjectLangFonts() {
+    return applyLangFonts(state.settings.langFonts, langFontUrl);
+  }
+  function onTypeKey(ev) {
+    if (!isTypeSound()) return;
+    if (!isEditorTarget(ev)) return;
+    const kind = soundKindFor(ev);
+    if (kind) playType(kind);
+  }
+  function syncTypeSound() {
+    const s = state.settings || {};
+    const want = !!s.typeSound && (s.typeSoundAlways || isTypewriter());
+    setTypeSound(want);
+    if (want && !_typeSoundBound) {
+      document.addEventListener("keydown", onTypeKey, true);
+      _typeSoundBound = true;
+    }
+    return want;
   }
   function bumpPageScale(dir) {
     setPageScale(pageScale + (dir > 0 ? 0.1 : -0.1));
@@ -64495,6 +66073,19 @@ ${css}
     });
     setStatus(t("status.zoomReset"));
   }
+  function zoomFitWidth(pane) {
+    const p = pane || state.active && state.active.pane;
+    const fmt = spFormat();
+    const pageW = (+fmt.paper.width || 8.5) * 96;
+    const avail = Math.max(200, (p ? p.clientWidth : window.innerWidth) - 48);
+    const z = Math.max(SCALE_MIN, Math.min(SCALE_MAX, Math.round(avail / pageW * 100) / 100));
+    keepZoomCenter(() => {
+      pageScale = z;
+      applyZoomVars();
+    });
+    setStatus("\u0E0B\u0E39\u0E21\u0E1E\u0E2D\u0E14\u0E35\u0E04\u0E27\u0E32\u0E21\u0E01\u0E27\u0E49\u0E32\u0E07: " + Math.round(z * 100) + "%");
+    return z;
+  }
   function centerPage(pane) {
     const p = pane || state.active && state.active.pane;
     if (!p || !p.scrollWidth) return;
@@ -64527,7 +66118,12 @@ ${css}
     }
     const pageWpx = fmt.paper.width * 96;
     const vs = viewScale(spViewMode, tab.pane.clientWidth || 900, pageWpx, 20);
-    renderPageView(host2, pg, fmt, { scale: vs.scale, perRow: vs.perRow, gap: 20 });
+    renderPageView(host2, pg, fmt, {
+      scale: vs.scale,
+      perRow: vs.perRow,
+      gap: 20,
+      startPage: currentStartPage(tab)
+    });
     return pg.count;
   }
   function setSpView(mode, quiet) {
@@ -64566,6 +66162,84 @@ ${css}
     syncMenuToggles();
     setStatus(v ? "\u0E41\u0E2A\u0E14\u0E07\u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A: \u0E40\u0E1B\u0E34\u0E14 (\u0E40\u0E2A\u0E49\u0E19\u0E02\u0E2D\u0E1A element + \u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E2B\u0E21\u0E32\u0E22\u0E08\u0E1A\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14)" : "\u0E41\u0E2A\u0E14\u0E07\u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A: \u0E1B\u0E34\u0E14");
     return v;
+  }
+  function spContinuedOn() {
+    const c = state.settings.spContinued;
+    return !c || c.enabled !== false;
+  }
+  function toggleContinueds(on) {
+    const cur = { ...CONTINUED_DEFAULTS, ...state.settings.spContinued || {} };
+    cur.enabled = on === void 0 ? !spContinuedOn() : !!on;
+    state.settings.spContinued = cur;
+    applyPageVars();
+    scheduleCount();
+    refreshSpView();
+    saveProjectMeta();
+    syncMenuToggles();
+    setStatus(cur.enabled ? "\u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21\u0E15\u0E48\u0E2D\u0E40\u0E19\u0E37\u0E48\u0E2D\u0E07: \u0E40\u0E1B\u0E34\u0E14 \u2014 (CONTINUED) \xB7 CONTINUED: \xB7 (MORE) \xB7 (cont'd)" : "\u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21\u0E15\u0E48\u0E2D\u0E40\u0E19\u0E37\u0E48\u0E2D\u0E07: \u0E1B\u0E34\u0E14");
+    return cur.enabled;
+  }
+  function toggleSceneNumbers(on) {
+    const cur = { ...SCENE_NUMBER_DEFAULTS, ...state.settings.spSceneNumbers || {} };
+    cur.show = on === void 0 ? !cur.show : !!on;
+    state.settings.spSceneNumbers = cur;
+    applyPageVars();
+    refreshSpView();
+    saveProjectMeta();
+    syncMenuToggles();
+    setStatus(cur.show ? `\u0E40\u0E25\u0E02\u0E09\u0E32\u0E01: \u0E40\u0E1B\u0E34\u0E14 (\u0E0B\u0E49\u0E32\u0E22 ${cur.left}" \xB7 \u0E02\u0E27\u0E32 ${cur.right}" \u0E08\u0E32\u0E01\u0E02\u0E2D\u0E1A\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29)` : "\u0E40\u0E25\u0E02\u0E09\u0E32\u0E01: \u0E1B\u0E34\u0E14");
+    return cur.show;
+  }
+  function togglePageNumbers(on) {
+    const cur = { ...PAGE_NUMBER_DEFAULTS, ...state.settings.spPageNumbers || {} };
+    cur.show = on === void 0 ? !cur.show : !!on;
+    state.settings.spPageNumbers = cur;
+    applyPageVars();
+    refreshSpView();
+    updatePageNumberHint();
+    saveProjectMeta();
+    syncMenuToggles();
+    setStatus(cur.show ? `\u0E40\u0E25\u0E02\u0E2B\u0E19\u0E49\u0E32: \u0E40\u0E1B\u0E34\u0E14 (\u0E0A\u0E34\u0E14\u0E02\u0E27\u0E32 ${cur.right}" \xB7 ${cur.top}" \u0E08\u0E32\u0E01\u0E02\u0E2D\u0E1A\u0E1A\u0E19)` : "\u0E40\u0E25\u0E02\u0E2B\u0E19\u0E49\u0E32: \u0E1B\u0E34\u0E14");
+    return cur.show;
+  }
+  function currentStartPage(tab) {
+    const t2 = tab || state.active;
+    const n = parseInt(t2 && t2.startPage, 10);
+    return Number.isFinite(n) && n > 0 ? n : 1;
+  }
+  function updatePageNumberHint() {
+    const t2 = state.active;
+    const pane = t2 && t2.pane;
+    if (!pane) return "";
+    const fmt = spFormat();
+    const label = t2.sp && fmt.pageNumbers.show ? pageNumberLabel(1, fmt, currentStartPage(t2)) : "";
+    pane.style.setProperty("--pg-no-first", label ? JSON.stringify(label) : '""');
+    return label;
+  }
+  function extensionMenu(x, y) {
+    const t2 = state.active;
+    if (!t2 || !t2.sp) {
+      setStatus("\u0E40\u0E1B\u0E34\u0E14\u0E09\u0E32\u0E01\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C\u0E01\u0E48\u0E2D\u0E19");
+      return null;
+    }
+    if (t2.sp.curElement() !== "character") {
+      setStatus('\u0E27\u0E32\u0E07\u0E40\u0E04\u0E2D\u0E23\u0E4C\u0E40\u0E0B\u0E2D\u0E23\u0E4C\u0E43\u0E19\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14 "\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23" \u0E01\u0E48\u0E2D\u0E19\u0E43\u0E2A\u0E48\u0E2A\u0E48\u0E27\u0E19\u0E40\u0E2A\u0E23\u0E34\u0E21');
+      return null;
+    }
+    const cur = t2.sp.curExtension();
+    const items = CHAR_EXTENSIONS.map((e) => ({
+      label: (e === cur ? "\u25CF " : "   ") + e,
+      click: () => {
+        t2.sp.setExtension(e);
+        markDirty(t2);
+      }
+    }));
+    items.push({ label: "\u2014 \u0E44\u0E21\u0E48\u0E21\u0E35\u0E2A\u0E48\u0E27\u0E19\u0E40\u0E2A\u0E23\u0E34\u0E21 \u2014", click: () => {
+      t2.sp.setExtension("");
+      markDirty(t2);
+    } });
+    const r = $("#elem-badge")?.getBoundingClientRect();
+    return popupMenu(x ?? (r ? r.left : 200), y ?? (r ? r.bottom + 4 : 120), items);
   }
   function spPageModel(tab) {
     const t2 = tab || state.active;
@@ -64803,6 +66477,178 @@ ${css}
     return confirmBox(`\u0E1E\u0E1A ${hard.length} \u0E02\u0E49\u0E2D\u0E1C\u0E34\u0E14\u0E1E\u0E25\u0E32\u0E14\u0E43\u0E19\u0E1A\u0E17 (\u0E40\u0E0A\u0E48\u0E19 \u201C${hard[0].msg}\u201D)
 \u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01\u0E15\u0E48\u0E2D\u0E44\u0E1B\u0E40\u0E25\u0E22\u0E44\u0E2B\u0E21?`, "\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01\u0E15\u0E48\u0E2D");
   }
+  function spReportInput(tab) {
+    const t2 = tab || state.active;
+    if (!t2 || !t2.sp) return null;
+    return {
+      blocks: blocksFromDoc(t2.sp.view.state.doc),
+      fmt: spFormat(),
+      startPage: currentStartPage(t2),
+      tab: t2
+    };
+  }
+  function buildSpReport(kind, input) {
+    const inp = input || spReportInput();
+    if (!inp) return null;
+    const opts = { fmt: inp.fmt, startPage: inp.startPage };
+    if (kind === "location") return generateLocationReport(inp.blocks, opts);
+    if (kind === "character") return generateCharacterReport(inp.blocks, opts);
+    if (kind === "chart") return generateDialogueChart(inp.blocks, opts);
+    return null;
+  }
+  function spReportText(kind, data) {
+    if (kind === "location") return locationReportText(data);
+    if (kind === "character") return characterReportText(data);
+    return dialogueChartText(data);
+  }
+  function chartBar(page) {
+    const bar = el("div", "sp-chart-bar");
+    bar.title = CHART_KINDS.map((k) => `${CHART_LABELS[k]} ${page.percentages[k]}%`).join(" \xB7 ");
+    for (const k of CHART_KINDS) {
+      const pc = page.percentages[k];
+      if (pc <= 0) continue;
+      const seg = el("div", "sp-chart-seg seg-" + k);
+      seg.style.width = pc + "%";
+      bar.append(seg);
+    }
+    return bar;
+  }
+  function openSpReport(kind = "location") {
+    const inp = spReportInput();
+    if (!inp) {
+      setStatus("\u0E40\u0E1B\u0E34\u0E14\u0E09\u0E32\u0E01\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C\u0E01\u0E48\u0E2D\u0E19\u0E08\u0E36\u0E07\u0E08\u0E30\u0E17\u0E33\u0E23\u0E32\u0E22\u0E07\u0E32\u0E19\u0E44\u0E14\u0E49");
+      return null;
+    }
+    const info = SP_REPORTS[kind] || SP_REPORTS.location;
+    const data = buildSpReport(kind, inp);
+    const ov = el("div", "k-overlay");
+    const box = el("div", "k-dialog k-report-dlg");
+    box.append(el("div", "k-dlg-title", info.title + " \u2014 " + (inp.tab.title || "")));
+    const tabs2 = el("div", "k-report-tabs");
+    for (const k of Object.keys(SP_REPORTS)) {
+      const b = el("button", "k-report-tab" + (k === kind ? " on" : ""), SP_REPORTS[k].title);
+      b.onclick = () => {
+        ov.remove();
+        openSpReport(k);
+      };
+      tabs2.append(b);
+    }
+    box.append(tabs2);
+    const body = el("div", "k-report-body");
+    const goto = (pos) => {
+      if (Number.isFinite(pos)) {
+        ov.remove();
+        inp.tab.sp.gotoPos(pos);
+      }
+    };
+    if (kind === "location") {
+      box.append(el(
+        "div",
+        "dim",
+        `${data.locations.length} \u0E2A\u0E16\u0E32\u0E19\u0E17\u0E35\u0E48 \xB7 ${data.totalScenes} \u0E09\u0E32\u0E01 \xB7 ${data.totalPages} \u0E2B\u0E19\u0E49\u0E32`
+      ));
+      for (const L of data.locations) {
+        const g = el("div", "k-report-group");
+        const h = el("div", "k-report-ghead");
+        h.append(el("b", null, L.location));
+        h.append(el("span", "dim", `  ${L.intExt.join("/") || "\u2014"} \xB7 ${L.sceneCount} \u0E09\u0E32\u0E01 \xB7 ~${L.pages} \u0E2B\u0E19\u0E49\u0E32`));
+        g.append(h);
+        for (const s of L.scenes) {
+          const row = el("div", "k-report-row");
+          row.append(el("span", "k-report-no", "\u0E09\u0E32\u0E01 " + s.n));
+          row.append(el("span", "k-report-pg", "\u0E2B\u0E19\u0E49\u0E32 " + s.page));
+          row.append(el("span", "k-report-txt", s.heading));
+          if (s.characters.length) row.append(el("span", "dim k-report-chars", s.characters.join(", ")));
+          if (Number.isFinite(s.pos)) {
+            row.classList.add("can-go");
+            row.onclick = () => goto(s.pos);
+          }
+          g.append(row);
+        }
+        body.append(g);
+      }
+      if (!data.locations.length) body.append(el("div", "cmp-empty", "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01\u0E43\u0E19\u0E1A\u0E17\u0E19\u0E35\u0E49"));
+    } else if (kind === "character") {
+      box.append(el(
+        "div",
+        "dim",
+        `${data.characters.length} \u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23 \xB7 ${data.totalLines} \u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E1A\u0E17\u0E1E\u0E39\u0E14 \xB7 ${data.totalPages} \u0E2B\u0E19\u0E49\u0E32`
+      ));
+      const tbl = el("table", "k-report-table");
+      const head = el("tr");
+      for (const h of ["\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23", "\u0E09\u0E32\u0E01", "\u0E04\u0E23\u0E31\u0E49\u0E07\u0E17\u0E35\u0E48\u0E1E\u0E39\u0E14", "\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14", "\u0E40\u0E09\u0E25\u0E35\u0E48\u0E22/\u0E09\u0E32\u0E01", "\u0E2B\u0E19\u0E49\u0E32", "\u0E2A\u0E31\u0E14\u0E2A\u0E48\u0E27\u0E19"])
+        head.append(el("th", null, h));
+      tbl.append(head);
+      for (const c of data.characters) {
+        const tr2 = el("tr");
+        tr2.append(el("td", "k-report-name", c.name));
+        tr2.append(el("td", null, String(c.sceneCount)));
+        tr2.append(el("td", null, String(c.speeches)));
+        tr2.append(el("td", null, String(c.totalLines)));
+        tr2.append(el("td", null, String(c.avgLines)));
+        tr2.append(el("td", null, c.firstPage === c.lastPage ? String(c.firstPage) : c.firstPage + "\u2013" + c.lastPage));
+        const td = el("td");
+        const b = el("div", "sp-chart-bar");
+        const seg = el("div", "sp-chart-seg seg-dialogue");
+        seg.style.width = c.share + "%";
+        b.append(seg);
+        td.append(b, el("span", "dim", " " + c.share + "%"));
+        tr2.append(td);
+        tbl.append(tr2);
+      }
+      body.append(tbl);
+      if (!data.characters.length) body.append(el("div", "cmp-empty", "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E1A\u0E17\u0E1E\u0E39\u0E14\u0E43\u0E19\u0E1A\u0E17\u0E19\u0E35\u0E49"));
+    } else {
+      box.append(el(
+        "div",
+        "dim",
+        `\u0E23\u0E27\u0E21\u0E17\u0E31\u0E49\u0E07\u0E40\u0E23\u0E37\u0E48\u0E2D\u0E07: ${CHART_KINDS.map((k) => CHART_LABELS[k] + " " + data.overall[k] + "%").join(" \xB7 ")}`
+      ));
+      const legend = el("div", "sp-chart-legend");
+      for (const k of CHART_KINDS) {
+        const it = el("span", "sp-chart-key");
+        it.append(el("i", "sp-chart-swatch seg-" + k), CHART_LABELS[k]);
+        legend.append(it);
+      }
+      body.append(legend);
+      for (const p of data.pages) {
+        const row = el("div", "k-report-row sp-chart-row");
+        row.append(el("span", "k-report-pg", "\u0E2B\u0E19\u0E49\u0E32 " + p.page));
+        row.append(chartBar(p));
+        const top = p.charDensity.slice(0, 3).map((d) => `${d.name} ${d.lines}`).join(" \xB7 ");
+        row.append(el("span", "dim k-report-chars", top));
+        body.append(row);
+      }
+    }
+    box.append(body);
+    const btns = el("div", "k-dlg-btns");
+    const bCopy = el("button", null, "\u{1F4CB} \u0E04\u0E31\u0E14\u0E25\u0E2D\u0E01\u0E40\u0E1B\u0E47\u0E19\u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21");
+    bCopy.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(spReportText(kind, data));
+        setStatus("\u0E04\u0E31\u0E14\u0E25\u0E2D\u0E01\u0E23\u0E32\u0E22\u0E07\u0E32\u0E19\u0E41\u0E25\u0E49\u0E27");
+      } catch (e) {
+        log("warn", "\u0E04\u0E31\u0E14\u0E25\u0E2D\u0E01\u0E23\u0E32\u0E22\u0E07\u0E32\u0E19\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08", e);
+      }
+    };
+    const bSave = el("button", null, "\u{1F4BE} \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E40\u0E1B\u0E47\u0E19\u0E44\u0E1F\u0E25\u0E4C\u2026");
+    bSave.onclick = async () => {
+      const p = await kapi.saveAsDialog(info.file + ".txt", "txt");
+      if (!p) return;
+      await kapi.writeFile(p, spReportText(kind, data));
+      setStatus("\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E23\u0E32\u0E22\u0E07\u0E32\u0E19\u0E41\u0E25\u0E49\u0E27: " + p);
+    };
+    const bOk = el("button", "k-ok", "\u0E1B\u0E34\u0E14");
+    bOk.onclick = () => ov.remove();
+    btns.append(bCopy, bSave, bOk);
+    box.append(btns);
+    ov.append(box);
+    document.body.append(ov);
+    ov.onclick = (ev) => {
+      if (ev.target === ov) ov.remove();
+    };
+    return ov;
+  }
   function applyUIScale(v) {
     const s = Math.max(UI_SCALE_MIN, Math.min(
       UI_SCALE_MAX,
@@ -65003,6 +66849,12 @@ ${css}
     });
     updateStatusExtras();
     smart.loadNames(root);
+    smart.onIgnore = (w) => {
+      smartIgnoreAdd(w);
+      setStatus(`\u0E44\u0E21\u0E48\u0E08\u0E33 "${w}" \u0E2D\u0E35\u0E01 (\u0E41\u0E01\u0E49\u0E44\u0E14\u0E49\u0E17\u0E35\u0E48 \u0E1A\u0E17 \u2192 \u0E08\u0E31\u0E14\u0E01\u0E32\u0E23 SmartType)`);
+    };
+    preloadLangFontUrls().then(() => applySettings()).catch(() => {
+    });
     loadSpellDict(root);
     await loadTemplates();
     warmInverse();
@@ -65789,6 +67641,19 @@ ${css}
                 label: iconHtml("search", 14) + " \u0E04\u0E49\u0E19\u0E2B\u0E32\u0E43\u0E19\u0E09\u0E32\u0E01 (Find on location)",
                 click: () => findEntityInScenes(p, name, e.clientX, e.clientY)
               },
+              // [alpha.58 ฟีเจอร์ที่ขาด 2] เอนทิตี้เป็นไฟล์ .json แก้นอกโปรแกรมได้ — ต้องหาเจอในดิสก์
+              { label: "\u{1F4C2} \u0E2B\u0E32\u0E43\u0E19\u0E14\u0E34\u0E2A\u0E01\u0E4C (Find on disk)", click: () => revealFile(p) },
+              {
+                label: iconHtml("history", 14) + " \u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E40\u0E27\u0E2D\u0E23\u0E4C\u0E0A\u0E31\u0E19\u2026",
+                click: async () => {
+                  const { fileVersionDialog: fileVersionDialog2 } = await Promise.resolve().then(() => (init_dialogs(), dialogs_exports));
+                  await fileVersionDialog2(p, name, { onRestored: async () => {
+                    const open = state.tabs.get(p);
+                    if (open && open.wiki) await open.wiki.reloadIfExists?.();
+                    await buildTree2();
+                  } });
+                }
+              },
               { label: "\u0E17\u0E33\u0E0B\u0E49\u0E33", click: () => duplicateEntity(p) },
               "-",
               { label: "\u0E25\u0E1A (\u0E22\u0E49\u0E32\u0E22\u0E44\u0E1B\u0E16\u0E31\u0E07\u0E02\u0E22\u0E30)", danger: true, click: () => deleteToTrash(p, name) }
@@ -66011,6 +67876,20 @@ ${css}
   }
   function catIconHtml(key, sz) {
     return iconHtml(catIcon(key), sz || 16);
+  }
+  async function revealFile(p) {
+    if (!p) {
+      setStatus("\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E44\u0E1F\u0E25\u0E4C\u0E43\u0E2B\u0E49\u0E40\u0E1B\u0E34\u0E14");
+      return false;
+    }
+    try {
+      const ok = await kapi.revealInOS(p);
+      setStatus(ok ? "\u{1F4C2} \u0E40\u0E1B\u0E34\u0E14\u0E42\u0E1F\u0E25\u0E40\u0E14\u0E2D\u0E23\u0E4C\u0E41\u0E25\u0E49\u0E27: " + p : "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E44\u0E1F\u0E25\u0E4C\u0E43\u0E19\u0E14\u0E34\u0E2A\u0E01\u0E4C: " + p);
+      return !!ok;
+    } catch (e) {
+      log("warn", "\u0E40\u0E1B\u0E34\u0E14\u0E42\u0E1F\u0E25\u0E40\u0E14\u0E2D\u0E23\u0E4C\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08", e);
+      return false;
+    }
   }
   async function findEntityInScenes(entityPath, name, x, y) {
     setStatus("\u0E01\u0E33\u0E25\u0E31\u0E07\u0E04\u0E49\u0E19\u0E2B\u0E32\u0E09\u0E32\u0E01\u0E17\u0E35\u0E48\u0E01\u0E25\u0E48\u0E32\u0E27\u0E16\u0E36\u0E07 \u201C" + name + "\u201D \u2026");
@@ -66918,6 +68797,12 @@ ${css}
         spView: currentSpView(),
         showFormat: isFormatGuide(),
         checkBeforeExport: state.settings.spCheckBeforeExport !== false,
+        // alpha.57a — เลขฉาก / เลขหน้า / เสียงพิมพ์
+        sceneNumbers: !!(state.settings.spSceneNumbers || {}).show,
+        pageNumbers: !!(state.settings.spPageNumbers || {}).show,
+        continueds: spContinuedOn(),
+        // alpha.58 · 55–56
+        typeSound: !!state.settings.typeSound,
         panels: {
           "tree-panel": !!ps.tree,
           "props-panel": !!ps.props,
@@ -67121,6 +69006,10 @@ ${css}
     const iSyn = mk("\u0E40\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E22\u0E48\u0E2D", row.synopsis, "textarea");
     const iStoryDate = mk("\u0E40\u0E27\u0E25\u0E32\u0E43\u0E19\u0E40\u0E23\u0E37\u0E48\u0E2D\u0E07 (\u0E40\u0E2A\u0E49\u0E19\u0E40\u0E27\u0E25\u0E32)", row.storyDate);
     iStoryDate.placeholder = "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48 3 \xB7 \u0E1B\u0E35\u0E17\u0E35\u0E48 1024 \xB7 \u0E40\u0E0A\u0E49\u0E32";
+    const iStartPage = mk("\u0E40\u0E25\u0E02\u0E2B\u0E19\u0E49\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19 (\u0E1A\u0E17)", row.startPage || "");
+    iStartPage.type = "number";
+    iStartPage.min = "1";
+    iStartPage.placeholder = "1";
     const iPov = mk("\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07 (POV)", row.pov);
     const iEmotion = mk("\u0E2D\u0E32\u0E23\u0E21\u0E13\u0E4C", row.emotion);
     const iConflict = mk("\u0E04\u0E27\u0E32\u0E21\u0E02\u0E31\u0E14\u0E41\u0E22\u0E49\u0E07", row.conflict);
@@ -67147,6 +69036,9 @@ ${css}
       row.flag = iFlag.checked;
       row.note = iNote.value;
       row.tags = iTags.value.split(",").map((x) => x.trim()).filter(Boolean);
+      const sp = parseInt(iStartPage.value, 10);
+      if (Number.isFinite(sp) && sp > 0) row.startPage = sp;
+      else delete row.startPage;
     };
     const snapshot = () => JSON.stringify([
       row.synopsis,
@@ -67158,7 +69050,8 @@ ${css}
       row.color,
       row.flag,
       row.note,
-      row.tags
+      row.tags,
+      row.startPage
     ]);
     let lastSaved = (collect(), snapshot());
     const commit = async (rebuildTree) => {
@@ -67469,7 +69362,7 @@ ${css}
         const { buildVarContext: buildVarContext2 } = await Promise.resolve().then(() => (init_template_vars(), template_vars_exports));
         Object.assign(varCtx, await buildVarContext2(state.root, kapi));
       }
-      return runWorkflow(model, cur(), { varCtx });
+      return runWorkflow(model, cur(), { varCtx, spFormat: spFormat() });
     };
     const btns = el("div", "k-dlg-btns");
     const bPrev = el("button", null, "\u{1F441} \u0E14\u0E39\u0E15\u0E31\u0E27\u0E2D\u0E22\u0E48\u0E32\u0E07");
@@ -68333,16 +70226,30 @@ ${css}
   }
   async function confirmQuit() {
     const dirty = [...state.tabs.values()].filter((t2) => t2.dirty);
-    if (!dirty.length) return kapi.quitNow();
-    const v = await choose(`\u0E21\u0E35 ${dirty.length} \u0E41\u0E17\u0E47\u0E1A\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01`, [
-      { label: "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14\u0E41\u0E25\u0E49\u0E27\u0E2D\u0E2D\u0E01", value: "save", primary: true },
-      { label: "\u0E2D\u0E2D\u0E01\u0E42\u0E14\u0E22\u0E44\u0E21\u0E48\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01", value: "discard", danger: true },
-      { label: "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01", value: null }
-    ]);
-    if (v === "save") {
-      for (const t2 of dirty) await saveTab(t2);
+    if (!dirty.length) {
       kapi.quitNow();
-    } else if (v === "discard") kapi.quitNow();
+      return "save";
+    }
+    const { action, keys: keys2 } = await saveAllDialog(dirtyTabList(), {
+      title: `\u0E1B\u0E34\u0E14\u0E42\u0E1B\u0E23\u0E41\u0E01\u0E23\u0E21 \u2014 \u0E21\u0E35 ${dirty.length} \u0E44\u0E1F\u0E25\u0E4C\u0E17\u0E35\u0E48\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01`,
+      saveLabel: "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E41\u0E25\u0E49\u0E27\u0E2D\u0E2D\u0E01",
+      discardLabel: "\u0E2D\u0E2D\u0E01\u0E42\u0E14\u0E22\u0E44\u0E21\u0E48\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01",
+      cancelLabel: "\u0E44\u0E21\u0E48\u0E2D\u0E2D\u0E01\u0E41\u0E25\u0E49\u0E27"
+    });
+    if (action === "save") {
+      const pick2 = new Set(keys2);
+      for (const t2 of dirty) {
+        if (!pick2.has(t2.file)) continue;
+        try {
+          await saveTab(t2);
+        } catch (err) {
+          log("error", "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E01\u0E48\u0E2D\u0E19\u0E1B\u0E34\u0E14\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08: " + (t2.file || t2.title), err);
+        }
+      }
+      kapi.quitNow();
+    } else if (action === "discard") kapi.quitNow();
+    else setStatus("\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01\u0E01\u0E32\u0E23\u0E1B\u0E34\u0E14\u0E42\u0E1B\u0E23\u0E41\u0E01\u0E23\u0E21");
+    return action;
   }
   function entityCreateDialog(cat, tps) {
     return new Promise((resolve) => {
@@ -68506,7 +70413,7 @@ ${css}
           markDirty(tab);
           scheduleCount();
           scheduleOutline();
-          setTimeout(() => spSmartCheck(tab), 0);
+          scheduleSpSmart(tab);
         },
         onKeyDown: (ev) => smart.onKey(ev),
         onElement: (elName) => setElementBadge(elName),
@@ -68556,9 +70463,21 @@ ${css}
     pane.classList.toggle("sp-pane", !!tab.sp);
     const ws = pane.querySelector(".workspace");
     if (ws) ws.style.minWidth = pageScale * 100 + "%";
+    if (tab.sp && tab.startPage === void 0) {
+      sceneCtx(tab.file).then((c) => {
+        tab.startPage = c && c.row && parseInt(c.row.startPage, 10) || 1;
+        if (state.active === tab) {
+          updatePageNumberHint();
+          refreshSpView();
+        }
+      }).catch(() => {
+        tab.startPage = 1;
+      });
+    }
     requestAnimationFrame(() => {
       setSpView(currentSpView(), true);
       centerPage(pane);
+      updatePageNumberHint();
     });
   }
   async function switchFormat(target) {
@@ -68607,41 +70526,118 @@ ${css}
     b.innerHTML = (sp ? iconHtml("film", 16) : iconHtml("book", 16)) + (sp ? " \u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07 \u25BE" : " \u0E19\u0E34\u0E22\u0E32\u0E22 \u25BE");
     b.title = "\u0E2A\u0E25\u0E31\u0E1A\u0E42\u0E2B\u0E21\u0E14\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23 \u0E19\u0E34\u0E22\u0E32\u0E22 \u2194 \u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07 (Ctrl+Shift+M)";
   }
-  function screenplayTerms(tab) {
-    const chars = /* @__PURE__ */ new Set(), locs = /* @__PURE__ */ new Set();
+  function smartIgnoreList() {
+    const v = state.meta && state.meta.smartIgnore;
+    return Array.isArray(v) ? v.map(String) : [];
+  }
+  function smartIgnored(word) {
+    const w = String(word || "").trim().toLowerCase();
+    return !!w && smartIgnoreList().some((x) => String(x).trim().toLowerCase() === w);
+  }
+  function smartIgnoreAdd(word) {
+    const w = String(word || "").trim();
+    if (!w || !state.meta) return smartIgnoreList();
+    const list = smartIgnoreList();
+    if (!list.some((x) => x.toLowerCase() === w.toLowerCase())) list.push(w);
+    state.meta.smartIgnore = list;
+    state.meta.smartPin = smartPinList().filter((x) => x.trim().toLowerCase() !== w.toLowerCase());
+    saveProjectMeta();
+    return list;
+  }
+  function smartIgnoreRemove(word) {
+    const w = String(word || "").trim().toLowerCase();
+    if (!state.meta) return smartIgnoreList();
+    const list = smartIgnoreList().filter((x) => x.trim().toLowerCase() !== w);
+    state.meta.smartIgnore = list;
+    saveProjectMeta();
+    return list;
+  }
+  function smartPinList() {
+    const v = state.meta && state.meta.smartPin;
+    return Array.isArray(v) ? v.map(String) : [];
+  }
+  function smartPinAdd(word) {
+    const w = String(word || "").trim();
+    if (!w || !state.meta) return smartPinList();
+    const list = smartPinList();
+    if (!list.some((x) => x.toLowerCase() === w.toLowerCase())) list.push(w);
+    state.meta.smartPin = list;
+    state.meta.smartIgnore = smartIgnoreList().filter((x) => x.trim().toLowerCase() !== w.toLowerCase());
+    saveProjectMeta();
+    return list;
+  }
+  function smartPinRemove(word) {
+    const w = String(word || "").trim().toLowerCase();
+    if (!state.meta) return smartPinList();
+    const list = smartPinList().filter((x) => x.trim().toLowerCase() !== w);
+    state.meta.smartPin = list;
+    saveProjectMeta();
+    return list;
+  }
+  function smartLearnMin() {
+    return learnMin(state.settings.smartLearnMin);
+  }
+  function screenplayTermCounts(tab, skipPos) {
+    const charList = [], locList = [];
     try {
-      tab.sp.view.state.doc.forEach((node) => {
+      const skip = Number.isFinite(skipPos) ? skipPos : (() => {
+        try {
+          return tab.sp.curBlock().pos;
+        } catch {
+          return null;
+        }
+      })();
+      tab.sp.view.state.doc.forEach((node, pos) => {
+        if (pos === skip) return;
         const el3 = node.attrs.el, txt = (node.textContent || "").trim();
         if (!txt) return;
-        if (el3 === "character") chars.add(txt);
-        else if (el3 === "scene") {
+        if (el3 === "character") {
+          charList.push(splitCharacter(txt).name);
+        } else if (el3 === "scene" || el3 === "subheader") {
           let s = txt;
           for (const p of SCENE_PREFIX) if (s.toUpperCase().startsWith(p.trim().toUpperCase())) {
             s = s.slice(p.trim().length);
             break;
           }
-          const loc = s.split(/\s[-–]\s|\s-\s/)[0].trim();
-          if (loc) locs.add(loc);
+          locList.push(s.split(/\s[-–]\s|\s-\s/)[0].trim());
         }
       });
     } catch {
     }
-    return { chars: [...chars], locs: [...locs] };
+    return { chars: countTerms(charList), locs: countTerms(locList) };
+  }
+  function screenplayTerms(tab, skipPos) {
+    const c = screenplayTermCounts(tab, skipPos);
+    const base3 = { min: smartLearnMin(), pinned: smartPinList(), ignored: smartIgnoreList() };
+    return {
+      chars: learnedTerms(c.chars, { ...base3, known: smart.byCat?.characters || [] }),
+      locs: learnedTerms(c.locs, { ...base3, known: smart.byCat?.locations || [] })
+    };
+  }
+  function clearTermCache() {
+    _termCache = { tab: null, at: 0, val: null };
+  }
+  function cachedTerms(tab) {
+    const now = Date.now();
+    if (_termCache.tab === tab && _termCache.val && now - _termCache.at < TERM_TTL) return _termCache.val;
+    const val = screenplayTerms(tab);
+    _termCache = { tab, at: now, val };
+    return val;
   }
   function spSmartCheck(tab) {
     const elName = tab.sp.curElement();
     smart.bindView(tab.sp.view);
-    const T = screenplayTerms(tab);
+    const T = cachedTerms(tab);
     if (elName === "character")
       smart.check(
         tab.sp.view,
-        uniqList([...T.chars, ...smart.byCat?.characters || [], ...CHAR_EXTENSIONS]),
+        notIgnored([...T.chars, ...smart.byCat?.characters || [], ...CHAR_EXTENSIONS]),
         { minLen: 1 }
       );
     else if (elName === "scene")
       smart.check(
         tab.sp.view,
-        uniqList([
+        notIgnored([
           ...SCENE_PREFIX,
           ...T.locs,
           ...smart.byCat?.locations || [],
@@ -68649,15 +70645,150 @@ ${css}
         ]),
         { minLen: 1, ci: true }
       );
-    else if (elName === "transition") smart.check(tab.sp.view, TRANSITIONS, { minLen: 1, ci: true });
-    else if (elName === "parenthetical") smart.check(tab.sp.view, PARENTHETICALS, { minLen: 1 });
+    else if (elName === "transition") smart.check(tab.sp.view, notIgnored(TRANSITIONS), { minLen: 1, ci: true });
+    else if (elName === "transition-in") smart.check(tab.sp.view, notIgnored(TRANSITIONS_IN), { minLen: 1, ci: true });
+    else if (elName === "intercut") smart.check(tab.sp.view, notIgnored(INTERCUTS), { minLen: 1, ci: true });
+    else if (elName === "subheader")
+      smart.check(
+        tab.sp.view,
+        notIgnored([...T.locs, ...smart.byCat?.locations || [], ...TIMES]),
+        { minLen: 1, ci: true }
+      );
+    else if (elName === "parenthetical") smart.check(tab.sp.view, notIgnored(PARENTHETICALS), { minLen: 1 });
     else if (elName === "dialogue" || elName === "action")
-      smart.check(tab.sp.view, uniqList([
+      smart.check(tab.sp.view, notIgnored([
         ...T.chars,
         ...smart.byCat?.characters || [],
         ...smart.names || []
       ]));
     else smart.hide();
+  }
+  function smartTypeDialog() {
+    const tab = state.active;
+    const ov = el("div", "k-overlay");
+    const box = el("div", "k-dialog k-smart-dlg");
+    box.append(el("div", "k-dlg-title", "\u0E08\u0E31\u0E14\u0E01\u0E32\u0E23 SmartType (\u0E04\u0E33\u0E17\u0E35\u0E48\u0E42\u0E1B\u0E23\u0E41\u0E01\u0E23\u0E21\u0E08\u0E33\u0E44\u0E27\u0E49)"));
+    box.append(el(
+      "div",
+      "dim",
+      '\u0E04\u0E33\u0E40\u0E2B\u0E25\u0E48\u0E32\u0E19\u0E35\u0E49\u0E40\u0E01\u0E47\u0E1A\u0E08\u0E32\u0E01 "\u0E2A\u0E34\u0E48\u0E07\u0E17\u0E35\u0E48\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E43\u0E19\u0E1A\u0E17\u0E19\u0E35\u0E49" \u2014 \u0E01\u0E14 \u2715 \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E2A\u0E31\u0E48\u0E07\u0E44\u0E21\u0E48\u0E43\u0E2B\u0E49\u0E08\u0E33\u0E2D\u0E35\u0E01'
+    ));
+    const minRow = el("div", "k-row k-smart-min");
+    minRow.append(el("label", null, "\u0E08\u0E33\u0E04\u0E33\u0E08\u0E32\u0E01\u0E1A\u0E17\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E40\u0E08\u0E2D\u0E0B\u0E49\u0E33\u0E2D\u0E22\u0E48\u0E32\u0E07\u0E19\u0E49\u0E2D\u0E22"));
+    const minSel = el("select");
+    for (let i2 = LEARN_MIN_RANGE[0]; i2 <= LEARN_MIN_RANGE[1]; i2++) {
+      const o = el("option");
+      o.value = String(i2);
+      o.textContent = i2 + " \u0E1A\u0E25\u0E47\u0E2D\u0E01" + (i2 === DEFAULT_LEARN_MIN ? " (\u0E41\u0E19\u0E30\u0E19\u0E33)" : "");
+      if (i2 === smartLearnMin()) o.selected = true;
+      minSel.append(o);
+    }
+    minRow.append(minSel);
+    minRow.append(el("span", "dim", " \u2014 \u0E04\u0E48\u0E32 1 = \u0E08\u0E33\u0E17\u0E38\u0E01\u0E04\u0E33\u0E17\u0E35\u0E48\u0E1E\u0E34\u0E21\u0E1E\u0E4C (\u0E04\u0E33\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E1C\u0E34\u0E14\u0E08\u0E30\u0E15\u0E34\u0E14\u0E21\u0E32\u0E14\u0E49\u0E27\u0E22)"));
+    box.append(minRow);
+    const body = el("div", "k-smart-body");
+    const render = () => {
+      body.innerHTML = "";
+      const counts = tab && tab.sp ? screenplayTermCounts(tab, -1) : { chars: /* @__PURE__ */ new Map(), locs: /* @__PURE__ */ new Map() };
+      const base3 = { min: smartLearnMin(), pinned: smartPinList(), ignored: smartIgnoreList() };
+      const known = { chars: smart.byCat?.characters || [], locs: smart.byCat?.locations || [] };
+      for (const [title, key] of [["\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E43\u0E19\u0E1A\u0E17\u0E19\u0E35\u0E49", "chars"], ["\u0E2A\u0E16\u0E32\u0E19\u0E17\u0E35\u0E48\u0E43\u0E19\u0E1A\u0E17\u0E19\u0E35\u0E49", "locs"]]) {
+        const opt = { ...base3, known: known[key] };
+        const list = learnedTerms(counts[key], opt);
+        body.append(el("div", "k-set-sub", title));
+        if (!list.length) body.append(el("div", "cmp-empty", "(\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35)"));
+        for (const w of list) {
+          const row = el("div", "k-smart-row");
+          row.append(el("span", "k-smart-word", w));
+          row.append(el("span", "dim", " \xD7 " + (counts[key].get(w) || 0)));
+          const x = el("button", "k-danger-btn", "\u2715");
+          x.title = "\u0E44\u0E21\u0E48\u0E15\u0E49\u0E2D\u0E07\u0E08\u0E33\u0E04\u0E33\u0E19\u0E35\u0E49";
+          x.onclick = () => {
+            smartIgnoreAdd(w);
+            render();
+          };
+          row.append(x);
+          body.append(row);
+        }
+        const wait = pendingTerms(counts[key], opt);
+        if (wait.length) {
+          body.append(el(
+            "div",
+            "k-smart-wait-head dim",
+            `\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E08\u0E33 (\u0E40\u0E08\u0E2D\u0E44\u0E21\u0E48\u0E16\u0E36\u0E07 ${smartLearnMin()} \u0E04\u0E23\u0E31\u0E49\u0E07) \u2014 \u0E01\u0E14 \u271A \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E08\u0E33\u0E40\u0E25\u0E22`
+          ));
+          for (const p of wait) {
+            const row = el("div", "k-smart-row k-smart-wait");
+            row.append(el("span", "k-smart-word dim", p.word));
+            row.append(el("span", "dim", " \xD7 " + p.count + (p.ok ? "" : " \xB7 \u0E2B\u0E19\u0E49\u0E32\u0E15\u0E32\u0E44\u0E21\u0E48\u0E40\u0E2B\u0E21\u0E37\u0E2D\u0E19\u0E0A\u0E37\u0E48\u0E2D")));
+            const add = el("button", null, "\u271A \u0E08\u0E33");
+            add.title = "\u0E08\u0E33\u0E04\u0E33\u0E19\u0E35\u0E49\u0E44\u0E27\u0E49\u0E40\u0E14\u0E32 \u0E41\u0E21\u0E49\u0E08\u0E30\u0E40\u0E08\u0E2D\u0E04\u0E23\u0E31\u0E49\u0E07\u0E40\u0E14\u0E35\u0E22\u0E27";
+            add.onclick = () => {
+              smartPinAdd(p.word);
+              render();
+            };
+            const x = el("button", "k-danger-btn", "\u2715");
+            x.title = "\u0E44\u0E21\u0E48\u0E15\u0E49\u0E2D\u0E07\u0E08\u0E33\u0E04\u0E33\u0E19\u0E35\u0E49";
+            x.onclick = () => {
+              smartIgnoreAdd(p.word);
+              render();
+            };
+            row.append(add, x);
+            body.append(row);
+          }
+        }
+      }
+      const pin = smartPinList();
+      if (pin.length) {
+        body.append(el("div", "k-set-sub", `\u0E04\u0E33\u0E17\u0E35\u0E48\u0E2A\u0E31\u0E48\u0E07\u0E43\u0E2B\u0E49\u0E08\u0E33\u0E40\u0E2D\u0E07 (${pin.length})`));
+        for (const w of pin) {
+          const row = el("div", "k-smart-row");
+          row.append(el("span", "k-smart-word", w));
+          const b = el("button", null, "\u21A9 \u0E40\u0E25\u0E34\u0E01\u0E08\u0E33\u0E40\u0E2D\u0E07");
+          b.onclick = () => {
+            smartPinRemove(w);
+            render();
+          };
+          row.append(b);
+          body.append(row);
+        }
+      }
+      const ign = smartIgnoreList();
+      body.append(el("div", "k-set-sub", `\u0E04\u0E33\u0E17\u0E35\u0E48\u0E2A\u0E31\u0E48\u0E07\u0E44\u0E21\u0E48\u0E43\u0E2B\u0E49\u0E08\u0E33 (${ign.length})`));
+      if (!ign.length) body.append(el("div", "cmp-empty", "(\u0E44\u0E21\u0E48\u0E21\u0E35)"));
+      for (const w of ign) {
+        const row = el("div", "k-smart-row");
+        row.append(el("span", "k-smart-word dim", w));
+        const b = el("button", null, "\u21A9 \u0E08\u0E33\u0E2D\u0E35\u0E01\u0E04\u0E23\u0E31\u0E49\u0E07");
+        b.onclick = () => {
+          smartIgnoreRemove(w);
+          render();
+        };
+        row.append(b);
+        body.append(row);
+      }
+    };
+    minSel.onchange = () => {
+      state.settings.smartLearnMin = learnMin(minSel.value);
+      saveProjectMeta();
+      render();
+    };
+    render();
+    box.append(body);
+    const btns = el("div", "k-dlg-btns");
+    const ok = el("button", "k-ok", "\u0E1B\u0E34\u0E14");
+    ok.onclick = () => {
+      ov.remove();
+      if (tab && tab.sp) spSmartCheck(tab);
+    };
+    btns.append(ok);
+    box.append(btns);
+    ov.append(box);
+    document.body.append(ov);
+    ov.onclick = (e) => {
+      if (e.target === ov) ok.onclick();
+    };
+    return ov;
   }
   function setElementBadge(elName) {
     const b = $("#elem-badge");
@@ -69363,6 +71494,21 @@ ${css}
       }
       b.classList.toggle("dis", !canEdit);
     });
+    const spExt = $("#tb-sp-ext");
+    if (spExt) {
+      spExt.style.display = sp ? "" : "none";
+      let curExt = "", onChar = false;
+      if (sp) {
+        try {
+          curExt = sp.curExtension();
+          onChar = sp.curElement() === "character";
+        } catch {
+        }
+      }
+      spExt.classList.toggle("dis", !onChar);
+      spExt.textContent = curExt || "( )";
+      spExt.title = onChar ? "\u0E2A\u0E48\u0E27\u0E19\u0E40\u0E2A\u0E23\u0E34\u0E21\u0E17\u0E49\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23 (V.O. \xB7 O.S. \xB7 cont'd)" : '\u0E27\u0E32\u0E07\u0E40\u0E04\u0E2D\u0E23\u0E4C\u0E40\u0E0B\u0E2D\u0E23\u0E4C\u0E43\u0E19\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14 "\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23" \u0E01\u0E48\u0E2D\u0E19';
+    }
     $("#tb-paper").classList.toggle("on", state.settings.paperMode !== false);
     $("#tb-read")?.classList.toggle("on", document.body.classList.contains("reading-mode"));
     $("#tb-split")?.classList.toggle("on", isSplit());
@@ -69377,15 +71523,36 @@ ${css}
     syncFloatBarVisible();
     syncMenuToggles();
   }
+  function scheduleSpSmart(tab) {
+    clearTimeout(_smartJob);
+    _smartJob = setTimeout(() => {
+      try {
+        spSmartCheck(tab);
+      } catch {
+      }
+    }, 90);
+  }
+  function heavyDelay(tab) {
+    const limit = parseInt(state.settings.heavyDocBlocks, 10) || 400;
+    let n = 0;
+    try {
+      n = tab.sp ? tab.sp.view.state.doc.childCount : tab.editor ? tab.editor.view.state.doc.childCount : 0;
+    } catch {
+      n = 0;
+    }
+    if (n <= limit) return 300;
+    return Math.min(1200, 300 + Math.ceil((n - limit) / limit) * 300);
+  }
   function scheduleCount() {
     clearTimeout(countJob);
+    const t0 = state.active;
     countJob = setTimeout(() => {
       const t2 = state.active;
       if (!t2 || t2.wiki || t2.gal || t2.isJson || t2.net || t2.dash || t2.planner || !t2.editor && !t2.sp && !t2.plain) {
         $("#wc").textContent = "";
         return;
       }
-      const body = t2.editor ? t2.editor.getMarkdown() : t2.sp ? t2.sp.getMarkdown() : t2.plain.value;
+      const body = t2.editor ? t2.editor.getMarkdown() : t2.sp ? t2.sp.getText() : t2.plain.value;
       let txt = `\u0E04\u0E33 ${(0, import_md10.countWords)(body).toLocaleString()} \xB7 \u0E2D\u0E31\u0E01\u0E02\u0E23\u0E30 ${body.length.toLocaleString()}`;
       if (t2.sp) {
         try {
@@ -69393,9 +71560,13 @@ ${css}
           const blocks = blocksFromDoc(t2.sp.view.state.doc);
           const pg = pagesOf(blocks, fmt, linesPerPage(fmt.paper, fmt.margins));
           txt += ` \xB7 ${pg.count} \u0E2B\u0E19\u0E49\u0E32`;
+          const base3 = currentStartPage(t2) - 1;
           const starts = pageStartPositions(pg);
-          const changed = setPageBreaks(starts.map((pos, i2) => ({ pos, page: i2 + 1 })).slice(1).filter((x) => Number.isFinite(x.pos)));
-          if (changed) t2.sp.refreshGuides();
+          const changed = setPageBreaks(starts.map((pos, i2) => ({ pos, page: base3 + i2 + 1 })).slice(1).filter((x) => Number.isFinite(x.pos)));
+          updatePageNumberHint();
+          const marks2 = spContinuedOn() ? computeContinueds(pg, fmt) : [];
+          const cChanged = setContinueds(marks2);
+          if (changed || cChanged) t2.sp.refreshGuides();
           refreshSpView();
         } catch (e) {
           log("warn", "\u0E19\u0E31\u0E1A\u0E2B\u0E19\u0E49\u0E32\u0E1A\u0E17\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08", e);
@@ -69407,12 +71578,13 @@ ${css}
         }
       } else {
         setPageBreaks([]);
+        setContinueds([]);
         _spErrors = [];
       }
       $("#wc").textContent = txt;
       updateErrorBadge();
       updateProgressBar();
-    }, 300);
+    }, t0 ? heavyDelay(t0) : 300);
   }
   function scheduleOutline() {
     clearTimeout(outlineJob);
@@ -69747,7 +71919,17 @@ ${css}
       case "typewriter":
         setStatus(toggleTypewriter() ? "\u0E42\u0E2B\u0E21\u0E14\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E14\u0E35\u0E14: \u0E40\u0E1B\u0E34\u0E14" : "\u0E42\u0E2B\u0E21\u0E14\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E14\u0E35\u0E14: \u0E1B\u0E34\u0E14");
         refreshToolbar();
+        syncTypeSound();
         syncMenuToggles();
+        break;
+      // [alpha.57a ข้อ 1] เสียงพิมพ์ — สวิตช์แยกจากโหมดเครื่องพิมพ์ดีด (ตั้งระดับเสียงในตั้งค่า)
+      case "type-sound":
+        state.settings.typeSound = !state.settings.typeSound;
+        syncTypeSound();
+        saveProjectMeta();
+        syncMenuToggles();
+        if (state.settings.typeSound) playType("key", { force: true });
+        setStatus(state.settings.typeSound ? "\u0E40\u0E2A\u0E35\u0E22\u0E07\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E14\u0E35\u0E14: \u0E40\u0E1B\u0E34\u0E14" + (state.settings.typeSoundAlways || isTypewriter() ? "" : " (\u0E08\u0E30\u0E44\u0E14\u0E49\u0E22\u0E34\u0E19\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E40\u0E1B\u0E34\u0E14\u0E42\u0E2B\u0E21\u0E14\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E14\u0E35\u0E14 \u2014 Ctrl+Shift+T)") : "\u0E40\u0E2A\u0E35\u0E22\u0E07\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E14\u0E35\u0E14: \u0E1B\u0E34\u0E14");
         break;
       case "quick-open":
         openQuickOpen();
@@ -69847,7 +72029,9 @@ ${css}
         exportDraft();
         break;
       case "zoom":
-        a[0] === 0 ? resetPageScale() : bumpPageScale(a[0]);
+        if (a[0] === "fit") zoomFitWidth();
+        else if (a[0] === 0) resetPageScale();
+        else bumpPageScale(a[0]);
         break;
       case "ui-scale":
         bumpUIScale(a[0]);
@@ -69959,6 +72143,13 @@ ${css}
       case "sp-show-format":
         toggleShowFormat(a[0]);
         break;
+      // ---- alpha.58: ระบบต่อเนื่อง (55/56) · รายงานบท (71/72/73) ----
+      case "sp-continued":
+        toggleContinueds(a[0]);
+        break;
+      case "sp-report":
+        openSpReport(a[0] || "location");
+        break;
       case "goto":
         gotoDialog(a[0]);
         break;
@@ -69988,6 +72179,22 @@ ${css}
         break;
       case "export-watermark":
         await watermarkDialog();
+        break;
+      // ---- alpha.57a ----
+      case "scene-numbers":
+        toggleSceneNumbers();
+        break;
+      case "page-numbers":
+        togglePageNumbers();
+        break;
+      case "sp-extension":
+        extensionMenu();
+        break;
+      case "smart-manage":
+        smartTypeDialog();
+        break;
+      case "lang-fonts":
+        settingsDialog("fonts");
         break;
     }
   }
@@ -72194,7 +74401,11 @@ ${css}
       spTab.sp.enter();
       check2("Enter \u0E2B\u0E25\u0E31\u0E07\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23 \u2192 \u0E1A\u0E17\u0E1E\u0E39\u0E14", spTab.sp.curElement() === "dialogue");
       spTab.sp.cycle(1);
-      check2("\u0E2A\u0E25\u0E31\u0E1A element \u0E44\u0E14\u0E49 (Ctrl+\u2191/\u2193 \xB7 Tab \u0E44\u0E21\u0E48\u0E2A\u0E25\u0E31\u0E1A\u0E41\u0E25\u0E49\u0E27)", spTab.sp.curElement() === "transition");
+      check2(
+        "\u0E2A\u0E25\u0E31\u0E1A element \u0E44\u0E14\u0E49 (Ctrl+\u2191/\u2193 \xB7 Tab \u0E44\u0E21\u0E48\u0E2A\u0E25\u0E31\u0E1A\u0E41\u0E25\u0E49\u0E27)",
+        spTab.sp.curElement() === "transition-in",
+        spTab.sp.curElement()
+      );
       setElementBadge(spTab.sp.curElement());
       check2(
         "\u0E1B\u0E49\u0E32\u0E22 element \u0E40\u0E1B\u0E47\u0E19 dropdown \u0E04\u0E25\u0E34\u0E01\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E44\u0E14\u0E49",
@@ -72832,8 +75043,9 @@ ${css}
       {
         const bx = document.querySelector(".k-dialog");
         const inps = bx.querySelectorAll("input.wiki-input");
-        inps[2].value = "\u0E2A\u0E34\u0E49\u0E19\u0E2B\u0E27\u0E31\u0E07";
-        inps[3].value = "\u0E1B\u0E30\u0E17\u0E30\u0E01\u0E31\u0E1A\u0E1E\u0E48\u0E2D";
+        inps[1].value = "7";
+        inps[3].value = "\u0E2A\u0E34\u0E49\u0E19\u0E2B\u0E27\u0E31\u0E07";
+        inps[4].value = "\u0E1B\u0E30\u0E17\u0E30\u0E01\u0E31\u0E1A\u0E1E\u0E48\u0E2D";
         bx.querySelectorAll("textarea")[1].value = "\u0E42\u0E19\u0E49\u0E15\u0E17\u0E14\u0E2A\u0E2D\u0E1A\u0E23\u0E30\u0E1A\u0E1A";
         bx.querySelectorAll("select")[0].value = "\u0E01\u0E33\u0E25\u0E31\u0E07\u0E40\u0E02\u0E35\u0E22\u0E19";
         bx.querySelectorAll("select")[1].value = "#6fae6f";
@@ -72847,6 +75059,11 @@ ${css}
         "\u0E04\u0E38\u0E13\u0E2A\u0E21\u0E1A\u0E31\u0E15\u0E34\u0E09\u0E32\u0E01\u0E40\u0E01\u0E47\u0E1A \u0E2D\u0E32\u0E23\u0E21\u0E13\u0E4C/\u0E04\u0E27\u0E32\u0E21\u0E02\u0E31\u0E14\u0E41\u0E22\u0E49\u0E07/\u0E42\u0E19\u0E49\u0E15/\u0E2A\u0E35/\u0E1B\u0E31\u0E01\u0E2B\u0E21\u0E38\u0E14/\u0E2A\u0E16\u0E32\u0E19\u0E30",
         scP2.emotion === "\u0E2A\u0E34\u0E49\u0E19\u0E2B\u0E27\u0E31\u0E07" && scP2.conflict === "\u0E1B\u0E30\u0E17\u0E30\u0E01\u0E31\u0E1A\u0E1E\u0E48\u0E2D" && scP2.note === "\u0E42\u0E19\u0E49\u0E15\u0E17\u0E14\u0E2A\u0E2D\u0E1A\u0E23\u0E30\u0E1A\u0E1A" && scP2.color === "#6fae6f" && scP2.flag === true && scP2.status === "\u0E01\u0E33\u0E25\u0E31\u0E07\u0E40\u0E02\u0E35\u0E22\u0E19",
         JSON.stringify(scP2)
+      );
+      check2(
+        "[57a-2] \u0E04\u0E38\u0E13\u0E2A\u0E21\u0E1A\u0E31\u0E15\u0E34\u0E09\u0E32\u0E01\u0E40\u0E01\u0E47\u0E1A\u0E40\u0E25\u0E02\u0E2B\u0E19\u0E49\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19\u0E25\u0E07 scenes.json",
+        scP2.startPage === 7,
+        JSON.stringify(scP2.startPage)
       );
       const scP2File = await kapi.join(dPath, "Chapters", chP.folderName, scP2.fileName);
       const scP2Fm = (0, import_md10.parseMdFile)(await kapi.readFile(scP2File)).meta;
@@ -74849,7 +77066,7 @@ ${css}
           );
           check2(
             "\u0E41\u0E1C\u0E07\u0E04\u0E38\u0E13\u0E2A\u0E21\u0E1A\u0E31\u0E15\u0E34\u0E44\u0E21\u0E48 duplicate \u0E0A\u0E48\u0E2D\u0E07\u0E01\u0E23\u0E2D\u0E01",
-            bodyEl.querySelectorAll("textarea.wiki-input").length === 2 && bodyEl.querySelectorAll("input.wiki-input").length === 5,
+            bodyEl.querySelectorAll("textarea.wiki-input").length === 2 && bodyEl.querySelectorAll("input.wiki-input").length === 6,
             `ta=${bodyEl.querySelectorAll("textarea.wiki-input").length} inp=${bodyEl.querySelectorAll("input.wiki-input").length}`
           );
           check2(
@@ -74857,8 +77074,8 @@ ${css}
             !bodyEl.querySelector(".props-save") && !!bodyEl.querySelector(".props-autosave")
           );
           const inps2 = bodyEl.querySelectorAll("input.wiki-input");
-          inps2[1].value = "\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07\u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34";
-          inps2[1].dispatchEvent(new Event("input", { bubbles: true }));
+          inps2[2].value = "\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07\u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34";
+          inps2[2].dispatchEvent(new Event("input", { bubbles: true }));
           await new Promise((r) => setTimeout(r, 900));
           const sj32 = await kapi.readJson(await kapi.join(dPath, "scenes.json"));
           const row3 = (sj32.chapters[ch2.guid] || []).find((x) => x.id === row2.id);
@@ -75020,8 +77237,8 @@ ${css}
             await new Promise((r) => setTimeout(r, 600));
             const wtab2 = state.tabs.get(wpath);
             check2(
-              "\u0E2B\u0E19\u0E49\u0E32 Wiki \u0E21\u0E35\u0E1B\u0E38\u0E48\u0E21\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34/\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E40\u0E27\u0E2D\u0E23\u0E4C\u0E0A\u0E31\u0E19",
-              wtab2.pane.querySelectorAll(".wiki-ver-btn").length === 2,
+              "\u0E2B\u0E19\u0E49\u0E32 Wiki \u0E21\u0E35\u0E1B\u0E38\u0E48\u0E21\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34/\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E40\u0E27\u0E2D\u0E23\u0E4C\u0E0A\u0E31\u0E19/\u0E2B\u0E32\u0E43\u0E19\u0E14\u0E34\u0E2A\u0E01\u0E4C",
+              wtab2.pane.querySelectorAll(".wiki-ver-btn").length === 3,
               String(wtab2.pane.querySelectorAll(".wiki-ver-btn").length)
             );
             await snapshotFile(wpath, "\u0E40\u0E27\u0E2D\u0E23\u0E4C\u0E0A\u0E31\u0E19\u0E17\u0E14\u0E2A\u0E2D\u0E1A Wiki");
@@ -76204,13 +78421,906 @@ ${css}
               );
             }
             check2(
-              "[59] \u0E15\u0E31\u0E27\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07\u0E1A\u0E17\u0E2D\u0E22\u0E39\u0E48\u0E1A\u0E19\u0E41\u0E16\u0E1A\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E21\u0E37\u0E2D\u0E04\u0E23\u0E1A 5 \u0E42\u0E2B\u0E21\u0E14",
-              $("#sp-view-select").options.length === 5
+              "[59] \u0E15\u0E31\u0E27\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07\u0E1A\u0E17\u0E1A\u0E19\u0E41\u0E16\u0E1A\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E21\u0E37\u0E2D\u0E04\u0E23\u0E1A\u0E17\u0E38\u0E01\u0E42\u0E2B\u0E21\u0E14\u0E43\u0E19 SP_VIEWS",
+              $("#sp-view-select").options.length === SP_VIEWS.length && [...$("#sp-view-select").options].every((o) => SP_VIEWS.includes(o.value)),
+              [...$("#sp-view-select").options].map((o) => o.value).join(",")
             );
             check2(
               "[59] \u0E15\u0E31\u0E27\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07\u0E42\u0E1C\u0E25\u0E48\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E41\u0E17\u0E47\u0E1A\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07",
               getComputedStyle($("#sp-view-select")).display !== "none"
             );
+          }
+          {
+            const btn = document.querySelector('.tb-menu[data-m="Script"]');
+            check2(
+              '[57a-3] \u0E41\u0E16\u0E1A\u0E0A\u0E37\u0E48\u0E2D\u0E21\u0E35\u0E1B\u0E38\u0E48\u0E21\u0E40\u0E21\u0E19\u0E39 "\u0E1A\u0E17"',
+              !!btn,
+              [...document.querySelectorAll(".tb-menu")].map((m) => m.dataset.m).join(",")
+            );
+            check2(
+              '[57a-3] \u0E1B\u0E38\u0E48\u0E21\u0E40\u0E21\u0E19\u0E39 "\u0E1A\u0E17" \u0E21\u0E35\u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21\u0E44\u0E17\u0E22 (\u0E44\u0E21\u0E48\u0E43\u0E0A\u0E48\u0E04\u0E35\u0E22\u0E4C i18n \u0E14\u0E34\u0E1A)',
+              !!btn && btn.textContent.trim() === "\u0E1A\u0E17",
+              btn && btn.textContent
+            );
+            check2(
+              "[57a-3] \u0E1B\u0E38\u0E48\u0E21\u0E40\u0E21\u0E19\u0E39\u0E17\u0E38\u0E01\u0E15\u0E31\u0E27\u0E21\u0E35\u0E40\u0E21\u0E19\u0E39\u0E08\u0E23\u0E34\u0E07\u0E23\u0E2D\u0E07\u0E23\u0E31\u0E1A (data-m \u0E15\u0E23\u0E07\u0E01\u0E31\u0E1A id \u0E43\u0E19 main.js)",
+              [...document.querySelectorAll(".tb-menu")].every((m) => ["File", "Edit", "Format", "Script", "View", "Help", "AI"].includes(m.dataset.m))
+            );
+            for (const ch of [
+              "scene-numbers",
+              "page-numbers",
+              "sp-extension",
+              "smart-manage",
+              "type-sound",
+              "lang-fonts"
+            ]) {
+              check2(
+                "[57a] handleCommand \u0E23\u0E39\u0E49\u0E08\u0E31\u0E01\u0E04\u0E33\u0E2A\u0E31\u0E48\u0E07 " + ch,
+                new RegExp(`case ['"]` + ch + `['"]`).test(String(handleCommand))
+              );
+            }
+          }
+          {
+            const optVals = [...$("#tb-sp-elem").options].map((o) => o.value);
+            check2(
+              "[57a-2] \u0E15\u0E31\u0E27\u0E40\u0E25\u0E37\u0E2D\u0E01 element \u0E1A\u0E19\u0E41\u0E16\u0E1A\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E21\u0E37\u0E2D\u0E21\u0E35 element \u0E43\u0E2B\u0E21\u0E48\u0E04\u0E23\u0E1A",
+              ["transition-in", "transition", "subheader", "intercut"].every((k) => optVals.includes(k)),
+              optVals.join(",")
+            );
+            check2(
+              "[57a-2] \u0E17\u0E38\u0E01\u0E15\u0E31\u0E27\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1A\u0E19\u0E41\u0E16\u0E1A\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E21\u0E37\u0E2D\u0E40\u0E1B\u0E47\u0E19 element \u0E08\u0E23\u0E34\u0E07",
+              optVals.every((v4) => !!SP_ELEMS[v4]),
+              optVals.join(",")
+            );
+            const nScenes2 = scenePositions(blocksFromDoc(spT.sp.view.state.doc)).length;
+            toggleSceneNumbers(true);
+            await new Promise((r) => setTimeout(r, 120));
+            const snEls = spT.pane.querySelectorAll(".k-scene-no");
+            check2(
+              "[57a-2] \u0E40\u0E1B\u0E34\u0E14\u0E40\u0E25\u0E02\u0E09\u0E32\u0E01 \u2192 \u0E21\u0E35\u0E40\u0E25\u0E02\u0E0B\u0E49\u0E32\u0E22+\u0E02\u0E27\u0E32\u0E04\u0E23\u0E1A\u0E17\u0E38\u0E01\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01",
+              nScenes2 > 0 && snEls.length === nScenes2 * 2,
+              `${snEls.length} vs ${nScenes2 * 2}`
+            );
+            check2(
+              "[57a-2] \u0E40\u0E25\u0E02\u0E09\u0E32\u0E01\u0E40\u0E23\u0E34\u0E48\u0E21\u0E17\u0E35\u0E48 1 \u0E41\u0E25\u0E30\u0E44\u0E25\u0E48\u0E15\u0E32\u0E21\u0E25\u0E33\u0E14\u0E31\u0E1A",
+              snEls.length >= 2 && snEls[0].textContent === "1" && snEls[1].textContent === "1",
+              [...snEls].slice(0, 4).map((n) => n.textContent).join(",")
+            );
+            {
+              const pageEl = spT.pane.querySelector(".ProseMirror");
+              const pr = pageEl.getBoundingClientRect();
+              const l = snEls[0].getBoundingClientRect(), r = snEls[1].getBoundingClientRect();
+              const dpi = pr.width / spFormat().paper.width;
+              const leftIn = (l.left - pr.left) / dpi, rightIn = (pr.right - r.right) / dpi;
+              check2(
+                "[57a-2] \u0E40\u0E25\u0E02\u0E09\u0E32\u0E01\u0E0B\u0E49\u0E32\u0E22\u0E2D\u0E22\u0E39\u0E48 0.75 \u0E19\u0E34\u0E49\u0E27\u0E08\u0E32\u0E01\u0E02\u0E2D\u0E1A\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E0B\u0E49\u0E32\u0E22",
+                Math.abs(leftIn - 0.75) < 0.06,
+                leftIn.toFixed(3)
+              );
+              check2(
+                "[57a-2] \u0E40\u0E25\u0E02\u0E09\u0E32\u0E01\u0E02\u0E27\u0E32\u0E2D\u0E22\u0E39\u0E48 1 \u0E19\u0E34\u0E49\u0E27\u0E08\u0E32\u0E01\u0E02\u0E2D\u0E1A\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E02\u0E27\u0E32",
+                Math.abs(rightIn - 1) < 0.06,
+                rightIn.toFixed(3)
+              );
+            }
+            toggleSceneNumbers(false);
+            await new Promise((r) => setTimeout(r, 120));
+            check2("[57a-2] \u0E1B\u0E34\u0E14\u0E40\u0E25\u0E02\u0E09\u0E32\u0E01 \u2192 \u0E2B\u0E32\u0E22\u0E2B\u0E21\u0E14", spT.pane.querySelectorAll(".k-scene-no").length === 0);
+            spT.startPage = 12;
+            togglePageNumbers(true);
+            scheduleCount();
+            await new Promise((r) => setTimeout(r, 400));
+            check2(
+              "[57a-2] \u0E40\u0E1B\u0E34\u0E14\u0E40\u0E25\u0E02\u0E2B\u0E19\u0E49\u0E32 \u2192 body \u0E15\u0E34\u0E14\u0E04\u0E25\u0E32\u0E2A sp-page-numbers",
+              document.body.classList.contains("sp-page-numbers")
+            );
+            check2(
+              "[57a-2] \u0E2B\u0E19\u0E49\u0E32\u0E41\u0E23\u0E01\u0E02\u0E2D\u0E07\u0E44\u0E1F\u0E25\u0E4C\u0E17\u0E35\u0E48\u0E40\u0E23\u0E34\u0E48\u0E21\u0E2B\u0E19\u0E49\u0E32 12 \u0E44\u0E21\u0E48\u0E43\u0E2A\u0E48\u0E40\u0E25\u0E02 (\u0E18\u0E23\u0E23\u0E21\u0E40\u0E19\u0E35\u0E22\u0E21\u0E1A\u0E17)",
+              updatePageNumberHint() === "",
+              JSON.stringify(updatePageNumberHint())
+            );
+            check2(
+              "[57a-2] \u0E40\u0E1B\u0E34\u0E14 firstPage \u0E41\u0E25\u0E49\u0E27\u0E2B\u0E19\u0E49\u0E32\u0E41\u0E23\u0E01\u0E44\u0E14\u0E49\u0E40\u0E25\u0E02 12",
+              pageNumberLabel(1, spFormat(), 12) === "" && pageNumberLabel(2, spFormat(), 12) === "13.",
+              pageNumberLabel(2, spFormat(), 12)
+            );
+            check2("[57a-2] \u0E40\u0E2A\u0E49\u0E19\u0E04\u0E31\u0E48\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E43\u0E19\u0E15\u0E31\u0E27\u0E41\u0E01\u0E49\u0E44\u0E02\u0E19\u0E31\u0E1A\u0E15\u0E48\u0E2D\u0E08\u0E32\u0E01\u0E40\u0E25\u0E02\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19 (\u0E16\u0E49\u0E32\u0E1A\u0E17\u0E22\u0E32\u0E27\u0E1E\u0E2D)", (() => {
+              const brk = pageBreaks();
+              return !brk.length || brk[0].page >= 12;
+            })(), JSON.stringify(pageBreaks()));
+            togglePageNumbers(false);
+            spT.startPage = 1;
+            check2("[57a-2] \u0E1B\u0E34\u0E14\u0E40\u0E25\u0E02\u0E2B\u0E19\u0E49\u0E32 \u2192 \u0E04\u0E25\u0E32\u0E2A\u0E2B\u0E25\u0E38\u0E14", !document.body.classList.contains("sp-page-numbers"));
+            {
+              const chars = [];
+              spT.sp.view.state.doc.forEach((n, p) => {
+                if (n.attrs.el === "character") chars.push(p);
+              });
+              check2("[57a-2] \u0E1A\u0E17\u0E17\u0E14\u0E2A\u0E2D\u0E1A\u0E21\u0E35\u0E1A\u0E25\u0E47\u0E2D\u0E01\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E43\u0E2B\u0E49\u0E17\u0E14\u0E2A\u0E2D\u0E1A", chars.length > 0);
+              spT.sp.gotoPos(chars[0] + 1);
+              const before = spT.sp.curBlock().node.textContent;
+              spT.sp.setExtension("(V.O.)");
+              const after = spT.sp.curBlock().node.textContent;
+              check2(
+                "[57a-2] \u0E43\u0E2A\u0E48\u0E2A\u0E48\u0E27\u0E19\u0E40\u0E2A\u0E23\u0E34\u0E21\u0E41\u0E25\u0E49\u0E27\u0E2D\u0E22\u0E39\u0E48\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E40\u0E14\u0E35\u0E22\u0E27\u0E01\u0E31\u0E19 \u0E40\u0E27\u0E49\u0E19 1 \u0E27\u0E23\u0E23\u0E04",
+                after === before.trim() + " (V.O.)",
+                JSON.stringify(after)
+              );
+              check2("[57a-2] curExtension \u0E2D\u0E48\u0E32\u0E19\u0E2A\u0E48\u0E27\u0E19\u0E40\u0E2A\u0E23\u0E34\u0E21\u0E01\u0E25\u0E31\u0E1A\u0E44\u0E14\u0E49", spT.sp.curExtension() === "(V.O.)");
+              spT.sp.setExtension("(CONT'D)");
+              check2(
+                "[57a-2] \u0E43\u0E2A\u0E48\u0E0B\u0E49\u0E33 = \u0E41\u0E17\u0E19\u0E17\u0E35\u0E48 \u0E44\u0E21\u0E48\u0E0B\u0E49\u0E2D\u0E19\u0E01\u0E31\u0E19",
+                spT.sp.curBlock().node.textContent === before.trim() + " (CONT'D)",
+                spT.sp.curBlock().node.textContent
+              );
+              spT.sp.setExtension("");
+              check2("[57a-2] \u0E16\u0E2D\u0E14\u0E2A\u0E48\u0E27\u0E19\u0E40\u0E2A\u0E23\u0E34\u0E21\u0E44\u0E14\u0E49", spT.sp.curBlock().node.textContent === before.trim());
+            }
+          }
+          {
+            const before57a = spT.sp.getMarkdown();
+            check2(
+              "[57a-4] \u0E04\u0E33\u0E17\u0E35\u0E48\u0E14\u0E39\u0E44\u0E21\u0E48\u0E43\u0E0A\u0E48\u0E0A\u0E37\u0E48\u0E2D\u0E16\u0E39\u0E01\u0E01\u0E23\u0E2D\u0E07\u0E17\u0E34\u0E49\u0E07",
+              !looksLikeTerm("\u0E01") && !looksLikeTerm("\u0E01\u0E01\u0E01\u0E01\u0E01\u0E01") && !looksLikeTerm("12345") && looksLikeTerm("\u0E42\u0E17\u0E23\u0E30") && looksLikeTerm("\u0E22\u0E31\u0E22\u0E41\u0E21\u0E27\u0E40\u0E01\u0E49\u0E32\u0E0A\u0E35\u0E27\u0E34\u0E15")
+            );
+            const posEnd = spT.sp.view.state.doc.content.size;
+            spT.sp.gotoPos(posEnd);
+            spT.sp.setElement("character");
+            spT.sp.view.dispatch(spT.sp.view.state.tr.insertText("\u0E2D\u0E2A\u0E23\u0E01\u0E14\u0E2B\u0E1F\u0E01"));
+            check2(
+              "[57a-4] \u0E04\u0E33\u0E17\u0E35\u0E48\u0E01\u0E33\u0E25\u0E31\u0E07\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E2D\u0E22\u0E39\u0E48 \u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E40\u0E01\u0E47\u0E1A\u0E40\u0E1B\u0E47\u0E19\u0E04\u0E33\u0E40\u0E14\u0E32 (\u0E44\u0E21\u0E48\u0E40\u0E14\u0E32\u0E17\u0E31\u0E1A\u0E15\u0E31\u0E27\u0E40\u0E2D\u0E07)",
+              !screenplayTerms(spT).chars.includes("\u0E2D\u0E2A\u0E23\u0E01\u0E14\u0E2B\u0E1F\u0E01"),
+              JSON.stringify(screenplayTerms(spT).chars)
+            );
+            spT.sp.gotoPos(1);
+            check2(
+              "[57a-4\u219258] \u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E04\u0E23\u0E31\u0E49\u0E07\u0E40\u0E14\u0E35\u0E22\u0E27 \u0E22\u0E49\u0E32\u0E22\u0E40\u0E04\u0E2D\u0E23\u0E4C\u0E40\u0E0B\u0E2D\u0E23\u0E4C\u0E2D\u0E2D\u0E01\u0E41\u0E25\u0E49\u0E27\u0E01\u0E47\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E08\u0E33",
+              !screenplayTerms(spT, -1).chars.includes("\u0E2D\u0E2A\u0E23\u0E01\u0E14\u0E2B\u0E1F\u0E01"),
+              JSON.stringify(screenplayTerms(spT, -1).chars)
+            );
+            spT.sp.gotoPos(spT.sp.view.state.doc.content.size);
+            spT.sp.enter();
+            spT.sp.setElement("character");
+            spT.sp.view.dispatch(spT.sp.view.state.tr.insertText("\u0E2D\u0E2A\u0E23\u0E01\u0E14\u0E2B\u0E1F\u0E01"));
+            spT.sp.gotoPos(1);
+            check2(
+              "[57a-4\u219258] \u0E40\u0E08\u0E2D\u0E0B\u0E49\u0E33 2 \u0E1A\u0E25\u0E47\u0E2D\u0E01\u0E41\u0E25\u0E49\u0E27\u0E16\u0E39\u0E01\u0E08\u0E33\u0E15\u0E32\u0E21\u0E1B\u0E01\u0E15\u0E34",
+              screenplayTerms(spT, -1).chars.includes("\u0E2D\u0E2A\u0E23\u0E01\u0E14\u0E2B\u0E1F\u0E01"),
+              JSON.stringify(screenplayTerms(spT, -1).chars)
+            );
+            smartIgnoreAdd("\u0E2D\u0E2A\u0E23\u0E01\u0E14\u0E2B\u0E1F\u0E01");
+            check2(
+              "[57a-4] \u0E2A\u0E31\u0E48\u0E07\u0E44\u0E21\u0E48\u0E43\u0E2B\u0E49\u0E08\u0E33\u0E41\u0E25\u0E49\u0E27\u0E2B\u0E32\u0E22\u0E08\u0E32\u0E01\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E40\u0E14\u0E32",
+              !screenplayTerms(spT).chars.includes("\u0E2D\u0E2A\u0E23\u0E01\u0E14\u0E2B\u0E1F\u0E01")
+            );
+            check2(
+              '[57a-4] \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 "\u0E44\u0E21\u0E48\u0E15\u0E49\u0E2D\u0E07\u0E08\u0E33" \u0E40\u0E01\u0E47\u0E1A\u0E43\u0E19 meta (\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E25\u0E07\u0E44\u0E1F\u0E25\u0E4C\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C)',
+              smartIgnoreList().includes("\u0E2D\u0E2A\u0E23\u0E01\u0E14\u0E2B\u0E1F\u0E01")
+            );
+            spSmartCheck(spT);
+            check2(
+              "[57a-4] SmartType \u0E44\u0E21\u0E48\u0E40\u0E2A\u0E19\u0E2D\u0E04\u0E33\u0E17\u0E35\u0E48\u0E2A\u0E31\u0E48\u0E07\u0E44\u0E21\u0E48\u0E43\u0E2B\u0E49\u0E08\u0E33",
+              !smart.items.includes("\u0E2D\u0E2A\u0E23\u0E01\u0E14\u0E2B\u0E1F\u0E01"),
+              JSON.stringify(smart.items)
+            );
+            smart.hide();
+            smartIgnoreRemove("\u0E2D\u0E2A\u0E23\u0E01\u0E14\u0E2B\u0E1F\u0E01");
+            check2('[57a-4] \u0E40\u0E2D\u0E32\u0E2D\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 "\u0E44\u0E21\u0E48\u0E15\u0E49\u0E2D\u0E07\u0E08\u0E33" \u0E44\u0E14\u0E49', !smartIgnored("\u0E2D\u0E2A\u0E23\u0E01\u0E14\u0E2B\u0E1F\u0E01"));
+            check2(
+              "[57a-4] \u0E40\u0E01\u0E47\u0E1A\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E0A\u0E37\u0E48\u0E2D \u0E44\u0E21\u0E48\u0E40\u0E2D\u0E32\u0E2A\u0E48\u0E27\u0E19\u0E40\u0E2A\u0E23\u0E34\u0E21\u0E21\u0E32\u0E40\u0E1B\u0E47\u0E19\u0E04\u0E19\u0E25\u0E30\u0E04\u0E19",
+              !screenplayTerms(spT).chars.some((c) => /\(/.test(c)),
+              JSON.stringify(screenplayTerms(spT).chars)
+            );
+            const dlg = smartTypeDialog();
+            check2(
+              "[57a-4] \u0E01\u0E25\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E14\u0E01\u0E32\u0E23 SmartType \u0E40\u0E1B\u0E34\u0E14\u0E44\u0E14\u0E49 + \u0E21\u0E35\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23",
+              !!dlg.querySelector(".k-smart-body")
+            );
+            dlg.querySelector(".k-dlg-btns .k-ok").click();
+            check2("[57a-4] \u0E1B\u0E34\u0E14\u0E01\u0E25\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E14\u0E01\u0E32\u0E23 SmartType \u0E41\u0E25\u0E49\u0E27", !document.body.contains(dlg));
+            spT.sp.setMarkdown(before57a);
+            scheduleCount();
+            await new Promise((r) => setTimeout(r, 300));
+          }
+          {
+            check2(
+              "[57a-1] soundKindFor \u0E41\u0E22\u0E01\u0E0A\u0E19\u0E34\u0E14\u0E40\u0E2A\u0E35\u0E22\u0E07\u0E16\u0E39\u0E01",
+              soundKindFor({ key: "\u0E01" }) === "key" && soundKindFor({ key: "Enter" }) === "return" && soundKindFor({ key: " ", code: "Space" }) === "space" && soundKindFor({ key: "Backspace" }) === "back"
+            );
+            check2(
+              "[57a-1] \u0E04\u0E35\u0E22\u0E4C\u0E25\u0E31\u0E14/\u0E1B\u0E38\u0E48\u0E21\u0E04\u0E27\u0E1A\u0E04\u0E38\u0E21\u0E44\u0E21\u0E48\u0E21\u0E35\u0E40\u0E2A\u0E35\u0E22\u0E07",
+              soundKindFor({ key: "s", ctrlKey: true }) === null && soundKindFor({ key: "ArrowLeft" }) === null && soundKindFor({ key: "Shift" }) === null
+            );
+            check2(
+              "[57a-1] \u0E40\u0E25\u0E48\u0E19\u0E40\u0E2A\u0E35\u0E22\u0E07\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E15\u0E2D\u0E19\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E43\u0E19\u0E15\u0E31\u0E27\u0E41\u0E01\u0E49\u0E44\u0E02",
+              isEditorTarget({ target: spT.pane.querySelector(".ProseMirror") }) && !isEditorTarget({ target: document.body })
+            );
+            state.settings.typeSound = false;
+            syncTypeSound();
+            check2("[57a-1] \u0E1B\u0E34\u0E14\u0E40\u0E2A\u0E35\u0E22\u0E07\u0E43\u0E19\u0E15\u0E31\u0E49\u0E07\u0E04\u0E48\u0E32 \u2192 \u0E40\u0E2A\u0E35\u0E22\u0E07\u0E44\u0E21\u0E48\u0E17\u0E33\u0E07\u0E32\u0E19", !isTypeSound());
+            state.settings.typeSound = true;
+            state.settings.typeSoundAlways = false;
+            toggleTypewriter(false);
+            syncTypeSound();
+            check2("[57a-1] \u0E40\u0E1B\u0E34\u0E14\u0E40\u0E2A\u0E35\u0E22\u0E07\u0E41\u0E15\u0E48\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E40\u0E1B\u0E34\u0E14\u0E42\u0E2B\u0E21\u0E14\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E14\u0E35\u0E14 \u2192 \u0E22\u0E31\u0E07\u0E40\u0E07\u0E35\u0E22\u0E1A", !isTypeSound());
+            toggleTypewriter(true);
+            syncTypeSound();
+            check2("[57a-1] \u0E40\u0E1B\u0E34\u0E14\u0E42\u0E2B\u0E21\u0E14\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E14\u0E35\u0E14\u0E41\u0E25\u0E49\u0E27\u0E40\u0E2A\u0E35\u0E22\u0E07\u0E17\u0E33\u0E07\u0E32\u0E19", isTypeSound());
+            toggleTypewriter(false);
+            state.settings.typeSoundAlways = true;
+            syncTypeSound();
+            check2('[57a-1] \u0E15\u0E31\u0E49\u0E07 "\u0E40\u0E25\u0E48\u0E19\u0E15\u0E25\u0E2D\u0E14" \u2192 \u0E44\u0E21\u0E48\u0E15\u0E49\u0E2D\u0E07\u0E40\u0E1B\u0E34\u0E14\u0E42\u0E2B\u0E21\u0E14\u0E01\u0E47\u0E21\u0E35\u0E40\u0E2A\u0E35\u0E22\u0E07', isTypeSound());
+            check2(
+              "[57a-1] \u0E15\u0E31\u0E49\u0E07\u0E23\u0E30\u0E14\u0E31\u0E1A\u0E40\u0E2A\u0E35\u0E22\u0E07\u0E44\u0E14\u0E49 0\u20131 (\u0E2B\u0E19\u0E35\u0E1A\u0E04\u0E48\u0E32\u0E19\u0E2D\u0E01\u0E0A\u0E48\u0E27\u0E07)",
+              setTypeVolume(0.35) === 0.35 && setTypeVolume(9) === 1 && setTypeVolume(-1) === 0
+            );
+            setTypeVolume(0.5);
+            state.settings.typeSound = false;
+            state.settings.typeSoundAlways = false;
+            syncTypeSound();
+            check2("[57a-1] \u0E1B\u0E34\u0E14\u0E01\u0E25\u0E31\u0E1A\u0E41\u0E25\u0E49\u0E27\u0E40\u0E07\u0E35\u0E22\u0E1A", !isTypeSound());
+          }
+          {
+            const keep = state.settings.langFonts;
+            state.settings.langFonts = [
+              { id: "thai", range: "U+0E00-0E7F", builtin: "CourierThaiMono.ttf", enabled: true }
+            ];
+            const n = applyProjectLangFonts();
+            check2(
+              "[57a-5] \u0E2A\u0E23\u0E49\u0E32\u0E07 @font-face \u0E15\u0E32\u0E21\u0E20\u0E32\u0E29\u0E32\u0E40\u0E02\u0E49\u0E32 <head>",
+              n === 1 && !!document.getElementById("k-lang-fonts")
+            );
+            const css = document.getElementById("k-lang-fonts").textContent;
+            check2(
+              "[57a-5] CSS \u0E21\u0E35 unicode-range \u0E02\u0E2D\u0E07\u0E44\u0E17\u0E22 + \u0E44\u0E1F\u0E25\u0E4C\u0E17\u0E35\u0E48\u0E1D\u0E31\u0E07\u0E21\u0E32",
+              css.includes("unicode-range:U+0E00-0E7F") && css.includes("CourierThaiMono.ttf"),
+              css
+            );
+            applySettings();
+            const edFont = document.documentElement.style.getPropertyValue("--ed-font");
+            const spFont = document.documentElement.style.getPropertyValue("--sp-font");
+            check2(
+              "[57a-5] \u0E27\u0E07\u0E28\u0E4C\u0E23\u0E27\u0E21\u0E16\u0E39\u0E01\u0E40\u0E2D\u0E32\u0E44\u0E1B\u0E19\u0E33\u0E2B\u0E19\u0E49\u0E32 font stack \u0E17\u0E31\u0E49\u0E07\u0E19\u0E34\u0E22\u0E32\u0E22\u0E41\u0E25\u0E30\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07",
+              edFont.startsWith('"' + LANG_FAMILY + '"') && spFont.startsWith('"' + LANG_FAMILY + '"'),
+              edFont + " | " + spFont
+            );
+            check2("[57a-5] \u0E22\u0E31\u0E07\u0E40\u0E01\u0E47\u0E1A\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E40\u0E14\u0E34\u0E21\u0E44\u0E27\u0E49\u0E17\u0E49\u0E32\u0E22 stack", spFont.includes("Courier"), spFont);
+            try {
+              await document.fonts.load('16px "Courier Thai Mono"');
+              check2(
+                "[57a-5] \u0E42\u0E2B\u0E25\u0E14\u0E44\u0E1F\u0E25\u0E4C\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E44\u0E17\u0E22\u0E17\u0E35\u0E48\u0E1D\u0E31\u0E07\u0E21\u0E32\u0E44\u0E14\u0E49\u0E08\u0E23\u0E34\u0E07",
+                document.fonts.check('16px "Courier Thai Mono"')
+              );
+            } catch (e) {
+              check2("[57a-5] \u0E42\u0E2B\u0E25\u0E14\u0E44\u0E1F\u0E25\u0E4C\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E44\u0E17\u0E22\u0E17\u0E35\u0E48\u0E1D\u0E31\u0E07\u0E21\u0E32\u0E44\u0E14\u0E49\u0E08\u0E23\u0E34\u0E07", false, String(e));
+            }
+            state.settings.langFonts = [{ id: "thai", range: "U+0E00-0E7F", builtin: "x.ttf", enabled: false }];
+            applySettings();
+            check2(
+              "[57a-5] \u0E44\u0E21\u0E48\u0E21\u0E35\u0E41\u0E16\u0E27\u0E44\u0E2B\u0E19\u0E43\u0E0A\u0E49\u0E44\u0E14\u0E49 \u2192 \u0E44\u0E21\u0E48\u0E41\u0E15\u0E30 font stack \u0E40\u0E14\u0E34\u0E21",
+              !document.documentElement.style.getPropertyValue("--sp-font").includes(LANG_FAMILY)
+            );
+            state.settings.langFonts = keep;
+            applySettings();
+          }
+          {
+            const sc = spT.pane.querySelector(".sp-scene");
+            const ls = sc ? getComputedStyle(sc).letterSpacing : "";
+            check2(
+              "[57a-5] \u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01\u0E44\u0E21\u0E48\u0E21\u0E35 letter-spacing (\u0E14\u0E31\u0E19\u0E2A\u0E23\u0E30/\u0E27\u0E23\u0E23\u0E13\u0E22\u0E38\u0E01\u0E15\u0E4C\u0E44\u0E17\u0E22\u0E2B\u0E25\u0E38\u0E14\u0E08\u0E32\u0E01\u0E1E\u0E22\u0E31\u0E0D\u0E0A\u0E19\u0E30)",
+              ls === "normal" || parseFloat(ls) === 0,
+              ls
+            );
+            const markGap = async (family, text, px = 110) => {
+              await document.fonts.load(`${px}px "${family}"`);
+              const cv = document.createElement("canvas");
+              cv.width = px * 2;
+              cv.height = px * 2;
+              const cx = cv.getContext("2d");
+              cx.fillStyle = "#fff";
+              cx.fillRect(0, 0, cv.width, cv.height);
+              cx.fillStyle = "#000";
+              cx.textBaseline = "alphabetic";
+              cx.font = `${px}px "${family}"`;
+              cx.fillText(text, px * 0.4, px * 1.4);
+              const d = cx.getImageData(0, 0, cv.width, cv.height).data;
+              const rows = [];
+              for (let y = 0; y < cv.height; y++) {
+                let ink = false;
+                for (let x = 0; x < cv.width && !ink; x++) if (d[(y * cv.width + x) * 4] < 128) ink = true;
+                rows.push(ink);
+              }
+              const ys = rows.map((v4, i2) => v4 ? i2 : -1).filter((i2) => i2 >= 0);
+              if (!ys.length) return null;
+              let gap = 0, cur = 0;
+              for (let i2 = ys[0]; i2 <= ys[ys.length - 1]; i2++) {
+                if (!rows[i2]) {
+                  cur++;
+                  gap = Math.max(gap, cur);
+                } else cur = 0;
+              }
+              return gap / px;
+            };
+            const LIMIT = 0.05;
+            for (const [fam, txt, label] of [
+              ["Courier Thai Mono", "\u0E01\u0E48", "\u0E1E\u0E22\u0E31\u0E0D\u0E0A\u0E19\u0E30+\u0E27\u0E23\u0E23\u0E13\u0E22\u0E38\u0E01\u0E15\u0E4C"],
+              ["Courier Thai Mono", "\u0E01\u0E35\u0E48", "\u0E1E\u0E22\u0E31\u0E0D\u0E0A\u0E19\u0E30+\u0E2A\u0E23\u0E30\u0E1A\u0E19+\u0E27\u0E23\u0E23\u0E13\u0E22\u0E38\u0E01\u0E15\u0E4C"],
+              ["Courier Thai Proportional", "\u0E01\u0E49", "\u0E15\u0E31\u0E27\u0E2A\u0E31\u0E14\u0E2A\u0E48\u0E27\u0E19"]
+            ]) {
+              const g = await markGap(fam, txt);
+              check2(
+                `[57a-5] \u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E44\u0E17\u0E22\u0E17\u0E35\u0E48\u0E1D\u0E31\u0E07\u0E21\u0E32 \u2014 \u0E27\u0E23\u0E23\u0E13\u0E22\u0E38\u0E01\u0E15\u0E4C\u0E44\u0E21\u0E48\u0E25\u0E2D\u0E22 (${label})`,
+                g !== null && g <= LIMIT,
+                `${fam} "${txt}" = ${g === null ? "\u0E27\u0E48\u0E32\u0E07" : (g * 100).toFixed(1) + "% \u0E02\u0E2D\u0E07 em"}`
+              );
+            }
+            const gu = await markGap("Courier Thai Mono", "\u0E01\u0E38");
+            check2(
+              "[57a-5] \u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E44\u0E17\u0E22\u0E17\u0E35\u0E48\u0E1D\u0E31\u0E07\u0E21\u0E32 \u2014 \u0E2A\u0E23\u0E30\u0E25\u0E48\u0E32\u0E07\u0E44\u0E21\u0E48\u0E2B\u0E49\u0E2D\u0E22\u0E2B\u0E25\u0E38\u0E14",
+              gu !== null && gu <= 0.065,
+              gu === null ? "\u0E27\u0E48\u0E32\u0E07" : (gu * 100).toFixed(1) + "%"
+            );
+          }
+        }
+        {
+          const spScene58 = [...document.querySelectorAll(".scene")].find((x) => x.textContent.includes("\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07\u0E17\u0E14\u0E2A\u0E2D\u0E1A"));
+          check2("[58] \u0E40\u0E1B\u0E34\u0E14\u0E09\u0E32\u0E01\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C\u0E2A\u0E33\u0E2B\u0E23\u0E31\u0E1A\u0E40\u0E17\u0E2A alpha.58 \u0E44\u0E14\u0E49", !!spScene58);
+          spScene58.click();
+          await new Promise((r) => setTimeout(r, 400));
+          const spT58 = state.active;
+          check2("[58] \u0E41\u0E17\u0E47\u0E1A\u0E17\u0E35\u0E48\u0E40\u0E1B\u0E34\u0E14\u0E40\u0E1B\u0E47\u0E19\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C\u0E08\u0E23\u0E34\u0E07", !!spT58.sp);
+          resetPageScale();
+          setSpView("normal");
+          await new Promise((r) => setTimeout(r, 150));
+          {
+            check2('[58-\u0E0A\u0E37\u0E48\u0E2D] \u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E0A\u0E37\u0E48\u0E2D subheader \u0E40\u0E1B\u0E47\u0E19 "\u0E09\u0E32\u0E01\u0E22\u0E48\u0E2D\u0E22"', SP_ELEMS.subheader.th === "\u0E09\u0E32\u0E01\u0E22\u0E48\u0E2D\u0E22");
+            check2(
+              "[58-\u0E0A\u0E37\u0E48\u0E2D] \u0E15\u0E31\u0E27\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1A\u0E19\u0E41\u0E16\u0E1A\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E21\u0E37\u0E2D\u0E43\u0E0A\u0E49\u0E0A\u0E37\u0E48\u0E2D\u0E43\u0E2B\u0E21\u0E48",
+              [...$("#tb-sp-elem").options].some((o) => o.value === "subheader" && o.textContent === "\u0E09\u0E32\u0E01\u0E22\u0E48\u0E2D\u0E22")
+            );
+            const F = spFormat();
+            for (const k of ["subheader", "shot", "intercut"]) {
+              check2(
+                `[58-\u0E09\u0E32\u0E01\u0E22\u0E48\u0E2D\u0E22] ${k} \u0E40\u0E22\u0E37\u0E49\u0E2D\u0E07/\u0E01\u0E27\u0E49\u0E32\u0E07\u0E40\u0E17\u0E48\u0E32\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01`,
+                F.elements[k].indent === F.elements.scene.indent && F.elements[k].width === F.elements.scene.width,
+                JSON.stringify(F.elements[k])
+              );
+              check2(
+                `[58-\u0E09\u0E32\u0E01\u0E22\u0E48\u0E2D\u0E22] ${k} \u0E40\u0E27\u0E49\u0E19\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E01\u0E48\u0E2D\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E40\u0E17\u0E48\u0E32\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01`,
+                F.elements[k].linesBefore === F.elements.scene.linesBefore
+              );
+              check2(
+                `[58-\u0E09\u0E32\u0E01\u0E22\u0E48\u0E2D\u0E22] ${k} \u0E15\u0E31\u0E27\u0E2B\u0E19\u0E32 + \u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E43\u0E2B\u0E0D\u0E48 \u0E17\u0E31\u0E49\u0E07\u0E1A\u0E19\u0E08\u0E2D\u0E41\u0E25\u0E30\u0E15\u0E2D\u0E19\u0E1E\u0E34\u0E21\u0E1E\u0E4C`,
+                F.styles[k].screen.bold && F.styles[k].screen.caps && F.styles[k].print.bold && F.styles[k].print.caps
+              );
+            }
+            check2("[58-\u0E09\u0E32\u0E01\u0E22\u0E48\u0E2D\u0E22] \u0E40\u0E25\u0E34\u0E01\u0E02\u0E35\u0E14\u0E40\u0E2A\u0E49\u0E19\u0E43\u0E15\u0E49\u0E09\u0E32\u0E01\u0E22\u0E48\u0E2D\u0E22", !F.styles.subheader.screen.underline);
+            spT58.sp.setMarkdown(".INT. \u0E2B\u0E49\u0E2D\u0E07\u0E19\u0E2D\u0E19 - \u0E04\u0E37\u0E19\n!\u0E1A\u0E23\u0E23\u0E22\u0E32\u0E22\n$sub \u0E21\u0E38\u0E21\u0E2B\u0E19\u0E49\u0E32\u0E15\u0E48\u0E32\u0E07\n$shot CLOSE ON \u0E21\u0E37\u0E2D");
+            await new Promise((r) => setTimeout(r, 60));
+            toggleSceneNumbers(true);
+            await new Promise((r) => setTimeout(r, 150));
+            const subEl = spT58.pane.querySelector(".sp-subheader");
+            const shotEl = spT58.pane.querySelector(".sp-shot");
+            check2(
+              "[58-\u0E09\u0E32\u0E01\u0E22\u0E48\u0E2D\u0E22] \u0E09\u0E32\u0E01\u0E22\u0E48\u0E2D\u0E22/\u0E0A\u0E47\u0E2D\u0E15\u0E44\u0E21\u0E48\u0E21\u0E35\u0E40\u0E25\u0E02\u0E09\u0E32\u0E01\u0E01\u0E33\u0E01\u0E31\u0E1A",
+              !!subEl && !subEl.querySelector(".k-scene-no") && !!shotEl && !shotEl.querySelector(".k-scene-no")
+            );
+            check2(
+              "[58-\u0E09\u0E32\u0E01\u0E22\u0E48\u0E2D\u0E22] \u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01\u0E22\u0E31\u0E07\u0E21\u0E35\u0E40\u0E25\u0E02\u0E09\u0E32\u0E01\u0E15\u0E32\u0E21\u0E40\u0E14\u0E34\u0E21",
+              spT58.pane.querySelectorAll(".sp-scene .k-scene-no").length === 2
+            );
+            const subCS = getComputedStyle(subEl), scCS = getComputedStyle(spT58.pane.querySelector(".sp-scene"));
+            check2(
+              "[58-\u0E09\u0E32\u0E01\u0E22\u0E48\u0E2D\u0E22] \u0E23\u0E30\u0E22\u0E30\u0E40\u0E22\u0E37\u0E49\u0E2D\u0E07\u0E1A\u0E19\u0E08\u0E2D\u0E40\u0E17\u0E48\u0E32\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01\u0E08\u0E23\u0E34\u0E07",
+              subCS.marginLeft === scCS.marginLeft,
+              subCS.marginLeft + " vs " + scCS.marginLeft
+            );
+            check2("[58-\u0E09\u0E32\u0E01\u0E22\u0E48\u0E2D\u0E22] \u0E15\u0E31\u0E27\u0E2B\u0E19\u0E32\u0E1A\u0E19\u0E08\u0E2D\u0E08\u0E23\u0E34\u0E07", +subCS.fontWeight >= 700, subCS.fontWeight);
+            toggleSceneNumbers(false);
+            await new Promise((r) => setTimeout(r, 100));
+          }
+          {
+            const keepFs = { off: state.settings.uiFontSize, pt: state.settings.spFontPt };
+            state.settings.uiFontSize = 0;
+            state.settings.spFontPt = 12;
+            applyZoomVars();
+            await new Promise((r) => setTimeout(r, 120));
+            const F = spFormat();
+            const mt = pageMetrics(F);
+            check2("[58-\u0E1A\u0E31\u0E4A\u0E013] Letter \u0E08\u0E38 54 \u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14/\u0E2B\u0E19\u0E49\u0E32", mt.linesPerPage === 54, mt.linesPerPage);
+            const pageEl = spT58.pane.querySelector(".ProseMirror");
+            const pr = pageEl.getBoundingClientRect();
+            const dpi = pr.width / F.paper.width;
+            const spEl = spT58.pane.querySelector(".sp-action") || spT58.pane.querySelector(".sp");
+            const cs = getComputedStyle(spEl);
+            const lh = parseFloat(cs.lineHeight), fs = parseFloat(cs.fontSize);
+            check2(
+              "[58-\u0E1A\u0E31\u0E4A\u0E013] \u0E0A\u0E48\u0E27\u0E07\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14 = \u0E02\u0E19\u0E32\u0E14\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E1E\u0E2D\u0E14\u0E35 (12pt/12pt \u0E15\u0E32\u0E21\u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19\u0E1A\u0E17)",
+              Math.abs(lh - fs) < 0.6,
+              `line-height ${lh} vs font-size ${fs}`
+            );
+            check2("[58-\u0E1A\u0E31\u0E4A\u0E013] \u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19 12pt = 16px", Math.abs(fs - 16) < 0.6, String(fs));
+            check2("[58-\u0E1A\u0E31\u0E4A\u0E013] 1 \u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14 = 1/6 \u0E19\u0E34\u0E49\u0E27 (6 \u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14/\u0E19\u0E34\u0E49\u0E27)", Math.abs(lh - 16) < 0.6, String(lh));
+            check2(
+              "[58-\u0E1A\u0E31\u0E4A\u0E013] 54 \u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E1E\u0E2D\u0E14\u0E35\u0E04\u0E27\u0E32\u0E21\u0E2A\u0E39\u0E07\u0E1E\u0E37\u0E49\u0E19\u0E17\u0E35\u0E48\u0E1E\u0E34\u0E21\u0E1E\u0E4C",
+              Math.abs(mt.linesPerPage * lh - mt.bodyHeightPx) < 8,
+              `${mt.linesPerPage} \xD7 ${lh} vs ${mt.bodyHeightPx}`
+            );
+            {
+              const cv = document.createElement("canvas");
+              const cx = cv.getContext("2d");
+              cx.font = `${fs}px ${cs.fontFamily}`;
+              const w10 = cx.measureText("0123456789").width;
+              check2(
+                "[58-\u0E1A\u0E31\u0E4A\u0E013] 10 \u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23 = 1 \u0E19\u0E34\u0E49\u0E27 (Courier 12pt)",
+                Math.abs(w10 - 96) < 6,
+                w10.toFixed(2) + "px \u0E15\u0E48\u0E2D 10 \u0E15\u0E31\u0E27"
+              );
+            }
+            const z = zoomFitWidth(spT58.pane);
+            await new Promise((r) => setTimeout(r, 120));
+            check2(
+              "[58-\u0E1A\u0E31\u0E4A\u0E013] \u0E0B\u0E39\u0E21\u0E1E\u0E2D\u0E14\u0E35\u0E04\u0E27\u0E32\u0E21\u0E01\u0E27\u0E49\u0E32\u0E07\u0E17\u0E33\u0E43\u0E2B\u0E49\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E44\u0E21\u0E48\u0E25\u0E49\u0E19\u0E1E\u0E37\u0E49\u0E19\u0E17\u0E35\u0E48",
+              spT58.pane.querySelector(".ProseMirror").getBoundingClientRect().width <= spT58.pane.clientWidth + 4,
+              `${Math.round(spT58.pane.querySelector(".ProseMirror").getBoundingClientRect().width)} vs ${spT58.pane.clientWidth}`
+            );
+            check2("[58-\u0E1A\u0E31\u0E4A\u0E013] \u0E0B\u0E39\u0E21\u0E1E\u0E2D\u0E14\u0E35\u0E04\u0E27\u0E32\u0E21\u0E01\u0E27\u0E49\u0E32\u0E07\u0E2D\u0E22\u0E39\u0E48\u0E43\u0E19\u0E0A\u0E48\u0E27\u0E07\u0E17\u0E35\u0E48\u0E2D\u0E19\u0E38\u0E0D\u0E32\u0E15", z >= SCALE_MIN && z <= SCALE_MAX, z);
+            check2(
+              "[58-\u0E1A\u0E31\u0E4A\u0E013] \u0E40\u0E21\u0E19\u0E39\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07\u0E21\u0E35\u0E04\u0E33\u0E2A\u0E31\u0E48\u0E07\u0E1E\u0E2D\u0E14\u0E35\u0E04\u0E27\u0E32\u0E21\u0E01\u0E27\u0E49\u0E32\u0E07",
+              /case ['"]zoom['"]/.test(String(handleCommand)) && /['"]fit['"]/.test(String(handleCommand)),
+              String(handleCommand).slice(0, 0) + typeof zoomFitWidth
+            );
+            resetPageScale();
+            state.settings.uiFontSize = keepFs.off;
+            state.settings.spFontPt = keepFs.pt;
+            applyZoomVars();
+            await new Promise((r) => setTimeout(r, 100));
+          }
+          {
+            check2("[58] \u0E21\u0E35\u0E42\u0E2B\u0E21\u0E14 layout \u0E43\u0E19\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07", SP_VIEWS.includes("layout"));
+            check2(
+              "[58] \u0E15\u0E31\u0E27\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1A\u0E19\u0E41\u0E16\u0E1A\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E21\u0E37\u0E2D\u0E21\u0E35\u0E42\u0E2B\u0E21\u0E14\u0E08\u0E31\u0E14\u0E2B\u0E19\u0E49\u0E32",
+              [...$("#sp-view-select").options].some((o) => o.value === "layout")
+            );
+            const long58 = [
+              ".INT. \u0E2B\u0E49\u0E2D\u0E07\u0E19\u0E2D\u0E19 - \u0E01\u0E25\u0E32\u0E07\u0E04\u0E37\u0E19",
+              ...Array.from({ length: 120 }, (_, i2) => "!\u0E1A\u0E23\u0E23\u0E22\u0E32\u0E22\u0E09\u0E32\u0E01\u0E17\u0E35\u0E48 " + i2 + " \u0E22\u0E32\u0E27\u0E1E\u0E2D\u0E04\u0E27\u0E23\u0E43\u0E2B\u0E49\u0E40\u0E15\u0E47\u0E21\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14")
+            ].join("\n");
+            spT58.sp.setMarkdown(long58);
+            await new Promise((r) => setTimeout(r, 700));
+            setSpView("layout");
+            await new Promise((r) => setTimeout(r, 400));
+            check2("[58] \u0E42\u0E2B\u0E21\u0E14\u0E08\u0E31\u0E14\u0E2B\u0E19\u0E49\u0E32\u0E43\u0E2A\u0E48\u0E04\u0E25\u0E32\u0E2A\u0E43\u0E2B\u0E49 pane", spT58.pane.classList.contains("sp-view-layout"));
+            check2(
+              "[58] \u0E42\u0E2B\u0E21\u0E14\u0E08\u0E31\u0E14\u0E2B\u0E19\u0E49\u0E32\u0E22\u0E31\u0E07\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E44\u0E14\u0E49 (\u0E44\u0E21\u0E48\u0E43\u0E0A\u0E48 overlay \u0E2D\u0E48\u0E32\u0E19\u0E2D\u0E22\u0E48\u0E32\u0E07\u0E40\u0E14\u0E35\u0E22\u0E27)",
+              isEditView("layout") && !spT58.pane.querySelector(":scope > .sp-pageview")
+            );
+            const pmCS = getComputedStyle(spT58.pane.querySelector(".ProseMirror"));
+            check2("[58] \u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E40\u0E1B\u0E47\u0E19\u0E2A\u0E35\u0E02\u0E32\u0E27\u0E08\u0E23\u0E34\u0E07", pmCS.backgroundColor === "rgb(255, 255, 255)", pmCS.backgroundColor);
+            check2("[58] \u0E21\u0E35\u0E40\u0E07\u0E32\u0E43\u0E15\u0E49\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29", pmCS.boxShadow !== "none");
+            check2(
+              "[58] \u0E23\u0E30\u0E22\u0E30\u0E02\u0E2D\u0E1A\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E16\u0E39\u0E01\u0E15\u0E49\u0E2D\u0E07 (\u0E0B\u0E49\u0E32\u0E22 1.5 \u0E19\u0E34\u0E49\u0E27 \u0E1A\u0E19 1 \u0E19\u0E34\u0E49\u0E27)",
+              Math.abs(parseFloat(pmCS.paddingLeft) - 1.5 * 96) < 2 && Math.abs(parseFloat(pmCS.paddingTop) - 1 * 96) < 2,
+              pmCS.paddingLeft + " / " + pmCS.paddingTop
+            );
+            check2(
+              "[58] \u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E2A\u0E39\u0E07\u0E2D\u0E22\u0E48\u0E32\u0E07\u0E19\u0E49\u0E2D\u0E22 1 \u0E2B\u0E19\u0E49\u0E32\u0E40\u0E15\u0E47\u0E21 (11 \u0E19\u0E34\u0E49\u0E27)",
+              parseFloat(pmCS.minHeight) >= 11 * 96 - 2,
+              pmCS.minHeight
+            );
+            const brks = spT58.pane.querySelectorAll(".sp-page-break");
+            check2("[58] \u0E21\u0E35\u0E23\u0E2D\u0E22\u0E15\u0E48\u0E2D\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E2B\u0E19\u0E49\u0E32\u0E43\u0E2B\u0E49\u0E40\u0E2B\u0E47\u0E19", brks.length >= 1, brks.length);
+            if (brks.length) {
+              const bCS = getComputedStyle(brks[0]);
+              check2(
+                '[58] \u0E23\u0E2D\u0E22\u0E15\u0E48\u0E2D\u0E40\u0E1B\u0E47\u0E19 "\u0E0A\u0E48\u0E2D\u0E07\u0E27\u0E48\u0E32\u0E07\u0E08\u0E23\u0E34\u0E07" \u0E44\u0E21\u0E48\u0E43\u0E0A\u0E48\u0E40\u0E2A\u0E49\u0E19\u0E1A\u0E32\u0E07',
+                parseFloat(bCS.height) >= 8,
+                bCS.height
+              );
+              check2(
+                "[58] \u0E0A\u0E48\u0E2D\u0E07\u0E27\u0E48\u0E32\u0E07\u0E25\u0E49\u0E33\u0E2D\u0E2D\u0E01\u0E19\u0E2D\u0E01\u0E23\u0E30\u0E22\u0E30\u0E02\u0E2D\u0E1A\u0E17\u0E31\u0E49\u0E07\u0E2A\u0E2D\u0E07\u0E02\u0E49\u0E32\u0E07",
+                parseFloat(bCS.marginLeft) < -1 && parseFloat(bCS.marginRight) < -1,
+                bCS.marginLeft + " / " + bCS.marginRight
+              );
+              check2(
+                "[58] \u0E0A\u0E48\u0E2D\u0E07\u0E27\u0E48\u0E32\u0E07\u0E21\u0E35\u0E40\u0E2A\u0E49\u0E19\u0E02\u0E2D\u0E1A\u0E1A\u0E19-\u0E25\u0E48\u0E32\u0E07\u0E04\u0E31\u0E48\u0E19",
+                parseFloat(bCS.borderTopWidth) >= 1 && parseFloat(bCS.borderBottomWidth) >= 1
+              );
+              const num4 = brks[0].querySelector(".sp-page-break-num");
+              check2("[58] \u0E21\u0E35\u0E40\u0E25\u0E02\u0E2B\u0E19\u0E49\u0E32\u0E01\u0E33\u0E01\u0E31\u0E1A\u0E23\u0E2D\u0E22\u0E15\u0E48\u0E2D", !!num4 && /\d/.test(num4.textContent), num4 && num4.textContent);
+            }
+            check2(
+              "[58] \u0E08\u0E33\u0E19\u0E27\u0E19\u0E23\u0E2D\u0E22\u0E15\u0E48\u0E2D = \u0E08\u0E33\u0E19\u0E27\u0E19\u0E2B\u0E19\u0E49\u0E32 \u2212 1 (\u0E15\u0E23\u0E07\u0E01\u0E31\u0E1A paginate)",
+              brks.length === pagesOf(
+                blocksFromDoc(spT58.sp.view.state.doc),
+                spFormat(),
+                linesPerPage(spFormat().paper, spFormat().margins)
+              ).count - 1,
+              brks.length
+            );
+            check2("[58] \u0E41\u0E16\u0E1A\u0E2A\u0E16\u0E32\u0E19\u0E30\u0E1A\u0E2D\u0E01\u0E08\u0E33\u0E19\u0E27\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E40\u0E14\u0E35\u0E22\u0E27\u0E01\u0E31\u0E19", /\d+ หน้า/.test($("#wc").textContent), $("#wc").textContent);
+            const lvVars = layoutCssVars(spFormat());
+            check2(
+              "[58] \u0E15\u0E31\u0E27\u0E41\u0E1B\u0E23 CSS \u0E02\u0E2D\u0E07\u0E42\u0E2B\u0E21\u0E14\u0E08\u0E31\u0E14\u0E2B\u0E19\u0E49\u0E32\u0E16\u0E39\u0E01\u0E15\u0E31\u0E49\u0E07\u0E08\u0E23\u0E34\u0E07",
+              rootVar("--sp-body-h") === lvVars["--sp-body-h"] && rootVar("--sp-line-h") === lvVars["--sp-line-h"],
+              rootVar("--sp-body-h") + " / " + rootVar("--sp-line-h")
+            );
+            setSpView("draft");
+            await new Promise((r) => setTimeout(r, 200));
+            check2(
+              "[58] \u0E2A\u0E25\u0E31\u0E1A\u0E44\u0E1B\u0E42\u0E2B\u0E21\u0E14\u0E23\u0E48\u0E32\u0E07\u0E41\u0E25\u0E49\u0E27\u0E04\u0E25\u0E32\u0E2A\u0E08\u0E31\u0E14\u0E2B\u0E19\u0E49\u0E32\u0E44\u0E21\u0E48\u0E04\u0E49\u0E32\u0E07",
+              !spT58.pane.classList.contains("sp-view-layout") && spT58.pane.classList.contains("sp-view-draft")
+            );
+            setSpView("normal");
+            await new Promise((r) => setTimeout(r, 200));
+            check2(
+              "[58] \u0E01\u0E25\u0E31\u0E1A\u0E42\u0E2B\u0E21\u0E14\u0E1B\u0E01\u0E15\u0E34\u0E41\u0E25\u0E49\u0E27\u0E44\u0E21\u0E48\u0E21\u0E35\u0E04\u0E25\u0E32\u0E2A\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07\u0E04\u0E49\u0E32\u0E07",
+              ALL_VIEW_CLASSES.every((c) => !spT58.pane.classList.contains(c))
+            );
+          }
+          {
+            check2("[55] \u0E23\u0E30\u0E1A\u0E1A\u0E15\u0E48\u0E2D\u0E40\u0E19\u0E37\u0E48\u0E2D\u0E07\u0E40\u0E1B\u0E34\u0E14\u0E40\u0E1B\u0E47\u0E19\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19", spContinuedOn());
+            const longScene = [
+              ".INT. \u0E2B\u0E49\u0E2D\u0E07\u0E19\u0E2D\u0E19 - \u0E01\u0E25\u0E32\u0E07\u0E04\u0E37\u0E19",
+              ...Array.from({ length: 130 }, (_, i2) => "!\u0E1A\u0E23\u0E23\u0E22\u0E32\u0E22\u0E09\u0E32\u0E01\u0E17\u0E35\u0E48 " + i2 + " \u0E43\u0E2B\u0E49\u0E22\u0E32\u0E27\u0E1E\u0E2D\u0E40\u0E15\u0E47\u0E21\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14")
+            ].join("\n");
+            spT58.sp.setMarkdown(longScene);
+            await new Promise((r) => setTimeout(r, 800));
+            const marks2 = spT58.pane.querySelectorAll(".sp-cont-mark");
+            check2("[55] \u0E09\u0E32\u0E01\u0E02\u0E49\u0E32\u0E21\u0E2B\u0E19\u0E49\u0E32 \u2192 \u0E21\u0E35\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E2B\u0E21\u0E32\u0E22\u0E15\u0E48\u0E2D\u0E40\u0E19\u0E37\u0E48\u0E2D\u0E07\u0E43\u0E19\u0E15\u0E31\u0E27\u0E41\u0E01\u0E49\u0E44\u0E02", marks2.length >= 2, marks2.length);
+            const texts = [...marks2].map((m) => m.textContent);
+            check2("[55] \u0E21\u0E35 (CONTINUED) \u0E17\u0E49\u0E32\u0E22\u0E2B\u0E19\u0E49\u0E32", texts.includes("(CONTINUED)"), texts.join(" | "));
+            check2("[56] \u0E21\u0E35 CONTINUED: \u0E15\u0E49\u0E19\u0E2B\u0E19\u0E49\u0E32", texts.some((x) => x.startsWith("CONTINUED:")));
+            const bot = spT58.pane.querySelector(".sp-cont-mark.sp-continued-bottom");
+            const top = spT58.pane.querySelector(".sp-cont-mark.sp-continued-top");
+            check2("[55] (CONTINUED) \u0E0A\u0E34\u0E14\u0E02\u0E27\u0E32", getComputedStyle(bot).textAlign === "right");
+            check2("[56] CONTINUED: \u0E0A\u0E34\u0E14\u0E0B\u0E49\u0E32\u0E22", getComputedStyle(top).textAlign === "left");
+            check2(
+              "[55] \u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E2B\u0E21\u0E32\u0E22\u0E41\u0E01\u0E49\u0E44\u0E02\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49 (\u0E44\u0E21\u0E48\u0E43\u0E0A\u0E48\u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21\u0E43\u0E19\u0E44\u0E1F\u0E25\u0E4C)",
+              bot.getAttribute("contenteditable") === "false" && getComputedStyle(bot).pointerEvents === "none"
+            );
+            check2(
+              "[55] \u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E2B\u0E21\u0E32\u0E22\u0E44\u0E21\u0E48\u0E2B\u0E25\u0E38\u0E14\u0E44\u0E1B\u0E2D\u0E22\u0E39\u0E48\u0E43\u0E19\u0E44\u0E1F\u0E25\u0E4C .md",
+              !spT58.sp.getMarkdown().includes("(CONTINUED)") && !spT58.sp.getMarkdown().includes("CONTINUED:")
+            );
+            {
+              const all = [...spT58.pane.querySelectorAll(".sp-cont-mark, .sp-page-break")];
+              const iBot = all.indexOf(bot), iTop = all.indexOf(top);
+              const iBrk = all.findIndex((n) => n.classList.contains("sp-page-break"));
+              check2(
+                "[55] (CONTINUED) \u0E2D\u0E22\u0E39\u0E48\u0E40\u0E2B\u0E19\u0E37\u0E2D\u0E40\u0E2A\u0E49\u0E19\u0E04\u0E31\u0E48\u0E19\u0E2B\u0E19\u0E49\u0E32 \xB7 CONTINUED: \u0E2D\u0E22\u0E39\u0E48\u0E43\u0E15\u0E49",
+                iBot >= 0 && iBrk > iBot && iTop > iBrk,
+                `bot=${iBot} brk=${iBrk} top=${iTop}`
+              );
+            }
+            check2(
+              "[56] \u0E02\u0E49\u0E32\u0E21\u0E2B\u0E25\u0E32\u0E22\u0E2B\u0E19\u0E49\u0E32\u0E15\u0E34\u0E14\u0E01\u0E31\u0E19\u0E21\u0E35\u0E40\u0E25\u0E02\u0E01\u0E33\u0E01\u0E31\u0E1A CONTINUED: (2)",
+              texts.some((x) => /^CONTINUED: \(\d+\)$/.test(x)),
+              texts.join(" | ")
+            );
+            const dlg58 = [
+              ".INT. \u0E04\u0E23\u0E31\u0E27 - \u0E40\u0E0A\u0E49\u0E32",
+              ...Array.from({ length: 42 }, (_, i2) => "!\u0E1A\u0E23\u0E23\u0E22\u0E32\u0E22 " + i2),
+              "@\u0E17\u0E2D\u0E23\u0E48\u0E32",
+              // ยาวกว่าหนึ่งหน้าเต็ม → ยังไงก็ต้องถูกตัด ไม่ว่าจะเริ่มตรงไหนของหน้า
+              "\u0E09\u0E31\u0E19\u0E08\u0E30\u0E40\u0E25\u0E48\u0E32\u0E43\u0E2B\u0E49\u0E1F\u0E31\u0E07\u0E17\u0E31\u0E49\u0E07\u0E2B\u0E21\u0E14 " + "\u0E1E\u0E39\u0E14\u0E15\u0E48\u0E2D\u0E44\u0E1B\u0E2D\u0E35\u0E01\u0E22\u0E32\u0E27\u0E21\u0E32\u0E01 ".repeat(300)
+            ].join("\n");
+            spT58.sp.setMarkdown(dlg58);
+            await new Promise((r) => setTimeout(r, 800));
+            const dTexts = [...spT58.pane.querySelectorAll(".sp-cont-mark")].map((m) => m.textContent);
+            check2(
+              "[55] \u0E1A\u0E17\u0E1E\u0E39\u0E14\u0E02\u0E49\u0E32\u0E21\u0E2B\u0E19\u0E49\u0E32 \u2192 \u0E21\u0E35 (MORE) \u0E17\u0E49\u0E32\u0E22\u0E2B\u0E19\u0E49\u0E32",
+              dTexts.includes("(MORE)"),
+              dTexts.join(" | ")
+            );
+            check2(
+              "[55] \u0E15\u0E49\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E43\u0E2B\u0E21\u0E48\u0E17\u0E27\u0E19\u0E0A\u0E37\u0E48\u0E2D + (cont'd)",
+              dTexts.some((x) => x.includes("\u0E17\u0E2D\u0E23\u0E48\u0E32") && x.includes("(cont'd)")),
+              dTexts.join(" | ")
+            );
+            {
+              const moreEl = [...spT58.pane.querySelectorAll(".sp-cont-mark")].find((m) => m.textContent === "(MORE)");
+              const chEl = spT58.pane.querySelector(".sp-character");
+              if (moreEl && chEl) {
+                check2(
+                  "[55] (MORE) \u0E40\u0E22\u0E37\u0E49\u0E2D\u0E07\u0E41\u0E19\u0E27\u0E40\u0E14\u0E35\u0E22\u0E27\u0E01\u0E31\u0E1A\u0E0A\u0E37\u0E48\u0E2D\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23",
+                  Math.abs(moreEl.getBoundingClientRect().left - chEl.getBoundingClientRect().left) < 4,
+                  `${moreEl.getBoundingClientRect().left} vs ${chEl.getBoundingClientRect().left}`
+                );
+              }
+            }
+            {
+              const twoBlocks = [
+                { el: "scene", text: "INT. \u0E01 - \u0E27\u0E31\u0E19" },
+                ...Array.from({ length: 9 }, (_, i2) => ({ el: "action", text: "\u0E1A\u0E23\u0E23\u0E22\u0E32\u0E22 " + i2 })),
+                { el: "scene", text: "EXT. \u0E02 - \u0E04\u0E37\u0E19" },
+                ...Array.from({ length: 5 }, (_, i2) => ({ el: "action", text: "\u0E15\u0E48\u0E2D " + i2 }))
+              ];
+              const pgTwo = paginate(twoBlocks, { lines: 20, fmt: spFormat() });
+              check2(
+                "[56] \u0E02\u0E36\u0E49\u0E19\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01\u0E43\u0E2B\u0E21\u0E48\u0E15\u0E49\u0E19\u0E2B\u0E19\u0E49\u0E32 \u2192 \u0E44\u0E21\u0E48\u0E21\u0E35 CONTINUED",
+                pgTwo.pages.length > 1 && !pgTwo.pages[1].continuedTop && !pgTwo.pages[0].continuedBottom,
+                JSON.stringify(pgTwo.pages.map((p) => [p.sceneStart, p.sceneEnd, p.continuedTop || ""]))
+              );
+              check2(
+                "[56] \u0E41\u0E15\u0E48\u0E25\u0E30\u0E2B\u0E19\u0E49\u0E32\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E40\u0E25\u0E02\u0E09\u0E32\u0E01\u0E40\u0E23\u0E34\u0E48\u0E21/\u0E08\u0E1A\u0E44\u0E27\u0E49\u0E43\u0E2B\u0E49\u0E15\u0E23\u0E27\u0E08\u0E44\u0E14\u0E49",
+                pgTwo.pages.every((p) => Number.isFinite(p.sceneStart) && Number.isFinite(p.sceneEnd))
+              );
+            }
+            toggleContinueds(false);
+            await new Promise((r) => setTimeout(r, 700));
+            check2(
+              "[55] \u0E1B\u0E34\u0E14\u0E2A\u0E27\u0E34\u0E15\u0E0A\u0E4C\u0E41\u0E25\u0E49\u0E27\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E2B\u0E21\u0E32\u0E22\u0E2B\u0E32\u0E22\u0E2B\u0E21\u0E14",
+              spT58.pane.querySelectorAll(".sp-cont-mark").length === 0
+            );
+            check2("[55] \u0E2A\u0E16\u0E32\u0E19\u0E30\u0E16\u0E39\u0E01\u0E08\u0E33\u0E25\u0E07 settings", state.settings.spContinued.enabled === false);
+            toggleContinueds(true);
+            await new Promise((r) => setTimeout(r, 700));
+            check2(
+              "[55] \u0E40\u0E1B\u0E34\u0E14\u0E01\u0E25\u0E31\u0E1A\u0E41\u0E25\u0E49\u0E27\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E2B\u0E21\u0E32\u0E22\u0E01\u0E25\u0E31\u0E1A\u0E21\u0E32",
+              spT58.pane.querySelectorAll(".sp-cont-mark").length > 0
+            );
+            check2(
+              "[55] handleCommand \u0E23\u0E39\u0E49\u0E08\u0E31\u0E01\u0E04\u0E33\u0E2A\u0E31\u0E48\u0E07 sp-continued",
+              /case ['"]sp-continued['"]/.test(String(handleCommand))
+            );
+          }
+          {
+            const rep58 = [
+              ".INT. \u0E2B\u0E49\u0E2D\u0E07\u0E19\u0E2D\u0E19 - \u0E01\u0E25\u0E32\u0E07\u0E04\u0E37\u0E19",
+              "!\u0E17\u0E2D\u0E23\u0E48\u0E32\u0E19\u0E31\u0E48\u0E07\u0E23\u0E34\u0E21\u0E40\u0E15\u0E35\u0E22\u0E07",
+              "@\u0E17\u0E2D\u0E23\u0E48\u0E32",
+              "\u0E09\u0E31\u0E19\u0E44\u0E21\u0E48\u0E2D\u0E22\u0E32\u0E01\u0E44\u0E1B",
+              "@\u0E41\u0E04\u0E2A\u0E0B\u0E35\u0E48",
+              "\u0E01\u0E47\u0E44\u0E21\u0E48\u0E15\u0E49\u0E2D\u0E07\u0E44\u0E1B\u0E2A\u0E34 " + "\u0E1E\u0E39\u0E14\u0E15\u0E48\u0E2D\u0E2D\u0E35\u0E01\u0E2B\u0E19\u0E48\u0E2D\u0E22 ".repeat(6),
+              "",
+              ".EXT. \u0E2A\u0E27\u0E19\u0E2B\u0E25\u0E31\u0E07\u0E1A\u0E49\u0E32\u0E19 - \u0E40\u0E0A\u0E49\u0E32",
+              "!\u0E41\u0E2A\u0E07\u0E41\u0E14\u0E14\u0E2A\u0E48\u0E2D\u0E07\u0E1C\u0E48\u0E32\u0E19\u0E43\u0E1A\u0E44\u0E21\u0E49",
+              "@\u0E17\u0E2D\u0E23\u0E48\u0E32 (V.O.)",
+              "\u0E40\u0E0A\u0E49\u0E32\u0E27\u0E31\u0E19\u0E19\u0E31\u0E49\u0E19\u0E17\u0E38\u0E01\u0E2D\u0E22\u0E48\u0E32\u0E07\u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E44\u0E1B",
+              ".INT. \u0E2B\u0E49\u0E2D\u0E07\u0E19\u0E2D\u0E19 - \u0E40\u0E0A\u0E49\u0E32",
+              "!\u0E40\u0E15\u0E35\u0E22\u0E07\u0E27\u0E48\u0E32\u0E07\u0E40\u0E1B\u0E25\u0E48\u0E32"
+            ].join("\n");
+            spT58.sp.setMarkdown(rep58);
+            await new Promise((r) => setTimeout(r, 700));
+            const inp = spReportInput();
+            check2("[71-73] \u0E2D\u0E48\u0E32\u0E19\u0E1A\u0E25\u0E47\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E1A\u0E17\u0E17\u0E35\u0E48\u0E40\u0E1B\u0E34\u0E14\u0E2D\u0E22\u0E39\u0E48\u0E44\u0E14\u0E49", !!inp && inp.blocks.length > 5);
+            const locData = buildSpReport("location", inp);
+            check2(
+              "[71] \u0E08\u0E31\u0E14\u0E01\u0E25\u0E38\u0E48\u0E21\u0E44\u0E14\u0E49 2 \u0E2A\u0E16\u0E32\u0E19\u0E17\u0E35\u0E48",
+              locData.locations.length === 2,
+              locData.locations.map((l) => l.location).join(",")
+            );
+            check2(
+              "[71] \u0E2B\u0E49\u0E2D\u0E07\u0E19\u0E2D\u0E19\u0E21\u0E35 2 \u0E09\u0E32\u0E01",
+              locData.locations.find((l) => l.location === "\u0E2B\u0E49\u0E2D\u0E07\u0E19\u0E2D\u0E19").sceneCount === 2
+            );
+            const chData = buildSpReport("character", inp);
+            check2(
+              "[72] \u0E19\u0E31\u0E1A\u0E44\u0E14\u0E49 2 \u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23 (V.O. \u0E23\u0E27\u0E21\u0E40\u0E1B\u0E47\u0E19\u0E04\u0E19\u0E40\u0E14\u0E35\u0E22\u0E27)",
+              chData.characters.length === 2,
+              chData.characters.map((c) => c.name).join(",")
+            );
+            check2(
+              "[72] \u0E40\u0E23\u0E35\u0E22\u0E07\u0E15\u0E32\u0E21\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E1A\u0E17\u0E1E\u0E39\u0E14\u0E21\u0E32\u0E01\u0E44\u0E1B\u0E19\u0E49\u0E2D\u0E22",
+              chData.characters[0].name === "\u0E41\u0E04\u0E2A\u0E0B\u0E35\u0E48",
+              chData.characters[0].name
+            );
+            const chartData = buildSpReport("chart", inp);
+            check2("[73] \u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E04\u0E23\u0E1A\u0E17\u0E38\u0E01\u0E2B\u0E19\u0E49\u0E32", chartData.pages.length === chartData.totalPages);
+            for (const kind of ["location", "character", "chart"]) {
+              const dlg = openSpReport(kind);
+              await new Promise((r) => setTimeout(r, 120));
+              check2(`[71-73] \u0E40\u0E1B\u0E34\u0E14\u0E01\u0E25\u0E48\u0E2D\u0E07\u0E23\u0E32\u0E22\u0E07\u0E32\u0E19 "${kind}" \u0E44\u0E14\u0E49`, !!dlg && !!dlg.querySelector(".k-report-dlg"));
+              check2(
+                `[71-73] \u0E01\u0E25\u0E48\u0E2D\u0E07 "${kind}" \u0E21\u0E35\u0E40\u0E19\u0E37\u0E49\u0E2D\u0E2B\u0E32`,
+                dlg.querySelector(".k-report-body").textContent.trim().length > 10
+              );
+              check2(
+                `[71-73] \u0E01\u0E25\u0E48\u0E2D\u0E07 "${kind}" \u0E2A\u0E25\u0E31\u0E1A\u0E44\u0E1B\u0E23\u0E32\u0E22\u0E07\u0E32\u0E19\u0E2D\u0E37\u0E48\u0E19\u0E44\u0E14\u0E49`,
+                dlg.querySelectorAll(".k-report-tab").length === 3
+              );
+              check2(
+                `[71-73] \u0E41\u0E17\u0E47\u0E1A\u0E17\u0E35\u0E48\u0E40\u0E1B\u0E34\u0E14\u0E2D\u0E22\u0E39\u0E48\u0E16\u0E39\u0E01\u0E44\u0E2E\u0E44\u0E25\u0E15\u0E4C`,
+                dlg.querySelectorAll(".k-report-tab.on").length === 1
+              );
+              if (kind === "location") {
+                const row = dlg.querySelector(".k-report-row.can-go");
+                check2("[71] \u0E41\u0E16\u0E27\u0E09\u0E32\u0E01\u0E04\u0E25\u0E34\u0E01\u0E01\u0E23\u0E30\u0E42\u0E14\u0E14\u0E44\u0E1B\u0E44\u0E14\u0E49", !!row);
+              }
+              if (kind === "character") {
+                check2("[72] \u0E41\u0E2A\u0E14\u0E07\u0E40\u0E1B\u0E47\u0E19\u0E15\u0E32\u0E23\u0E32\u0E07", !!dlg.querySelector(".k-report-table"));
+                check2(
+                  "[72] \u0E15\u0E32\u0E23\u0E32\u0E07\u0E21\u0E35\u0E2B\u0E31\u0E27\u0E04\u0E2D\u0E25\u0E31\u0E21\u0E19\u0E4C\u0E04\u0E23\u0E1A 7 \u0E0A\u0E48\u0E2D\u0E07",
+                  dlg.querySelectorAll(".k-report-table th").length === 7
+                );
+              }
+              if (kind === "chart") {
+                check2("[73] \u0E21\u0E35\u0E41\u0E16\u0E1A\u0E2A\u0E31\u0E14\u0E2A\u0E48\u0E27\u0E19\u0E15\u0E48\u0E2D\u0E2B\u0E19\u0E49\u0E32", dlg.querySelectorAll(".sp-chart-bar").length >= 1);
+                check2(
+                  "[73] \u0E41\u0E16\u0E1A\u0E21\u0E35\u0E2B\u0E25\u0E32\u0E22\u0E2A\u0E35\u0E15\u0E32\u0E21\u0E0A\u0E19\u0E34\u0E14 element",
+                  dlg.querySelectorAll(".sp-chart-seg").length >= 2
+                );
+                check2("[73] \u0E21\u0E35\u0E04\u0E33\u0E2D\u0E18\u0E34\u0E1A\u0E32\u0E22\u0E2A\u0E35 (legend)", dlg.querySelectorAll(".sp-chart-key").length === 4);
+              }
+              dlg.querySelector(".k-dlg-btns .k-ok").click();
+              await new Promise((r) => setTimeout(r, 60));
+            }
+            check2(
+              "[71-73] handleCommand \u0E23\u0E39\u0E49\u0E08\u0E31\u0E01\u0E04\u0E33\u0E2A\u0E31\u0E48\u0E07 sp-report",
+              /case ['"]sp-report['"]/.test(String(handleCommand))
+            );
+            check2("[71] \u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21\u0E23\u0E32\u0E22\u0E07\u0E32\u0E19\u0E2A\u0E16\u0E32\u0E19\u0E17\u0E35\u0E48\u0E04\u0E31\u0E14\u0E25\u0E2D\u0E01\u0E44\u0E14\u0E49", spReportText("location", locData).includes("\u0E2B\u0E49\u0E2D\u0E07\u0E19\u0E2D\u0E19"));
+            check2("[72] \u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21\u0E23\u0E32\u0E22\u0E07\u0E32\u0E19\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E04\u0E31\u0E14\u0E25\u0E2D\u0E01\u0E44\u0E14\u0E49", spReportText("character", chData).includes("\u0E41\u0E04\u0E2A\u0E0B\u0E35\u0E48"));
+            check2("[73] \u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21\u0E01\u0E23\u0E32\u0E1F\u0E04\u0E31\u0E14\u0E25\u0E2D\u0E01\u0E44\u0E14\u0E49", spReportText("chart", chartData).includes("\u0E2B\u0E19\u0E49\u0E32"));
+          }
+          {
+            const junk = [
+              ".INT. \u0E2B\u0E49\u0E2D\u0E07\u0E19\u0E2D\u0E19 - \u0E04\u0E37\u0E19",
+              "@\u0E17\u0E2D\u0E23\u0E48\u0E32",
+              "\u0E2A\u0E27\u0E31\u0E2A\u0E14\u0E35",
+              "@\u0E17\u0E2D\u0E23\u0E48\u0E32",
+              "\u0E2D\u0E35\u0E01\u0E04\u0E23\u0E31\u0E49\u0E07",
+              "@\u0E1E\u0E21\u0E34\u0E21\u0E1E\u0E4C",
+              "\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E21\u0E31\u0E48\u0E27"
+            ].join("\n");
+            spT58.sp.setMarkdown(junk);
+            await new Promise((r) => setTimeout(r, 300));
+            spT58.sp.gotoPos(1);
+            const T58 = screenplayTerms(spT58, -1);
+            check2("[58-\u0E1A\u0E31\u0E4A\u0E011] \u0E0A\u0E37\u0E48\u0E2D\u0E17\u0E35\u0E48\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E0B\u0E49\u0E33 2 \u0E04\u0E23\u0E31\u0E49\u0E07 \u2192 \u0E08\u0E33", T58.chars.includes("\u0E17\u0E2D\u0E23\u0E48\u0E32"), T58.chars.join(","));
+            check2("[58-\u0E1A\u0E31\u0E4A\u0E011] \u0E04\u0E33\u0E17\u0E35\u0E48\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E04\u0E23\u0E31\u0E49\u0E07\u0E40\u0E14\u0E35\u0E22\u0E27 \u2192 \u0E44\u0E21\u0E48\u0E08\u0E33", !T58.chars.includes("\u0E1E\u0E21\u0E34\u0E21\u0E1E\u0E4C"), T58.chars.join(","));
+            check2("[58-\u0E1A\u0E31\u0E4A\u0E011] \u0E40\u0E01\u0E13\u0E11\u0E4C\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19 = 2 \u0E1A\u0E25\u0E47\u0E2D\u0E01", smartLearnMin() === 2);
+            smartPinAdd("\u0E1E\u0E21\u0E34\u0E21\u0E1E\u0E4C");
+            check2(
+              "[58-\u0E1A\u0E31\u0E4A\u0E011] \u0E01\u0E14\u0E08\u0E33\u0E40\u0E2D\u0E07 \u2192 \u0E08\u0E33\u0E17\u0E31\u0E19\u0E17\u0E35\u0E41\u0E21\u0E49\u0E40\u0E08\u0E2D\u0E04\u0E23\u0E31\u0E49\u0E07\u0E40\u0E14\u0E35\u0E22\u0E27",
+              screenplayTerms(spT58, -1).chars.includes("\u0E1E\u0E21\u0E34\u0E21\u0E1E\u0E4C")
+            );
+            smartIgnoreAdd("\u0E1E\u0E21\u0E34\u0E21\u0E1E\u0E4C");
+            check2(
+              "[58-\u0E1A\u0E31\u0E4A\u0E011] \u0E2A\u0E31\u0E48\u0E07\u0E44\u0E21\u0E48\u0E08\u0E33 \u0E0A\u0E19\u0E30\u0E01\u0E32\u0E23\u0E01\u0E14\u0E08\u0E33\u0E40\u0E2D\u0E07",
+              !screenplayTerms(spT58, -1).chars.includes("\u0E1E\u0E21\u0E34\u0E21\u0E1E\u0E4C")
+            );
+            check2("[58-\u0E1A\u0E31\u0E4A\u0E011] \u0E2A\u0E31\u0E48\u0E07\u0E44\u0E21\u0E48\u0E08\u0E33\u0E41\u0E25\u0E49\u0E27\u0E2D\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E08\u0E33\u0E40\u0E2D\u0E07", !smartPinList().includes("\u0E1E\u0E21\u0E34\u0E21\u0E1E\u0E4C"));
+            smartIgnoreRemove("\u0E1E\u0E21\u0E34\u0E21\u0E1E\u0E4C");
+            check2("[58-\u0E1A\u0E31\u0E4A\u0E011] \u0E04\u0E33\u0E02\u0E36\u0E49\u0E19\u0E15\u0E49\u0E19\u0E14\u0E49\u0E27\u0E22\u0E27\u0E23\u0E23\u0E13\u0E22\u0E38\u0E01\u0E15\u0E4C\u0E15\u0E01\u0E17\u0E31\u0E19\u0E17\u0E35", !looksLikeTerm("\u0E48\u0E27\u0E19"));
+            check2("[58-\u0E1A\u0E31\u0E4A\u0E011] \u0E0A\u0E37\u0E48\u0E2D\u0E08\u0E23\u0E34\u0E07\u0E22\u0E31\u0E07\u0E1C\u0E48\u0E32\u0E19", looksLikeTerm("\u0E17\u0E2D\u0E23\u0E48\u0E32") && looksLikeTerm("Nazarena"));
+            const sdlg = smartTypeDialog();
+            await new Promise((r) => setTimeout(r, 120));
+            check2("[58-\u0E1A\u0E31\u0E4A\u0E011] \u0E01\u0E25\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E14\u0E01\u0E32\u0E23\u0E21\u0E35\u0E15\u0E31\u0E27\u0E15\u0E31\u0E49\u0E07\u0E40\u0E01\u0E13\u0E11\u0E4C\u0E40\u0E08\u0E2D\u0E0B\u0E49\u0E33", !!sdlg.querySelector(".k-smart-min select"));
+            check2(
+              "[58-\u0E1A\u0E31\u0E4A\u0E011] \u0E01\u0E25\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E14\u0E01\u0E32\u0E23\u0E42\u0E0A\u0E27\u0E4C\u0E04\u0E33\u0E17\u0E35\u0E48\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E08\u0E33\u0E43\u0E2B\u0E49\u0E01\u0E14\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E44\u0E14\u0E49",
+              sdlg.querySelectorAll(".k-smart-wait").length >= 1,
+              sdlg.querySelector(".k-smart-body").textContent.slice(0, 120)
+            );
+            sdlg.querySelector(".k-dlg-btns .k-ok").click();
+            await new Promise((r) => setTimeout(r, 60));
+          }
+          {
+            settingsDialog();
+            await new Promise((r) => setTimeout(r, 250));
+            const rows = [...document.querySelectorAll("#st-spcycle tbody tr")];
+            const labels = rows.map((r) => r.querySelector("td").textContent);
+            check2(
+              "[58-\u0E1A\u0E31\u0E4A\u0E012] \u0E15\u0E32\u0E23\u0E32\u0E07\u0E1B\u0E38\u0E48\u0E21\u0E2A\u0E25\u0E31\u0E1A\u0E21\u0E35\u0E04\u0E23\u0E1A\u0E17\u0E38\u0E01 element \u0E43\u0E19 TAB_CYCLE",
+              rows.length === TAB_CYCLE.length,
+              `${rows.length} vs ${TAB_CYCLE.length}`
+            );
+            for (const k of ["transition-in", "subheader", "intercut"]) {
+              check2(
+                `[58-\u0E1A\u0E31\u0E4A\u0E012] \u0E15\u0E32\u0E23\u0E32\u0E07\u0E21\u0E35\u0E41\u0E16\u0E27 "${SP_ELEMS[k].th}"`,
+                labels.includes(SP_ELEMS[k].th),
+                labels.join(",")
+              );
+            }
+            const opts0 = [...rows[0].querySelectorAll("select")[0].options].map((o) => o.textContent);
+            check2(
+              "[58-\u0E1A\u0E31\u0E4A\u0E012] \u0E15\u0E31\u0E27\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1B\u0E25\u0E32\u0E22\u0E17\u0E32\u0E07\u0E21\u0E35 element \u0E43\u0E2B\u0E21\u0E48\u0E14\u0E49\u0E27\u0E22",
+              ["\u0E17\u0E23\u0E32\u0E19\u0E0B\u0E34\u0E0A\u0E31\u0E19\u0E40\u0E02\u0E49\u0E32 (\u0E0B\u0E49\u0E32\u0E22)", "\u0E09\u0E32\u0E01\u0E22\u0E48\u0E2D\u0E22", "\u0E2A\u0E25\u0E31\u0E1A\u0E09\u0E32\u0E01"].every((x) => opts0.includes(x)),
+              opts0.join(",")
+            );
+            const ovs58 = [...document.querySelectorAll(".k-overlay")];
+            const cancel = ovs58.length && ovs58[ovs58.length - 1].querySelector(".k-cancel");
+            if (cancel) cancel.click();
+            await new Promise((r) => setTimeout(r, 150));
+            document.querySelectorAll(".k-overlay").forEach((o) => o.remove());
+          }
+          {
+            const big = [
+              ".INT. \u0E2B\u0E49\u0E2D\u0E07\u0E17\u0E14\u0E2A\u0E2D\u0E1A - \u0E27\u0E31\u0E19",
+              ...Array.from({ length: 400 }, (_, i2) => "!\u0E1A\u0E23\u0E23\u0E22\u0E32\u0E22\u0E22\u0E32\u0E27 \u0E46 \u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E17\u0E35\u0E48 " + i2)
+            ].join("\n");
+            spT58.sp.setMarkdown(big);
+            await new Promise((r) => setTimeout(r, 900));
+            const v4 = spT58.sp.view;
+            const endPos = v4.state.doc.content.size - 1;
+            spT58.sp.gotoPos(endPos);
+            const t0 = performance.now();
+            for (let i2 = 0; i2 < 30; i2++) {
+              v4.dispatch(v4.state.tr.insertText("\u0E01", v4.state.selection.from));
+            }
+            const dt = performance.now() - t0;
+            check2("[58-\u0E1A\u0E31\u0E4A\u0E014] \u0E1E\u0E34\u0E21\u0E1E\u0E4C 30 \u0E15\u0E31\u0E27\u0E43\u0E19\u0E44\u0E1F\u0E25\u0E4C 400 \u0E1A\u0E25\u0E47\u0E2D\u0E01\u0E44\u0E21\u0E48\u0E2B\u0E19\u0E48\u0E27\u0E07 (< 900ms)", dt < 900, dt.toFixed(0) + "ms");
+            check2(
+              "[58-\u0E1A\u0E31\u0E4A\u0E014] \u0E1C\u0E25\u0E25\u0E31\u0E1E\u0E18\u0E4C\u0E22\u0E31\u0E07\u0E16\u0E39\u0E01 (\u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21\u0E40\u0E02\u0E49\u0E32\u0E44\u0E1B\u0E04\u0E23\u0E1A)",
+              spT58.sp.getText().includes("\u0E01\u0E01\u0E01\u0E01\u0E01")
+            );
+            check2("[58-\u0E1A\u0E31\u0E4A\u0E014] \u0E2B\u0E19\u0E48\u0E27\u0E07\u0E07\u0E32\u0E19\u0E2B\u0E19\u0E31\u0E01\u0E22\u0E37\u0E14\u0E15\u0E32\u0E21\u0E04\u0E27\u0E32\u0E21\u0E22\u0E32\u0E27\u0E44\u0E1F\u0E25\u0E4C", heavyDelay(spT58) > 300, heavyDelay(spT58));
+            v4.dispatch(v4.state.tr.insertText(" zzzqqqwww ", v4.state.selection.from));
+            refreshAllSpell();
+            await new Promise((r) => setTimeout(r, 400));
+            check2(
+              "[58-\u0E1A\u0E31\u0E4A\u0E014] \u0E15\u0E23\u0E27\u0E08\u0E04\u0E33\u0E1C\u0E34\u0E14\u0E22\u0E31\u0E07\u0E17\u0E33\u0E07\u0E32\u0E19\u0E2B\u0E25\u0E31\u0E07\u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E40\u0E1B\u0E47\u0E19 incremental",
+              spT58.pane.querySelectorAll(".k-spell-bad").length >= 0
+            );
+            spT58.sp.setMarkdown(".INT. \u0E2B\u0E49\u0E2D\u0E07\u0E19\u0E2D\u0E19 - \u0E04\u0E37\u0E19\n!\u0E01\u0E25\u0E31\u0E1A\u0E2A\u0E20\u0E32\u0E1E\u0E40\u0E14\u0E34\u0E21");
+            await new Promise((r) => setTimeout(r, 400));
+          }
+          {
+            markDirty(spT58);
+            const p58 = confirmQuit();
+            await new Promise((r) => setTimeout(r, 150));
+            const box = document.querySelector(".k-overlay .k-saveall");
+            check2("[58-\u0E1F\u0E35\u0E40\u0E08\u0E2D\u0E23\u0E4C1] \u0E1B\u0E34\u0E14\u0E42\u0E1B\u0E23\u0E41\u0E01\u0E23\u0E21\u0E17\u0E31\u0E49\u0E07\u0E17\u0E35\u0E48\u0E21\u0E35\u0E07\u0E32\u0E19\u0E04\u0E49\u0E32\u0E07 \u2192 \u0E02\u0E36\u0E49\u0E19\u0E01\u0E25\u0E48\u0E2D\u0E07\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E44\u0E1F\u0E25\u0E4C", !!box);
+            check2(
+              "[58-\u0E1F\u0E35\u0E40\u0E08\u0E2D\u0E23\u0E4C1] \u0E01\u0E25\u0E48\u0E2D\u0E07\u0E1A\u0E2D\u0E01\u0E27\u0E48\u0E32\u0E01\u0E33\u0E25\u0E31\u0E07\u0E08\u0E30\u0E1B\u0E34\u0E14\u0E42\u0E1B\u0E23\u0E41\u0E01\u0E23\u0E21",
+              !!box && box.querySelector(".k-dlg-title").textContent.includes("\u0E1B\u0E34\u0E14\u0E42\u0E1B\u0E23\u0E41\u0E01\u0E23\u0E21"),
+              box && box.querySelector(".k-dlg-title").textContent
+            );
+            check2(
+              "[58-\u0E1F\u0E35\u0E40\u0E08\u0E2D\u0E23\u0E4C1] \u0E21\u0E35\u0E40\u0E0A\u0E47\u0E04\u0E1A\u0E47\u0E2D\u0E01\u0E0B\u0E4C\u0E43\u0E2B\u0E49\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E17\u0E35\u0E25\u0E30\u0E44\u0E1F\u0E25\u0E4C",
+              !!box && box.querySelectorAll(".k-saveall-row input[type=checkbox]").length >= 1
+            );
+            check2(
+              "[58-\u0E1F\u0E35\u0E40\u0E08\u0E2D\u0E23\u0E4C1] \u0E41\u0E2A\u0E14\u0E07 path \u0E02\u0E2D\u0E07\u0E44\u0E1F\u0E25\u0E4C\u0E14\u0E49\u0E27\u0E22",
+              !!box && box.querySelector(".k-saveall-path").textContent.length > 3
+            );
+            check2(
+              '[58-\u0E1F\u0E35\u0E40\u0E08\u0E2D\u0E23\u0E4C1] \u0E21\u0E35\u0E1B\u0E38\u0E48\u0E21 "\u0E2D\u0E2D\u0E01\u0E42\u0E14\u0E22\u0E44\u0E21\u0E48\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01" \u0E41\u0E25\u0E30 "\u0E44\u0E21\u0E48\u0E2D\u0E2D\u0E01\u0E41\u0E25\u0E49\u0E27"',
+              [...box.querySelectorAll(".k-dlg-btns button")].map((b) => b.textContent).join("|").includes("\u0E2D\u0E2D\u0E01\u0E42\u0E14\u0E22\u0E44\u0E21\u0E48\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01")
+            );
+            box.querySelector(".k-cancel").click();
+            check2("[58-\u0E1F\u0E35\u0E40\u0E08\u0E2D\u0E23\u0E4C1] \u0E22\u0E01\u0E40\u0E25\u0E34\u0E01\u0E41\u0E25\u0E49\u0E27\u0E44\u0E21\u0E48\u0E1B\u0E34\u0E14\u0E42\u0E1B\u0E23\u0E41\u0E01\u0E23\u0E21", await p58 === null);
+            await saveTab(spT58);
+          }
+          {
+            const entFile2 = await kapi.join(
+              await wikiRoot(),
+              "characters",
+              (await kapi.listFiles(await kapi.join(await wikiRoot(), "characters"), ".json"))[0]
+            );
+            await openEntity(entFile2);
+            await new Promise((r) => setTimeout(r, 250));
+            const wTab = state.active;
+            check2("[58-\u0E1F\u0E35\u0E40\u0E08\u0E2D\u0E23\u0E4C2] \u0E40\u0E1B\u0E34\u0E14\u0E2B\u0E19\u0E49\u0E32 Wiki \u0E44\u0E14\u0E49", !!wTab && !!wTab.wiki);
+            const btns = [...wTab.pane.querySelectorAll(".wiki-head button")].map((b) => b.textContent.trim());
+            check2(
+              "[58-\u0E1F\u0E35\u0E40\u0E08\u0E2D\u0E23\u0E4C2] \u0E2B\u0E19\u0E49\u0E32 Wiki \u0E21\u0E35\u0E1B\u0E38\u0E48\u0E21\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E40\u0E27\u0E2D\u0E23\u0E4C\u0E0A\u0E31\u0E19",
+              btns.some((b) => b.includes("\u0E1B\u0E23\u0E30\u0E27\u0E31\u0E15\u0E34\u0E40\u0E27\u0E2D\u0E23\u0E4C\u0E0A\u0E31\u0E19")),
+              btns.join(" | ")
+            );
+            check2(
+              "[58-\u0E1F\u0E35\u0E40\u0E08\u0E2D\u0E23\u0E4C2] \u0E2B\u0E19\u0E49\u0E32 Wiki \u0E21\u0E35\u0E1B\u0E38\u0E48\u0E21\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E40\u0E27\u0E2D\u0E23\u0E4C\u0E0A\u0E31\u0E19",
+              btns.some((b) => b.includes("\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E40\u0E27\u0E2D\u0E23\u0E4C\u0E0A\u0E31\u0E19"))
+            );
+            check2(
+              '[58-\u0E1F\u0E35\u0E40\u0E08\u0E2D\u0E23\u0E4C2] \u0E2B\u0E19\u0E49\u0E32 Wiki \u0E21\u0E35\u0E1B\u0E38\u0E48\u0E21 "\u0E2B\u0E32\u0E43\u0E19\u0E14\u0E34\u0E2A\u0E01\u0E4C"',
+              btns.some((b) => b.includes("\u0E2B\u0E32\u0E43\u0E19\u0E14\u0E34\u0E2A\u0E01\u0E4C")),
+              btns.join(" | ")
+            );
+            check2("[58-\u0E1F\u0E35\u0E40\u0E08\u0E2D\u0E23\u0E4C2] revealFile \u0E17\u0E33\u0E07\u0E32\u0E19\u0E01\u0E31\u0E1A\u0E44\u0E1F\u0E25\u0E4C\u0E17\u0E35\u0E48\u0E21\u0E35\u0E08\u0E23\u0E34\u0E07", await revealFile(entFile2) === true);
+            check2("[58-\u0E1F\u0E35\u0E40\u0E08\u0E2D\u0E23\u0E4C2] revealFile \u0E01\u0E31\u0E1A path \u0E27\u0E48\u0E32\u0E07 \u2192 \u0E44\u0E21\u0E48\u0E1E\u0E31\u0E07", await revealFile("") === false);
+            await snapshotFile(entFile2, "\u0E40\u0E17\u0E2A 58");
+            const snaps = await listSnapshots(entFile2);
+            check2("[58-\u0E1F\u0E35\u0E40\u0E08\u0E2D\u0E23\u0E4C2] \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E40\u0E27\u0E2D\u0E23\u0E4C\u0E0A\u0E31\u0E19\u0E2B\u0E19\u0E49\u0E32 Wiki \u0E44\u0E14\u0E49\u0E08\u0E23\u0E34\u0E07", snaps.length >= 1, snaps.length);
+            check2(
+              "[58-\u0E1F\u0E35\u0E40\u0E08\u0E2D\u0E23\u0E4C2] \u0E40\u0E27\u0E2D\u0E23\u0E4C\u0E0A\u0E31\u0E19\u0E21\u0E35\u0E1B\u0E49\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E17\u0E35\u0E48\u0E15\u0E31\u0E49\u0E07\u0E44\u0E27\u0E49",
+              snaps.some((s) => (s.label || "").includes("\u0E40\u0E17\u0E2A 58"))
+            );
+            closeTab(entFile2);
+            await new Promise((r) => setTimeout(r, 150));
+            activate(spT58.file);
+            await new Promise((r) => setTimeout(r, 200));
           }
         }
         showPanel("kanban");
@@ -76904,7 +80014,7 @@ ${css}
     await kapi.writeFile("/tmp/k2result.txt", out.join("\n"));
     document.title = out[out.length - 1] === "ALL OK" ? "TESTOK" : "TESTFAIL";
   }
-  var import_md10, tr, pageScale, autosaveTimer, spViewMode, _spViewJob, _spErrors, treeScope, _treeBuilding, _treeQueued, INV_C, FLOAT_Z_MIN, FLOAT_Z_MAX, _floatZ, mapsState_C, _menuTogSig, _readEsc, APP_VERSION, propsTarget_C, _propsGen, propsFlush_C, SECTION_STATUSES, plugins, TPL_CATS, FIELD_TYPES, _cmMigrated, uniqList, imgURLBase, FMTS, ALWAYS_ON_TB, countJob, outlineJob, navShowBeats, navTrunc, _logTimer, FEATURE_PANELS, _featInFlight, TB_SC_MAP, floatBar, TIP_GAP, _tipEl, _tipHost, _tipSaved, _tipJob, _tipKt;
+  var import_md10, tr, pageScale, autosaveTimer, _langFontUrls, _typeSoundBound, spViewMode, _spViewJob, _spErrors, SP_REPORTS, treeScope, _treeBuilding, _treeQueued, INV_C, FLOAT_Z_MIN, FLOAT_Z_MAX, _floatZ, mapsState_C, _menuTogSig, _readEsc, APP_VERSION, propsTarget_C, _propsGen, propsFlush_C, SECTION_STATUSES, plugins, TPL_CATS, FIELD_TYPES, _cmMigrated, uniqList, notIgnored, TERM_TTL, _termCache, imgURLBase, FMTS, ALWAYS_ON_TB, _smartJob, countJob, outlineJob, navShowBeats, navTrunc, _logTimer, FEATURE_PANELS, _featInFlight, TB_SC_MAP, floatBar, TIP_GAP, _tipEl, _tipHost, _tipSaved, _tipJob, _tipKt;
   var init_app = __esm({
     "src/app.js"() {
       init_editor();
@@ -76977,6 +80087,10 @@ ${css}
       init_roster_ui();
       init_sp_view();
       init_sp_format_guide();
+      init_sp_continued();
+      init_smart_terms();
+      init_sp_reports();
+      init_typewriter_sound();
       init_sp_validator();
       init_export_fdx();
       init_export_rtf();
@@ -76984,6 +80098,8 @@ ${css}
       tr = t;
       pageScale = 1;
       autosaveTimer = null;
+      _langFontUrls = /* @__PURE__ */ new Map();
+      _typeSoundBound = false;
       spViewMode = "normal";
       _spViewJob = null;
       window.addEventListener("resize", () => {
@@ -76992,6 +80108,11 @@ ${css}
         _spViewJob = setTimeout(refreshSpView, 150);
       });
       _spErrors = [];
+      SP_REPORTS = {
+        location: { title: "\u{1F4CD} \u0E23\u0E32\u0E22\u0E07\u0E32\u0E19\u0E2A\u0E16\u0E32\u0E19\u0E17\u0E35\u0E48", file: "\u0E23\u0E32\u0E22\u0E07\u0E32\u0E19\u0E2A\u0E16\u0E32\u0E19\u0E17\u0E35\u0E48" },
+        character: { title: "\u{1F465} \u0E23\u0E32\u0E22\u0E07\u0E32\u0E19\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23", file: "\u0E23\u0E32\u0E22\u0E07\u0E32\u0E19\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23" },
+        chart: { title: "\u{1F4CA} \u0E01\u0E23\u0E32\u0E1F\u0E1A\u0E17\u0E1E\u0E39\u0E14\u0E15\u0E48\u0E2D\u0E2B\u0E19\u0E49\u0E32", file: "\u0E01\u0E23\u0E32\u0E1F\u0E1A\u0E17\u0E1E\u0E39\u0E14" }
+      };
       treeScope = null;
       _treeBuilding = false;
       _treeQueued = false;
@@ -77020,6 +80141,9 @@ ${css}
       FIELD_TYPES = ["String", "Text", "Int", "Date", "Boolean", "EntityRef"];
       _cmMigrated = /* @__PURE__ */ new Set();
       uniqList = (arr) => [...new Set(arr.filter(Boolean))];
+      notIgnored = (arr) => uniqList(arr).filter((x) => !smartIgnored(x));
+      TERM_TTL = 700;
+      _termCache = { tab: null, at: 0, val: null };
       imgURLBase = /* @__PURE__ */ new Map();
       FMTS = ["bold", "italic", "underline", "strike"];
       ALWAYS_ON_TB = /* @__PURE__ */ new Set([
@@ -77044,6 +80168,7 @@ ${css}
         "tb-ai-chat",
         "tb-plug"
       ]);
+      _smartJob = null;
       countJob = null;
       outlineJob = null;
       navShowBeats = (localStorage.getItem("k2-nav-beats") ?? "1") === "1";
@@ -77165,6 +80290,11 @@ ${css}
           sp.view.focus();
           setElementBadge(e.target.value);
           if (state.active) markDirty(state.active);
+        };
+        const spExtBtn = $("#tb-sp-ext");
+        if (spExtBtn) spExtBtn.onclick = (e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          extensionMenu(r.left, r.bottom + 4);
         };
         const spViewSel = $("#sp-view-select");
         if (spViewSel) spViewSel.onchange = (e) => setSpView(e.target.value);

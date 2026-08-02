@@ -8,12 +8,14 @@
 // ส่วนคำนวณทั้งหมดบริสุทธิ์ (ทดสอบด้วย node ได้ — test/sp-view.test.cjs)
 // ส่วนที่แตะ DOM มีเฉพาะ renderPageView() ซึ่งรับ host element มาจากผู้เรียก
 
-import { paginate, mergeSpFormat, textWidth, wrapLines, CHARS_PER_INCH } from './sp-format.js';
+import { paginate, mergeSpFormat, textWidth, wrapLines, CHARS_PER_INCH, LINE_HEIGHT_IN,
+         linesPerPage, pageNumberLabel } from './sp-format.js';
 
 // ───────── รายการโหมด ─────────
-export const SP_VIEWS = ['normal', 'draft', 'side', 'overview1', 'overview4'];
+export const SP_VIEWS = ['normal', 'layout', 'draft', 'side', 'overview1', 'overview4'];
 export const SP_VIEW_LABELS = {
   normal:    'ปกติ (หน้ากระดาษ)',
+  layout:    'จัดหน้า — เห็นหน้าจริง (Layout)',
   draft:     'ร่าง — ข้อความล้วน (Draft)',
   side:      'เรียงหน้าคู่ (Side-by-Side)',
   overview1: 'ภาพรวม 1px/ตัวอักษร',
@@ -22,16 +24,55 @@ export const SP_VIEW_LABELS = {
 // คลาสที่ใส่ให้ .pane — normal ไม่ต้องมีคลาสอะไร
 export const SP_VIEW_CLASS = {
   normal: '',
+  layout: 'sp-view-layout',
   draft: 'sp-view-draft',
   side: 'sp-view-side',
   overview1: 'sp-view-overview sp-view-ov1',
   overview4: 'sp-view-overview sp-view-ov4',
 };
-export const ALL_VIEW_CLASSES = ['sp-view-draft', 'sp-view-side', 'sp-view-overview',
-                                 'sp-view-ov1', 'sp-view-ov4'];
+export const ALL_VIEW_CLASSES = ['sp-view-layout', 'sp-view-draft', 'sp-view-side',
+                                 'sp-view-overview', 'sp-view-ov1', 'sp-view-ov4'];
 /** โหมดที่วาด "หน้ากระดาษจริง" แทนตัวแก้ไข (อ่านอย่างเดียว) */
 export const isPageView = (mode) => mode === 'side' || mode === 'overview1' || mode === 'overview4';
 export const isValidView = (mode) => SP_VIEWS.includes(mode);
+/** โหมดที่ยังพิมพ์ได้ (ใช้ ProseMirror ตามปกติ) — ปกติ/จัดหน้า/ร่าง */
+export const isEditView = (mode) => !isPageView(mode);
+
+// ───────── 58. Layout View — ตัวเลขที่ CSS ต้องใช้วาดหน้ากระดาษจริง ─────────
+/**
+ * มาตรวัดของหน้ากระดาษหนึ่งหน้า (ทุกอย่างคำนวณจาก fmt เดียว — ไม่มีเลขฝังในโค้ด)
+ * ใช้ทั้งกับ Layout View (ช่องว่างคั่นหน้า/ความสูงกระดาษ) และการนับหน้าในแถบสถานะ
+ * @returns {{linesPerPage, charsPerLine, usableWidth, usableHeight, lineHeightIn,
+ *            pageWidthPx, pageHeightPx, bodyHeightPx, lineHeightPx}}
+ */
+export function pageMetrics(fmt, dpi = 96) {
+  const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+  const m = f.margins;
+  const usableWidth = textWidth(f.paper, m);
+  const usableHeight = Math.max(0.5, +f.paper.height - m.top - m.bottom);
+  const lpp = linesPerPage(f.paper, m);
+  return {
+    linesPerPage: lpp,
+    charsPerLine: Math.floor(usableWidth * CHARS_PER_INCH),
+    usableWidth: +usableWidth.toFixed(4),
+    usableHeight: +usableHeight.toFixed(4),
+    lineHeightIn: LINE_HEIGHT_IN,
+    pageWidthPx: Math.round(+f.paper.width * dpi),
+    pageHeightPx: Math.round(+f.paper.height * dpi),
+    bodyHeightPx: Math.round(usableHeight * dpi),
+    lineHeightPx: +(LINE_HEIGHT_IN * dpi).toFixed(4),
+  };
+}
+
+/** ตัวแปร CSS ของ Layout View — ช่องว่างระหว่างหน้า + ความสูงเนื้อหน้า */
+export function layoutCssVars(fmt, gapPx = 28) {
+  const mt = pageMetrics(fmt);
+  return {
+    '--sp-body-h': mt.bodyHeightPx + 'px',
+    '--sp-page-gap': Math.max(8, Math.round(gapPx)) + 'px',
+    '--sp-line-h': mt.lineHeightPx + 'px',
+  };
+}
 
 // ───────── 59. คำนวณสเกล/จำนวนหน้าต่อแถวให้พอดีความกว้าง ─────────
 /**
@@ -86,7 +127,7 @@ export const LINE_MARK = { hard: '¶', soft: '·' };
 export function blocksFromDoc(doc) {
   const out = [];
   if (!doc || typeof doc.forEach !== 'function') return out;
-  let i = 0;
+  let i = 0, scene = 0;
   doc.forEach((node, offset) => {
     if (node.type && node.type.name === 'spimage') {
       out.push({ el: 'image', text: node.attrs.alt || '', pos: offset, idx: i++ });
@@ -95,7 +136,9 @@ export function blocksFromDoc(doc) {
     const el = (node.attrs && node.attrs.el) || 'action';
     const text = node.textContent || '';
     const blank = el === 'action' && !text.trim();
-    out.push({ el: blank ? 'blank' : el, text, pos: offset, idx: i++ });
+    const b = { el: blank ? 'blank' : el, text, pos: offset, idx: i++ };
+    if (b.el === 'scene') b.sceneNo = ++scene;      // [alpha.57a] เลขฉากไล่ตามลำดับในไฟล์
+    out.push(b);
   });
   return out;
 }
@@ -179,10 +222,19 @@ export function renderPageView(host, pages, fmt, opts = {}) {
     page.style.paddingRight = cssIn(f.margins.right);
     page.style.transform = 'scale(' + scale + ')';
 
-    if (showNums && pg.index > 1) {
+    // [alpha.57a ข้อ 2] เลขหน้า — เปิด/ปิดได้ที่ตั้งค่าโปรเจกต์ · ตำแหน่งวัดจากขอบกระดาษ
+    // (ค่าเริ่มต้น: ชิดขวา 1" จากขอบขวา · 0.5" จากขอบบน · เริ่มนับที่ startPage ของไฟล์นั้น)
+    const label = f.pageNumbers && f.pageNumbers.show
+      ? pageNumberLabel(pg.index, f, opts.startPage)
+      : (showNums && pg.index > 1 ? pg.index + '.' : '');
+    if (label) {
       const num = document.createElement('div');
       num.className = 'sp-page-num';
-      num.textContent = pg.index + '.';
+      if (f.pageNumbers && f.pageNumbers.show) {
+        num.style.top = cssIn(f.pageNumbers.top);
+        num.style.right = cssIn(f.pageNumbers.right);
+      }
+      num.textContent = label;
       page.append(num);
     }
     if (pg.continuedTop) {
@@ -196,6 +248,15 @@ export function renderPageView(host, pages, fmt, opts = {}) {
       d.className = 'sp sp-' + (b.el || 'action');
       if (Number.isFinite(b.pos)) d.dataset.pos = String(b.pos);
       d.textContent = b.text || '';
+      // [alpha.57a] เลขฉากสองฝั่ง (ตำแหน่งมาจาก .k-scene-no-l/.k-scene-no-r ใน spCss)
+      if (b.el === 'scene' && b.sceneNo && f.sceneNumbers && f.sceneNumbers.show) {
+        for (const side of ['l', 'r']) {
+          const s = document.createElement('span');
+          s.className = 'k-scene-no k-scene-no-' + side;
+          s.textContent = String(b.sceneNo) + (f.sceneNumbers.suffix || '');
+          d.append(s);
+        }
+      }
       page.append(d);
     }
     if (pg.continuedBottom) {

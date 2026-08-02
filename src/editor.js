@@ -16,6 +16,59 @@ import { searchPlugin } from './search.js';
 import { Plugin as PMPlugin, PluginKey as PMKey } from 'prosemirror-state';
 import { Decoration as Deco, DecorationSet as DecoSet } from 'prosemirror-view';
 
+// ══════════ alpha.58 (บั๊ก 4) — decoration แบบ "ทาสีเฉพาะบล็อกที่เปลี่ยน" ══════════
+// อาการ: พิมพ์ในไฟล์ยาว ๆ แล้วโปรแกรมกระตุก
+// เหตุ: ปลั๊กอิน decoration ทุกตัว (ตรวจคำผิด · ชื่อ Wiki · สมอคอมเมนต์) สแกน "ทั้งเอกสาร"
+//       ใหม่ทุกครั้งที่ doc เปลี่ยน = ทุกตัวอักษรที่พิมพ์ → O(ความยาวไฟล์) ต่อ 1 keystroke
+//       ยิ่งไฟล์ยาว ยิ่งหน่วง (บทยาว ๆ สแกนหลายพันโหนดต่อการกดปุ่มหนึ่งครั้ง)
+// แก้: ย้าย decoration เก่าตามการแก้ไข (prev.map) แล้วสแกนใหม่เฉพาะ "บล็อกระดับบนที่ถูกแตะ"
+//      ผลลัพธ์เท่าเดิมทุกประการ เพราะ decoration ทั้งสามชนิดคิดจากข้อความในบล็อกเดียวเท่านั้น
+//      (ไม่มีตัวไหนข้ามบล็อก) — ของที่ต้องดูทั้งเอกสารอย่างเลขฉาก/เส้นคั่นหน้าไม่ได้ใช้ทางนี้
+
+/** ช่วงที่ transaction ไปแตะ (พิกัดของ doc ใหม่) — คืน null เมื่อหาไม่ได้ */
+function changedRange(tr) {
+  let from = Infinity, to = -Infinity;
+  for (let i = 0; i < tr.mapping.maps.length; i++) {
+    const rest = tr.mapping.slice(i + 1);
+    tr.mapping.maps[i].forEach((_os, _oe, ns, ne) => {
+      from = Math.min(from, rest.map(ns, -1));
+      to = Math.max(to, rest.map(ne, 1));
+    });
+  }
+  return from <= to ? { from, to } : null;
+}
+
+/** ขยายช่วงให้ครอบบล็อกระดับบนทั้งใบ (decoration คิดจากทั้งบล็อกเสมอ) */
+function blockRange(doc, from, to) {
+  const size = doc.content.size;
+  const clamp = (v) => Math.max(0, Math.min(v, size));
+  const $f = doc.resolve(clamp(from));
+  const $t = doc.resolve(clamp(to));
+  return { from: $f.depth ? $f.before(1) : 0, to: $t.depth ? $t.after(1) : size };
+}
+
+/**
+ * state ของปลั๊กอิน decoration ที่คำนวณใหม่เฉพาะส่วนที่เปลี่ยน
+ * @param {PMKey} key
+ * @param {(doc, from, to) => Decoration[]} scan สแกนช่วง [from,to] คืนรายการ decoration
+ */
+function incrementalDecoState(key, scan) {
+  const full = (doc) => DecoSet.create(doc, scan(doc, 0, doc.content.size));
+  return {
+    init: (_c, st) => full(st.doc),
+    apply(tr, prev, _o, st) {
+      if (tr.getMeta(key)) return full(st.doc);              // สั่งวาดใหม่ทั้งหมด (เปลี่ยนพจนานุกรม ฯลฯ)
+      if (!tr.docChanged) return prev.map(tr.mapping, tr.doc);
+      const ch = changedRange(tr);
+      if (!ch) return prev.map(tr.mapping, tr.doc);
+      const r = blockRange(st.doc, ch.from, ch.to);
+      const moved = prev.map(tr.mapping, tr.doc);
+      const kept = moved.remove(moved.find(r.from, r.to));
+      return kept.add(st.doc, scan(st.doc, r.from, r.to));
+    },
+  };
+}
+
 // ---- mention: ไฮไลต์ชื่อจาก Wiki (Ctrl/Cmd+Click เปิดหน้า Wiki) ----
 const mentionKey = new PMKey('kmention');
 function buildMentionRegex(names) {
@@ -27,10 +80,10 @@ function buildMentionRegex(names) {
     .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   return new RegExp('\\[\\[(?:[^\\]]+)\\]\\]|' + esc.join('|'), 'g');
 }
-function mentionDecos(doc, rx) {
-  if (!rx) return DecoSet.empty;
+function mentionScan(doc, rx, from, to) {
+  if (!rx) return [];
   const out = [];
-  doc.descendants((node, pos) => {
+  doc.nodesBetween(from, to, (node, pos) => {
     if (!node.isText) return;
     rx.lastIndex = 0;
     let m;
@@ -39,18 +92,20 @@ function mentionDecos(doc, rx) {
         { class: 'k-mention', title: 'Ctrl+คลิก เปิดใน Wiki' }));
     }
   });
-  return DecoSet.create(doc, out);
+  return out;
 }
 export function mentionPlugin(getNames) {
+  // สร้าง regex ใหม่เฉพาะตอนรายชื่อเปลี่ยนจริง — เดิมสร้างใหม่ทุก keystroke (ชื่อเป็นร้อยตัว)
+  let cacheKey = null, cacheRx = null;
+  const rxOf = () => {
+    const names = getNames() || [];
+    const k = names.length + '|' + names.join('');
+    if (k !== cacheKey) { cacheKey = k; cacheRx = buildMentionRegex(names); }
+    return cacheRx;
+  };
   return new PMPlugin({
     key: mentionKey,
-    state: {
-      init: (_c, st) => mentionDecos(st.doc, buildMentionRegex(getNames())),
-      apply(tr, prev, _o, st) {
-        if (!tr.docChanged && !tr.getMeta(mentionKey)) return prev.map(tr.mapping, tr.doc);
-        return mentionDecos(st.doc, buildMentionRegex(getNames()));
-      },
-    },
+    state: incrementalDecoState(mentionKey, (doc, from, to) => mentionScan(doc, rxOf(), from, to)),
     props: { decorations(state) { return mentionKey.getState(state); } },
   });
 }
@@ -60,10 +115,10 @@ export function refreshMentions(view) {
 
 // ---- ตรวจคำผิด: ขีดเส้นใต้แดงคำที่น่าจะสะกดผิด (ผสมกับ Chromium native ได้) ----
 const spellKey = new PMKey('kspell');
-function spellDecos(doc, checkFn) {
-  if (!checkFn) return DecoSet.empty;
+function spellScan(doc, checkFn, from, to) {
+  if (!checkFn) return [];
   const out = [];
-  doc.descendants((node, pos) => {
+  doc.nodesBetween(from, to, (node, pos) => {
     if (!node.isText || !node.text) {
       // ไม่ตรวจคำผิดในหัวฉาก/ชื่อตัวละคร/ทรานซิชัน (เป็นชื่อเฉพาะ/คำย่อ — ขีดแดงรกเปล่า ๆ)
       if (node.type && node.type.name === 'sp' &&
@@ -75,19 +130,14 @@ function spellDecos(doc, checkFn) {
         { class: 'k-spell-bad', title: 'น่าจะสะกดผิด: ' + b.word }));
     }
   });
-  return DecoSet.create(doc, out);
+  return out;
 }
 // getChecker: () => (text)=>[{start,end,word}]  หรือ null เมื่อปิด/ยังไม่พร้อม
 export function spellPlugin(getChecker) {
   return new PMPlugin({
     key: spellKey,
-    state: {
-      init: (_c, st) => spellDecos(st.doc, getChecker()),
-      apply(tr, prev, _o, st) {
-        if (!tr.docChanged && !tr.getMeta(spellKey)) return prev.map(tr.mapping, tr.doc);
-        return spellDecos(st.doc, getChecker());
-      },
-    },
+    state: incrementalDecoState(spellKey,
+      (doc, from, to) => spellScan(doc, getChecker(), from, to)),
     props: { decorations(state) { return spellKey.getState(state); } },
   });
 }
@@ -131,10 +181,10 @@ export function setCommentAnchors(quotes, active) {
   _cmActive = active || '';
 }
 export function commentAnchors() { return _cmQuotes.slice(); }
-function cmDecos(doc) {
-  if (!_cmQuotes.length) return DecoSet.empty;
+function cmScan(doc, from, to) {
+  if (!_cmQuotes.length) return [];
   const out = [];
-  doc.descendants((node, pos) => {
+  doc.nodesBetween(from, to, (node, pos) => {
     if (!node.isText || !node.text) return;
     for (const q of _cmQuotes) {
       let i = -1;
@@ -144,18 +194,12 @@ function cmDecos(doc) {
       }
     }
   });
-  return DecoSet.create(doc, out);
+  return out;
 }
 export function commentAnchorPlugin() {
   return new PMPlugin({
     key: cmKey,
-    state: {
-      init: (_c, st) => cmDecos(st.doc),
-      apply(tr, prev, _o, st) {
-        if (!tr.docChanged && !tr.getMeta(cmKey)) return prev.map(tr.mapping, tr.doc);
-        return cmDecos(st.doc);
-      },
-    },
+    state: incrementalDecoState(cmKey, cmScan),
     props: { decorations(state) { return cmKey.getState(state); } },
   });
 }

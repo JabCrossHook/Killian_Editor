@@ -48,8 +48,14 @@ export const SP_ELEMENT_CONFIG = {
   character:     { indent: 3.7, width: 3.8, linesBefore: 10, linesBetween: 10 },
   parenthetical: { indent: 3.1, width: 2.9, linesBefore: 0,  linesBetween: 10 },
   dialogue:      { indent: 2.5, width: 3.5, linesBefore: 0,  linesBetween: 10 },
+  // [alpha.57a ข้อ 2] ทรานซิชันเข้า = ชิดซ้าย · ทรานซิชันออก = ชิดขวา (ของเดิม)
+  'transition-in': { indent: 1.5, width: 6.0, linesBefore: 10, linesBetween: 10 },
   transition:    { indent: 6.0, width: 2.0, linesBefore: 10, linesBetween: 10 },
-  shot:          { indent: 1.5, width: 6.0, linesBefore: 10, linesBetween: 10 },
+  // [alpha.58 ข้อเสนอ] ฉากย่อย + ช็อต วางตัวเหมือนหัวฉากทุกอย่าง (ระยะเยื้อง/ความกว้าง/ระยะเว้น)
+  // ต่างกันแค่ "ไม่มีเลขฉาก" — เลขฉากผูกกับ el === 'scene' เท่านั้น
+  subheader:     { indent: 1.5, width: 6.0, linesBefore: 20, linesBetween: 10 },
+  intercut:      { indent: 1.5, width: 6.0, linesBefore: 20, linesBetween: 10 },
+  shot:          { indent: 1.5, width: 6.0, linesBefore: 20, linesBetween: 10 },
   'act-break':   { indent: 1.5, width: 6.0, linesBefore: 20, linesBetween: 10 },
   note:          { indent: 1.5, width: 6.0, linesBefore: 10, linesBetween: 10 },
   summary:       { indent: 1.5, width: 6.0, linesBefore: 10, linesBetween: 10 },
@@ -68,8 +74,12 @@ export const SP_ELEMENT_STYLES = {
   character:     { screen: ST(true,  false, false, false), print: ST(true,  false, false, false) },
   parenthetical: { screen: ST(false, false, true,  false), print: ST(false, false, false, false) },
   dialogue:      { screen: ST(false, false, false, false), print: ST(false, false, false, false) },
+  'transition-in': { screen: ST(true, false, false, false), print: ST(true,  false, false, false) },
   transition:    { screen: ST(true,  false, false, false), print: ST(true,  false, false, false) },
-  shot:          { screen: ST(true,  false, false, false), print: ST(true,  false, false, false) },
+  // [alpha.58] ฉากย่อย/สลับฉาก/ช็อต = ตัวหนาพิมพ์ใหญ่เหมือนหัวฉาก (เลิกขีดเส้นใต้)
+  subheader:     { screen: ST(true,  true,  false, false), print: ST(true,  true,  false, false) },
+  intercut:      { screen: ST(true,  true,  false, false), print: ST(true,  true,  false, false) },
+  shot:          { screen: ST(true,  true,  false, false), print: ST(true,  true,  false, false) },
   'act-break':   { screen: ST(true,  true,  false, false), print: ST(true,  true,  false, true) },
   note:          { screen: ST(false, false, true,  false), print: ST(false, false, true,  false) },
   summary:       { screen: ST(false, false, true,  false), print: ST(false, false, true,  false) },
@@ -90,6 +100,16 @@ export const PAGE_BREAK_RULES = {
   keepSceneWithNext: 2,          // หัวฉากท้ายหน้าต้องมีเนื้อตามอย่างน้อยกี่บรรทัด ไม่งั้นยกทั้งก้อน
 };
 
+// ───────── 55–56. CONTINUED / (MORE) / (cont'd) ─────────
+// สวิตช์ของ "ระบบต่อเนื่อง" ทั้งชุด — ข้อความที่ใช้จริงอยู่ใน SP_STRINGS (ข้อ 92)
+//   scene    = (CONTINUED) ท้ายหน้า + CONTINUED: ต้นหน้า เมื่อฉากเดียวกันข้ามหน้า
+//   dialogue = (MORE) ท้ายหน้า + ทวนชื่อ + (cont'd) ต้นหน้า เมื่อบทพูดถูกตัดกลาง
+//   number   = ข้ามหลายหน้าติดกันให้ใส่เลขกำกับ "CONTINUED: (2)"
+//   indent   = ระยะเยื้องของ (MORE) วัดจากขอบกระดาษ (นิ้ว) — แนวเดียวกับชื่อตัวละคร
+export const CONTINUED_DEFAULTS = {
+  enabled: true, scene: true, dialogue: true, number: true, indent: 3.7,
+};
+
 // ───────── 92. ข้อความมาตรฐานที่ผู้ใช้แก้ได้ ─────────
 export const SP_STRINGS = {
   continuedBottom: '(CONTINUED)',
@@ -102,6 +122,37 @@ export const SP_STRINGS = {
   timeTitle: 'Time',
 };
 
+// ───────── alpha.57a ข้อ 2 · เลขฉาก + เลขหน้า ─────────
+// เลขฉาก: อยู่ข้าง ๆ หัวฉากทั้งสองฝั่ง — ซ้ายวัด 0.75" จากขอบกระดาษซ้าย · ขวาวัด 1" จากขอบขวา
+export const SCENE_NUMBER_DEFAULTS = { show: false, left: 0.75, right: 1.0, suffix: '' };
+// เลขหน้า: ชิดขวา 1" จากขอบขวา · 0.5" จากขอบบนของกระดาษ · มีเฉพาะไฟล์ที่เป็นฉาก
+// firstPage=false → ไม่พิมพ์เลขบนหน้าแรก (ธรรมเนียมบทภาพยนตร์)
+export const PAGE_NUMBER_DEFAULTS = { show: false, right: 1.0, top: 0.5, suffix: '.', firstPage: false };
+
+/** ตำแหน่งเลขฉากเทียบกับ "กล่องหัวฉาก" (นิ้ว · ค่าติดลบ = ล้ำออกนอกกล่องไปทางนั้น) */
+export function sceneNumberOffsets(fmt) {
+  const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+  const sn = f.sceneNumbers;
+  const cfg = f.elements.scene;
+  const boxLeft = num(cfg.indent, f.margins.left);
+  const boxRight = boxLeft + num(cfg.width, 6);
+  return {
+    left: +(num(sn.left, 0.75) - boxLeft).toFixed(4),
+    right: +(boxRight - (num(f.paper.width, 8.5) - num(sn.right, 1))).toFixed(4),
+  };
+}
+
+/** เลขหน้าที่ต้องพิมพ์บนหน้าที่ index (1-based ภายในไฟล์) — คืน '' เมื่อไม่ต้องพิมพ์ */
+export function pageNumberLabel(index, fmt, startPage) {
+  const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+  const pn = f.pageNumbers;
+  if (!pn.show) return '';
+  const i = Math.max(1, Math.round(+index || 1));
+  if (i === 1 && !pn.firstPage) return '';
+  const start = Math.max(1, Math.round(+startPage || 1));
+  return String(start + i - 1) + (pn.suffix || '');
+}
+
 // ───────── ค่าตั้งต้นรวม + การผสานกับค่าที่ผู้ใช้ตั้ง ─────────
 export const DEFAULT_SP_FORMAT = {
   paperSize: 'letter',
@@ -111,6 +162,9 @@ export const DEFAULT_SP_FORMAT = {
   styles: SP_ELEMENT_STYLES,
   rules: PAGE_BREAK_RULES,
   strings: SP_STRINGS,
+  sceneNumbers: SCENE_NUMBER_DEFAULTS,
+  pageNumbers: PAGE_NUMBER_DEFAULTS,
+  continued: CONTINUED_DEFAULTS,
 };
 
 export const SP_ELEMENT_KEYS = Object.keys(SP_ELEMENT_CONFIG);
@@ -138,6 +192,9 @@ export function mergeSpFormat(user) {
     elements, styles,
     rules: { ...PAGE_BREAK_RULES, ...(u.rules || {}) },
     strings: { ...SP_STRINGS, ...(u.strings || {}) },
+    sceneNumbers: { ...SCENE_NUMBER_DEFAULTS, ...(u.sceneNumbers || {}) },
+    pageNumbers: { ...PAGE_NUMBER_DEFAULTS, ...(u.pageNumbers || {}) },
+    continued: { ...CONTINUED_DEFAULTS, ...(u.continued || {}) },
   };
 }
 
@@ -154,6 +211,9 @@ export function pageCssVars(fmt) {
     '--mg-left': m.left + 'in',
     '--mg-right': m.right + 'in',
     '--text-w': +textWidth(f.paper, m).toFixed(4) + 'in',
+    // [alpha.57a] เลขหน้า — ระยะจากขอบกระดาษ (ไม่ใช่จากขอบพื้นที่พิมพ์)
+    '--pg-no-top': (f.pageNumbers?.top ?? 0.5) + 'in',
+    '--pg-no-right': (f.pageNumbers?.right ?? 1) + 'in',
   };
 }
 
@@ -181,6 +241,21 @@ export function spCss(fmt) {
     out.push(`.sp.sp-${k}{margin-left:${ml}in;width:${w}in;max-width:none;` +
              `margin-top:${mt}em;margin-bottom:${Math.max(0, mb)}em;${decl(s.screen)}}`);
   }
+  // [alpha.57a ข้อ 2] เลขฉากสองฝั่งของหัวฉาก — วางแบบ absolute เทียบกับกล่องหัวฉาก
+  // (คำนวณระยะเป็น "นิ้ว" ที่นี่ ไม่ใช้ calc(%) ด้วยเหตุผลเดียวกับความกว้างด้านบน)
+  const so = sceneNumberOffsets(f);
+  out.push('.sp.sp-scene{position:relative}');
+  out.push('.k-scene-no{position:absolute;top:0;white-space:nowrap;user-select:none;' +
+           'pointer-events:none;text-transform:none;font-weight:400;font-style:normal;text-decoration:none}');
+  out.push(`.k-scene-no-l{left:${so.left}in}`);
+  out.push(`.k-scene-no-r{right:${so.right}in}`);
+  // [alpha.58 · 55–56] ข้อความต่อเนื่อง — (MORE) เยื้องแนวชื่อตัวละคร · CONTINUED: ชิดซ้าย · (CONTINUED) ชิดขวา
+  const ct = { ...CONTINUED_DEFAULTS, ...(f.continued || {}) };
+  const moreML = Math.max(0, +(num(ct.indent, 3.7) - left).toFixed(4));
+  out.push(`.sp.sp-more{margin-left:${moreML}in;width:auto;max-width:none;` +
+           'margin-top:0;margin-bottom:0;text-transform:none}');
+  out.push(`.sp-continued-top,.sp-cont-top{margin-left:0;width:${+tw.toFixed(4)}in;text-align:left}`);
+  out.push(`.sp-continued-bottom,.sp-cont-bottom{margin-left:0;width:${+tw.toFixed(4)}in;text-align:right}`);
   // ขนาดกระดาษ + ระยะขอบตอนพิมพ์ (@page ใช้ CSS variable ไม่ได้ จึงต้องสร้างเป็นข้อความ)
   // orphans/widows = กฎ widow/orphan ระดับบรรทัดของเบราว์เซอร์ (ข้อ 84)
   const m = f.margins;
@@ -229,9 +304,26 @@ export function paginate(blocks, opts = {}) {
   const R = fmt.rules, S = fmt.strings;
   const cfg = (el) => fmt.elements[el] || fmt.elements.action;
 
+  const CT = { ...CONTINUED_DEFAULTS, ...(fmt.continued || {}) };
+  const wantDlgMarkers = CT.enabled !== false && CT.dialogue !== false;
+
   const pages = [];
   let cur = [], used = 0, lastChar = '';
-  const pushPage = () => { pages.push({ index: pages.length + 1, blocks: cur }); cur = []; used = 0; };
+  // [55–56] ติดตามว่าหน้าหนึ่ง ๆ เริ่ม/จบด้วย "ฉากที่เท่าไร" เพื่อรู้ว่าฉากข้ามหน้าจริงไหม
+  let sceneSeq = 0, curScene = 0, pageSceneStart = 0;
+  /** ใส่บล็อกลงหน้าปัจจุบัน — ตัวเดียวที่นับเลขฉาก (ท่อนหางของบล็อกที่ถูกตัดไม่นับซ้ำ) */
+  const addBlock = (blk) => {
+    if (blk.el === 'scene' && blk.split !== 'tail') {
+      curScene = ++sceneSeq;
+      if (!cur.length) pageSceneStart = curScene;
+    }
+    cur.push(blk);
+  };
+  const pushPage = () => {
+    pages.push({ index: pages.length + 1, blocks: cur,
+                 sceneStart: pageSceneStart, sceneEnd: curScene });
+    cur = []; used = 0; pageSceneStart = curScene;   // หน้าใหม่เริ่มด้วยฉากเดิมจนกว่าจะเจอหัวฉากใหม่
+  };
 
   const list = (blocks || []).filter((b) => b && b.el !== 'blank');
   for (let i = 0; i < list.length; i++) {
@@ -243,7 +335,7 @@ export function paginate(blocks, opts = {}) {
     const need = before + body;
     const free = perPage - used;
 
-    if (need <= free) { cur.push({ ...b, lines: body }); used += need; continue; }
+    if (need <= free) { addBlock({ ...b, lines: body }); used += need; continue; }
 
     // ── ไม่พอ: ตัดสินใจตามชนิด ──
     const isDlg = b.el === 'dialogue';
@@ -255,14 +347,14 @@ export function paginate(blocks, opts = {}) {
     if ((isDlg || isAct) && canBottom >= minBot && body - canBottom >= minTop) {
       // แบ่งครึ่ง: ท้ายหน้าใส่ (MORE) · ต้นหน้าใหม่ทวนชื่อ + (cont'd)
       const head = splitText(b.text, c.width, canBottom);
-      cur.push({ ...b, text: head.head, lines: canBottom, split: 'head' });
-      if (isDlg) cur.push({ el: 'more', text: S.dialogueMore, lines: 1 });
+      addBlock({ ...b, text: head.head, lines: canBottom, split: 'head' });
+      if (isDlg && wantDlgMarkers) addBlock({ el: 'more', text: S.dialogueMore, lines: 1, more: true });
       pushPage();
-      if (isDlg && lastChar) {
-        cur.push({ el: 'character', text: lastChar + ' ' + S.dialogueContd, lines: 1, contd: true });
+      if (isDlg && wantDlgMarkers && lastChar) {
+        addBlock({ el: 'character', text: lastChar + ' ' + S.dialogueContd, lines: 1, contd: true });
         used += 1;
       }
-      cur.push({ ...b, text: head.rest, lines: body - canBottom, split: 'tail' });
+      addBlock({ ...b, text: head.rest, lines: body - canBottom, split: 'tail' });
       used += body - canBottom;
       continue;
     }
@@ -276,18 +368,42 @@ export function paginate(blocks, opts = {}) {
     for (const x of carry) used -= x.lines || 1;
     pushPage();
     for (const x of carry) { cur.push(x); used += x.lines || 1; }
-    cur.push({ ...b, lines: body });
+    addBlock({ ...b, lines: body });
     used += body;
   }
   if (cur.length) pushPage();
-  if (!pages.length) pages.push({ index: 1, blocks: [] });
+  if (!pages.length) pages.push({ index: 1, blocks: [], sceneStart: 0, sceneEnd: 0 });
 
-  // หัว/ท้ายหน้าที่ฉากต่อเนื่อง (ข้อ 92)
-  for (let i = 0; i < pages.length - 1; i++) {
-    pages[i].continuedBottom = S.continuedBottom;
-    pages[i + 1].continuedTop = S.continuedTop;
-  }
+  annotateContinued(pages, fmt);
   return { pages, count: pages.length };
+}
+
+/**
+ * [55–56] ใส่ CONTINUED ให้กับผลของ paginate
+ * เงื่อนไข: หน้าถัดไป "เริ่มด้วยฉากเดิม" (ไม่ได้ขึ้นหัวฉากใหม่) เท่านั้นจึงถือว่าฉากข้ามหน้า
+ * เดิมใส่ทุกคู่หน้าโดยไม่ดูเลย → หน้าที่จบฉากพอดีก็ยังขึ้น (CONTINUED) ผิดธรรมเนียม
+ * page.contdRun = ฉากนี้ต่อเนื่องมาเป็นหน้าที่เท่าไร (2, 3, …) ใช้ทำ "CONTINUED: (2)"
+ */
+export function annotateContinued(pages, fmt) {
+  const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+  const S = f.strings;
+  const CT = { ...CONTINUED_DEFAULTS, ...(f.continued || {}) };
+  const on = CT.enabled !== false && CT.scene !== false;
+  for (const p of pages) { delete p.continuedBottom; delete p.continuedTop; delete p.contdRun; }
+  let run = 1, contScene = 0;
+  for (let i = 0; i < pages.length - 1; i++) {
+    const p = pages[i], n = pages[i + 1];
+    const spans = on && p.sceneEnd > 0 && n.sceneStart === p.sceneEnd;
+    if (!spans) { run = 1; contScene = 0; continue; }
+    // เปลี่ยนฉากแล้ว = เริ่มนับใหม่ (ไม่งั้นฉากใหม่ที่ข้ามหน้าครั้งแรกได้เลข (2) ทันที)
+    if (p.sceneEnd !== contScene) { run = 1; contScene = p.sceneEnd; }
+    run++;
+    p.continuedBottom = S.continuedBottom;
+    n.contdRun = run;
+    n.continuedTop = CT.number !== false && run > 2
+      ? `${S.continuedTop} (${run - 1})` : S.continuedTop;
+  }
+  return pages;
 }
 
 /** ตัดข้อความให้ส่วนแรกยาว n บรรทัด (กว้าง widthIn นิ้ว) — คืน {head, rest} */

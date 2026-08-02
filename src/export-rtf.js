@@ -44,7 +44,8 @@ export function plainText(s) {
 }
 
 // element ที่ควรอยู่ติดกับบรรทัดถัดไป (ห้ามค้างท้ายหน้าเดี่ยว ๆ)
-const KEEP_NEXT = ['scene', 'character', 'parenthetical', 'act-break', 'shot'];
+const KEEP_NEXT = ['scene', 'character', 'parenthetical', 'act-break', 'shot',
+                   'subheader', 'intercut', 'transition-in'];   // [alpha.57a]
 
 /** คำสั่งจัดย่อหน้าของ element หนึ่ง (เยื้องซ้าย/ขวา/ระยะก่อนหน้า/สไตล์) */
 export function paraCtrl(el, fmt) {

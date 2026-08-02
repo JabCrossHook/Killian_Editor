@@ -7,7 +7,12 @@ export const SP_ELEMS = {
   character: { th: 'ตัวละคร', prefix: '@' },
   parenthetical: { th: 'วงเล็บ', prefix: '(' },
   dialogue: { th: 'บทพูด', prefix: '' },
-  transition: { th: 'ทรานซิชัน', prefix: '>' },
+  // [alpha.57a ข้อ 2] ทรานซิชันแยกเข้า/ออก — "เข้า" ชิดซ้าย · "ออก" ชิดขวา (ของเดิม)
+  'transition-in': { th: 'ทรานซิชันเข้า (ซ้าย)', prefix: '$in ' },
+  transition: { th: 'ทรานซิชันออก (ขวา)', prefix: '>' },
+  // [alpha.58] เรียก "ฉากย่อย" ตามที่ผู้ใช้เข้าใจ (mini-slug) — วางตัวเหมือนหัวฉากแต่ไม่มีเลขฉาก
+  subheader: { th: 'ฉากย่อย', prefix: '$sub ' },
+  intercut: { th: 'สลับฉาก', prefix: '$intercut ' },     // [alpha.57a]
   shot: { th: 'ช็อต', prefix: '$shot ' },        // [50] 9-element system
   'act-break': { th: 'ตอน', prefix: '$act ' },   // [50]
   summary: { th: 'สรุป', prefix: '= ' },
@@ -18,9 +23,11 @@ export const SP_ELEMS = {
   image: { th: 'รูปภาพ', prefix: '' },          // ![alt](src) — แสดงเป็นรูปจริงในบทหนัง
   raw: { th: 'อื่น ๆ', prefix: '' },            // element ที่ v2 ยังไม่ทำ UI — คงบรรทัดเดิมเป๊ะ
 };
-export const TAB_CYCLE = ['action', 'scene', 'character', 'parenthetical', 'dialogue', 'transition', 'shot', 'act-break', 'note'];
+export const TAB_CYCLE = ['action', 'scene', 'subheader', 'character', 'parenthetical', 'dialogue',
+  'transition-in', 'transition', 'intercut', 'shot', 'act-break', 'note'];
 export const NEXT_ELEM = { scene: 'action', action: 'action', character: 'dialogue',
   parenthetical: 'dialogue', dialogue: 'action', transition: 'scene',
+  'transition-in': 'scene', subheader: 'action', intercut: 'action',
   shot: 'action', 'act-break': 'action',
   summary: 'action', outline1: 'outline2', outline2: 'outline3', outline3: 'action',
   note: 'action', image: 'action', raw: 'action' };
@@ -44,8 +51,36 @@ export const PARENTHETICALS = [
   '(หยุดคิด)', '(กระซิบ)', '(ตะโกน)', '(พูดกับตัวเอง)', '(เสียงในใจ)', '(นอกจอ)', '(ต่อ)',
   '(หัวเราะ)', '(ร้องไห้)', '(ประชด)', '(จริงจัง)', '(ลังเล)',
 ];
-// ส่วนขยายท้ายชื่อตัวละคร
-export const CHAR_EXTENSIONS = ["(V.O.)", "(O.S.)", "(CONT'D)", '(ต่อ)', '(เสียง)', '(นอกจอ)'];
+// ส่วนขยายท้ายชื่อตัวละคร (Extension) — อยู่บรรทัดเดียวกับชื่อ เว้น "1 วรรค" พอดี
+export const CHAR_EXTENSIONS = ["(V.O.)", "(O.S.)", "(O.C.)", "(CONT'D)", '(ต่อ)', '(เสียง)', '(นอกจอ)', '(ในใจ)'];
+
+// ทรานซิชัน "เข้า" (ชิดซ้าย) vs "ออก" (ชิดขวา) — [alpha.57a ข้อ 2]
+export const TRANSITIONS_IN = ['FADE IN:', 'FADE UP:', 'SMASH IN:', 'BACK TO SCENE:',
+  'FLASHBACK TO:', 'PRELAP:', 'จางเข้า:', 'ตัดเข้า:', 'ย้อนอดีต:'];
+export const INTERCUTS = ['INTERCUT WITH:', 'INTERCUT:', 'สลับฉากกับ:', 'สลับฉาก:'];
+
+/**
+ * แยกชื่อตัวละครกับส่วนเสริมออกจากกัน — "สมชาย (V.O.)" → { name:'สมชาย', ext:'(V.O.)' }
+ * รับได้ทั้งกรณีไม่มีส่วนเสริม และกรณีเว้นวรรคเกิน/ขาด
+ */
+export function splitCharacter(text) {
+  const s = String(text ?? '').trim();
+  const m = /^(.*?)\s*(\([^()]*\))\s*$/.exec(s);
+  if (!m) return { name: s, ext: '' };
+  return { name: m[1].trim(), ext: m[2].trim() };
+}
+
+/**
+ * ประกอบชื่อตัวละคร + ส่วนเสริมให้เว้น "1 วรรค" เสมอ (ต่อให้ผู้ใช้พิมพ์เว้นเกิน)
+ * ext ว่าง = ถอดส่วนเสริมออก
+ */
+export function withExtension(text, ext) {
+  const { name } = splitCharacter(text);
+  const e = String(ext ?? '').trim();
+  if (!e) return name;
+  const wrapped = e.startsWith('(') && e.endsWith(')') ? e : '(' + e.replace(/^\(|\)$/g, '') + ')';
+  return name ? name + ' ' + wrapped : wrapped;
+}
 
 export function classify(line, prevBlank = true, prevType = 'action') {
   const s = line.trim();
@@ -54,6 +89,10 @@ export function classify(line, prevBlank = true, prevType = 'action') {
   // [50] Shot + Act Break — จับก่อน raw (RAW_PREFIX ย้าย shot/act ออกแล้ว)
   if (s.startsWith('$shot ')) return ['shot', s.slice(6).trim()];
   if (s.startsWith('$act ')) return ['act-break', s.slice(5).trim()];
+  // [alpha.57a ข้อ 2] element ใหม่ — ใช้ prefix แบบเดียวกับ $shot/$act จึง round-trip ปลอดภัย
+  if (s.startsWith('$in ')) return ['transition-in', s.slice(4).trim()];
+  if (s.startsWith('$sub ')) return ['subheader', s.slice(5).trim()];
+  if (s.startsWith('$intercut ')) return ['intercut', s.slice(10).trim()];
   if (RAW_PREFIX.test(s)) return ['raw', line];
   if (s.startsWith('((') && s.endsWith('))')) return ['note', s.slice(2, -2).trim()];
   if (s.startsWith('### ')) return ['outline3', s.slice(4).trim()];
@@ -103,6 +142,9 @@ export function lineFor(el, text, prevBlank, prevType) {
     case 'note': s = '((' + text + '))'; break;
     case 'shot': s = '$shot ' + text; break;             // [50]
     case 'act-break': s = '$act ' + text; break;         // [50]
+    case 'transition-in': s = '$in ' + text; break;      // [alpha.57a]
+    case 'subheader': s = '$sub ' + text; break;
+    case 'intercut': s = '$intercut ' + text; break;
     case 'parenthetical':
       s = text.startsWith('(') && text.endsWith(')') ? text : '(' + text + ')'; break;
     case 'summary': s = '= ' + text; break;

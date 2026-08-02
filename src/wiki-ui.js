@@ -1,5 +1,5 @@
 // wiki-ui.js — Wiki: หมวด (สร้าง/แก้/ลบ) + เอนทิตี้ (เพิ่ม/เปิด/ทำสำเนา)
-import { INV_C, activate, allCatKeys, applyTemplate, buildTree, catEditDialog, catIcon, catKeyFrom, catLabel, closeTab, entityCreateDialog, fieldLabels, guid, invertRole, markDirty, pickFromList, relationDialog, safeName, saveProjectMeta, spellChecker, wikiRoot } from './app.js';
+import { INV_C, activate, allCatKeys, applyTemplate, buildTree, catEditDialog, catIcon, catKeyFrom, catLabel, closeTab, entityCreateDialog, fieldLabels, guid, invertRole, markDirty, pickFromList, relationDialog, revealFile, safeName, saveProjectMeta, spellChecker, wikiRoot } from './app.js';
 import { $, BUILTIN_CATS, el, setStatus, smart, state } from './core.js';
 import { pickImage } from './gallery.js';
 import { confirmBox, ask } from './ui.js';
@@ -114,6 +114,8 @@ export async function openEntity(file) {
         },
       });
     },
+    // [alpha.58] หาไฟล์ในดิสก์ — เอนทิตี้เป็นไฟล์ .json แก้นอกโปรแกรมได้ ต้องเปิดโฟลเดอร์เจอ
+    onReveal: (f) => revealFile(f),
     onSnapshot: async () => {
       const { snapshotFile } = await import('./app.js');
       if (tab.wiki.dirty) await tab.wiki.save();

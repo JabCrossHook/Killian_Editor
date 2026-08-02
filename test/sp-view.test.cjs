@@ -17,7 +17,8 @@ function check(name, cond, extra) {
 }
 
 // ── รายการโหมด ──
-check('มี 5 โหมด: ปกติ/ร่าง/เรียงหน้า/ภาพรวม 2 ระดับ', SV.SP_VIEWS.length === 5, SV.SP_VIEWS.join(','));
+check('มี 6 โหมด: ปกติ/จัดหน้า/ร่าง/เรียงหน้า/ภาพรวม 2 ระดับ',
+  SV.SP_VIEWS.length === 6 && SV.SP_VIEWS.includes('layout'), SV.SP_VIEWS.join(','));
 check('ทุกโหมดมีป้ายชื่อภาษาไทย', SV.SP_VIEWS.every((m) => (SV.SP_VIEW_LABELS[m] || '').length > 2));
 check('ทุกโหมดมีคลาส CSS กำกับ (normal = ว่าง)',
   SV.SP_VIEW_CLASS.normal === '' && SV.SP_VIEWS.slice(1).every((m) => SV.SP_VIEW_CLASS[m].length > 3));
@@ -131,6 +132,34 @@ check('viewStatusText บอกชื่อโหมด + จำนวนหน�
   SV.viewStatusText('side', 12).includes('12 หน้า') && SV.viewStatusText('side', 12).includes('Side-by-Side'),
   SV.viewStatusText('side', 12));
 check('viewStatusText ไม่มีจำนวนหน้าก็ยังใช้ได้', SV.viewStatusText('draft').includes('Draft'));
+
+// ── [58] Layout View — มาตรวัดหน้ากระดาษ ──
+const mt = SV.pageMetrics();
+check('[58] Letter = 54 บรรทัด/หน้า', mt.linesPerPage === 54, mt.linesPerPage);
+check('[58] พื้นที่พิมพ์ 6 นิ้ว = 60 ตัวอักษร/บรรทัด', mt.charsPerLine === 60, mt.charsPerLine);
+check('[58] กระดาษ 8.5×11 นิ้ว = 816×1056 px', mt.pageWidthPx === 816 && mt.pageHeightPx === 1056,
+  mt.pageWidthPx + 'x' + mt.pageHeightPx);
+check('[58] ความสูงเนื้อหน้า = 9 นิ้ว = 864px', mt.bodyHeightPx === 864, mt.bodyHeightPx);
+check('[58] 1 บรรทัด = 16px (6 บรรทัด/นิ้ว)', mt.lineHeightPx === 16, mt.lineHeightPx);
+check('[58] 54 บรรทัด × 16px = ความสูงเนื้อหน้าพอดี',
+  mt.linesPerPage * mt.lineHeightPx === mt.bodyHeightPx);
+const a4 = SV.pageMetrics({ paperSize: 'a4' });
+check('[58] A4 สูงกว่า → บรรทัดมากกว่า Letter', a4.linesPerPage > mt.linesPerPage, a4.linesPerPage);
+check('[58] A4 แคบกว่า → ตัวอักษรต่อบรรทัดน้อยกว่า', a4.charsPerLine < mt.charsPerLine, a4.charsPerLine);
+const vars = SV.layoutCssVars();
+check('[58] layoutCssVars ให้ตัวแปร CSS ครบ',
+  vars['--sp-body-h'] === '864px' && vars['--sp-line-h'] === '16px' && /px$/.test(vars['--sp-page-gap']),
+  JSON.stringify(vars));
+check('[58] ช่องว่างคั่นหน้าไม่แคบเกินจนมองไม่เห็น',
+  parseInt(SV.layoutCssVars(null, 0)['--sp-page-gap'], 10) >= 8);
+check('[58] โหมดจัดหน้ายังพิมพ์ได้ (ไม่ใช่ page view)',
+  SV.isEditView('layout') && !SV.isPageView('layout'));
+check('[58] โหมดเรียงหน้า/ภาพรวม = อ่านอย่างเดียว',
+  !SV.isEditView('side') && !SV.isEditView('overview4'));
+check('[58] โหมดจัดหน้ามีคลาส CSS ของตัวเอง', SV.SP_VIEW_CLASS.layout === 'sp-view-layout');
+check('[58] ALL_VIEW_CLASSES ครอบคลุมทุกโหมด (ล้างคลาสได้หมด)',
+  SV.SP_VIEWS.filter((m) => m !== 'normal')
+    .every((m) => SV.SP_VIEW_CLASS[m].split(' ').every((c) => SV.ALL_VIEW_CLASSES.includes(c))));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

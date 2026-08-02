@@ -8,7 +8,7 @@
   },
   "ui": {
     "app": { "title": "Killian 2", "newProject": "New Project...", "openProject": "Open Project...", "saveAll": "Save All", "home": "Home", "ready": "Ready", "project": "Project", "saving": "Saving...", "saved": "Saved", "loading": "Loading...", "searching": "Searching..." },
-    "menu": { "file": "File", "edit": "Edit", "view": "View", "format": "Format", "help": "Help", "ai": "AI" },
+    "menu": { "file": "File", "edit": "Edit", "view": "View", "format": "Format", "script": "Script", "help": "Help", "ai": "AI" },
     "toolbar": {
       "paperMode": "Paper Mode", "toggleMode": "Toggle Mode",
       "normalText": "Body Text", "heading1": "Heading 1", "heading2": "Heading 2",

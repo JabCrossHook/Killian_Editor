@@ -1,6 +1,6 @@
 // scene-props.js — แผงคุณสมบัติฉาก (สถานะ/สี/ปักหมุด/ล็อก/futureNote)
-import { buildTree, guid } from './app.js';
-import { SCENE_COLORS, SCENE_STATUSES, el, setStatus } from './core.js';
+import { buildTree, guid, updatePageNumberHint, refreshSpView } from './app.js';
+import { SCENE_COLORS, SCENE_STATUSES, el, setStatus, state } from './core.js';
 import { allStatuses } from './custom-status.js';
 import * as spell from './spell.js';
 import { dumpMdFile, parseMdFile } from './md.js';
@@ -43,6 +43,10 @@ export async function sceneProps(dPath, ch, sc) {
   const iSyn = mk('เรื่องย่อ', row.synopsis, 'textarea');
   const iStoryDate = mk('เวลาในเรื่อง (เส้นเวลา)', row.storyDate);
   iStoryDate.placeholder = 'เช่น วันที่ 3 · ปีที่ 1024 · เช้าวันจันทร์';
+  // [alpha.57a ข้อ 2] เลขหน้าเริ่มต้นของไฟล์ฉากนี้ — เลขหน้าบนกระดาษนับต่อจากค่านี้
+  const iStartPage = mk('เลขหน้าเริ่มต้น (บทภาพยนตร์)', row.startPage || '');
+  iStartPage.type = 'number'; iStartPage.min = '1';
+  iStartPage.placeholder = '1 — ใช้เมื่อเปิด "เลขหน้า" ในตั้งค่าโปรเจกต์';
   const iPov = mk('มุมมอง (POV)', row.pov);
   const iEmotion = mk('อารมณ์', row.emotion);
   const iConflict = mk('ความขัดแย้ง', row.conflict);
@@ -71,6 +75,9 @@ export async function sceneProps(dPath, ch, sc) {
   ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
   okB.onclick = async () => {
     row.synopsis = iSyn.value; row.pov = iPov.value; row.status = iStatus.value; row.storyDate = iStoryDate.value.trim();
+    // เก็บเฉพาะเมื่อผู้ใช้กรอกจริง (ค่าว่าง = เริ่มที่ 1) — กัน field ว่างรกทุกแถว
+    { const sp = parseInt(iStartPage.value, 10);
+      if (Number.isFinite(sp) && sp > 0) row.startPage = sp; else delete row.startPage; }
     row.emotion = iEmotion.value; row.conflict = iConflict.value;
     row.color = iColor.value; row.flag = iFlag.checked; row.note = iNote.value;
     row.futureNote = iFuture.value;
@@ -89,6 +96,9 @@ export async function sceneProps(dPath, ch, sc) {
       await kapi.writeFile(file, dumpMdFile(meta, body));
     } catch {}
     await buildTree();                 // สี/สถานะที่เพิ่งตั้งเห็นผลใน tree ทันที
+    // เลขหน้าเริ่มต้นเปลี่ยน → แท็บที่เปิดไฟล์นี้อยู่ต้องวาดเลขหน้าใหม่ทันที
+    const openTab = state.tabs.get(file);
+    if (openTab) { openTab.startPage = row.startPage || 1; updatePageNumberHint(); refreshSpView(); }
     ov.remove(); setStatus('บันทึกคุณสมบัติฉากแล้ว');
   };
 }

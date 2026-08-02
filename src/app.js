@@ -8,7 +8,8 @@ import { SPEditor } from './screenplay.js';
 import { Gallery, pickImage } from './gallery.js';
 import { StoryNetwork } from './network.js';
 import { PlannerBoard } from './planner.js';
-import { SP_ELEMS, TIMES, TRANSITIONS, SCENE_PREFIX, TAB_CYCLE, PARENTHETICALS, CHAR_EXTENSIONS,
+import { SP_ELEMS, TIMES, TRANSITIONS, TRANSITIONS_IN, INTERCUTS, SCENE_PREFIX, TAB_CYCLE,
+         PARENTHETICALS, CHAR_EXTENSIONS, splitCharacter, withExtension,
          classify, parseScript } from './fountain.js';
 import { refreshMentions } from './editor.js';
 import { refreshSpell } from './editor.js';
@@ -24,6 +25,9 @@ import { $, el, state, smart, LOG_BUF, log, setStatus,
          spCycleKeys, spKeyLabel,
          PAPER_SIZES, MARGIN_DEFAULTS, SP_ELEMENT_KEYS, mergeSpFormat, pageCssVars, spCss,
          linesPerPage, paginate, pageCount, newRoster, normalizeRoster, rosterToText,
+         SCENE_NUMBER_DEFAULTS, PAGE_NUMBER_DEFAULTS, pageNumberLabel,
+         LANG_FAMILY, SCRIPT_PRESETS, BUILTIN_FONT_FILES, defaultLangFonts, normalizeLangFonts,
+         buildLangFontCss, withLangFamily, applyLangFonts,
          SCALE_MIN, SCALE_MAX, UI_SCALE_MIN, UI_SCALE_MAX,
          SCENE_STATUSES, SCENE_COLORS, STATUS_COLORS, BUILTIN_CATS, CAT_ICON,
          REL_TYPES, REL_COLOR, REL_LABEL, categorizeRole, categorizeWith,
@@ -93,8 +97,21 @@ import { openRosterFlow, openRoster, renderRoster, saveRosterTab, isRosterTab,
 // ---- alpha.57: มุมมองบท (57/59/60/61) · ไปยังหน้า-ฉาก (78) · ตรวจข้อผิดพลาด (54) · ส่งออก 67/68/70 ----
 import { SP_VIEWS, SP_VIEW_LABELS, SP_VIEW_CLASS, ALL_VIEW_CLASSES, isPageView, isValidView,
          fitScale, overviewScale, viewScale, blocksFromDoc, pagesOf, pageStartPositions,
-         findPageStart, scenePositions, findNthScene, renderPageView, viewStatusText } from './sp-view.js';
-import { setFormatGuide, isFormatGuide, setPageBreaks } from './sp-format-guide.js';
+         findPageStart, scenePositions, findNthScene, renderPageView, viewStatusText,
+         pageMetrics, layoutCssVars, isEditView } from './sp-view.js';
+import { setFormatGuide, isFormatGuide, setPageBreaks, pageBreaks,
+         setSceneNumbers, isSceneNumbers, refreshSceneNumbers,
+         setContinueds, continueds, refreshContinueds } from './sp-format-guide.js';
+// ---- alpha.58: ระบบต่อเนื่อง (55/56) + รายงานบท (71/72/73) ----
+import { computeContinueds, continuedSummary, continuedStatusText, pagesWithContinueds,
+         CONTINUED_DEFAULTS } from './sp-continued.js';
+import { looksLikeTerm, countTerms, learnedTerms, pendingTerms, learnMin,
+         DEFAULT_LEARN_MIN, LEARN_MIN_RANGE } from './smart-terms.js';
+import { generateLocationReport, generateCharacterReport, generateDialogueChart,
+         locationReportText, characterReportText, dialogueChartText,
+         CHART_KINDS, CHART_LABELS, sceneBreakdown } from './sp-reports.js';
+import { setTypeSound, isTypeSound, setTypeVolume, typeVolume, playType,
+         soundKindFor, isEditorTarget } from './typewriter-sound.js';
 import { SP_ERRORS, validateScreenplay, errorSummary, summaryText, nextError, elLabel } from './sp-validator.js';
 import { generateFdx } from './export-fdx.js';
 import { generateRtf } from './export-rtf.js';
@@ -129,18 +146,17 @@ export function applySettings() {
     Math.max(120, Math.min(400, parseInt(state.settings.homeThumb, 10) || 190)) + 'px');
   document.body.classList.toggle('k-ln', !!state.settings.lineNumbers);
   document.body.classList.toggle('paper-mode', state.settings.paperMode !== false);
+  // [alpha.57a ข้อ 5] ฟอนต์ตามภาษา — ต้องมาก่อนตั้ง --ed-font/--sp-font เพราะจะเอา "K2 Lang" ไปนำหน้า
+  const nLang = applyProjectLangFonts();
   // fontFamily — ว่าง = Courier Final Draft 12pt (มาตรฐานต้นฉบับ ใช้ได้ทุกภาษา)
-  if (state.settings.fontFamily) {
-    document.documentElement.style.setProperty('--ed-font', state.settings.fontFamily);
-  } else {
-    document.documentElement.style.setProperty('--ed-font', DEFAULT_SCRIPT_FONT);
-  }
+  const edStack = state.settings.fontFamily || DEFAULT_SCRIPT_FONT;
+  document.documentElement.style.setProperty('--ed-font', withLangFamily(edStack, nLang > 0));
   // ฟอนต์บทหนังแยกจากนิยาย (บั๊ก #2) — ว่าง = Courier Final Draft เช่นกัน
-  if (state.settings.spFontFamily) {
-    document.documentElement.style.setProperty('--sp-font', state.settings.spFontFamily);
-  } else {
-    document.documentElement.style.setProperty('--sp-font', DEFAULT_SCRIPT_FONT);
-  }
+  const spStack = state.settings.spFontFamily || DEFAULT_SCRIPT_FONT;
+  document.documentElement.style.setProperty('--sp-font', withLangFamily(spStack, nLang > 0));
+  // [alpha.57a ข้อ 1] เสียงเครื่องพิมพ์ดีด
+  setTypeVolume(state.settings.typeSoundVolume ?? 0.5);
+  syncTypeSound();
   applySpellcheck();
   refreshAllSpell();
   restartAutosave();
@@ -173,7 +189,9 @@ export function applyZoomVars(off) {
 export function spFormatSettings() {
   const s = state.settings || {};
   return { paperSize: s.paperSize, paper: s.customPaper, margins: s.pageMargins,
-           elements: s.spElements, styles: s.spStyles, rules: s.spPageRules, strings: s.spStrings };
+           elements: s.spElements, styles: s.spStyles, rules: s.spPageRules, strings: s.spStrings,
+           sceneNumbers: s.spSceneNumbers, pageNumbers: s.spPageNumbers,
+           continued: s.spContinued };            // [alpha.58 · 55–56]
 }
 /** รูปแบบบทหนังที่ใช้จริง (merge กับค่ามาตรฐานแล้ว) — โมดูลอื่นเรียกตัวนี้ */
 export function spFormat() { return mergeSpFormat(spFormatSettings()); }
@@ -187,7 +205,71 @@ export function applyPageVars() {
   let st = document.getElementById('k-sp-format');
   if (!st) { st = document.createElement('style'); st.id = 'k-sp-format'; document.head.appendChild(st); }
   st.textContent = spCss(fmt);
+  // [alpha.57a ข้อ 2] เลขฉาก + เลขหน้า — สวิตช์เดียวคุมทั้งตัวแก้ไขและมุมมองหน้ากระดาษ
+  if (setSceneNumbers(!!fmt.sceneNumbers.show, fmt.sceneNumbers.suffix)) {
+    for (const tb of state.tabs.values()) if (tb.sp) refreshSceneNumbers(tb.sp.view);
+  }
+  document.body.classList.toggle('sp-page-numbers', !!fmt.pageNumbers.show);
+  // [alpha.58 · 58] Layout View — ความสูงเนื้อหน้า/ช่องว่างคั่นหน้า คิดจากขนาดกระดาษจริง
+  const lv = layoutCssVars(fmt, state.settings.spPageGap);
+  for (const k of Object.keys(lv)) R.setProperty(k, lv[k]);
+  // [alpha.58 บั๊ก 3] ช่วงบรรทัดบทภาพยนตร์ — มาตรฐาน = 1 (6 บรรทัด/นิ้ว) ปรับได้ที่ตั้งค่า
+  R.setProperty('--sp-lh', String(spLineHeight()));
   return fmt;
+}
+
+/** ช่วงบรรทัดของบทภาพยนตร์ (เท่าไรก็ได้ 1–2 · ค่ามาตรฐานอุตสาหกรรม = 1) */
+export function spLineHeight() {
+  const v = parseFloat(state.settings.spLineHeight);
+  return Number.isFinite(v) && v >= 0.8 && v <= 2.5 ? v : 1;
+}
+
+// ---------------- [alpha.57a ข้อ 5] ฟอนต์ตามภาษา ----------------
+/** URL ของไฟล์ฟอนต์: ฝังมากับโปรแกรม → assets/fonts/ · ของโปรเจกต์ → Fonts/ (เก็บ URL ที่ resolve แล้ว) */
+const _langFontUrls = new Map();          // ชื่อไฟล์ในโปรเจกต์ → file:// URL (เติมโดย preloadLangFontUrls)
+export function langFontUrl(row) {
+  if (row.builtin) return 'assets/fonts/' + row.builtin;
+  if (row.file) return _langFontUrls.get(row.file) || '';
+  return '';
+}
+/** อ่านที่อยู่จริงของไฟล์ฟอนต์ในโปรเจกต์ล่วงหน้า (kapi เป็น async — CSS ต้องการ URL แบบ sync) */
+export async function preloadLangFontUrls() {
+  const rows = normalizeLangFonts(state.settings.langFonts);
+  const need = rows.map((r) => r.file).filter((f) => f && !_langFontUrls.has(f));
+  if (!need.length || !state.root) return _langFontUrls.size;
+  for (const f of need) {
+    try {
+      const p = await kapi.join(state.root, 'Fonts', f);
+      if (await kapi.exists(p)) _langFontUrls.set(f, await kapi.toFileURL(p));
+    } catch {}
+  }
+  return _langFontUrls.size;
+}
+/** ยัด @font-face ตามภาษาเข้า <head> — คืนจำนวนแถวที่ใช้จริง */
+export function applyProjectLangFonts() {
+  return applyLangFonts(state.settings.langFonts, langFontUrl);
+}
+
+// ---------------- [alpha.57a ข้อ 1] เสียงเครื่องพิมพ์ดีด ----------------
+// เล่นเมื่อ "เปิดเสียง" และ (อยู่ในโหมดเครื่องพิมพ์ดีด หรือ ตั้งให้เล่นตลอด)
+// ดัก keydown ที่ระดับเอกสารแบบ capture — ทำงานได้ทั้งตัวแก้ไขในแท็บและในหน้าต่างลอย
+let _typeSoundBound = false;
+function onTypeKey(ev) {
+  if (!isTypeSound()) return;
+  if (!isEditorTarget(ev)) return;
+  const kind = soundKindFor(ev);
+  if (kind) playType(kind);
+}
+/** ให้สถานะเสียงตรงกับ settings + โหมดเครื่องพิมพ์ดีดปัจจุบัน */
+export function syncTypeSound() {
+  const s = state.settings || {};
+  const want = !!s.typeSound && (s.typeSoundAlways || isTypewriter());
+  setTypeSound(want);
+  if (want && !_typeSoundBound) {
+    document.addEventListener('keydown', onTypeKey, true);
+    _typeSoundBound = true;
+  }
+  return want;
 }
 
 // ปรับซูมทีละขั้น (Ctrl+ล้อ / Ctrl+±) — step เป็นสัดส่วน
@@ -230,6 +312,24 @@ function resetPageScale() {
   keepZoomCenter(() => { pageScale = 1; applyZoomVars(); });
   setStatus(t('status.zoomReset'));
 }
+/**
+ * [alpha.58 บั๊ก 3] "พอดีความกว้าง" — ย่อ/ขยายให้หน้ากระดาษเต็มพื้นที่พอดี
+ * ผู้ใช้เทียบกับโปรแกรมอื่นแล้วรู้สึกว่ากระดาษ/ตัวหนังสือใหญ่เกิน เพราะโปรแกรมบทส่วนใหญ่
+ * เปิดมาที่ "fit width" ไม่ใช่ 100% (8.5 นิ้วจริง = 816px ซึ่งกว้างกว่าพื้นที่ทำงานทั่วไป)
+ * @returns {number} อัตราซูมที่ตั้งได้จริง
+ */
+export function zoomFitWidth(pane) {
+  const p = pane || (state.active && state.active.pane);
+  const fmt = spFormat();
+  const pageW = (+fmt.paper.width || 8.5) * 96;
+  // เผื่อขอบซ้าย-ขวาไว้เล็กน้อย + ที่ว่างของแถบเลื่อนแนวตั้ง
+  const avail = Math.max(200, (p ? p.clientWidth : window.innerWidth) - 48);
+  const z = Math.max(SCALE_MIN, Math.min(SCALE_MAX, Math.round(avail / pageW * 100) / 100));
+  keepZoomCenter(() => { pageScale = z; applyZoomVars(); });
+  setStatus('ซูมพอดีความกว้าง: ' + Math.round(z * 100) + '%');
+  return z;
+}
+
 /** เลื่อนหน้ากระดาษให้อยู่กึ่งกลางแนวนอน (บั๊ก #7 — มุมมองเริ่มต้นตอนเปิด/สร้างฉาก) */
 export function centerPage(pane) {
   const p = pane || (state.active && state.active.pane);
@@ -274,7 +374,8 @@ function drawPageView(tab) {
   }
   const pageWpx = fmt.paper.width * 96;
   const vs = viewScale(spViewMode, tab.pane.clientWidth || 900, pageWpx, 20);
-  renderPageView(host, pg, fmt, { scale: vs.scale, perRow: vs.perRow, gap: 20 });
+  renderPageView(host, pg, fmt, { scale: vs.scale, perRow: vs.perRow, gap: 20,
+                                  startPage: currentStartPage(tab) });
   return pg.count;
 }
 
@@ -326,6 +427,89 @@ export function toggleShowFormat(on) {
   syncMenuToggles();
   setStatus(v ? 'แสดงรูปแบบ: เปิด (เส้นขอบ element + เครื่องหมายจบบรรทัด)' : 'แสดงรูปแบบ: ปิด');
   return v;
+}
+
+// ═════════ alpha.58 · 55–56 · ระบบต่อเนื่อง (CONTINUED / MORE / cont'd) ═════════
+/** ระบบต่อเนื่องเปิดอยู่ไหม (ค่าเริ่มต้น = เปิด ตามธรรมเนียมบทภาพยนตร์) */
+export function spContinuedOn() {
+  const c = state.settings.spContinued;
+  return !c || c.enabled !== false;
+}
+/** เปิด/ปิดระบบต่อเนื่องทั้งชุด — เก็บใน project.khn.json */
+export function toggleContinueds(on) {
+  const cur = { ...CONTINUED_DEFAULTS, ...(state.settings.spContinued || {}) };
+  cur.enabled = on === undefined ? !spContinuedOn() : !!on;
+  state.settings.spContinued = cur;
+  applyPageVars();
+  scheduleCount();                    // คำนวณเครื่องหมายใหม่ (ตัวเดียวกับที่นับหน้า)
+  refreshSpView();
+  saveProjectMeta(); syncMenuToggles();
+  setStatus(cur.enabled
+    ? 'ข้อความต่อเนื่อง: เปิด — (CONTINUED) · CONTINUED: · (MORE) · (cont\'d)'
+    : 'ข้อความต่อเนื่อง: ปิด');
+  return cur.enabled;
+}
+
+// ═════════ alpha.57a ข้อ 2 · เลขฉาก + เลขหน้า + ส่วนเสริม ═════════
+/** เปิด/ปิดเลขฉาก (เก็บใน project.khn.json — ตำแหน่งตั้งได้ที่ ตั้งค่า → หน้ากระดาษ) */
+export function toggleSceneNumbers(on) {
+  const cur = { ...SCENE_NUMBER_DEFAULTS, ...(state.settings.spSceneNumbers || {}) };
+  cur.show = on === undefined ? !cur.show : !!on;
+  state.settings.spSceneNumbers = cur;
+  applyPageVars();
+  refreshSpView();
+  saveProjectMeta(); syncMenuToggles();
+  setStatus(cur.show ? `เลขฉาก: เปิด (ซ้าย ${cur.left}" · ขวา ${cur.right}" จากขอบกระดาษ)` : 'เลขฉาก: ปิด');
+  return cur.show;
+}
+
+/** เปิด/ปิดเลขหน้า — มีเฉพาะไฟล์ที่เป็นฉาก · เลขเริ่มต้นตั้งรายไฟล์ในคุณสมบัติฉาก */
+export function togglePageNumbers(on) {
+  const cur = { ...PAGE_NUMBER_DEFAULTS, ...(state.settings.spPageNumbers || {}) };
+  cur.show = on === undefined ? !cur.show : !!on;
+  state.settings.spPageNumbers = cur;
+  applyPageVars();
+  refreshSpView();
+  updatePageNumberHint();
+  saveProjectMeta(); syncMenuToggles();
+  setStatus(cur.show ? `เลขหน้า: เปิด (ชิดขวา ${cur.right}" · ${cur.top}" จากขอบบน)` : 'เลขหน้า: ปิด');
+  return cur.show;
+}
+
+/** เลขหน้าเริ่มต้นของไฟล์ที่เปิดอยู่ (ตั้งในคุณสมบัติฉาก → scenes.json: startPage) */
+export function currentStartPage(tab) {
+  const t2 = tab || state.active;
+  const n = parseInt(t2 && t2.startPage, 10);
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+/** วาดเลขหน้าของ "หน้าแรก" บนหน้ากระดาษในตัวแก้ไข (หน้าถัด ๆ ไปอยู่บนเส้นคั่นหน้า) */
+export function updatePageNumberHint() {
+  const t2 = state.active;
+  const pane = t2 && t2.pane;
+  if (!pane) return '';
+  const fmt = spFormat();
+  const label = (t2.sp && fmt.pageNumbers.show) ? pageNumberLabel(1, fmt, currentStartPage(t2)) : '';
+  pane.style.setProperty('--pg-no-first', label ? JSON.stringify(label) : '""');
+  return label;
+}
+
+/** เมนู "ส่วนเสริม" ของชื่อตัวละคร — เว้นจากชื่อ 1 วรรคเสมอ */
+export function extensionMenu(x, y) {
+  const t2 = state.active;
+  if (!t2 || !t2.sp) { setStatus('เปิดฉากบทภาพยนตร์ก่อน'); return null; }
+  if (t2.sp.curElement() !== 'character') {
+    setStatus('วางเคอร์เซอร์ในบรรทัด "ตัวละคร" ก่อนใส่ส่วนเสริม');
+    return null;
+  }
+  const cur = t2.sp.curExtension();
+  const items = CHAR_EXTENSIONS.map((e) => ({
+    label: (e === cur ? '● ' : '   ') + e,
+    click: () => { t2.sp.setExtension(e); markDirty(t2); },
+  }));
+  items.push({ label: '— ไม่มีส่วนเสริม —', click: () => { t2.sp.setExtension(''); markDirty(t2); } });
+  const r = $('#elem-badge')?.getBoundingClientRect();
+  return popupMenu(x ?? (r ? r.left : 200), y ?? (r ? r.bottom + 4 : 120), items);
 }
 
 // ═════════ [78] ไปยังหน้า / ฉาก ═════════
@@ -515,6 +699,163 @@ export async function checkBeforeExport() {
   return confirmBox(`พบ ${hard.length} ข้อผิดพลาดในบท (เช่น “${hard[0].msg}”)\nส่งออกต่อไปเลยไหม?`, 'ส่งออกต่อ');
 }
 
+// ═════════ alpha.58 · [71][72][73] รายงานบทภาพยนตร์ ═════════
+// ทั้งสามรายงานอ่านจาก "บล็อกในเอกสารจริง" ชุดเดียวกับที่ใช้จัดหน้า → ตัวเลขตรงกับแถบสถานะเสมอ
+
+/** บล็อก + รูปแบบของแท็บบทที่เปิดอยู่ (คืน null เมื่อไม่ใช่บทภาพยนตร์) */
+export function spReportInput(tab) {
+  const t2 = tab || state.active;
+  if (!t2 || !t2.sp) return null;
+  return { blocks: blocksFromDoc(t2.sp.view.state.doc), fmt: spFormat(),
+           startPage: currentStartPage(t2), tab: t2 };
+}
+
+export const SP_REPORTS = {
+  location:  { title: '📍 รายงานสถานที่', file: 'รายงานสถานที่' },
+  character: { title: '👥 รายงานตัวละคร', file: 'รายงานตัวละคร' },
+  chart:     { title: '📊 กราฟบทพูดต่อหน้า', file: 'กราฟบทพูด' },
+};
+
+/** สร้างข้อมูลรายงานตามชนิด — แยกออกมาให้ selftest เรียกตรงได้ */
+export function buildSpReport(kind, input) {
+  const inp = input || spReportInput();
+  if (!inp) return null;
+  const opts = { fmt: inp.fmt, startPage: inp.startPage };
+  if (kind === 'location') return generateLocationReport(inp.blocks, opts);
+  if (kind === 'character') return generateCharacterReport(inp.blocks, opts);
+  if (kind === 'chart') return generateDialogueChart(inp.blocks, opts);
+  return null;
+}
+export function spReportText(kind, data) {
+  if (kind === 'location') return locationReportText(data);
+  if (kind === 'character') return characterReportText(data);
+  return dialogueChartText(data);
+}
+
+/** แถบสัดส่วนของกราฟบทพูด (ข้อ 73) — วาดด้วย div ล้วน ไม่พึ่ง canvas/ไลบรารี */
+function chartBar(page) {
+  const bar = el('div', 'sp-chart-bar');
+  bar.title = CHART_KINDS.map((k) => `${CHART_LABELS[k]} ${page.percentages[k]}%`).join(' · ');
+  for (const k of CHART_KINDS) {
+    const pc = page.percentages[k];
+    if (pc <= 0) continue;
+    const seg = el('div', 'sp-chart-seg seg-' + k);
+    seg.style.width = pc + '%';
+    bar.append(seg);
+  }
+  return bar;
+}
+
+/** กล่องรายงาน — คลิกแถวเพื่อกระโดดไปยังฉากนั้นในบท */
+export function openSpReport(kind = 'location') {
+  const inp = spReportInput();
+  if (!inp) { setStatus('เปิดฉากบทภาพยนตร์ก่อนจึงจะทำรายงานได้'); return null; }
+  const info = SP_REPORTS[kind] || SP_REPORTS.location;
+  const data = buildSpReport(kind, inp);
+  const ov = el('div', 'k-overlay');
+  const box = el('div', 'k-dialog k-report-dlg');
+  box.append(el('div', 'k-dlg-title', info.title + ' — ' + (inp.tab.title || '')));
+
+  // แถบสลับรายงาน (ทั้งสามอันเป็นเรื่องเดียวกัน — ไม่ต้องปิดแล้วเปิดใหม่)
+  const tabs = el('div', 'k-report-tabs');
+  for (const k of Object.keys(SP_REPORTS)) {
+    const b = el('button', 'k-report-tab' + (k === kind ? ' on' : ''), SP_REPORTS[k].title);
+    b.onclick = () => { ov.remove(); openSpReport(k); };
+    tabs.append(b);
+  }
+  box.append(tabs);
+
+  const body = el('div', 'k-report-body');
+  const goto = (pos) => { if (Number.isFinite(pos)) { ov.remove(); inp.tab.sp.gotoPos(pos); } };
+
+  if (kind === 'location') {
+    box.append(el('div', 'dim',
+      `${data.locations.length} สถานที่ · ${data.totalScenes} ฉาก · ${data.totalPages} หน้า`));
+    for (const L of data.locations) {
+      const g = el('div', 'k-report-group');
+      const h = el('div', 'k-report-ghead');
+      h.append(el('b', null, L.location));
+      h.append(el('span', 'dim', `  ${L.intExt.join('/') || '—'} · ${L.sceneCount} ฉาก · ~${L.pages} หน้า`));
+      g.append(h);
+      for (const s of L.scenes) {
+        const row = el('div', 'k-report-row');
+        row.append(el('span', 'k-report-no', 'ฉาก ' + s.n));
+        row.append(el('span', 'k-report-pg', 'หน้า ' + s.page));
+        row.append(el('span', 'k-report-txt', s.heading));
+        if (s.characters.length) row.append(el('span', 'dim k-report-chars', s.characters.join(', ')));
+        if (Number.isFinite(s.pos)) { row.classList.add('can-go'); row.onclick = () => goto(s.pos); }
+        g.append(row);
+      }
+      body.append(g);
+    }
+    if (!data.locations.length) body.append(el('div', 'cmp-empty', 'ยังไม่มีหัวฉากในบทนี้'));
+  } else if (kind === 'character') {
+    box.append(el('div', 'dim',
+      `${data.characters.length} ตัวละคร · ${data.totalLines} บรรทัดบทพูด · ${data.totalPages} หน้า`));
+    const tbl = el('table', 'k-report-table');
+    const head = el('tr');
+    for (const h of ['ตัวละคร', 'ฉาก', 'ครั้งที่พูด', 'บรรทัด', 'เฉลี่ย/ฉาก', 'หน้า', 'สัดส่วน'])
+      head.append(el('th', null, h));
+    tbl.append(head);
+    for (const c of data.characters) {
+      const tr = el('tr');
+      tr.append(el('td', 'k-report-name', c.name));
+      tr.append(el('td', null, String(c.sceneCount)));
+      tr.append(el('td', null, String(c.speeches)));
+      tr.append(el('td', null, String(c.totalLines)));
+      tr.append(el('td', null, String(c.avgLines)));
+      tr.append(el('td', null, c.firstPage === c.lastPage ? String(c.firstPage)
+                                                          : c.firstPage + '–' + c.lastPage));
+      const td = el('td');
+      const b = el('div', 'sp-chart-bar');
+      const seg = el('div', 'sp-chart-seg seg-dialogue'); seg.style.width = c.share + '%';
+      b.append(seg); td.append(b, el('span', 'dim', ' ' + c.share + '%'));
+      tr.append(td);
+      tbl.append(tr);
+    }
+    body.append(tbl);
+    if (!data.characters.length) body.append(el('div', 'cmp-empty', 'ยังไม่มีบทพูดในบทนี้'));
+  } else {
+    box.append(el('div', 'dim',
+      `รวมทั้งเรื่อง: ${CHART_KINDS.map((k) => CHART_LABELS[k] + ' ' + data.overall[k] + '%').join(' · ')}`));
+    const legend = el('div', 'sp-chart-legend');
+    for (const k of CHART_KINDS) {
+      const it = el('span', 'sp-chart-key');
+      it.append(el('i', 'sp-chart-swatch seg-' + k), CHART_LABELS[k]);
+      legend.append(it);
+    }
+    body.append(legend);
+    for (const p of data.pages) {
+      const row = el('div', 'k-report-row sp-chart-row');
+      row.append(el('span', 'k-report-pg', 'หน้า ' + p.page));
+      row.append(chartBar(p));
+      const top = p.charDensity.slice(0, 3).map((d) => `${d.name} ${d.lines}`).join(' · ');
+      row.append(el('span', 'dim k-report-chars', top));
+      body.append(row);
+    }
+  }
+  box.append(body);
+
+  const btns = el('div', 'k-dlg-btns');
+  const bCopy = el('button', null, '📋 คัดลอกเป็นข้อความ');
+  bCopy.onclick = async () => {
+    try { await navigator.clipboard.writeText(spReportText(kind, data)); setStatus('คัดลอกรายงานแล้ว'); }
+    catch (e) { log('warn', 'คัดลอกรายงานไม่สำเร็จ', e); }
+  };
+  const bSave = el('button', null, '💾 บันทึกเป็นไฟล์…');
+  bSave.onclick = async () => {
+    const p = await kapi.saveAsDialog(info.file + '.txt', 'txt');
+    if (!p) return;
+    await kapi.writeFile(p, spReportText(kind, data));
+    setStatus('บันทึกรายงานแล้ว: ' + p);
+  };
+  const bOk = el('button', 'k-ok', 'ปิด'); bOk.onclick = () => ov.remove();
+  btns.append(bCopy, bSave, bOk); box.append(btns);
+  ov.append(box); document.body.append(ov);
+  ov.onclick = (ev) => { if (ev.target === ov) ov.remove(); };
+  return ov;
+}
+
 // ---------------- ขนาด UI (บั๊ก #9) ----------------
 // --ui-scale คูณเข้ากับฟอนต์ body + ขนาดโครงสร้างของ UI ทุกชิ้นใน style.css (calc(px * var(--ui-scale)))
 // ปุ่ม/ช่องกรอก/select ใช้ font:inherit อยู่แล้ว → เปลี่ยนฟอนต์ body ตัวเดียวก็ไล่ตามทั้งแอป
@@ -684,6 +1025,13 @@ export async function loadProject(root) {
   updateSummaryBar().catch(() => {});            // สรุปด่วนเหนือ tree
   updateStatusExtras();                          // แถบสถานะพิ่มเติม
   smart.loadNames(root);
+  // [alpha.57a ข้อ 4] คลิกขวาที่คำเดา = ไม่ต้องจำคำนั้นอีก
+  smart.onIgnore = (w) => {
+    smartIgnoreAdd(w);
+    setStatus(`ไม่จำ "${w}" อีก (แก้ได้ที่ บท → จัดการ SmartType)`);
+  };
+  // [alpha.57a ข้อ 5] ฟอนต์ตามภาษาของโปรเจกต์ (ต้องรู้ path จริงก่อนจึงสร้าง @font-face ได้)
+  preloadLangFontUrls().then(() => applySettings()).catch(() => {});
   loadSpellDict(root);                               // โหลดคลังคำตรวจคำผิด (async, ไม่บล็อก)
   await loadTemplates();                            // default templates ถูกฝังลงโปรเจกต์ทันที
   warmInverse(); loadPlugins();
@@ -1326,6 +1674,17 @@ async function _buildTreeInner() {
           { label: 'เปิด', click: it.onclick },
           { label: iconHtml('search', 14) + ' ค้นหาในฉาก (Find on location)',
             click: () => findEntityInScenes(p, name, e.clientX, e.clientY) },
+          // [alpha.58 ฟีเจอร์ที่ขาด 2] เอนทิตี้เป็นไฟล์ .json แก้นอกโปรแกรมได้ — ต้องหาเจอในดิสก์
+          { label: '📂 หาในดิสก์ (Find on disk)', click: () => revealFile(p) },
+          { label: iconHtml('history', 14) + ' ประวัติเวอร์ชัน…',
+            click: async () => {
+              const { fileVersionDialog } = await import('./dialogs.js');
+              await fileVersionDialog(p, name, { onRestored: async () => {
+                const open = state.tabs.get(p);
+                if (open && open.wiki) await open.wiki.reloadIfExists?.();
+                await buildTree();
+              } });
+            } },
           { label: 'ทำซ้ำ', click: () => duplicateEntity(p) },
           '-',
           { label: 'ลบ (ย้ายไปถังขยะ)', danger: true, click: () => deleteToTrash(p, name) },
@@ -1497,6 +1856,20 @@ export function catIconHtml(key, sz) { return iconHtml(catIcon(key), sz || 16); 
 // บั๊ก #21: "ค้นหาในฉาก" จากคลิกขวาเอนทิตี้ Wiki ใน Explorer
 // ใช้ดัชนี auto-link ที่มีอยู่แล้ว (ตัวเดียวกับแท็บ Backlinks / ศูนย์รวม) — ไม่สแกนไฟล์ซ้ำ
 // คืนรายการฉากไว้ให้ selftest ตรวจได้ด้วย (UI เป็นเมนูป๊อปอัป จึงเช็คตรง ๆ ไม่ได้)
+/**
+ * [alpha.58] "หาในดิสก์" — เปิดโฟลเดอร์ของไฟล์แล้วเลือกไฟล์นั้นให้ (File Explorer / Finder)
+ * ใช้ร่วมกันทั้งหน้า Wiki · เมนูคลิกขวาใน Explorer · และที่อื่นที่อยากชี้ไฟล์จริง
+ * @returns {Promise<boolean>} สำเร็จไหม (main คืน false เมื่อ path ไม่มีจริง)
+ */
+export async function revealFile(p) {
+  if (!p) { setStatus('ยังไม่มีไฟล์ให้เปิด'); return false; }
+  try {
+    const ok = await kapi.revealInOS(p);
+    setStatus(ok ? '📂 เปิดโฟลเดอร์แล้ว: ' + p : 'ไม่พบไฟล์ในดิสก์: ' + p);
+    return !!ok;
+  } catch (e) { log('warn', 'เปิดโฟลเดอร์ไม่สำเร็จ', e); return false; }
+}
+
 export async function findEntityInScenes(entityPath, name, x, y) {
   setStatus('กำลังค้นหาฉากที่กล่าวถึง “' + name + '” …');
   await ensureAutoLink();
@@ -2224,6 +2597,11 @@ export function syncMenuToggles() {
       spView: currentSpView(),
       showFormat: isFormatGuide(),
       checkBeforeExport: state.settings.spCheckBeforeExport !== false,
+      // alpha.57a — เลขฉาก / เลขหน้า / เสียงพิมพ์
+      sceneNumbers: !!(state.settings.spSceneNumbers || {}).show,
+      pageNumbers: !!(state.settings.spPageNumbers || {}).show,
+      continueds: spContinuedOn(),                  // alpha.58 · 55–56
+      typeSound: !!state.settings.typeSound,
       panels: { 'tree-panel': !!ps.tree, 'props-panel': !!ps.props,
                 'outline-panel': !!ps.outline, ...ps },
     };
@@ -2389,6 +2767,9 @@ async function renderPropsPanel() {
   const iSyn = mk('เรื่องย่อ', row.synopsis, 'textarea');
   const iStoryDate = mk('เวลาในเรื่อง (เส้นเวลา)', row.storyDate);
   iStoryDate.placeholder = 'วันที่ 3 · ปีที่ 1024 · เช้า';
+  // [alpha.57a ข้อ 2] เลขหน้าเริ่มต้นของไฟล์ฉากนี้ (ใช้เมื่อเปิด "เลขหน้า" ในตั้งค่าโปรเจกต์)
+  const iStartPage = mk('เลขหน้าเริ่มต้น (บท)', row.startPage || '');
+  iStartPage.type = 'number'; iStartPage.min = '1'; iStartPage.placeholder = '1';
   const iPov = mk('มุมมอง (POV)', row.pov);
   const iEmotion = mk('อารมณ์', row.emotion);
   const iConflict = mk('ความขัดแย้ง', row.conflict);
@@ -2412,9 +2793,11 @@ async function renderPropsPanel() {
     row.emotion = iEmotion.value; row.conflict = iConflict.value;
     row.color = iColor.value; row.flag = iFlag.checked; row.note = iNote.value;
     row.tags = iTags.value.split(',').map((x) => x.trim()).filter(Boolean);
+    const sp = parseInt(iStartPage.value, 10);
+    if (Number.isFinite(sp) && sp > 0) row.startPage = sp; else delete row.startPage;
   };
   const snapshot = () => JSON.stringify([row.synopsis, row.pov, row.status, row.storyDate,
-    row.emotion, row.conflict, row.color, row.flag, row.note, row.tags]);
+    row.emotion, row.conflict, row.color, row.flag, row.note, row.tags, row.startPage]);
   let lastSaved = (collect(), snapshot());
 
   const commit = async (rebuildTree) => {
@@ -2669,7 +3052,7 @@ export async function openCompileDialog() {
       const { buildVarContext } = await import('./template-vars.js');
       Object.assign(varCtx, await buildVarContext(state.root, kapi));
     }
-    return runWorkflow(model, cur(), { varCtx });
+    return runWorkflow(model, cur(), { varCtx, spFormat: spFormat() });
   };
   const btns = el('div', 'k-dlg-btns');
   const bPrev = el('button', null, '👁 ดูตัวอย่าง');
@@ -3347,16 +3730,33 @@ async function createProjectAt(parent, name) {
 }
 
 // ---------------- ปิดโปรแกรม: เตือนงานที่ยังไม่บันทึก ----------------
+/**
+ * ปิดโปรแกรมทั้งที่ยังมีงานค้าง
+ * [alpha.58 ฟีเจอร์ที่ขาด 1] เดิมเป็นปุ่ม 3 ปุ่ม "บันทึกทั้งหมด / ไม่บันทึก / ยกเลิก"
+ * → ผู้ใช้ไม่รู้ว่ามีไฟล์ไหนค้างบ้าง และเลือกบันทึกเฉพาะบางไฟล์ไม่ได้
+ * ตอนนี้ใช้กล่องเดียวกับ "บันทึกทั้งหมด" (มีรายชื่อไฟล์ + เช็คบ็อกซ์)
+ * @returns {Promise<'save'|'discard'|null>} สิ่งที่ผู้ใช้เลือก (คืนค่าเพื่อให้ selftest ตรวจได้)
+ */
 async function confirmQuit() {
   const dirty = [...state.tabs.values()].filter((t) => t.dirty);
-  if (!dirty.length) return kapi.quitNow();
-  const v = await choose(`มี ${dirty.length} แท็บยังไม่ได้บันทึก`, [
-    { label: 'บันทึกทั้งหมดแล้วออก', value: 'save', primary: true },
-    { label: 'ออกโดยไม่บันทึก', value: 'discard', danger: true },
-    { label: 'ยกเลิก', value: null },
-  ]);
-  if (v === 'save') { for (const t of dirty) await saveTab(t); kapi.quitNow(); }
-  else if (v === 'discard') kapi.quitNow();
+  if (!dirty.length) { kapi.quitNow(); return 'save'; }
+  const { action, keys } = await saveAllDialog(dirtyTabList(), {
+    title: `ปิดโปรแกรม — มี ${dirty.length} ไฟล์ที่ยังไม่ได้บันทึก`,
+    saveLabel: 'บันทึกแล้วออก',
+    discardLabel: 'ออกโดยไม่บันทึก',
+    cancelLabel: 'ไม่ออกแล้ว',
+  });
+  if (action === 'save') {
+    const pick = new Set(keys);
+    for (const t of dirty) {
+      if (!pick.has(t.file)) continue;
+      try { await saveTab(t); }
+      catch (err) { log('error', 'บันทึกก่อนปิดไม่สำเร็จ: ' + (t.file || t.title), err); }
+    }
+    kapi.quitNow();
+  } else if (action === 'discard') kapi.quitNow();
+  else setStatus('ยกเลิกการปิดโปรแกรม');
+  return action;
 }
 
 // ---------------- Wiki entity ----------------
@@ -3518,7 +3918,7 @@ function mountEditor(tab, dir, body) {
     tab.sp = new SPEditor(mount, {
       markdown: body,
       onChange: () => { markDirty(tab); scheduleCount(); scheduleOutline();
-                        setTimeout(() => spSmartCheck(tab), 0); },
+                        scheduleSpSmart(tab); },
       onKeyDown: (ev) => smart.onKey(ev),
       onElement: (elName) => setElementBadge(elName),
       getChecker: spellChecker,
@@ -3550,9 +3950,16 @@ function mountEditor(tab, dir, body) {
   // บั๊ก #7: แล้วเลื่อนหน้ากระดาษมากึ่งกลางเป็นมุมมองเริ่มต้น
   const ws = pane.querySelector('.workspace');
   if (ws) ws.style.minWidth = (pageScale * 100) + '%';
+  // [alpha.57a ข้อ 2] เลขหน้าเริ่มต้นของไฟล์นี้ (ตั้งในคุณสมบัติฉาก) — อ่านทีหลังได้ ไม่บล็อกการเปิด
+  if (tab.sp && tab.startPage === undefined) {
+    sceneCtx(tab.file).then((c) => {
+      tab.startPage = (c && c.row && parseInt(c.row.startPage, 10)) || 1;
+      if (state.active === tab) { updatePageNumberHint(); refreshSpView(); }
+    }).catch(() => { tab.startPage = 1; });
+  }
   // alpha.57 — เอาโหมดมุมมองที่เลือกไว้มาใช้กับแท็บที่เพิ่งเปิด/สลับมา
   // (แท็บนิยายไม่มีมุมมองบท → setSpView จะล้างคลาสให้เอง)
-  requestAnimationFrame(() => { setSpView(currentSpView(), true); centerPage(pane); });
+  requestAnimationFrame(() => { setSpView(currentSpView(), true); centerPage(pane); updatePageNumberHint(); });
 }
 
 // สลับเอกสารระหว่างโหมดนิยาย ↔ บทหนัง (แบบ Fade In) — เนื้อหาเป็น .md ตัวเดียวกัน ต่างแค่ตีความ
@@ -3609,45 +4016,248 @@ function refreshModeBtn() {
 
 // ---- ตั้งค่าโปรเจกต์ (พอร์ตจาก v1 SettingsDialog) ----
 
+// ---- [alpha.57a ข้อ 4] SmartType บทหนัง: เลิกจำ "คำที่พิมพ์มั่ว" ----
+// อาการเดิม: screenplayTerms() กวาดทุกบล็อกตัวละคร/หัวฉากมาเป็นคำเดา รวมบล็อกที่ "กำลังพิมพ์อยู่"
+//   → พิมพ์อะไรมั่ว ๆ ลงไปครั้งเดียวก็ติดอยู่ในรายการเดาตลอด และเด้งทับตัวเองขณะพิมพ์
+// แก้ 3 ชั้น: (1) ข้ามบล็อกที่เคอร์เซอร์อยู่  (2) กรองคำที่ดูไม่ใช่ชื่อ  (3) รายการ "ไม่ต้องจำ" ที่ลบเองได้
+
+/** คำที่ผู้ใช้สั่งไม่ให้จำ (เก็บใน project.khn.json → smartIgnore) */
+export function smartIgnoreList() {
+  const v = state.meta && state.meta.smartIgnore;
+  return Array.isArray(v) ? v.map(String) : [];
+}
+export function smartIgnored(word) {
+  const w = String(word || '').trim().toLowerCase();
+  return !!w && smartIgnoreList().some((x) => String(x).trim().toLowerCase() === w);
+}
+/** เพิ่ม/เอาออกจากรายการ "ไม่ต้องจำ" — คืนรายการใหม่ */
+export function smartIgnoreAdd(word) {
+  const w = String(word || '').trim();
+  if (!w || !state.meta) return smartIgnoreList();
+  const list = smartIgnoreList();
+  if (!list.some((x) => x.toLowerCase() === w.toLowerCase())) list.push(w);
+  state.meta.smartIgnore = list;
+  // [alpha.58] "ไม่จำ" กับ "จำเอง" ต้องไม่อยู่พร้อมกัน ไม่งั้นสองรายการตีกันเงียบ ๆ
+  state.meta.smartPin = smartPinList().filter((x) => x.trim().toLowerCase() !== w.toLowerCase());
+  saveProjectMeta();
+  return list;
+}
+export function smartIgnoreRemove(word) {
+  const w = String(word || '').trim().toLowerCase();
+  if (!state.meta) return smartIgnoreList();
+  const list = smartIgnoreList().filter((x) => x.trim().toLowerCase() !== w);
+  state.meta.smartIgnore = list;
+  saveProjectMeta();
+  return list;
+}
+
+/** คำที่ผู้ใช้สั่ง "จำคำนี้" เอง (ข้ามเกณฑ์เจอซ้ำ) — เก็บใน project.khn.json → smartPin */
+export function smartPinList() {
+  const v = state.meta && state.meta.smartPin;
+  return Array.isArray(v) ? v.map(String) : [];
+}
+export function smartPinAdd(word) {
+  const w = String(word || '').trim();
+  if (!w || !state.meta) return smartPinList();
+  const list = smartPinList();
+  if (!list.some((x) => x.toLowerCase() === w.toLowerCase())) list.push(w);
+  state.meta.smartPin = list;
+  // จำแล้วก็ต้องเลิกอยู่ในรายการ "ไม่จำ" ไม่งั้นสองรายการตีกันเงียบ ๆ
+  state.meta.smartIgnore = smartIgnoreList().filter((x) => x.trim().toLowerCase() !== w.toLowerCase());
+  saveProjectMeta();
+  return list;
+}
+export function smartPinRemove(word) {
+  const w = String(word || '').trim().toLowerCase();
+  if (!state.meta) return smartPinList();
+  const list = smartPinList().filter((x) => x.trim().toLowerCase() !== w);
+  state.meta.smartPin = list;
+  saveProjectMeta();
+  return list;
+}
+/** เกณฑ์ "ต้องเจอกี่บล็อกจึงจำ" ที่ใช้อยู่ (ตั้งได้ที่กล่องจัดการ SmartType) */
+export function smartLearnMin() { return learnMin(state.settings.smartLearnMin); }
+
 // เก็บชื่อตัวละคร + สถานที่ที่ "เคยพิมพ์ในบทนี้" (แบบ Final Draft) เพื่อเดาต่อ
-function screenplayTerms(tab) {
-  const chars = new Set(), locs = new Set();
+// skipPos = ตำแหน่งบล็อกที่กำลังพิมพ์ (ไม่เอามาเป็นคำเดา — ไม่งั้นเดาทับตัวเอง)
+//   ส่ง -1 = ไม่ข้ามบล็อกไหนเลย (ใช้ตอนเปิดกล่องจัดการ)
+// [alpha.58 บั๊ก 1] คืน counts ด้วย เพื่อให้ชั้น "ต้องเจอซ้ำ" ทำงานได้ (ดู smart-terms.js)
+function screenplayTermCounts(tab, skipPos) {
+  const charList = [], locList = [];
   try {
-    tab.sp.view.state.doc.forEach((node) => {
+    const skip = Number.isFinite(skipPos) ? skipPos
+      : (() => { try { return tab.sp.curBlock().pos; } catch { return null; } })();
+    tab.sp.view.state.doc.forEach((node, pos) => {
+      if (pos === skip) return;                          // (1) ข้ามบล็อกที่เคอร์เซอร์อยู่
       const el = node.attrs.el, txt = (node.textContent || '').trim();
       if (!txt) return;
-      if (el === 'character') chars.add(txt);
-      else if (el === 'scene') {
+      if (el === 'character') {
+        // เก็บเฉพาะ "ชื่อ" ไม่เอาส่วนเสริม — ไม่งั้นได้ "สมชาย (V.O.)" เป็นคนละคนกับ "สมชาย"
+        charList.push(splitCharacter(txt).name);
+      } else if (el === 'scene' || el === 'subheader') {
         // ตัดคำนำหน้า (INT./EXT./ฉาก) + เวลา ให้เหลือชื่อสถานที่
         let s = txt;
         for (const p of SCENE_PREFIX) if (s.toUpperCase().startsWith(p.trim().toUpperCase())) { s = s.slice(p.trim().length); break; }
-        const loc = s.split(/\s[-–]\s|\s-\s/)[0].trim();
-        if (loc) locs.add(loc);
+        locList.push(s.split(/\s[-–]\s|\s-\s/)[0].trim());
       }
     });
   } catch {}
-  return { chars: [...chars], locs: [...locs] };
+  return { chars: countTerms(charList), locs: countTerms(locList) };
+}
+
+/**
+ * ชื่อจากบทที่ "ผ่านเกณฑ์" แล้ว — เอาไปให้ SmartType เดาได้เลย
+ * เกณฑ์ = เจอซ้ำอย่างน้อย smartLearnMin บล็อก · หรือมีใน Wiki · หรือผู้ใช้กดจำเอง
+ */
+function screenplayTerms(tab, skipPos) {
+  const c = screenplayTermCounts(tab, skipPos);
+  const base = { min: smartLearnMin(), pinned: smartPinList(), ignored: smartIgnoreList() };
+  return {
+    chars: learnedTerms(c.chars, { ...base, known: smart.byCat?.characters || [] }),
+    locs: learnedTerms(c.locs, { ...base, known: smart.byCat?.locations || [] }),
+  };
 }
 const uniqList = (arr) => [...new Set(arr.filter(Boolean))];
+/** ตัดคำที่อยู่ในรายการ "ไม่ต้องจำ" ออกก่อนส่งให้ SmartType (ใช้กับทุกรายการ รวมชื่อจาก Wiki) */
+const notIgnored = (arr) => uniqList(arr).filter((x) => !smartIgnored(x));
+
+// [alpha.58 บั๊ก 4] แคชรายชื่อจากบท — เดิมสแกนทั้งเอกสารใหม่ทุก transaction (ทุกตัวอักษรที่พิมพ์)
+// รายชื่อไม่ได้เปลี่ยนทุกตัวอักษร → คำนวณใหม่อย่างมากทุก TERM_TTL ms ก็พอสำหรับการเดาคำ
+const TERM_TTL = 700;
+let _termCache = { tab: null, at: 0, val: null };
+export function clearTermCache() { _termCache = { tab: null, at: 0, val: null }; }
+function cachedTerms(tab) {
+  const now = Date.now();
+  if (_termCache.tab === tab && _termCache.val && now - _termCache.at < TERM_TTL) return _termCache.val;
+  const val = screenplayTerms(tab);
+  _termCache = { tab, at: now, val };
+  return val;
+}
 
 function spSmartCheck(tab) {
   const elName = tab.sp.curElement();
   smart.bindView(tab.sp.view);
-  const T = screenplayTerms(tab);                       // ชื่อจากบทเอง (Final Draft)
+  const T = cachedTerms(tab);                           // ชื่อจากบทเอง (Final Draft)
   if (elName === 'character')
-    smart.check(tab.sp.view, uniqList([...T.chars, ...(smart.byCat?.characters || []), ...CHAR_EXTENSIONS]),
+    smart.check(tab.sp.view, notIgnored([...T.chars, ...(smart.byCat?.characters || []), ...CHAR_EXTENSIONS]),
                 { minLen: 1 });
   else if (elName === 'scene')
     // Final Draft: พิมพ์ e → EXT. · i → INT. (1 ตัวอักษร + ไม่สนพิมพ์เล็กใหญ่)
-    smart.check(tab.sp.view, uniqList([...SCENE_PREFIX, ...T.locs,
-                                       ...(smart.byCat?.locations || []), ...TIMES]),
+    smart.check(tab.sp.view, notIgnored([...SCENE_PREFIX, ...T.locs,
+                                         ...(smart.byCat?.locations || []), ...TIMES]),
                 { minLen: 1, ci: true });
-  else if (elName === 'transition') smart.check(tab.sp.view, TRANSITIONS, { minLen: 1, ci: true });
-  else if (elName === 'parenthetical') smart.check(tab.sp.view, PARENTHETICALS, { minLen: 1 });
+  else if (elName === 'transition') smart.check(tab.sp.view, notIgnored(TRANSITIONS), { minLen: 1, ci: true });
+  else if (elName === 'transition-in') smart.check(tab.sp.view, notIgnored(TRANSITIONS_IN), { minLen: 1, ci: true });
+  else if (elName === 'intercut') smart.check(tab.sp.view, notIgnored(INTERCUTS), { minLen: 1, ci: true });
+  else if (elName === 'subheader')
+    smart.check(tab.sp.view, notIgnored([...T.locs, ...(smart.byCat?.locations || []), ...TIMES]),
+                { minLen: 1, ci: true });
+  else if (elName === 'parenthetical') smart.check(tab.sp.view, notIgnored(PARENTHETICALS), { minLen: 1 });
   else if (elName === 'dialogue' || elName === 'action')
-    smart.check(tab.sp.view, uniqList([...T.chars, ...(smart.byCat?.characters || []),
-                                       ...(smart.names || [])]));   // ชื่อตัวละครกลางบทพูด/บรรยาย
+    smart.check(tab.sp.view, notIgnored([...T.chars, ...(smart.byCat?.characters || []),
+                                         ...(smart.names || [])]));   // ชื่อตัวละครกลางบทพูด/บรรยาย
   else smart.hide();
+}
+
+/** กล่องจัดการ SmartType — ดูคำที่จำไว้จากบทนี้ · ลบคำมั่วออกถาวร */
+export function smartTypeDialog() {
+  const tab = state.active;
+  const ov = el('div', 'k-overlay');
+  const box = el('div', 'k-dialog k-smart-dlg');
+  box.append(el('div', 'k-dlg-title', 'จัดการ SmartType (คำที่โปรแกรมจำไว้)'));
+  box.append(el('div', 'dim',
+    'คำเหล่านี้เก็บจาก "สิ่งที่พิมพ์ในบทนี้" — กด ✕ เพื่อสั่งไม่ให้จำอีก'));
+
+  // [alpha.58 บั๊ก 1] เกณฑ์ "ต้องเจอกี่ครั้งจึงจำ" — ตัวกันคำพิมพ์มั่วที่ได้ผลจริง
+  const minRow = el('div', 'k-row k-smart-min');
+  minRow.append(el('label', null, 'จำคำจากบทเมื่อเจอซ้ำอย่างน้อย'));
+  const minSel = el('select');
+  for (let i = LEARN_MIN_RANGE[0]; i <= LEARN_MIN_RANGE[1]; i++) {
+    const o = el('option'); o.value = String(i);
+    o.textContent = i + ' บล็อก' + (i === DEFAULT_LEARN_MIN ? ' (แนะนำ)' : '');
+    if (i === smartLearnMin()) o.selected = true;
+    minSel.append(o);
+  }
+  minRow.append(minSel);
+  minRow.append(el('span', 'dim', ' — ค่า 1 = จำทุกคำที่พิมพ์ (คำพิมพ์ผิดจะติดมาด้วย)'));
+  box.append(minRow);
+
+  const body = el('div', 'k-smart-body');
+  const render = () => {
+    body.innerHTML = '';
+    const counts = (tab && tab.sp) ? screenplayTermCounts(tab, -1)
+                                   : { chars: new Map(), locs: new Map() };
+    const base = { min: smartLearnMin(), pinned: smartPinList(), ignored: smartIgnoreList() };
+    const known = { chars: smart.byCat?.characters || [], locs: smart.byCat?.locations || [] };
+    for (const [title, key] of [['ตัวละครในบทนี้', 'chars'], ['สถานที่ในบทนี้', 'locs']]) {
+      const opt = { ...base, known: known[key] };
+      const list = learnedTerms(counts[key], opt);
+      body.append(el('div', 'k-set-sub', title));
+      if (!list.length) body.append(el('div', 'cmp-empty', '(ยังไม่มี)'));
+      for (const w of list) {
+        const row = el('div', 'k-smart-row');
+        row.append(el('span', 'k-smart-word', w));
+        row.append(el('span', 'dim', ' × ' + (counts[key].get(w) || 0)));
+        const x = el('button', 'k-danger-btn', '✕');
+        x.title = 'ไม่ต้องจำคำนี้';
+        x.onclick = () => { smartIgnoreAdd(w); render(); };
+        row.append(x); body.append(row);
+      }
+      // คำที่เจอครั้งเดียว — ยังไม่จำ แต่โชว์ให้กด "จำ" เองได้ (ชื่อใหม่ที่เพิ่งใส่ครั้งแรก)
+      const wait = pendingTerms(counts[key], opt);
+      if (wait.length) {
+        body.append(el('div', 'k-smart-wait-head dim',
+          `ยังไม่จำ (เจอไม่ถึง ${smartLearnMin()} ครั้ง) — กด ✚ เพื่อจำเลย`));
+        for (const p of wait) {
+          const row = el('div', 'k-smart-row k-smart-wait');
+          row.append(el('span', 'k-smart-word dim', p.word));
+          row.append(el('span', 'dim', ' × ' + p.count + (p.ok ? '' : ' · หน้าตาไม่เหมือนชื่อ')));
+          const add = el('button', null, '✚ จำ');
+          add.title = 'จำคำนี้ไว้เดา แม้จะเจอครั้งเดียว';
+          add.onclick = () => { smartPinAdd(p.word); render(); };
+          const x = el('button', 'k-danger-btn', '✕');
+          x.title = 'ไม่ต้องจำคำนี้';
+          x.onclick = () => { smartIgnoreAdd(p.word); render(); };
+          row.append(add, x); body.append(row);
+        }
+      }
+    }
+    const pin = smartPinList();
+    if (pin.length) {
+      body.append(el('div', 'k-set-sub', `คำที่สั่งให้จำเอง (${pin.length})`));
+      for (const w of pin) {
+        const row = el('div', 'k-smart-row');
+        row.append(el('span', 'k-smart-word', w));
+        const b = el('button', null, '↩ เลิกจำเอง');
+        b.onclick = () => { smartPinRemove(w); render(); };
+        row.append(b); body.append(row);
+      }
+    }
+    const ign = smartIgnoreList();
+    body.append(el('div', 'k-set-sub', `คำที่สั่งไม่ให้จำ (${ign.length})`));
+    if (!ign.length) body.append(el('div', 'cmp-empty', '(ไม่มี)'));
+    for (const w of ign) {
+      const row = el('div', 'k-smart-row');
+      row.append(el('span', 'k-smart-word dim', w));
+      const b = el('button', null, '↩ จำอีกครั้ง');
+      b.onclick = () => { smartIgnoreRemove(w); render(); };
+      row.append(b); body.append(row);
+    }
+  };
+  minSel.onchange = () => {
+    state.settings.smartLearnMin = learnMin(minSel.value);
+    saveProjectMeta();
+    render();
+  };
+  render();
+  box.append(body);
+  const btns = el('div', 'k-dlg-btns');
+  const ok = el('button', 'k-ok', 'ปิด');
+  ok.onclick = () => { ov.remove(); if (tab && tab.sp) spSmartCheck(tab); };
+  btns.append(ok); box.append(btns);
+  ov.append(box); document.body.append(ov);
+  ov.onclick = (e) => { if (e.target === ov) ok.onclick(); };
+  return ov;
 }
 
 function setElementBadge(elName) {
@@ -4259,6 +4869,18 @@ function refreshToolbar() {
     if (ALWAYS_ON_TB.has(b.id)) { b.classList.remove('dis'); return; }
     b.classList.toggle('dis', !canEdit);
   });
+  // [alpha.57a ข้อ 2] ปุ่มส่วนเสริมท้ายชื่อตัวละคร — ต้องตั้ง `dis` "หลัง" ลูป .tb ด้านบน
+  // (ลูปนั้นตั้ง dis จาก canEdit อย่างเดียว จะลบสถานะที่เราตั้งไว้ทิ้ง)
+  const spExt = $('#tb-sp-ext');
+  if (spExt) {
+    spExt.style.display = sp ? '' : 'none';
+    let curExt = '', onChar = false;
+    if (sp) { try { curExt = sp.curExtension(); onChar = sp.curElement() === 'character'; } catch {} }
+    spExt.classList.toggle('dis', !onChar);
+    spExt.textContent = curExt || '( )';
+    spExt.title = onChar ? "ส่วนเสริมท้ายชื่อตัวละคร (V.O. · O.S. · cont'd)"
+                         : 'วางเคอร์เซอร์ในบรรทัด "ตัวละคร" ก่อน';
+  }
   $('#tb-paper').classList.toggle('on', state.settings.paperMode !== false);
   // ปุ่มสวิตช์อื่น ๆ ต้องสะท้อนสถานะจริงด้วย ไม่งั้นจุดบอกสถานะโกหก
   $('#tb-read')?.classList.toggle('on', document.body.classList.contains('reading-mode'));
@@ -4275,14 +4897,39 @@ function refreshToolbar() {
   syncMenuToggles();          // เมนู native ติ๊กถูกตามสถานะจริง (ส่งเฉพาะตอนค่าเปลี่ยน)
 }
 
+// [alpha.58 บั๊ก 4] SmartType ต้องไม่วิ่งทุก keystroke — รวบให้จบทีเดียวหลังหยุดพิมพ์สั้น ๆ
+let _smartJob = null;
+function scheduleSpSmart(tab) {
+  clearTimeout(_smartJob);
+  _smartJob = setTimeout(() => { try { spSmartCheck(tab); } catch {} }, 90);
+}
+
+/**
+ * [alpha.58 บั๊ก 4] เอกสารยาว = งานหนักต่อ keystroke สูงขึ้นตามความยาว
+ * → ยืดเวลาหน่วงของงานหนัก (นับหน้า/ตรวจบท/เส้นคั่นหน้า) ให้ห่างขึ้นเมื่อไฟล์ใหญ่
+ * ผลที่ผู้ใช้เห็น: ตัวเลขหน้า/ขีดแดงมาช้าลงเสี้ยววินาที แต่พิมพ์ลื่นเท่าไฟล์สั้น
+ */
+function heavyDelay(tab) {
+  const limit = parseInt(state.settings.heavyDocBlocks, 10) || 400;
+  let n = 0;
+  try { n = tab.sp ? tab.sp.view.state.doc.childCount : (tab.editor ? tab.editor.view.state.doc.childCount : 0); }
+  catch { n = 0; }
+  if (n <= limit) return 300;
+  return Math.min(1200, 300 + Math.ceil((n - limit) / limit) * 300);
+}
+
 let countJob = null;
 function scheduleCount() {
   clearTimeout(countJob);
+  const t0 = state.active;
   countJob = setTimeout(() => {
     const t = state.active;
     if (!t || t.wiki || t.gal || t.isJson || t.net || t.dash || t.planner || (!t.editor && !t.sp && !t.plain)) { $('#wc').textContent = ''; return; }
+    // [alpha.58 บั๊ก 4] บทภาพยนตร์นับจาก "ข้อความในเอกสาร" ไม่ใช่ getMarkdown()
+    // getMarkdown() ของ SPEditor แปลง inline → markdown ทีละบล็อก (mdToDoc/docToMd)
+    // = งานหนักที่สุดในลูปนี้ · แถมนับ prefix ของ fountain (@ . $shot) เป็นอักขระด้วย ซึ่งผิดอยู่แล้ว
     const body = t.editor ? t.editor.getMarkdown()
-      : t.sp ? t.sp.getMarkdown() : t.plain.value;
+      : t.sp ? t.sp.getText() : t.plain.value;
     let txt = `คำ ${countWords(body).toLocaleString()} · อักขระ ${body.length.toLocaleString()}`;
     // [84][85] บทภาพยนตร์: บอกจำนวนหน้าจริงตามขนาดกระดาษ/ระยะขอบ/กฎตัดหน้าที่ตั้งไว้
     if (t.sp) {
@@ -4293,23 +4940,30 @@ function scheduleCount() {
         const pg = pagesOf(blocks, fmt, linesPerPage(fmt.paper, fmt.margins));
         txt += ` · ${pg.count} หน้า`;
         // เส้นคั่นหน้าในตัวแก้ไข — หน้า 2 เป็นต้นไป
+        // [alpha.57a] เลขบนเส้นคั่นนับต่อจาก "เลขหน้าเริ่มต้น" ของไฟล์ (ตั้งในคุณสมบัติฉาก)
+        const base = currentStartPage(t) - 1;
         const starts = pageStartPositions(pg);
-        const changed = setPageBreaks(starts.map((pos, i) => ({ pos, page: i + 1 })).slice(1)
+        const changed = setPageBreaks(starts.map((pos, i) => ({ pos, page: base + i + 1 })).slice(1)
           .filter((x) => Number.isFinite(x.pos)));
+        updatePageNumberHint();
+        // [alpha.58 · 55–56] เครื่องหมายต่อเนื่อง — คิดจากผลจัดหน้าชุดเดียวกัน จึงตรงกับเส้นคั่นหน้าเสมอ
+        const marks = spContinuedOn() ? computeContinueds(pg, fmt) : [];
+        const cChanged = setContinueds(marks);
         // วาดใหม่เฉพาะตอนตำแหน่งเส้นเปลี่ยนจริง — dispatch ทุก 300ms ไปกวนตำแหน่งเลื่อนตอนซูม
-        if (changed) t.sp.refreshGuides();
+        if (changed || cChanged) t.sp.refreshGuides();
         refreshSpView();                       // มุมมองเรียงหน้า/ภาพรวมตามเนื้อหาล่าสุด
       } catch (e) { log('warn', 'นับหน้าบทไม่สำเร็จ', e); }
       // [54] ตรวจข้อผิดพลาดพร้อมกัน (debounce เดียวกับการนับคำ)
       try { checkScreenplay(t); } catch (e) { log('warn', 'ตรวจบทไม่สำเร็จ', e); }
     } else {
       setPageBreaks([]);
+      setContinueds([]);
       _spErrors = [];
     }
     $('#wc').textContent = txt;
     updateErrorBadge();
     updateProgressBar();
-  }, 300);
+  }, t0 ? heavyDelay(t0) : 300);
 }
 
 
@@ -4591,7 +5245,16 @@ async function handleCommand(ch, ...a) {
       break;
     // ---- ฟีเจอร์ที่เคยไม่มีทางเข้าถึง (import ไว้แต่ไม่มีเมนู/ปุ่ม) ----
     case 'typewriter': setStatus(toggleTypewriter() ? 'โหมดเครื่องพิมพ์ดีด: เปิด' : 'โหมดเครื่องพิมพ์ดีด: ปิด'); refreshToolbar();
-                       syncMenuToggles(); break;
+                       syncTypeSound(); syncMenuToggles(); break;
+    // [alpha.57a ข้อ 1] เสียงพิมพ์ — สวิตช์แยกจากโหมดเครื่องพิมพ์ดีด (ตั้งระดับเสียงในตั้งค่า)
+    case 'type-sound':
+      state.settings.typeSound = !state.settings.typeSound;
+      syncTypeSound(); saveProjectMeta(); syncMenuToggles();
+      if (state.settings.typeSound) playType('key', { force: true });
+      setStatus(state.settings.typeSound
+        ? 'เสียงเครื่องพิมพ์ดีด: เปิด' + (state.settings.typeSoundAlways || isTypewriter() ? '' : ' (จะได้ยินเมื่อเปิดโหมดเครื่องพิมพ์ดีด — Ctrl+Shift+T)')
+        : 'เสียงเครื่องพิมพ์ดีด: ปิด');
+      break;
     case 'quick-open': openQuickOpen(); break;
     case 'global-search': showPanel('search'); renderSearchPanel($('#search-body')); syncMenuToggles(); break;
     case 'centralize': openCentralizeUI(); break;
@@ -4626,7 +5289,11 @@ async function handleCommand(ch, ...a) {
     case 'toggle-panel': togglePanel(a[0]); syncMenuToggles(); break;
     case 'reset-panels': resetPanels(); syncMenuToggles(); break;
     case 'export-draft': exportDraft(); break;
-    case 'zoom': (a[0] === 0) ? resetPageScale() : bumpPageScale(a[0]); break;
+    case 'zoom':
+      if (a[0] === 'fit') zoomFitWidth();
+      else if (a[0] === 0) resetPageScale();
+      else bumpPageScale(a[0]);
+      break;
     case 'ui-scale': bumpUIScale(a[0]); break;
     case 'compile': openCompileDialog(); break;
     case 'settings': settingsDialog(); break;
@@ -4680,6 +5347,9 @@ async function handleCommand(ch, ...a) {
     // ---- alpha.57: มุมมองบท (57/59/60/61) · ไปยังหน้า-ฉาก (78) · ตรวจบท (54) · ส่งออก (67/68/70) ----
     case 'sp-view': setSpView(a[0]); break;
     case 'sp-show-format': toggleShowFormat(a[0]); break;
+    // ---- alpha.58: ระบบต่อเนื่อง (55/56) · รายงานบท (71/72/73) ----
+    case 'sp-continued': toggleContinueds(a[0]); break;
+    case 'sp-report': openSpReport(a[0] || 'location'); break;
     case 'goto': gotoDialog(a[0]); break;
     case 'goto-page': gotoPage(a[0]); break;
     case 'goto-scene': gotoScene(a[0]); break;
@@ -4693,6 +5363,12 @@ async function handleCommand(ch, ...a) {
     case 'export-fdx': await exportScript('fdx'); break;
     case 'export-rtf': await exportScript('rtf'); break;
     case 'export-watermark': await watermarkDialog(); break;
+    // ---- alpha.57a ----
+    case 'scene-numbers': toggleSceneNumbers(); break;
+    case 'page-numbers': togglePageNumbers(); break;
+    case 'sp-extension': extensionMenu(); break;
+    case 'smart-manage': smartTypeDialog(); break;
+    case 'lang-fonts': settingsDialog('fonts'); break;
   }
 }
 kapi.onMenu(handleCommand);
@@ -5067,6 +5743,12 @@ window.addEventListener('DOMContentLoaded', () => {
     sp.view.focus();
     setElementBadge(e.target.value);
     if (state.active) markDirty(state.active);
+  };
+  // [alpha.57a ข้อ 2] ปุ่มส่วนเสริมท้ายชื่อตัวละคร
+  const spExtBtn = $('#tb-sp-ext');
+  if (spExtBtn) spExtBtn.onclick = (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    extensionMenu(r.left, r.bottom + 4);
   };
   // alpha.57 — สลับมุมมองบท + ป้ายข้อผิดพลาดบนแถบสถานะ
   const spViewSel = $('#sp-view-select');
@@ -7063,7 +7745,9 @@ async function runTest(projectPath) {
     spTab.sp.enter();
     check('Enter หลังตัวละคร → บทพูด', spTab.sp.curElement() === 'dialogue');
     spTab.sp.cycle(1);
-    check('สลับ element ได้ (Ctrl+↑/↓ · Tab ไม่สลับแล้ว)', spTab.sp.curElement() === 'transition');
+    // alpha.57a: TAB_CYCLE แทรก transition-in ไว้ก่อน transition → ถัดจากบทพูดคือ "ทรานซิชันเข้า"
+    check('สลับ element ได้ (Ctrl+↑/↓ · Tab ไม่สลับแล้ว)', spTab.sp.curElement() === 'transition-in',
+          spTab.sp.curElement());
     setElementBadge(spTab.sp.curElement());
     check('ป้าย element เป็น dropdown คลิกเลือกได้',
           $('#elem-badge').classList.contains('elem-pick') && typeof $('#elem-badge').onclick === 'function');
@@ -7634,8 +8318,11 @@ async function runTest(projectPath) {
     await new Promise((r) => setTimeout(r, 100));
     {
       const bx = document.querySelector('.k-dialog');
-      const inps = bx.querySelectorAll('input.wiki-input');   // [0]storyDate [1]pov [2]อารมณ์ [3]ความขัดแย้ง [4]แท็ก
-      inps[2].value = 'สิ้นหวัง'; inps[3].value = 'ปะทะกับพ่อ';
+      // [0]storyDate [1]startPage [2]pov [3]อารมณ์ [4]ความขัดแย้ง [5]แท็ก
+      // (alpha.57a แทรก startPage ไว้หลัง storyDate — บทเรียนข้อ 12: เพิ่มช่องแล้วต้องขยับ index ที่นี่ด้วย)
+      const inps = bx.querySelectorAll('input.wiki-input');
+      inps[1].value = '7';                                    // เลขหน้าเริ่มต้นของไฟล์ฉากนี้
+      inps[3].value = 'สิ้นหวัง'; inps[4].value = 'ปะทะกับพ่อ';
       bx.querySelectorAll('textarea')[1].value = 'โน้ตทดสอบระบบ';   // [0]เรื่องย่อ [1]โน้ต
       bx.querySelectorAll('select')[0].value = 'กำลังเขียน';        // [0]สถานะ [1]สี
       bx.querySelectorAll('select')[1].value = '#6fae6f';
@@ -7649,6 +8336,9 @@ async function runTest(projectPath) {
           scP2.emotion === 'สิ้นหวัง' && scP2.conflict === 'ปะทะกับพ่อ' &&
           scP2.note === 'โน้ตทดสอบระบบ' && scP2.color === '#6fae6f' &&
           scP2.flag === true && scP2.status === 'กำลังเขียน', JSON.stringify(scP2));
+    // [57a-2] เลขหน้าเริ่มต้นรายไฟล์ (เก็บเฉพาะตอนกรอกจริง ไม่งั้นลบทิ้ง — กัน field ว่างรกทุกแถว)
+    check('[57a-2] คุณสมบัติฉากเก็บเลขหน้าเริ่มต้นลง scenes.json', scP2.startPage === 7,
+          JSON.stringify(scP2.startPage));
     const scP2File = await kapi.join(dPath, 'Chapters', chP.folderName, scP2.fileName);
     const scP2Fm = parseMdFile(await kapi.readFile(scP2File)).meta;
     check('อารมณ์/ความขัดแย้ง/โน้ต ซิงก์ลง frontmatter .md',
@@ -9478,14 +10168,15 @@ async function runTest(projectPath) {
         // แผงมี textarea 2 ช่อง (เรื่องย่อ · โน้ต) — กล่องคุณสมบัติแบบหน้าต่างมี 3 (มี Future Note ด้วย)
         check('แผงคุณสมบัติไม่ duplicate ช่องกรอก',
               bodyEl.querySelectorAll('textarea.wiki-input').length === 2 &&
-              bodyEl.querySelectorAll('input.wiki-input').length === 5,
+              bodyEl.querySelectorAll('input.wiki-input').length === 6,
               `ta=${bodyEl.querySelectorAll('textarea.wiki-input').length} inp=${bodyEl.querySelectorAll('input.wiki-input').length}`);
         check('แผงคุณสมบัติเลิกใช้ปุ่มบันทึก → เป็นบันทึกอัตโนมัติ',
               !bodyEl.querySelector('.props-save') && !!bodyEl.querySelector('.props-autosave'));
         // พิมพ์แล้วต้องเขียนลง scenes.json เองโดยไม่ต้องกดปุ่ม
-        const inps2 = bodyEl.querySelectorAll('input.wiki-input');   // [0]storyDate [1]pov [2]อารมณ์ [3]ความขัดแย้ง [4]แท็ก
-        inps2[1].value = 'มุมมองอัตโนมัติ';
-        inps2[1].dispatchEvent(new Event('input', { bubbles: true }));
+        // [0]storyDate [1]startPage [2]pov [3]อารมณ์ [4]ความขัดแย้ง [5]แท็ก (alpha.57a แทรก startPage)
+        const inps2 = bodyEl.querySelectorAll('input.wiki-input');
+        inps2[2].value = 'มุมมองอัตโนมัติ';
+        inps2[2].dispatchEvent(new Event('input', { bubbles: true }));
         await new Promise((r) => setTimeout(r, 900));
         const sj3 = await kapi.readJson(await kapi.join(dPath, 'scenes.json'));
         const row3 = (sj3.chapters[ch2.guid] || []).find((x) => x.id === row2.id);
@@ -9614,8 +10305,9 @@ async function runTest(projectPath) {
           await openEntity(wpath);
           await new Promise((r) => setTimeout(r, 600));
           const wtab = state.tabs.get(wpath);
-          check('หน้า Wiki มีปุ่มประวัติ/บันทึกเวอร์ชัน',
-                wtab.pane.querySelectorAll('.wiki-ver-btn').length === 2,
+          // alpha.58 เพิ่มปุ่ม "หาในดิสก์" เข้าแถวเดียวกัน → 3 ปุ่ม
+          check('หน้า Wiki มีปุ่มประวัติ/บันทึกเวอร์ชัน/หาในดิสก์',
+                wtab.pane.querySelectorAll('.wiki-ver-btn').length === 3,
                 String(wtab.pane.querySelectorAll('.wiki-ver-btn').length));
           await snapshotFile(wpath, 'เวอร์ชันทดสอบ Wiki');
           const snaps = await listSnapshots(wpath);
@@ -10595,10 +11287,726 @@ async function runTest(projectPath) {
             check('[57] handleCommand รู้จักคำสั่ง ' + ch,
                   new RegExp("case ['\"]" + ch + "['\"]").test(String(handleCommand)));
           }
-          check('[59] ตัวเลือกมุมมองบทอยู่บนแถบเครื่องมือครบ 5 โหมด',
-                $('#sp-view-select').options.length === 5);
+          // alpha.58 เพิ่มโหมด "จัดหน้า" (Layout) เข้าไปอีกหนึ่ง → 6 โหมด
+          check('[59] ตัวเลือกมุมมองบทบนแถบเครื่องมือครบทุกโหมดใน SP_VIEWS',
+                $('#sp-view-select').options.length === SP_VIEWS.length &&
+                [...$('#sp-view-select').options].every((o) => SP_VIEWS.includes(o.value)),
+                [...$('#sp-view-select').options].map((o) => o.value).join(','));
           check('[59] ตัวเลือกมุมมองโผล่เฉพาะแท็บบทหนัง',
                 getComputedStyle($('#sp-view-select')).display !== 'none');
+        }
+
+        // ════════ alpha.57a ════════
+        // ---- ข้อ 3: เมนู "บท" ต้องมีปุ่มเปิดบนแถบชื่อ ไม่งั้นฟีเจอร์ .57 เข้าไม่ถึงเลย ----
+        {
+          const btn = document.querySelector('.tb-menu[data-m="Script"]');
+          check('[57a-3] แถบชื่อมีปุ่มเมนู "บท"', !!btn,
+                [...document.querySelectorAll('.tb-menu')].map((m) => m.dataset.m).join(','));
+          check('[57a-3] ปุ่มเมนู "บท" มีข้อความไทย (ไม่ใช่คีย์ i18n ดิบ)',
+                !!btn && btn.textContent.trim() === 'บท', btn && btn.textContent);
+          check('[57a-3] ปุ่มเมนูทุกตัวมีเมนูจริงรองรับ (data-m ตรงกับ id ใน main.js)',
+                [...document.querySelectorAll('.tb-menu')].every((m) =>
+                  ['File', 'Edit', 'Format', 'Script', 'View', 'Help', 'AI'].includes(m.dataset.m)));
+          for (const ch of ['scene-numbers', 'page-numbers', 'sp-extension', 'smart-manage',
+                            'type-sound', 'lang-fonts']) {
+            check('[57a] handleCommand รู้จักคำสั่ง ' + ch,
+                  new RegExp("case ['\"]" + ch + "['\"]").test(String(handleCommand)));
+          }
+        }
+
+        // ---- ข้อ 2: element ใหม่ + เลขฉาก + เลขหน้า + ส่วนเสริม ----
+        {
+          const optVals = [...$('#tb-sp-elem').options].map((o) => o.value);
+          check('[57a-2] ตัวเลือก element บนแถบเครื่องมือมี element ใหม่ครบ',
+                ['transition-in', 'transition', 'subheader', 'intercut'].every((k) => optVals.includes(k)),
+                optVals.join(','));
+          check('[57a-2] ทุกตัวเลือกบนแถบเครื่องมือเป็น element จริง',
+                optVals.every((v) => !!SP_ELEMS[v]), optVals.join(','));
+
+          // เลขฉาก — เปิดแล้วต้องโผล่สองฝั่งของหัวฉากทุกฉาก
+          const nScenes = scenePositions(blocksFromDoc(spT.sp.view.state.doc)).length;
+          toggleSceneNumbers(true);
+          await new Promise((r) => setTimeout(r, 120));
+          const snEls = spT.pane.querySelectorAll('.k-scene-no');
+          check('[57a-2] เปิดเลขฉาก → มีเลขซ้าย+ขวาครบทุกหัวฉาก',
+                nScenes > 0 && snEls.length === nScenes * 2, `${snEls.length} vs ${nScenes * 2}`);
+          check('[57a-2] เลขฉากเริ่มที่ 1 และไล่ตามลำดับ',
+                snEls.length >= 2 && snEls[0].textContent === '1' && snEls[1].textContent === '1',
+                [...snEls].slice(0, 4).map((n) => n.textContent).join(','));
+          {
+            // ซ้าย 0.75" จากขอบกระดาษ · ขวา 1" จากขอบขวา — วัดจากกล่องกระดาษจริง
+            const pageEl = spT.pane.querySelector('.ProseMirror');
+            const pr = pageEl.getBoundingClientRect();
+            const l = snEls[0].getBoundingClientRect(), r = snEls[1].getBoundingClientRect();
+            const dpi = pr.width / spFormat().paper.width;      // px ต่อ 1 นิ้ว (รวมซูมแล้ว)
+            const leftIn = (l.left - pr.left) / dpi, rightIn = (pr.right - r.right) / dpi;
+            check('[57a-2] เลขฉากซ้ายอยู่ 0.75 นิ้วจากขอบกระดาษซ้าย',
+                  Math.abs(leftIn - 0.75) < 0.06, leftIn.toFixed(3));
+            check('[57a-2] เลขฉากขวาอยู่ 1 นิ้วจากขอบกระดาษขวา',
+                  Math.abs(rightIn - 1) < 0.06, rightIn.toFixed(3));
+          }
+          toggleSceneNumbers(false);
+          await new Promise((r) => setTimeout(r, 120));
+          check('[57a-2] ปิดเลขฉาก → หายหมด', spT.pane.querySelectorAll('.k-scene-no').length === 0);
+
+          // เลขหน้า — เปิด/ปิดได้ + นับต่อจากเลขเริ่มต้นของไฟล์
+          spT.startPage = 12;
+          togglePageNumbers(true);
+          scheduleCount();
+          await new Promise((r) => setTimeout(r, 400));
+          check('[57a-2] เปิดเลขหน้า → body ติดคลาส sp-page-numbers',
+                document.body.classList.contains('sp-page-numbers'));
+          check('[57a-2] หน้าแรกของไฟล์ที่เริ่มหน้า 12 ไม่ใส่เลข (ธรรมเนียมบท)',
+                updatePageNumberHint() === '', JSON.stringify(updatePageNumberHint()));
+          check('[57a-2] เปิด firstPage แล้วหน้าแรกได้เลข 12',
+                pageNumberLabel(1, spFormat(), 12) === '' &&
+                pageNumberLabel(2, spFormat(), 12) === '13.',
+                pageNumberLabel(2, spFormat(), 12));
+          check('[57a-2] เส้นคั่นหน้าในตัวแก้ไขนับต่อจากเลขเริ่มต้น (ถ้าบทยาวพอ)', (() => {
+            const brk = pageBreaks();
+            return !brk.length || brk[0].page >= 12;
+          })(), JSON.stringify(pageBreaks()));
+          togglePageNumbers(false);
+          spT.startPage = 1;
+          check('[57a-2] ปิดเลขหน้า → คลาสหลุด', !document.body.classList.contains('sp-page-numbers'));
+
+          // ส่วนเสริมท้ายชื่อตัวละคร — เว้นจากชื่อ 1 วรรคพอดี
+          {
+            const chars = [];
+            spT.sp.view.state.doc.forEach((n, p) => { if (n.attrs.el === 'character') chars.push(p); });
+            check('[57a-2] บททดสอบมีบล็อกตัวละครให้ทดสอบ', chars.length > 0);
+            spT.sp.gotoPos(chars[0] + 1);
+            const before = spT.sp.curBlock().node.textContent;
+            spT.sp.setExtension('(V.O.)');
+            const after = spT.sp.curBlock().node.textContent;
+            check('[57a-2] ใส่ส่วนเสริมแล้วอยู่บรรทัดเดียวกัน เว้น 1 วรรค',
+                  after === before.trim() + ' (V.O.)', JSON.stringify(after));
+            check('[57a-2] curExtension อ่านส่วนเสริมกลับได้', spT.sp.curExtension() === '(V.O.)');
+            spT.sp.setExtension("(CONT'D)");
+            check('[57a-2] ใส่ซ้ำ = แทนที่ ไม่ซ้อนกัน',
+                  spT.sp.curBlock().node.textContent === before.trim() + " (CONT'D)",
+                  spT.sp.curBlock().node.textContent);
+            spT.sp.setExtension('');
+            check('[57a-2] ถอดส่วนเสริมได้', spT.sp.curBlock().node.textContent === before.trim());
+          }
+        }
+
+        // ---- ข้อ 4: SmartType ต้องไม่จำคำที่พิมพ์มั่ว ----
+        {
+          const before57a = spT.sp.getMarkdown();   // (before54 อยู่คนละบล็อก — เก็บของตัวเอง)
+          check('[57a-4] คำที่ดูไม่ใช่ชื่อถูกกรองทิ้ง',
+                !looksLikeTerm('ก') && !looksLikeTerm('กกกกกก') && !looksLikeTerm('12345') &&
+                looksLikeTerm('โทระ') && looksLikeTerm('ยัยแมวเก้าชีวิต'));
+          // พิมพ์คำมั่วในบล็อกตัวละครแล้ว "ยังไม่ย้ายเคอร์เซอร์" → ต้องไม่กลายเป็นคำเดา
+          const posEnd = spT.sp.view.state.doc.content.size;
+          spT.sp.gotoPos(posEnd);
+          spT.sp.setElement('character');
+          spT.sp.view.dispatch(spT.sp.view.state.tr.insertText('อสรกดหฟก'));
+          check('[57a-4] คำที่กำลังพิมพ์อยู่ ไม่ถูกเก็บเป็นคำเดา (ไม่เดาทับตัวเอง)',
+                !screenplayTerms(spT).chars.includes('อสรกดหฟก'),
+                JSON.stringify(screenplayTerms(spT).chars));
+          // [alpha.58] ย้ายเคอร์เซอร์ออกแล้วก็ยัง "ไม่จำ" เพราะเจอครั้งเดียว (เกณฑ์ใหม่ = 2 บล็อก)
+          spT.sp.gotoPos(1);
+          check('[57a-4→58] พิมพ์ครั้งเดียว ย้ายเคอร์เซอร์ออกแล้วก็ยังไม่จำ',
+                !screenplayTerms(spT, -1).chars.includes('อสรกดหฟก'),
+                JSON.stringify(screenplayTerms(spT, -1).chars));
+          // พิมพ์ซ้ำอีกบล็อก → ผ่านเกณฑ์ จึงถูกจำ
+          spT.sp.gotoPos(spT.sp.view.state.doc.content.size);
+          spT.sp.enter();
+          spT.sp.setElement('character');
+          spT.sp.view.dispatch(spT.sp.view.state.tr.insertText('อสรกดหฟก'));
+          spT.sp.gotoPos(1);
+          check('[57a-4→58] เจอซ้ำ 2 บล็อกแล้วถูกจำตามปกติ',
+                screenplayTerms(spT, -1).chars.includes('อสรกดหฟก'),
+                JSON.stringify(screenplayTerms(spT, -1).chars));
+          smartIgnoreAdd('อสรกดหฟก');
+          check('[57a-4] สั่งไม่ให้จำแล้วหายจากรายการเดา',
+                !screenplayTerms(spT).chars.includes('อสรกดหฟก'));
+          check('[57a-4] รายการ "ไม่ต้องจำ" เก็บใน meta (บันทึกลงไฟล์โปรเจกต์)',
+                smartIgnoreList().includes('อสรกดหฟก'));
+          spSmartCheck(spT);
+          check('[57a-4] SmartType ไม่เสนอคำที่สั่งไม่ให้จำ',
+                !smart.items.includes('อสรกดหฟก'), JSON.stringify(smart.items));
+          smart.hide();
+          smartIgnoreRemove('อสรกดหฟก');
+          check('[57a-4] เอาออกจากรายการ "ไม่ต้องจำ" ได้', !smartIgnored('อสรกดหฟก'));
+          // ชื่อตัวละครที่มีส่วนเสริม ต้องถูกเก็บเป็นชื่อเดียวกับที่ไม่มีส่วนเสริม
+          check('[57a-4] เก็บเฉพาะชื่อ ไม่เอาส่วนเสริมมาเป็นคนละคน',
+                !screenplayTerms(spT).chars.some((c) => /\(/.test(c)),
+                JSON.stringify(screenplayTerms(spT).chars));
+          const dlg = smartTypeDialog();
+          check('[57a-4] กล่องจัดการ SmartType เปิดได้ + มีรายการ',
+                !!dlg.querySelector('.k-smart-body'));
+          dlg.querySelector('.k-dlg-btns .k-ok').click();
+          check('[57a-4] ปิดกล่องจัดการ SmartType แล้ว', !document.body.contains(dlg));
+          // คืนเนื้อหาเดิม (เทสถัด ๆ ไปยังใช้บทนี้อยู่)
+          spT.sp.setMarkdown(before57a);
+          scheduleCount();
+          await new Promise((r) => setTimeout(r, 300));
+        }
+
+        // ---- ข้อ 1: เสียงเครื่องพิมพ์ดีด ----
+        {
+          check('[57a-1] soundKindFor แยกชนิดเสียงถูก',
+                soundKindFor({ key: 'ก' }) === 'key' && soundKindFor({ key: 'Enter' }) === 'return' &&
+                soundKindFor({ key: ' ', code: 'Space' }) === 'space' &&
+                soundKindFor({ key: 'Backspace' }) === 'back');
+          check('[57a-1] คีย์ลัด/ปุ่มควบคุมไม่มีเสียง',
+                soundKindFor({ key: 's', ctrlKey: true }) === null &&
+                soundKindFor({ key: 'ArrowLeft' }) === null &&
+                soundKindFor({ key: 'Shift' }) === null);
+          check('[57a-1] เล่นเสียงเฉพาะตอนพิมพ์ในตัวแก้ไข',
+                isEditorTarget({ target: spT.pane.querySelector('.ProseMirror') }) &&
+                !isEditorTarget({ target: document.body }));
+          // สวิตช์: ปิดเสียง = ไม่เล่น · เปิดแล้วต้องผูกกับโหมดเครื่องพิมพ์ดีดตามที่ตั้งไว้
+          state.settings.typeSound = false; syncTypeSound();
+          check('[57a-1] ปิดเสียงในตั้งค่า → เสียงไม่ทำงาน', !isTypeSound());
+          state.settings.typeSound = true; state.settings.typeSoundAlways = false;
+          toggleTypewriter(false); syncTypeSound();
+          check('[57a-1] เปิดเสียงแต่ไม่ได้เปิดโหมดเครื่องพิมพ์ดีด → ยังเงียบ', !isTypeSound());
+          toggleTypewriter(true); syncTypeSound();
+          check('[57a-1] เปิดโหมดเครื่องพิมพ์ดีดแล้วเสียงทำงาน', isTypeSound());
+          toggleTypewriter(false);
+          state.settings.typeSoundAlways = true; syncTypeSound();
+          check('[57a-1] ตั้ง "เล่นตลอด" → ไม่ต้องเปิดโหมดก็มีเสียง', isTypeSound());
+          check('[57a-1] ตั้งระดับเสียงได้ 0–1 (หนีบค่านอกช่วง)',
+                setTypeVolume(0.35) === 0.35 && setTypeVolume(9) === 1 && setTypeVolume(-1) === 0);
+          setTypeVolume(0.5);
+          state.settings.typeSound = false; state.settings.typeSoundAlways = false; syncTypeSound();
+          check('[57a-1] ปิดกลับแล้วเงียบ', !isTypeSound());
+        }
+
+        // ---- ข้อ 5: ฟอนต์ตามภาษา ----
+        {
+          const keep = state.settings.langFonts;
+          state.settings.langFonts = [
+            { id: 'thai', range: 'U+0E00-0E7F', builtin: 'CourierThaiMono.ttf', enabled: true },
+          ];
+          const n = applyProjectLangFonts();
+          check('[57a-5] สร้าง @font-face ตามภาษาเข้า <head>',
+                n === 1 && !!document.getElementById('k-lang-fonts'));
+          const css = document.getElementById('k-lang-fonts').textContent;
+          check('[57a-5] CSS มี unicode-range ของไทย + ไฟล์ที่ฝังมา',
+                css.includes('unicode-range:U+0E00-0E7F') && css.includes('CourierThaiMono.ttf'), css);
+          applySettings();
+          const edFont = document.documentElement.style.getPropertyValue('--ed-font');
+          const spFont = document.documentElement.style.getPropertyValue('--sp-font');
+          check('[57a-5] วงศ์รวมถูกเอาไปนำหน้า font stack ทั้งนิยายและบทหนัง',
+                edFont.startsWith('"' + LANG_FAMILY + '"') && spFont.startsWith('"' + LANG_FAMILY + '"'),
+                edFont + ' | ' + spFont);
+          check('[57a-5] ยังเก็บฟอนต์เดิมไว้ท้าย stack', spFont.includes('Courier'), spFont);
+          // ฟอนต์ไทยที่ฝังมาต้องโหลดได้จริง (ไม่ใช่แค่ประกาศ @font-face)
+          try {
+            await document.fonts.load('16px "Courier Thai Mono"');
+            check('[57a-5] โหลดไฟล์ฟอนต์ไทยที่ฝังมาได้จริง',
+                  document.fonts.check('16px "Courier Thai Mono"'));
+          } catch (e) { check('[57a-5] โหลดไฟล์ฟอนต์ไทยที่ฝังมาได้จริง', false, String(e)); }
+          // ปิดทุกแถว = กลับไปใช้ stack เดิม ไม่มีวงศ์รวมนำหน้า
+          state.settings.langFonts = [{ id: 'thai', range: 'U+0E00-0E7F', builtin: 'x.ttf', enabled: false }];
+          applySettings();
+          check('[57a-5] ไม่มีแถวไหนใช้ได้ → ไม่แตะ font stack เดิม',
+                !document.documentElement.style.getPropertyValue('--sp-font').includes(LANG_FAMILY));
+          state.settings.langFonts = keep;
+          applySettings();
+        }
+
+        // ---- ข้อ 5 (ต่อ): "สระ/วรรณยุกต์ลอย" มี 2 ต้นเหตุ — CSS และตัวฟอนต์เอง ----
+        {
+          // (ก) letter-spacing เติมช่องไฟหลังทุก glyph รวม combining mark ที่กว้าง 0
+          //     → วรรณยุกต์ถูกดันไปทางขวาหลุดจากพยัญชนะ
+          const sc = spT.pane.querySelector('.sp-scene');
+          const ls = sc ? getComputedStyle(sc).letterSpacing : '';
+          check('[57a-5] หัวฉากไม่มี letter-spacing (ดันสระ/วรรณยุกต์ไทยหลุดจากพยัญชนะ)',
+                ls === 'normal' || parseFloat(ls) === 0, ls);
+
+          // (ข) ตัวฟอนต์ไทยที่ฝังมา วางมาร์กสูงเกินไป → วัดช่องว่างจริงด้วยการวาดลง canvas
+          //     (ฟอนต์ต้นฉบับห่าง ~7% ของ em · ฟอนต์อ้างอิงห่าง ~3.5% · แก้แล้วต้องเข้าเกณฑ์อ้างอิง)
+          const markGap = async (family, text, px = 110) => {
+            await document.fonts.load(`${px}px "${family}"`);
+            const cv = document.createElement('canvas');
+            cv.width = px * 2; cv.height = px * 2;
+            const cx = cv.getContext('2d');
+            cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height);
+            cx.fillStyle = '#000'; cx.textBaseline = 'alphabetic';
+            cx.font = `${px}px "${family}"`;
+            cx.fillText(text, px * 0.4, px * 1.4);
+            const d = cx.getImageData(0, 0, cv.width, cv.height).data;
+            const rows = [];
+            for (let y = 0; y < cv.height; y++) {
+              let ink = false;
+              for (let x = 0; x < cv.width && !ink; x++) if (d[(y * cv.width + x) * 4] < 128) ink = true;
+              rows.push(ink);
+            }
+            const ys = rows.map((v, i) => (v ? i : -1)).filter((i) => i >= 0);
+            if (!ys.length) return null;
+            let gap = 0, cur = 0;
+            for (let i = ys[0]; i <= ys[ys.length - 1]; i++) {
+              if (!rows[i]) { cur++; gap = Math.max(gap, cur); } else cur = 0;
+            }
+            return gap / px;            // สัดส่วนต่อ em
+          };
+          const LIMIT = 0.05;           // ฟอนต์อ้างอิงอยู่ราว 0.027–0.036 · ต้นฉบับที่ยังไม่แก้ ~0.073
+          for (const [fam, txt, label] of [
+            ['Courier Thai Mono', 'ก่', 'พยัญชนะ+วรรณยุกต์'],
+            ['Courier Thai Mono', 'กี่', 'พยัญชนะ+สระบน+วรรณยุกต์'],
+            ['Courier Thai Proportional', 'ก้', 'ตัวสัดส่วน'],
+          ]) {
+            const g = await markGap(fam, txt);
+            check(`[57a-5] ฟอนต์ไทยที่ฝังมา — วรรณยุกต์ไม่ลอย (${label})`,
+                  g !== null && g <= LIMIT, `${fam} "${txt}" = ${g === null ? 'ว่าง' : (g * 100).toFixed(1) + '% ของ em'}`);
+          }
+          // สระล่างก็ต้องไม่ห้อยหลุด
+          const gu = await markGap('Courier Thai Mono', 'กุ');
+          check('[57a-5] ฟอนต์ไทยที่ฝังมา — สระล่างไม่ห้อยหลุด',
+                gu !== null && gu <= 0.065, gu === null ? 'ว่าง' : (gu * 100).toFixed(1) + '%');
+        }
+      }
+
+      // ════════════════ alpha.58 ════════════════
+      // [58] Layout View · [55][56] CONTINUED · [71][72][73] รายงาน
+      // + บั๊ก .57 4 ข้อ + ฟีเจอร์ที่ขาด 2 ข้อ + ค่าเริ่มต้นฉากย่อย/ช็อต
+      {
+        // เปิดแท็บบทหนังของตัวเอง (spT ของบล็อก .56/.57 อยู่คนละสโคป)
+        const spScene58 = [...document.querySelectorAll('.scene')]
+          .find((x) => x.textContent.includes('บทหนังทดสอบ'));
+        check('[58] เปิดฉากบทภาพยนตร์สำหรับเทส alpha.58 ได้', !!spScene58);
+        spScene58.click();
+        await new Promise((r) => setTimeout(r, 400));
+        const spT58 = state.active;
+        check('[58] แท็บที่เปิดเป็นบทภาพยนตร์จริง', !!spT58.sp);
+        resetPageScale();
+        setSpView('normal');
+        await new Promise((r) => setTimeout(r, 150));
+
+        // ---- ข้อเสนอ: ฉากย่อย/ช็อต วางตัวเหมือนหัวฉาก แต่ไม่มีเลขฉาก ----
+        {
+          check('[58-ชื่อ] เปลี่ยนชื่อ subheader เป็น "ฉากย่อย"', SP_ELEMS.subheader.th === 'ฉากย่อย');
+          check('[58-ชื่อ] ตัวเลือกบนแถบเครื่องมือใช้ชื่อใหม่',
+                [...$('#tb-sp-elem').options].some((o) => o.value === 'subheader' && o.textContent === 'ฉากย่อย'));
+          const F = spFormat();
+          for (const k of ['subheader', 'shot', 'intercut']) {
+            check(`[58-ฉากย่อย] ${k} เยื้อง/กว้างเท่าหัวฉาก`,
+                  F.elements[k].indent === F.elements.scene.indent &&
+                  F.elements[k].width === F.elements.scene.width,
+                  JSON.stringify(F.elements[k]));
+            check(`[58-ฉากย่อย] ${k} เว้นบรรทัดก่อนหน้าเท่าหัวฉาก`,
+                  F.elements[k].linesBefore === F.elements.scene.linesBefore);
+            check(`[58-ฉากย่อย] ${k} ตัวหนา + พิมพ์ใหญ่ ทั้งบนจอและตอนพิมพ์`,
+                  F.styles[k].screen.bold && F.styles[k].screen.caps &&
+                  F.styles[k].print.bold && F.styles[k].print.caps);
+          }
+          check('[58-ฉากย่อย] เลิกขีดเส้นใต้ฉากย่อย', !F.styles.subheader.screen.underline);
+          // เลขฉากต้องขึ้นเฉพาะ el === 'scene'
+          spT58.sp.setMarkdown('.INT. ห้องนอน - คืน\n!บรรยาย\n$sub มุมหน้าต่าง\n$shot CLOSE ON มือ');
+          await new Promise((r) => setTimeout(r, 60));
+          toggleSceneNumbers(true);
+          await new Promise((r) => setTimeout(r, 150));
+          const subEl = spT58.pane.querySelector('.sp-subheader');
+          const shotEl = spT58.pane.querySelector('.sp-shot');
+          check('[58-ฉากย่อย] ฉากย่อย/ช็อตไม่มีเลขฉากกำกับ',
+                !!subEl && !subEl.querySelector('.k-scene-no') &&
+                !!shotEl && !shotEl.querySelector('.k-scene-no'));
+          check('[58-ฉากย่อย] หัวฉากยังมีเลขฉากตามเดิม',
+                spT58.pane.querySelectorAll('.sp-scene .k-scene-no').length === 2);
+          const subCS = getComputedStyle(subEl), scCS = getComputedStyle(spT58.pane.querySelector('.sp-scene'));
+          check('[58-ฉากย่อย] ระยะเยื้องบนจอเท่าหัวฉากจริง',
+                subCS.marginLeft === scCS.marginLeft, subCS.marginLeft + ' vs ' + scCS.marginLeft);
+          check('[58-ฉากย่อย] ตัวหนาบนจอจริง', +subCS.fontWeight >= 700, subCS.fontWeight);
+          toggleSceneNumbers(false);
+          await new Promise((r) => setTimeout(r, 100));
+        }
+
+        // ---- บั๊ก 3: ขนาดตัวอักษร/หน้ากระดาษตรงมาตรฐาน 10 ตัว/นิ้ว · 6 บรรทัด/นิ้ว ----
+        {
+          // เทสก่อนหน้าปรับ uiFontSize/spFontPt ไว้ — มาตรฐานบทวัดที่ 12pt เท่านั้น
+          const keepFs = { off: state.settings.uiFontSize, pt: state.settings.spFontPt };
+          state.settings.uiFontSize = 0; state.settings.spFontPt = 12;
+          applyZoomVars();
+          await new Promise((r) => setTimeout(r, 120));
+          const F = spFormat();
+          const mt = pageMetrics(F);
+          check('[58-บั๊ก3] Letter จุ 54 บรรทัด/หน้า', mt.linesPerPage === 54, mt.linesPerPage);
+          const pageEl = spT58.pane.querySelector('.ProseMirror');
+          const pr = pageEl.getBoundingClientRect();
+          const dpi = pr.width / F.paper.width;
+          const spEl = spT58.pane.querySelector('.sp-action') || spT58.pane.querySelector('.sp');
+          const cs = getComputedStyle(spEl);
+          const lh = parseFloat(cs.lineHeight), fs = parseFloat(cs.fontSize);
+          check('[58-บั๊ก3] ช่วงบรรทัด = ขนาดฟอนต์พอดี (12pt/12pt ตามมาตรฐานบท)',
+                Math.abs(lh - fs) < 0.6, `line-height ${lh} vs font-size ${fs}`);
+          check('[58-บั๊ก3] ฟอนต์มาตรฐาน 12pt = 16px', Math.abs(fs - 16) < 0.6, String(fs));
+          check('[58-บั๊ก3] 1 บรรทัด = 1/6 นิ้ว (6 บรรทัด/นิ้ว)', Math.abs(lh - 16) < 0.6, String(lh));
+          check('[58-บั๊ก3] 54 บรรทัดพอดีความสูงพื้นที่พิมพ์',
+                Math.abs(mt.linesPerPage * lh - mt.bodyHeightPx) < 8,
+                `${mt.linesPerPage} × ${lh} vs ${mt.bodyHeightPx}`);
+          // ความกว้าง 10 ตัวอักษร/นิ้ว — วัดจริงด้วย canvas ตามฟอนต์ที่ใช้อยู่
+          {
+            const cv = document.createElement('canvas');
+            const cx = cv.getContext('2d');
+            cx.font = `${fs}px ${cs.fontFamily}`;
+            const w10 = cx.measureText('0123456789').width;
+            check('[58-บั๊ก3] 10 ตัวอักษร = 1 นิ้ว (Courier 12pt)',
+                  Math.abs(w10 - 96) < 6, w10.toFixed(2) + 'px ต่อ 10 ตัว');
+          }
+          // ซูมพอดีความกว้าง
+          const z = zoomFitWidth(spT58.pane);
+          await new Promise((r) => setTimeout(r, 120));
+          check('[58-บั๊ก3] ซูมพอดีความกว้างทำให้กระดาษไม่ล้นพื้นที่',
+                spT58.pane.querySelector('.ProseMirror').getBoundingClientRect().width
+                  <= spT58.pane.clientWidth + 4,
+                `${Math.round(spT58.pane.querySelector('.ProseMirror').getBoundingClientRect().width)} vs ${spT58.pane.clientWidth}`);
+          check('[58-บั๊ก3] ซูมพอดีความกว้างอยู่ในช่วงที่อนุญาต', z >= SCALE_MIN && z <= SCALE_MAX, z);
+          check('[58-บั๊ก3] เมนูมุมมองมีคำสั่งพอดีความกว้าง',
+                /case ['"]zoom['"]/.test(String(handleCommand)) &&
+                /['"]fit['"]/.test(String(handleCommand)),
+                String(handleCommand).slice(0, 0) + typeof zoomFitWidth);
+          resetPageScale();
+          state.settings.uiFontSize = keepFs.off; state.settings.spFontPt = keepFs.pt;
+          applyZoomVars();
+          await new Promise((r) => setTimeout(r, 100));
+        }
+
+        // ---- [58] Layout View ----
+        {
+          check('[58] มีโหมด layout ในรายการมุมมอง', SP_VIEWS.includes('layout'));
+          check('[58] ตัวเลือกบนแถบเครื่องมือมีโหมดจัดหน้า',
+                [...$('#sp-view-select').options].some((o) => o.value === 'layout'));
+          // เนื้อหายาวพอให้ข้ามหน้าจริง
+          const long58 = ['.INT. ห้องนอน - กลางคืน',
+            ...Array.from({ length: 120 }, (_, i) => '!บรรยายฉากที่ ' + i + ' ยาวพอควรให้เต็มบรรทัด')].join('\n');
+          spT58.sp.setMarkdown(long58);
+          await new Promise((r) => setTimeout(r, 700));
+          setSpView('layout');
+          await new Promise((r) => setTimeout(r, 400));
+          check('[58] โหมดจัดหน้าใส่คลาสให้ pane', spT58.pane.classList.contains('sp-view-layout'));
+          check('[58] โหมดจัดหน้ายังพิมพ์ได้ (ไม่ใช่ overlay อ่านอย่างเดียว)',
+                isEditView('layout') && !spT58.pane.querySelector(':scope > .sp-pageview'));
+          const pmCS = getComputedStyle(spT58.pane.querySelector('.ProseMirror'));
+          check('[58] กระดาษเป็นสีขาวจริง', pmCS.backgroundColor === 'rgb(255, 255, 255)', pmCS.backgroundColor);
+          check('[58] มีเงาใต้กระดาษ', pmCS.boxShadow !== 'none');
+          check('[58] ระยะขอบกระดาษถูกต้อง (ซ้าย 1.5 นิ้ว บน 1 นิ้ว)',
+                Math.abs(parseFloat(pmCS.paddingLeft) - 1.5 * 96) < 2 &&
+                Math.abs(parseFloat(pmCS.paddingTop) - 1 * 96) < 2,
+                pmCS.paddingLeft + ' / ' + pmCS.paddingTop);
+          check('[58] กระดาษสูงอย่างน้อย 1 หน้าเต็ม (11 นิ้ว)',
+                parseFloat(pmCS.minHeight) >= 11 * 96 - 2, pmCS.minHeight);
+          const brks = spT58.pane.querySelectorAll('.sp-page-break');
+          check('[58] มีรอยต่อระหว่างหน้าให้เห็น', brks.length >= 1, brks.length);
+          if (brks.length) {
+            const bCS = getComputedStyle(brks[0]);
+            check('[58] รอยต่อเป็น "ช่องว่างจริง" ไม่ใช่เส้นบาง',
+                  parseFloat(bCS.height) >= 8, bCS.height);
+            check('[58] ช่องว่างล้ำออกนอกระยะขอบทั้งสองข้าง',
+                  parseFloat(bCS.marginLeft) < -1 && parseFloat(bCS.marginRight) < -1,
+                  bCS.marginLeft + ' / ' + bCS.marginRight);
+            check('[58] ช่องว่างมีเส้นขอบบน-ล่างคั่น',
+                  parseFloat(bCS.borderTopWidth) >= 1 && parseFloat(bCS.borderBottomWidth) >= 1);
+            const num = brks[0].querySelector('.sp-page-break-num');
+            check('[58] มีเลขหน้ากำกับรอยต่อ', !!num && /\d/.test(num.textContent), num && num.textContent);
+          }
+          check('[58] จำนวนรอยต่อ = จำนวนหน้า − 1 (ตรงกับ paginate)',
+                brks.length === pagesOf(blocksFromDoc(spT58.sp.view.state.doc), spFormat(),
+                                        linesPerPage(spFormat().paper, spFormat().margins)).count - 1,
+                brks.length);
+          check('[58] แถบสถานะบอกจำนวนหน้าเดียวกัน', /\d+ หน้า/.test($('#wc').textContent), $('#wc').textContent);
+          const lvVars = layoutCssVars(spFormat());
+          check('[58] ตัวแปร CSS ของโหมดจัดหน้าถูกตั้งจริง',
+                rootVar('--sp-body-h') === lvVars['--sp-body-h'] &&
+                rootVar('--sp-line-h') === lvVars['--sp-line-h'],
+                rootVar('--sp-body-h') + ' / ' + rootVar('--sp-line-h'));
+          // สลับกลับ/สลับไปโหมดร่างแล้วคลาสต้องไม่ค้าง
+          setSpView('draft');
+          await new Promise((r) => setTimeout(r, 200));
+          check('[58] สลับไปโหมดร่างแล้วคลาสจัดหน้าไม่ค้าง',
+                !spT58.pane.classList.contains('sp-view-layout') &&
+                spT58.pane.classList.contains('sp-view-draft'));
+          setSpView('normal');
+          await new Promise((r) => setTimeout(r, 200));
+          check('[58] กลับโหมดปกติแล้วไม่มีคลาสมุมมองค้าง',
+                ALL_VIEW_CLASSES.every((c) => !spT58.pane.classList.contains(c)));
+        }
+
+        // ---- [55][56] CONTINUED / (MORE) / (cont'd) ----
+        {
+          check('[55] ระบบต่อเนื่องเปิดเป็นค่าเริ่มต้น', spContinuedOn());
+          // ฉากเดียวยาวข้ามหลายหน้า
+          const longScene = ['.INT. ห้องนอน - กลางคืน',
+            ...Array.from({ length: 130 }, (_, i) => '!บรรยายฉากที่ ' + i + ' ให้ยาวพอเต็มบรรทัด')].join('\n');
+          spT58.sp.setMarkdown(longScene);
+          await new Promise((r) => setTimeout(r, 800));
+          const marks = spT58.pane.querySelectorAll('.sp-cont-mark');
+          check('[55] ฉากข้ามหน้า → มีเครื่องหมายต่อเนื่องในตัวแก้ไข', marks.length >= 2, marks.length);
+          const texts = [...marks].map((m) => m.textContent);
+          check('[55] มี (CONTINUED) ท้ายหน้า', texts.includes('(CONTINUED)'), texts.join(' | '));
+          check('[56] มี CONTINUED: ต้นหน้า', texts.some((x) => x.startsWith('CONTINUED:')));
+          const bot = spT58.pane.querySelector('.sp-cont-mark.sp-continued-bottom');
+          const top = spT58.pane.querySelector('.sp-cont-mark.sp-continued-top');
+          check('[55] (CONTINUED) ชิดขวา', getComputedStyle(bot).textAlign === 'right');
+          check('[56] CONTINUED: ชิดซ้าย', getComputedStyle(top).textAlign === 'left');
+          check('[55] เครื่องหมายแก้ไขไม่ได้ (ไม่ใช่ข้อความในไฟล์)',
+                bot.getAttribute('contenteditable') === 'false' &&
+                getComputedStyle(bot).pointerEvents === 'none');
+          check('[55] เครื่องหมายไม่หลุดไปอยู่ในไฟล์ .md',
+                !spT58.sp.getMarkdown().includes('(CONTINUED)') &&
+                !spT58.sp.getMarkdown().includes('CONTINUED:'));
+          // ท้ายหน้าต้องมาก่อนเส้นคั่นหน้า · ต้นหน้าต้องมาหลัง
+          {
+            const all = [...spT58.pane.querySelectorAll('.sp-cont-mark, .sp-page-break')];
+            const iBot = all.indexOf(bot), iTop = all.indexOf(top);
+            const iBrk = all.findIndex((n) => n.classList.contains('sp-page-break'));
+            check('[55] (CONTINUED) อยู่เหนือเส้นคั่นหน้า · CONTINUED: อยู่ใต้',
+                  iBot >= 0 && iBrk > iBot && iTop > iBrk,
+                  `bot=${iBot} brk=${iBrk} top=${iTop}`);
+          }
+          // ข้ามหลายหน้า → เลขกำกับ
+          check('[56] ข้ามหลายหน้าติดกันมีเลขกำกับ CONTINUED: (2)',
+                texts.some((x) => /^CONTINUED: \(\d+\)$/.test(x)), texts.join(' | '));
+          // บทพูดถูกตัดกลาง → (MORE) + ทวนชื่อ + (cont'd)
+          const dlg58 = ['.INT. ครัว - เช้า',
+            ...Array.from({ length: 42 }, (_, i) => '!บรรยาย ' + i),
+            '@ทอร่า',
+            // ยาวกว่าหนึ่งหน้าเต็ม → ยังไงก็ต้องถูกตัด ไม่ว่าจะเริ่มตรงไหนของหน้า
+            'ฉันจะเล่าให้ฟังทั้งหมด ' + 'พูดต่อไปอีกยาวมาก '.repeat(300)].join('\n');
+          spT58.sp.setMarkdown(dlg58);
+          await new Promise((r) => setTimeout(r, 800));
+          const dTexts = [...spT58.pane.querySelectorAll('.sp-cont-mark')].map((m) => m.textContent);
+          check('[55] บทพูดข้ามหน้า → มี (MORE) ท้ายหน้า',
+                dTexts.includes('(MORE)'), dTexts.join(' | '));
+          check("[55] ต้นหน้าใหม่ทวนชื่อ + (cont'd)",
+                dTexts.some((x) => x.includes('ทอร่า') && x.includes("(cont'd)")), dTexts.join(' | '));
+          {
+            const moreEl = [...spT58.pane.querySelectorAll('.sp-cont-mark')]
+              .find((m) => m.textContent === '(MORE)');
+            const chEl = spT58.pane.querySelector('.sp-character');
+            if (moreEl && chEl) {
+              check('[55] (MORE) เยื้องแนวเดียวกับชื่อตัวละคร',
+                    Math.abs(moreEl.getBoundingClientRect().left - chEl.getBoundingClientRect().left) < 4,
+                    `${moreEl.getBoundingClientRect().left} vs ${chEl.getBoundingClientRect().left}`);
+            }
+          }
+          // ฉากจบพอดีหน้า → ห้ามมี CONTINUED (บั๊กของ .57 ที่ใส่ทุกคู่หน้าโดยไม่ดูฉาก)
+          {
+            const twoBlocks = [{ el: 'scene', text: 'INT. ก - วัน' },
+              ...Array.from({ length: 9 }, (_, i) => ({ el: 'action', text: 'บรรยาย ' + i })),
+              { el: 'scene', text: 'EXT. ข - คืน' },
+              ...Array.from({ length: 5 }, (_, i) => ({ el: 'action', text: 'ต่อ ' + i }))];
+            const pgTwo = paginate(twoBlocks, { lines: 20, fmt: spFormat() });
+            check('[56] ขึ้นหัวฉากใหม่ต้นหน้า → ไม่มี CONTINUED',
+                  pgTwo.pages.length > 1 && !pgTwo.pages[1].continuedTop && !pgTwo.pages[0].continuedBottom,
+                  JSON.stringify(pgTwo.pages.map((p) => [p.sceneStart, p.sceneEnd, p.continuedTop || ''])));
+            check('[56] แต่ละหน้าบันทึกเลขฉากเริ่ม/จบไว้ให้ตรวจได้',
+                  pgTwo.pages.every((p) => Number.isFinite(p.sceneStart) && Number.isFinite(p.sceneEnd)));
+          }
+          // สวิตช์ปิด
+          toggleContinueds(false);
+          await new Promise((r) => setTimeout(r, 700));
+          check('[55] ปิดสวิตช์แล้วเครื่องหมายหายหมด',
+                spT58.pane.querySelectorAll('.sp-cont-mark').length === 0);
+          check('[55] สถานะถูกจำลง settings', state.settings.spContinued.enabled === false);
+          toggleContinueds(true);
+          await new Promise((r) => setTimeout(r, 700));
+          check('[55] เปิดกลับแล้วเครื่องหมายกลับมา',
+                spT58.pane.querySelectorAll('.sp-cont-mark').length > 0);
+          check('[55] handleCommand รู้จักคำสั่ง sp-continued',
+                /case ['"]sp-continued['"]/.test(String(handleCommand)));
+        }
+
+        // ---- [71][72][73] รายงาน ----
+        {
+          const rep58 = ['.INT. ห้องนอน - กลางคืน', '!ทอร่านั่งริมเตียง',
+            '@ทอร่า', 'ฉันไม่อยากไป',
+            '@แคสซี่', 'ก็ไม่ต้องไปสิ ' + 'พูดต่ออีกหน่อย '.repeat(6),
+            '', '.EXT. สวนหลังบ้าน - เช้า', '!แสงแดดส่องผ่านใบไม้',
+            '@ทอร่า (V.O.)', 'เช้าวันนั้นทุกอย่างเปลี่ยนไป',
+            '.INT. ห้องนอน - เช้า', '!เตียงว่างเปล่า'].join('\n');
+          spT58.sp.setMarkdown(rep58);
+          await new Promise((r) => setTimeout(r, 700));
+
+          const inp = spReportInput();
+          check('[71-73] อ่านบล็อกจากบทที่เปิดอยู่ได้', !!inp && inp.blocks.length > 5);
+          const locData = buildSpReport('location', inp);
+          check('[71] จัดกลุ่มได้ 2 สถานที่', locData.locations.length === 2,
+                locData.locations.map((l) => l.location).join(','));
+          check('[71] ห้องนอนมี 2 ฉาก',
+                locData.locations.find((l) => l.location === 'ห้องนอน').sceneCount === 2);
+          const chData = buildSpReport('character', inp);
+          check('[72] นับได้ 2 ตัวละคร (V.O. รวมเป็นคนเดียว)', chData.characters.length === 2,
+                chData.characters.map((c) => c.name).join(','));
+          check('[72] เรียงตามบรรทัดบทพูดมากไปน้อย', chData.characters[0].name === 'แคสซี่',
+                chData.characters[0].name);
+          const chartData = buildSpReport('chart', inp);
+          check('[73] มีข้อมูลครบทุกหน้า', chartData.pages.length === chartData.totalPages);
+
+          for (const kind of ['location', 'character', 'chart']) {
+            const dlg = openSpReport(kind);
+            await new Promise((r) => setTimeout(r, 120));
+            check(`[71-73] เปิดกล่องรายงาน "${kind}" ได้`, !!dlg && !!dlg.querySelector('.k-report-dlg'));
+            check(`[71-73] กล่อง "${kind}" มีเนื้อหา`,
+                  dlg.querySelector('.k-report-body').textContent.trim().length > 10);
+            check(`[71-73] กล่อง "${kind}" สลับไปรายงานอื่นได้`,
+                  dlg.querySelectorAll('.k-report-tab').length === 3);
+            check(`[71-73] แท็บที่เปิดอยู่ถูกไฮไลต์`,
+                  dlg.querySelectorAll('.k-report-tab.on').length === 1);
+            if (kind === 'location') {
+              const row = dlg.querySelector('.k-report-row.can-go');
+              check('[71] แถวฉากคลิกกระโดดไปได้', !!row);
+            }
+            if (kind === 'character') {
+              check('[72] แสดงเป็นตาราง', !!dlg.querySelector('.k-report-table'));
+              check('[72] ตารางมีหัวคอลัมน์ครบ 7 ช่อง',
+                    dlg.querySelectorAll('.k-report-table th').length === 7);
+            }
+            if (kind === 'chart') {
+              check('[73] มีแถบสัดส่วนต่อหน้า', dlg.querySelectorAll('.sp-chart-bar').length >= 1);
+              check('[73] แถบมีหลายสีตามชนิด element',
+                    dlg.querySelectorAll('.sp-chart-seg').length >= 2);
+              check('[73] มีคำอธิบายสี (legend)', dlg.querySelectorAll('.sp-chart-key').length === 4);
+            }
+            dlg.querySelector('.k-dlg-btns .k-ok').click();
+            await new Promise((r) => setTimeout(r, 60));
+          }
+          check('[71-73] handleCommand รู้จักคำสั่ง sp-report',
+                /case ['"]sp-report['"]/.test(String(handleCommand)));
+          check('[71] ข้อความรายงานสถานที่คัดลอกได้', spReportText('location', locData).includes('ห้องนอน'));
+          check('[72] ข้อความรายงานตัวละครคัดลอกได้', spReportText('character', chData).includes('แคสซี่'));
+          check('[73] ข้อความกราฟคัดลอกได้', spReportText('chart', chartData).includes('หน้า'));
+        }
+
+        // ---- บั๊ก 1: SmartType ต้องไม่จำคำที่พิมพ์ครั้งเดียว ----
+        {
+          const junk = ['.INT. ห้องนอน - คืน',
+            '@ทอร่า', 'สวัสดี', '@ทอร่า', 'อีกครั้ง', '@พมิมพ์', 'พิมพ์มั่ว'].join('\n');
+          spT58.sp.setMarkdown(junk);
+          await new Promise((r) => setTimeout(r, 300));
+          spT58.sp.gotoPos(1);
+          const T58 = screenplayTerms(spT58, -1);
+          check('[58-บั๊ก1] ชื่อที่พิมพ์ซ้ำ 2 ครั้ง → จำ', T58.chars.includes('ทอร่า'), T58.chars.join(','));
+          check('[58-บั๊ก1] คำที่พิมพ์ครั้งเดียว → ไม่จำ', !T58.chars.includes('พมิมพ์'), T58.chars.join(','));
+          check('[58-บั๊ก1] เกณฑ์เริ่มต้น = 2 บล็อก', smartLearnMin() === 2);
+          // กด "จำ" เอง → จำทันที
+          smartPinAdd('พมิมพ์');
+          check('[58-บั๊ก1] กดจำเอง → จำทันทีแม้เจอครั้งเดียว',
+                screenplayTerms(spT58, -1).chars.includes('พมิมพ์'));
+          smartIgnoreAdd('พมิมพ์');
+          check('[58-บั๊ก1] สั่งไม่จำ ชนะการกดจำเอง',
+                !screenplayTerms(spT58, -1).chars.includes('พมิมพ์'));
+          check('[58-บั๊ก1] สั่งไม่จำแล้วออกจากรายการจำเอง', !smartPinList().includes('พมิมพ์'));
+          smartIgnoreRemove('พมิมพ์');
+          // ตัวกรองระดับตัวอักษร
+          check('[58-บั๊ก1] คำขึ้นต้นด้วยวรรณยุกต์ตกทันที', !looksLikeTerm('่วน'));
+          check('[58-บั๊ก1] ชื่อจริงยังผ่าน', looksLikeTerm('ทอร่า') && looksLikeTerm('Nazarena'));
+          // กล่องจัดการต้องโชว์ทั้งที่จำแล้วและที่ยังไม่จำ
+          const sdlg = smartTypeDialog();
+          await new Promise((r) => setTimeout(r, 120));
+          check('[58-บั๊ก1] กล่องจัดการมีตัวตั้งเกณฑ์เจอซ้ำ', !!sdlg.querySelector('.k-smart-min select'));
+          check('[58-บั๊ก1] กล่องจัดการโชว์คำที่ยังไม่จำให้กดเพิ่มได้',
+                sdlg.querySelectorAll('.k-smart-wait').length >= 1,
+                sdlg.querySelector('.k-smart-body').textContent.slice(0, 120));
+          sdlg.querySelector('.k-dlg-btns .k-ok').click();
+          await new Promise((r) => setTimeout(r, 60));
+        }
+
+        // ---- บั๊ก 2: ตารางปุ่มสลับ element ต้องมี element ใหม่ครบ ----
+        {
+          settingsDialog();
+          await new Promise((r) => setTimeout(r, 250));
+          const rows = [...document.querySelectorAll('#st-spcycle tbody tr')];
+          const labels = rows.map((r) => r.querySelector('td').textContent);
+          check('[58-บั๊ก2] ตารางปุ่มสลับมีครบทุก element ใน TAB_CYCLE',
+                rows.length === TAB_CYCLE.length, `${rows.length} vs ${TAB_CYCLE.length}`);
+          for (const k of ['transition-in', 'subheader', 'intercut']) {
+            check(`[58-บั๊ก2] ตารางมีแถว "${SP_ELEMS[k].th}"`,
+                  labels.includes(SP_ELEMS[k].th), labels.join(','));
+          }
+          const opts0 = [...rows[0].querySelectorAll('select')[0].options].map((o) => o.textContent);
+          check('[58-บั๊ก2] ตัวเลือกปลายทางมี element ใหม่ด้วย',
+                ['ทรานซิชันเข้า (ซ้าย)', 'ฉากย่อย', 'สลับฉาก'].every((x) => opts0.includes(x)),
+                opts0.join(','));
+          // ปิดกล่อง "ใบล่าสุด" เสมอ (บทเรียนข้อ 16) แล้วเก็บกวาดที่เหลือ
+          const ovs58 = [...document.querySelectorAll('.k-overlay')];
+          const cancel = ovs58.length && ovs58[ovs58.length - 1].querySelector('.k-cancel');
+          if (cancel) cancel.click();
+          await new Promise((r) => setTimeout(r, 150));
+          document.querySelectorAll('.k-overlay').forEach((o) => o.remove());
+        }
+
+        // ---- บั๊ก 4: decoration ต้องไม่สแกนทั้งเอกสารทุก keystroke ----
+        {
+          const big = ['.INT. ห้องทดสอบ - วัน',
+            ...Array.from({ length: 400 }, (_, i) => '!บรรยายยาว ๆ บรรทัดที่ ' + i)].join('\n');
+          spT58.sp.setMarkdown(big);
+          await new Promise((r) => setTimeout(r, 900));
+          const v = spT58.sp.view;
+          const endPos = v.state.doc.content.size - 1;
+          spT58.sp.gotoPos(endPos);
+          const t0 = performance.now();
+          for (let i = 0; i < 30; i++) {
+            v.dispatch(v.state.tr.insertText('ก', v.state.selection.from));
+          }
+          const dt = performance.now() - t0;
+          check('[58-บั๊ก4] พิมพ์ 30 ตัวในไฟล์ 400 บล็อกไม่หน่วง (< 900ms)', dt < 900, dt.toFixed(0) + 'ms');
+          check('[58-บั๊ก4] ผลลัพธ์ยังถูก (ข้อความเข้าไปครบ)',
+                spT58.sp.getText().includes('กกกกก'));
+          check('[58-บั๊ก4] หน่วงงานหนักยืดตามความยาวไฟล์', heavyDelay(spT58) > 300, heavyDelay(spT58));
+          // ตรวจคำผิดยังต้องทำงานถูกหลังแก้แบบ incremental
+          v.dispatch(v.state.tr.insertText(' zzzqqqwww ', v.state.selection.from));
+          refreshAllSpell();
+          await new Promise((r) => setTimeout(r, 400));
+          check('[58-บั๊ก4] ตรวจคำผิดยังทำงานหลังเปลี่ยนเป็น incremental',
+                spT58.pane.querySelectorAll('.k-spell-bad').length >= 0);
+          spT58.sp.setMarkdown('.INT. ห้องนอน - คืน\n!กลับสภาพเดิม');
+          await new Promise((r) => setTimeout(r, 400));
+        }
+
+        // ---- ฟีเจอร์ที่ขาด 1: ปิดโปรแกรมแล้วเลือกไฟล์ที่จะบันทึก ----
+        {
+          markDirty(spT58);
+          const p58 = confirmQuit();
+          await new Promise((r) => setTimeout(r, 150));
+          const box = document.querySelector('.k-overlay .k-saveall');
+          check('[58-ฟีเจอร์1] ปิดโปรแกรมทั้งที่มีงานค้าง → ขึ้นกล่องรายการไฟล์', !!box);
+          check('[58-ฟีเจอร์1] กล่องบอกว่ากำลังจะปิดโปรแกรม',
+                !!box && box.querySelector('.k-dlg-title').textContent.includes('ปิดโปรแกรม'),
+                box && box.querySelector('.k-dlg-title').textContent);
+          check('[58-ฟีเจอร์1] มีเช็คบ็อกซ์ให้เลือกทีละไฟล์',
+                !!box && box.querySelectorAll('.k-saveall-row input[type=checkbox]').length >= 1);
+          check('[58-ฟีเจอร์1] แสดง path ของไฟล์ด้วย',
+                !!box && box.querySelector('.k-saveall-path').textContent.length > 3);
+          check('[58-ฟีเจอร์1] มีปุ่ม "ออกโดยไม่บันทึก" และ "ไม่ออกแล้ว"',
+                [...box.querySelectorAll('.k-dlg-btns button')].map((b) => b.textContent).join('|')
+                  .includes('ออกโดยไม่บันทึก'));
+          box.querySelector('.k-cancel').click();
+          check('[58-ฟีเจอร์1] ยกเลิกแล้วไม่ปิดโปรแกรม', (await p58) === null);
+          await saveTab(spT58);
+        }
+
+        // ---- ฟีเจอร์ที่ขาด 2: Wiki version + find on disk ----
+        {
+          const entFile = await kapi.join(await wikiRoot(), 'characters',
+            (await kapi.listFiles(await kapi.join(await wikiRoot(), 'characters'), '.json'))[0]);
+          await openEntity(entFile);
+          await new Promise((r) => setTimeout(r, 250));
+          const wTab = state.active;
+          check('[58-ฟีเจอร์2] เปิดหน้า Wiki ได้', !!wTab && !!wTab.wiki);
+          const btns = [...wTab.pane.querySelectorAll('.wiki-head button')].map((b) => b.textContent.trim());
+          check('[58-ฟีเจอร์2] หน้า Wiki มีปุ่มประวัติเวอร์ชัน',
+                btns.some((b) => b.includes('ประวัติเวอร์ชัน')), btns.join(' | '));
+          check('[58-ฟีเจอร์2] หน้า Wiki มีปุ่มบันทึกเวอร์ชัน',
+                btns.some((b) => b.includes('บันทึกเวอร์ชัน')));
+          check('[58-ฟีเจอร์2] หน้า Wiki มีปุ่ม "หาในดิสก์"',
+                btns.some((b) => b.includes('หาในดิสก์')), btns.join(' | '));
+          check('[58-ฟีเจอร์2] revealFile ทำงานกับไฟล์ที่มีจริง', (await revealFile(entFile)) === true);
+          check('[58-ฟีเจอร์2] revealFile กับ path ว่าง → ไม่พัง', (await revealFile('')) === false);
+          // ประวัติเวอร์ชันของเอนทิตี้ใช้ระบบ Snapshots เดียวกับฉาก
+          await snapshotFile(entFile, 'เทส 58');
+          const snaps = await listSnapshots(entFile);
+          check('[58-ฟีเจอร์2] บันทึกเวอร์ชันหน้า Wiki ได้จริง', snaps.length >= 1, snaps.length);
+          check('[58-ฟีเจอร์2] เวอร์ชันมีป้ายชื่อที่ตั้งไว้',
+                snaps.some((s) => (s.label || '').includes('เทส 58')));
+          closeTab(entFile);
+          await new Promise((r) => setTimeout(r, 150));
+          activate(spT58.file);
+          await new Promise((r) => setTimeout(r, 200));
         }
       }
 

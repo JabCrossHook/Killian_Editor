@@ -101,8 +101,33 @@ check('paginate: บทยาว → หลายหน้า', pg.count > 1, pg
 check('paginate: ทุกหน้ามีบล็อก', pg.pages.every((p) => p.blocks.length > 0));
 check('paginate: หน้าแรกไม่เกินจำนวนบรรทัดต่อหน้า',
   pg.pages[0].blocks.reduce((a, b) => a + (b.lines || 1) + 1, 0) <= 22);
-check('paginate: หน้าที่ไม่ใช่หน้าสุดท้ายมี (CONTINUED)', pg.pages[0].continuedBottom === '(CONTINUED)');
-check('paginate: หน้าที่ 2 มี CONTINUED: ด้านบน', pg.pages[1].continuedTop === 'CONTINUED:');
+// [alpha.58 · 55–56] ไม่มีหัวฉาก = ไม่มีฉากให้ "ต่อ" → ห้ามขึ้น CONTINUED (เดิมขึ้นทุกคู่หน้า)
+check('paginate: ไม่มีหัวฉาก → ไม่มี (CONTINUED)', !pg.pages[0].continuedBottom);
+check('paginate: ไม่มีหัวฉาก → ไม่มี CONTINUED: ต้นหน้า', !pg.pages[1].continuedTop);
+const sceneLong = [{ el: 'scene', text: 'INT. ห้องนอน - กลางคืน' }, ...many];
+const pgS = SF.paginate(sceneLong, { lines: 20 });
+check('paginate: ฉากเดียวข้ามหน้า → ท้ายหน้ามี (CONTINUED)',
+  pgS.pages[0].continuedBottom === '(CONTINUED)', pgS.pages[0].continuedBottom);
+check('paginate: ฉากเดียวข้ามหน้า → ต้นหน้า 2 มี CONTINUED:',
+  pgS.pages[1].continuedTop === 'CONTINUED:', pgS.pages[1].continuedTop);
+check('paginate: ข้ามหน้าที่สามขึ้นไปใส่เลขกำกับ',
+  pgS.count < 3 || pgS.pages[2].continuedTop === 'CONTINUED: (2)', pgS.pages[2] && pgS.pages[2].continuedTop);
+// หัวฉากใหม่ต้นหน้า = ฉากก่อนหน้าจบพอดี → ห้ามมี CONTINUED
+// (หัวฉาก 1 บรรทัด + บรรยาย 9 ก้อน × 2 บรรทัด = 19 บรรทัด → หัวฉากถัดไปลงหน้าใหม่พอดี)
+const twoScenes = [{ el: 'scene', text: 'INT. ก - วัน' },
+  ...Array.from({ length: 9 }, (_, i) => ({ el: 'action', text: 'บรรยาย ' + i })),
+  { el: 'scene', text: 'EXT. ข - คืน' },
+  ...Array.from({ length: 5 }, (_, i) => ({ el: 'action', text: 'ต่อ ' + i }))];
+const pgT = SF.paginate(twoScenes, { lines: 20 });
+check('paginate: ขึ้นฉากใหม่ต้นหน้า → ไม่มี CONTINUED',
+  pgT.pages.length > 1 && !pgT.pages[1].continuedTop && !pgT.pages[0].continuedBottom,
+  JSON.stringify(pgT.pages.map((p) => [p.sceneStart, p.sceneEnd, p.continuedTop || ''])));
+check('paginate: เลขฉากเริ่ม/จบของแต่ละหน้าถูกบันทึกไว้',
+  pgS.pages.every((p) => Number.isFinite(p.sceneStart) && Number.isFinite(p.sceneEnd)));
+// ปิดระบบต่อเนื่องได้
+const pgOff = SF.paginate(sceneLong, { lines: 20, fmt: SF.mergeSpFormat({ continued: { enabled: false } }) });
+check('paginate: ปิดระบบต่อเนื่อง → ไม่มี CONTINUED เลย',
+  pgOff.pages.every((p) => !p.continuedTop && !p.continuedBottom));
 check('paginate: บทว่าง → 1 หน้า', SF.paginate([]).count === 1);
 check('pageCount ตรงกับ paginate().count', SF.pageCount(many, { lines: 20 }) === pg.count);
 
@@ -174,6 +199,65 @@ check('rosterToText: มีหัวข้อ Scene และ Time', rTxt.includ
 check('rosterToText: ปิด Scene แล้วไม่มีหัวข้อ Scene',
   !SF.rosterToText({ scene: 'x', showScene: false }).includes('Scene'));
 check('rosterToText: ไม่มีเลขหน้า', !/^\s*\d+\s*$/m.test(rTxt));
+
+// ═══════ alpha.57a ข้อ 2 — เลขฉาก · เลขหน้า · element ใหม่ ═══════
+const F0 = SF.mergeSpFormat();
+check('[57a] element ใหม่ 3 ตัวมีค่าระยะครบ',
+  ['transition-in', 'subheader', 'intercut'].every((k) => F0.elements[k] && F0.elements[k].width > 0),
+  Object.keys(F0.elements).join(','));
+check('[57a] ทรานซิชันเข้าอยู่ซ้าย (เยื้องเท่าบรรยาย) · ออกอยู่ขวา',
+  F0.elements['transition-in'].indent === F0.elements.action.indent &&
+  F0.elements.transition.indent > F0.elements['transition-in'].indent);
+check('[57a] วงเล็บอยู่ที่ 3.1 นิ้วจากขอบกระดาษ', F0.elements.parenthetical.indent === 3.1);
+check('[57a] element ใหม่มีสไตล์จอ/พิมพ์ครบ',
+  ['transition-in', 'subheader', 'intercut'].every((k) => F0.styles[k] && F0.styles[k].screen && F0.styles[k].print));
+
+// ---- เลขฉาก: ค่าเริ่มต้นปิด · ตำแหน่ง 0.75" ซ้าย / 1" ขวา ----
+check('[57a] เลขฉากปิดเป็นค่าเริ่มต้น', F0.sceneNumbers.show === false);
+check('[57a] เลขฉากซ้าย 0.75" ขวา 1"',
+  F0.sceneNumbers.left === 0.75 && F0.sceneNumbers.right === 1);
+{
+  const o = SF.sceneNumberOffsets(F0);
+  // หัวฉากเริ่มที่ 1.5" → เลขซ้ายที่ 0.75" = ล้ำออกไปทางซ้าย 0.75"
+  check('[57a] ระยะเลขฉากซ้าย = 0.75 - 1.5 = -0.75', o.left === -0.75, o.left);
+  // กล่องหัวฉากจบที่ 1.5+6 = 7.5" · ขอบขวากระดาษ 8.5-1 = 7.5" → พอดี 0
+  check('[57a] ระยะเลขฉากขวาพอดีขอบพื้นที่พิมพ์ (Letter)', o.right === 0, o.right);
+  const wide = SF.mergeSpFormat({ sceneNumbers: { left: 0.5, right: 0.5 } });
+  check('[57a] เปลี่ยนค่าแล้วระยะขยับตาม',
+    SF.sceneNumberOffsets(wide).left === -1 && SF.sceneNumberOffsets(wide).right === -0.5);
+}
+{
+  const css = SF.spCss(SF.mergeSpFormat());
+  check('[57a] spCss สร้างกฎเลขฉากทั้งสองฝั่ง',
+    css.includes('.k-scene-no-l{left:-0.75in}') && css.includes('.k-scene-no-r{right:0in}'));
+  check('[57a] หัวฉากเป็น position:relative (ให้เลขฉากวางทับได้)',
+    css.includes('.sp.sp-scene{position:relative}'));
+  check('[57a] เลขฉากไม่โดน caps/หนาของหัวฉากกลืน',
+    /\.k-scene-no\{[^}]*text-transform:none/.test(css));
+}
+
+// ---- เลขหน้า ----
+check('[57a] เลขหน้าปิดเป็นค่าเริ่มต้น', F0.pageNumbers.show === false);
+check('[57a] เลขหน้าชิดขวา 1" · 0.5" จากขอบบน',
+  F0.pageNumbers.right === 1 && F0.pageNumbers.top === 0.5);
+{
+  const on = SF.mergeSpFormat({ pageNumbers: { show: true } });
+  check('[57a] ปิดอยู่ → ไม่มีเลขหน้าเลย', SF.pageNumberLabel(3, F0, 1) === '');
+  check('[57a] หน้าแรกไม่ใส่เลข (ธรรมเนียมบท)', SF.pageNumberLabel(1, on, 1) === '');
+  check('[57a] หน้า 2 = "2."', SF.pageNumberLabel(2, on, 1) === '2.');
+  check('[57a] เริ่มนับที่ 12 → หน้าที่ 2 ของไฟล์ = "13."', SF.pageNumberLabel(2, on, 12) === '13.');
+  check('[57a] เปิด firstPage → หน้าแรกได้เลขเริ่มต้น',
+    SF.pageNumberLabel(1, SF.mergeSpFormat({ pageNumbers: { show: true, firstPage: true } }), 7) === '7.');
+  check('[57a] เปลี่ยนท้ายเลขได้',
+    SF.pageNumberLabel(2, SF.mergeSpFormat({ pageNumbers: { show: true, suffix: '' } }), 1) === '2');
+  check('[57a] startPage ที่ไม่ถูกต้อง → เริ่มที่ 1', SF.pageNumberLabel(2, on, 0) === '2.');
+  const vars = SF.pageCssVars(on);
+  check('[57a] pageCssVars มีตัวแปรตำแหน่งเลขหน้า',
+    vars['--pg-no-top'] === '0.5in' && vars['--pg-no-right'] === '1in', JSON.stringify(vars));
+}
+check('[57a] paginate รองรับ element ใหม่ (ไม่หล่นหาย)',
+  SF.paginate([{ el: 'transition-in', text: 'FADE IN:' }, { el: 'subheader', text: 'ห้องครัว' },
+               { el: 'intercut', text: 'INTERCUT WITH:' }]).pages[0].blocks.length === 3);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 try { fs.unlinkSync(tmp); } catch {}

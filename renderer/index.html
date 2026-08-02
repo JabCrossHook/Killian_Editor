@@ -11,6 +11,9 @@
   <span class="tb-menu" data-m="File" data-i18n="menu.file">ไฟล์</span>
   <span class="tb-menu" data-m="Edit" data-i18n="menu.edit">แก้ไข</span>
   <span class="tb-menu" data-m="Format" data-i18n="menu.format">รูปแบบ</span>
+  <!-- alpha.57a ข้อ 3: เมนู "บท" มีอยู่ใน main.js ตั้งแต่ .57 แต่แถบชื่อไม่มีปุ่มเปิด
+       → ฟีเจอร์ 54/57/59/60/61/78 เข้าไม่ถึงเลย (67/68/70 รอดเพราะอยู่ในเมนู "ไฟล์" ด้วย) -->
+  <span class="tb-menu" data-m="Script" data-i18n="menu.script">บท</span>
   <span class="tb-menu" data-m="View" data-i18n="menu.view">มุมมอง</span>
   <span class="tb-menu" data-m="Help" data-i18n="menu.help">ช่วยเหลือ</span>
   <span class="tb-menu" data-m="AI" data-i18n="menu.ai">AI</span>
@@ -42,11 +45,20 @@
     <option value="character">ตัวละคร</option>
     <option value="parenthetical">วงเล็บ</option>
     <option value="dialogue">บทพูด</option>
-    <option value="transition">ทรานซิชัน</option>
+    <option value="transition-in">ทรานซิชันเข้า (ซ้าย)</option>
+    <option value="transition">ทรานซิชันออก (ขวา)</option>
+    <option value="subheader">ฉากย่อย</option>
+    <option value="intercut">สลับฉาก</option>
+    <option value="shot">ช็อต</option>
+    <option value="act-break">ตอน</option>
+    <option value="note">โน้ต</option>
   </select>
+  <!-- alpha.57a ข้อ 2: ส่วนเสริมท้ายชื่อตัวละคร (V.O./O.S./cont'd) — เว้นจากชื่อ 1 วรรค -->
+  <button id="tb-sp-ext" class="tb" style="display:none" title="ส่วนเสริมท้ายชื่อตัวละคร (Extension)">( )</button>
   <!-- alpha.57 [57][59][60] มุมมองบท — โผล่เฉพาะแท็บบทภาพยนตร์ -->
   <select id="sp-view-select" class="tb" style="display:none" title="มุมมองบทภาพยนตร์">
     <option value="normal">ปกติ (หน้ากระดาษ)</option>
+    <option value="layout">จัดหน้า (Layout)</option>
     <option value="draft">ร่าง — ข้อความล้วน</option>
     <option value="side">เรียงหน้าคู่</option>
     <option value="overview1">ภาพรวม 1px</option>

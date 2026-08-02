@@ -27,9 +27,10 @@ export class WikiEditor {
                                     onOpenEntity = null, pickFromGallery = null,
                                     getChecker = null, onRendered = null,
                                     onVersions = null, onSnapshot = null,
-                                    onSwapTemplate = null } = {}) {
+                                    onSwapTemplate = null, onReveal = null } = {}) {
     this.onRendered = onRendered;
     this.onVersions = onVersions; this.onSnapshot = onSnapshot;   // ประวัติเวอร์ชันหน้า Wiki (ข้อ 10)
+    this.onReveal = onReveal;                                      // [alpha.58] หาไฟล์ในดิสก์
     this.onSwapTemplate = onSwapTemplate;                          // เปลี่ยนเทมเพลต (ข้อ 18b)
     this.pane = pane; this.file = file; this.e = entity;
     this.projectRoot = projectRoot; this.labels = labels;
@@ -170,6 +171,14 @@ export class WikiEditor {
       snapBtn.title = 'บันทึกเวอร์ชันนี้ไว้ (ตั้งชื่อได้)';
       snapBtn.onclick = () => this.onSnapshot && this.onSnapshot();
       head.append(snapBtn);
+    }
+    // [alpha.58] หาไฟล์ในดิสก์ — เปิดโฟลเดอร์ของ .json นี้ใน File Explorer/Finder
+    if (this.onReveal) {
+      const revBtn = document.createElement('button');
+      revBtn.className = 'wiki-ver-btn'; revBtn.innerHTML = iconHtml('folder', 14) + ' หาในดิสก์';
+      revBtn.title = 'เปิดโฟลเดอร์ที่เก็บไฟล์นี้ (' + this.file + ')';
+      revBtn.onclick = () => this.onReveal(this.file);
+      head.append(revBtn);
     }
     // ปุ่มเปลี่ยนเทมเพลต (ข้อ 18b) — merge fields ไม่ล้างของเดิม
     if (this.onSwapTemplate) {

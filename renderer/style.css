@@ -12,6 +12,13 @@
   src:url("assets/fonts/CourierPrime-Italic.ttf") format("truetype"); }
 @font-face { font-family:"Courier Prime"; font-weight:700; font-style:italic; font-display:swap;
   src:url("assets/fonts/CourierPrime-BoldItalic.ttf") format("truetype"); }
+/* ฟอนต์ไทยตระกูล Courier (alpha.57a) — ให้บทภาพยนตร์ภาษาไทยได้หน้าตาเดียวกับต้นฉบับ
+   ประกาศเป็นวงศ์ของตัวเองไว้ ผู้ใช้เลือกใช้ผ่าน ตั้งค่า → ฟอนต์ตามภาษา (unicode-range)
+   หรือเลือกเป็นฟอนต์หลักก็ได้ · Mono = ทุกตัวกว้างเท่ากัน · Proportional = กว้างตามตัวอักษร */
+@font-face { font-family:"Courier Thai Mono"; font-weight:400; font-style:normal; font-display:swap;
+  src:url("assets/fonts/CourierThaiMono.ttf") format("truetype"); }
+@font-face { font-family:"Courier Thai Proportional"; font-weight:400; font-style:normal; font-display:swap;
+  src:url("assets/fonts/CourierThaiProp.ttf") format("truetype"); }
 
 :root {
   --bg:#262624; --side:#1f1e1c; --bar:#30302d; --border:#3f3e3a;
@@ -702,17 +709,29 @@ body.printing #tabs, body.printing #statusbar { visibility:hidden; }
   border:1px solid var(--border); border-radius:4px;
   padding:var(--mg-top) var(--mg-right) 40vh var(--mg-left);
   margin:24px auto 40vh; box-shadow:0 2px 18px rgba(0,0,0,.28); }
+/* alpha.58 (บั๊ก 3): บทภาพยนตร์ = 6 บรรทัด/นิ้ว → 12pt บนช่วงบรรทัด 12pt = line-height 1 พอดี
+   ของเดิมเป็น 1.5 ทำให้หน้าหนึ่งจุแค่ 36 บรรทัดแทนที่จะเป็น 54 (ตัวหนังสือดู "ใหญ่/ห่าง" กว่า
+   Final Draft ครึ่งเท่า) และเส้นคั่นหน้าในตัวแก้ไขไม่ตรงกับที่ paginate()/ตอนพิมพ์คิดไว้
+   — ตอนส่งออก PDF ใช้ line-height:1 อยู่แล้ว จอกับกระดาษจึงเคยไม่ตรงกัน
+   ปรับได้ที่ ตั้งค่า → หน้ากระดาษ ผ่าน --sp-lh (ค่ามาตรฐาน = 1) */
 .sp { font-family:var(--sp-font, "Courier Prime", "Courier Final Draft", "Courier New", "TH Sarabun New", "Sarabun", monospace);
   font-size:var(--sp-fs, 16px);
-  line-height:1.5; margin:0 0 2px; min-height:1.5em; white-space:pre-wrap; }
+  line-height:var(--sp-lh, 1); margin:0; min-height:1em; white-space:pre-wrap; }
 /* [81][82][83] ระยะเยื้อง/ความกว้าง/ระยะเว้นบรรทัด/ตัวพิมพ์ ของแต่ละ element
    ค่าจริงถูก "สร้างเป็น CSS" จาก sp-format.js แล้วยัดใน <style id="k-sp-format"> (specificity .sp.sp-x)
    กฎด้านล่างจึงเหลือแค่ "สี" + fallback สำหรับตอนที่ยังไม่มีโปรเจกต์เปิด */
-.sp-scene { color:var(--link); letter-spacing:.5px; }
+/* alpha.57a: เอา letter-spacing ออกจากหัวฉาก/ทรานซิชัน — CSS letter-spacing เติมช่องไฟ
+   "หลังทุก glyph" รวมสระ/วรรณยุกต์ไทยที่ความกว้าง 0 ด้วย → มองเห็นเป็นวรรณยุกต์ลอยหลุดจากพยัญชนะ
+   (อาการที่ผู้ใช้เจอตอนตั้งฟอนต์ไทย ไม่ใช่ความผิดของไฟล์ฟอนต์) */
+.sp-scene { color:var(--link); }
 .sp-character { color:var(--bright); }
 .sp-parenthetical { color:var(--dim); }
 .sp-dialogue { color:var(--fg); }
-.sp-transition { text-align:right; color:var(--orange); letter-spacing:.5px; }
+.sp-transition { text-align:right; color:var(--orange); }
+/* ทรานซิชันเข้า = ชิดซ้าย · หัวข้อย่อย/สลับฉาก = ชิดซ้ายเหมือนหัวฉาก (ระยะจริงมาจาก spCss) */
+.sp-transition-in { text-align:left; color:var(--orange); }
+.sp-subheader { color:var(--link); }
+.sp-intercut { color:var(--accent-hi); }
 .sp-outline1,.sp-outline2,.sp-outline3 { color:var(--accent-hi); }
 .sp-summary { color:var(--green); font-style:italic; }
 .sp-act-break { text-align:center; }
@@ -724,6 +743,21 @@ figure.sp-image img { max-width:100%; max-height:420px; border-radius:8px; }
 figure.sp-image.ProseMirror-selectednode img { outline:3px solid var(--accent-hi); }
 /* เปิดเลขบรรทัดต้องคุม padding-left ได้แม้บนหน้ากระดาษบทหนัง (specificity สูงกว่า) */
 body.k-ln .pane.sp-pane .ProseMirror { padding-left:64px; }
+
+/* ---------- alpha.57a ข้อ 2: เลขฉาก + เลขหน้า ---------- */
+/* เลขฉาก — ตำแหน่งซ้าย/ขวาเป็น "นิ้ว" มาจาก spCss() (.k-scene-no-l / .k-scene-no-r)
+   ตัวเลขต้องไม่โดน text-transform/สไตล์ของหัวฉากกลืน จึงรีเซ็ตไว้ในกฎที่ spCss สร้าง */
+.k-scene-no { color:var(--dim); font-size:1em; }
+.pane.sp-view-draft .k-scene-no { display:none; }   /* โหมดร่าง = ข้อความล้วน ไม่มีเลขฉาก */
+
+/* เลขหน้าบนหน้ากระดาษของตัวแก้ไข (หน้าแรกของไฟล์) — หน้าถัดไปอยู่บนเส้นคั่นหน้า
+   --pg-no-first ตั้งจาก JS เป็นสตริงพร้อมอัญประกาศ ('""' = ไม่แสดง) */
+body.sp-page-numbers .pane.sp-pane:not(.sp-view-draft) .ProseMirror::before {
+  content:var(--pg-no-first, ""); position:absolute;
+  top:var(--pg-no-top, .5in); right:var(--pg-no-right, 1in);
+  color:var(--dim); font:var(--sp-fs, 16px)/1 var(--sp-font, monospace);
+  pointer-events:none; }
+.pane.sp-pane .ProseMirror { position:relative; }
 
 /* ---------- ล็อกไฟล์ (แก้ไม่ได้จนปลดล็อก) ---------- */
 .pane-locked .ProseMirror { caret-color:transparent; opacity:.92; }
@@ -2147,6 +2181,54 @@ body.paper-mode .pane.sp-view-draft > .workspace > .ProseMirror {
 body.paper-mode .sp-page-break { border-top-color:#c9c2ae; }
 body.paper-mode .sp-page-break-num { background:var(--paper); color:#8a836f; }
 
+/* ══════════ alpha.58 · [58] Layout View — เห็น "หน้ากระดาษจริง" ขณะพิมพ์ ══════════ */
+/* ต่างจากโหมดปกติตรงที่หน้ากระดาษเป็น "สีขาวจริง" และรอยต่อระหว่างหน้าเป็นช่องว่างจริง
+   (ไม่ใช่เส้นประ) → เห็นว่าเนื้อหาแต่ละหน้าจบตรงไหนแบบเดียวกับ PDF ที่จะได้
+   ความสูงช่องว่าง/ความสูงเนื้อหน้ามาจาก layoutCssVars() ใน sp-view.js (คำนวณจากขนาดกระดาษจริง) */
+.pane.sp-view-layout > .workspace > .ProseMirror,
+body.paper-mode .pane.sp-view-layout > .workspace > .ProseMirror {
+  background:#ffffff !important; color:#111 !important;
+  border:1px solid var(--paper-edge) !important;
+  box-shadow:0 0 10px rgba(0,0,0,.35) !important;
+  min-height:var(--page-h, 11in);
+  padding-bottom:var(--mg-bottom, 1in) !important;
+  margin-bottom:60px !important;
+}
+.pane.sp-view-layout .sp,
+.pane.sp-view-layout .sp-scene, .pane.sp-view-layout .sp-character,
+.pane.sp-view-layout .sp-dialogue, .pane.sp-view-layout .sp-transition,
+.pane.sp-view-layout .sp-transition-in, .pane.sp-view-layout .sp-subheader,
+.pane.sp-view-layout .sp-intercut, .pane.sp-view-layout .sp-act-break,
+.pane.sp-view-layout .sp-shot { color:#111; }
+.pane.sp-view-layout .sp-parenthetical { color:#555; }
+.pane.sp-view-layout .k-scene-no { color:#666; }
+/* ช่องว่างระหว่างหน้า — ล้ำออกไปนอกระยะขอบทั้งสองข้างให้เห็นว่า "คนละแผ่น" */
+.pane.sp-view-layout .sp-page-break {
+  height:var(--sp-page-gap, 28px); border:0;
+  border-top:2px solid var(--paper-edge); border-bottom:2px solid var(--paper-edge);
+  background:var(--paper-surround, #33322f);
+  margin:0 calc(-1 * var(--mg-right, 1in)) 0 calc(-1 * var(--mg-left, 1.5in));
+}
+/* เลขหน้าอยู่ตรงกลางช่องว่าง (แบบ footer ของโปรแกรมจัดหน้า) */
+.pane.sp-view-layout .sp-page-break-num {
+  position:absolute; right:auto; left:50%; top:50%; transform:translate(-50%, -50%);
+  background:transparent; color:var(--dim); padding:0;
+  font-size:calc(11px * var(--ui-scale, 1)); }
+
+/* ---- alpha.58 · [55][56] เครื่องหมายต่อเนื่อง (CONTINUED / MORE / cont'd) ---- */
+/* วาดด้วย decoration — ไม่ใช่ข้อความจริงในไฟล์ จึงลบไม่ได้และไม่หลุดไปอยู่ใน .md */
+.sp-cont-mark { user-select:none; pointer-events:none; opacity:.75;
+  font-family:var(--sp-font, "Courier Prime", monospace); font-size:var(--sp-fs, 16px);
+  line-height:var(--sp-lh, 1); white-space:pre; }
+.sp-cont-mark.sp-continued-bottom { text-align:right; font-style:italic; }
+.sp-cont-mark.sp-continued-top { text-align:left; font-style:italic; }
+.sp-cont-mark.sp-more { text-align:left; }
+.sp-cont-mark.sp-contd { text-align:left; text-transform:uppercase; }
+body.paper-mode .sp-cont-mark { color:#6b6552; }
+.pane.sp-view-layout .sp-cont-mark { color:#555; opacity:.9; }
+/* โหมดร่าง = ข้อความล้วน ไม่ต้องมีเครื่องหมายจัดหน้า */
+.pane.sp-view-draft .sp-cont-mark { display:none; }
+
 /* ---- [61] แสดงรูปแบบ: เส้นฟ้าขอบ element + เครื่องหมายจบบรรทัด ---- */
 .sp-fmt-guide { box-shadow:inset 1px 0 0 #4fc3f7, inset -1px 0 0 #4fc3f7;
   background:rgba(79,195,247,.05); }
@@ -2168,12 +2250,16 @@ body.paper-mode .sp-page-break-num { background:var(--paper); color:#8a836f; }
   border:1px solid var(--paper-edge); border-radius:2px;
   box-shadow:0 2px 14px rgba(0,0,0,.30);
   font-family:var(--sp-font, "Courier Prime", "Courier New", monospace);
-  font-size:var(--sp-fs, 16px); line-height:1.5; overflow:hidden; cursor:pointer; }
+  font-size:var(--sp-fs, 16px); line-height:var(--sp-lh, 1); overflow:hidden; cursor:pointer; }
 .sp-pageview .sp-page:hover { outline:2px solid var(--accent-hi); }
 .sp-pageview .sp { color:var(--paper-ink); white-space:pre-wrap; }
 .sp-pageview .sp-scene, .sp-pageview .sp-character, .sp-pageview .sp-transition { color:#000; }
 .sp-pageview .sp-parenthetical { color:#555; }
 .sp-page-num { text-align:right; color:#555; margin-bottom:1em; }
+/* alpha.57a: เมื่อเปิด "เลขหน้า" ตำแหน่งวัดจากขอบกระดาษจริง (inline style จาก renderPageView) */
+.sp-page[style] > .sp-page-num[style*="top"] { position:absolute; margin:0; }
+.sp-pageview .sp-page { position:relative; }
+.sp-pageview .k-scene-no { color:#555; }
 .sp-continued-top { color:#555; }
 .sp-continued-bottom { text-align:right; color:#555; margin-top:1em; }
 .sp-pageview .sp-more { margin-left:2.2in; color:#333; }
@@ -2182,6 +2268,48 @@ body.paper-mode .sp-page-break-num { background:var(--paper); color:#8a836f; }
 .pane.sp-view-overview .sp-pageview .sp-page:hover { outline-width:1px; }
 .pane.sp-view-ov1 .sp-pageview { gap:6px; padding:10px; }
 .pane.sp-view-ov4 .sp-pageview { gap:10px; padding:14px; }
+
+/* ---- alpha.58 · กล่องจัดการ SmartType (เกณฑ์เจอซ้ำ + รายการรอ) ---- */
+.k-smart-min { gap:8px; margin:8px 0 2px; flex-wrap:wrap; }
+.k-smart-wait-head { margin:6px 0 2px; font-size:.92em; }
+.k-smart-row.k-smart-wait { opacity:.8; }
+.k-smart-row.k-smart-wait button { margin-left:4px; }
+
+/* ══════════ alpha.58 · [71][72][73] รายงานบทภาพยนตร์ ══════════ */
+.k-report-dlg { min-width:min(920px, 94vw); }
+.k-report-tabs { display:flex; gap:6px; margin:8px 0 4px; flex-wrap:wrap; }
+.k-report-tab { background:var(--bar); border:1px solid var(--border); border-radius:6px;
+  padding:4px 10px; cursor:pointer; color:var(--dim); }
+.k-report-tab.on { background:var(--accent); border-color:var(--accent-hi); color:#fff; }
+.k-report-body { max-height:56vh; overflow:auto; margin:10px 0;
+  border:1px solid var(--border); border-radius:6px; padding:8px 10px; }
+.k-report-group { margin-bottom:14px; }
+.k-report-ghead { border-bottom:1px solid var(--border); padding-bottom:4px; margin-bottom:4px; }
+.k-report-row { display:flex; align-items:baseline; gap:10px; padding:3px 4px; border-radius:4px; }
+.k-report-row.can-go { cursor:pointer; }
+.k-report-row.can-go:hover { background:var(--bar); }
+.k-report-no { min-width:58px; color:var(--dim); }
+.k-report-pg { min-width:62px; color:var(--dim); }
+.k-report-txt { flex:0 1 auto; color:var(--bright); }
+.k-report-chars { flex:1 1 auto; text-align:right; overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; }
+.k-report-table { width:100%; border-collapse:collapse; }
+.k-report-table th { text-align:left; color:var(--dim); font-weight:500;
+  border-bottom:1px solid var(--border); padding:4px 6px; }
+.k-report-table td { padding:3px 6px; border-bottom:1px solid rgba(255,255,255,.05); }
+.k-report-name { color:var(--bright); }
+/* แถบสัดส่วน (ใช้ทั้งกราฟต่อหน้าและสัดส่วนบทพูดต่อคน) */
+.sp-chart-bar { display:flex; height:12px; min-width:120px; border-radius:3px;
+  overflow:hidden; background:var(--bar); }
+.sp-chart-seg { height:100%; }
+.seg-action { background:#5b8fa8; }
+.seg-dialogue { background:#c98a3c; }
+.seg-character { background:#8a6fb0; }
+.seg-other { background:#5a5a56; }
+.sp-chart-legend { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:8px; color:var(--dim); }
+.sp-chart-key { display:inline-flex; align-items:center; gap:5px; }
+.sp-chart-swatch { width:11px; height:11px; border-radius:2px; display:inline-block; }
+.sp-chart-row .sp-chart-bar { flex:1 1 auto; }
 
 /* ---- [54] ป้ายข้อผิดพลาดบนแถบสถานะ ---- */
 #sp-errors:empty { display:none; }
@@ -2212,3 +2340,25 @@ body.paper-mode .sp-page-break-num { background:var(--paper); color:#8a836f; }
 .k-wm-dlg { min-width:min(620px, 92vw); }
 .k-wm-list { width:100%; font-family:var(--ed-font, monospace); }
 .k-wm-prog { min-height:1.4em; margin-top:6px; }
+
+/* ---- alpha.57a ข้อ 5: ตารางฟอนต์ตามภาษา (ตั้งค่า → ฟอนต์ตามภาษา) ---- */
+.k-font-row { display:flex; align-items:center; gap:8px; padding:6px 2px;
+  border-bottom:1px solid var(--border); flex-wrap:wrap; }
+.k-font-row:last-child { border-bottom:0; }
+.k-font-row select, .k-font-row input[type=text] { font:inherit; background:var(--bg); color:var(--fg);
+  border:1px solid var(--border); border-radius:5px; padding:3px 7px; }
+.k-font-script { min-width:150px; }
+.k-font-pick { flex:1 1 240px; min-width:180px; }
+.k-font-range, .k-font-family { flex:1 1 170px; min-width:150px; }
+.k-font-range.bad { border-color:#e5695e; color:#e5695e; }
+#st-fonts-sample { border:1px solid var(--border); border-radius:8px; padding:10px 14px;
+  background:var(--bg); color:var(--fg); overflow-x:auto; white-space:nowrap; }
+
+/* ---- alpha.57a ข้อ 4: กล่องจัดการ SmartType ---- */
+.k-smart-dlg { min-width:min(560px, 92vw); }
+.k-smart-body { max-height:52vh; overflow:auto; margin-top:8px;
+  border:1px solid var(--border); border-radius:6px; padding:4px 10px; }
+.k-smart-row { display:flex; align-items:center; gap:8px; padding:4px 0;
+  border-bottom:1px solid var(--border); }
+.k-smart-row:last-child { border-bottom:0; }
+.k-smart-word { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
