@@ -48,6 +48,8 @@ export const spSchema = new Schema({
 // inline **หนา** ฯลฯ — ชุดเดียวกับ md.js (import ตรงจะวนกันเอง จึงรับผ่านพารามิเตอร์)
 import { mdToDoc, docToMd } from './md.js';
 import { spellPlugin, mentionPlugin, refreshMentions, focusLinePlugin, commentAnchorPlugin } from './editor.js';
+// [61] แสดงรูปแบบ + [57] เส้นคั่นหน้าในตัวแก้ไข
+import { spFormatGuidePlugin, spPageBreakPlugin, refreshFormatGuide, refreshPageBreaks } from './sp-format-guide.js';
 import { IMG_RE } from './fountain.js';
 function inlineContent(text) {
   const doc = mdToDoc(text);
@@ -58,6 +60,26 @@ function inlineToMd(content) {
   return docToMd({ type: 'doc', content: [{ type: 'paragraph', content }] });
 }
 
+/** แปลง markdown ของบท → doc ของ spSchema (ใช้ทั้งตอนสร้างตัวแก้ไขและตอน setMarkdown) */
+export function spDocFromMarkdown(markdown, resolveSrc = (p) => p) {
+  const blocks = parseScript(markdown || '').map((b) => {
+    if (b.el === 'image') {
+      const m = IMG_RE.exec(b.text) || [];
+      return { type: 'spimage', attrs: { alt: m[1] || '', src: m[2] || '',
+               md: b.text, resolved: resolveSrc(m[2] || '') } };
+    }
+    return {
+      type: 'sp',
+      attrs: { el: b.el === 'blank' ? 'action' : b.el },
+      content: b.el === 'raw'
+        ? (b.text ? [{ type: 'text', text: b.text }] : [])
+        : inlineContent(b.text),
+    };
+  });
+  if (!blocks.length) blocks.push({ type: 'sp', attrs: { el: 'scene' } });
+  return spSchema.nodeFromJSON({ type: 'doc', content: blocks });
+}
+
 export class SPEditor {
   constructor(mount, { markdown = '', onChange = null, onKeyDown = null,
                        onElement = null, getChecker = null, resolveSrc = (p) => p,
@@ -65,22 +87,7 @@ export class SPEditor {
     this.onChange = onChange; this.onElement = onElement;
     this.getChecker = getChecker; this.resolveSrc = resolveSrc;
     this.getNames = getNames;
-    const blocks = parseScript(markdown).map((b) => {
-      if (b.el === 'image') {
-        const m = IMG_RE.exec(b.text) || [];
-        return { type: 'spimage', attrs: { alt: m[1] || '', src: m[2] || '',
-                 md: b.text, resolved: resolveSrc(m[2] || '') } };
-      }
-      return {
-        type: 'sp',
-        attrs: { el: b.el === 'blank' ? 'action' : b.el },
-        content: b.el === 'raw'
-          ? (b.text ? [{ type: 'text', text: b.text }] : [])
-          : inlineContent(b.text),
-      };
-    });
-    if (!blocks.length) blocks.push({ type: 'sp', attrs: { el: 'scene' } });
-    const doc = spSchema.nodeFromJSON({ type: 'doc', content: blocks });
+    const doc = spDocFromMarkdown(markdown, resolveSrc);
     const self = this;
     this.view = new EditorView(mount, {
       editable: editable ? () => editable() : undefined,
@@ -102,6 +109,8 @@ export class SPEditor {
           ...(getChecker ? [spellPlugin(getChecker)] : []),
           focusLinePlugin(),
           commentAnchorPlugin(),
+          spFormatGuidePlugin(),      // [61] เส้นขอบ element + เครื่องหมายจบบรรทัด
+          spPageBreakPlugin(),        // [57] เส้นคั่นหน้า (ตำแหน่งมาจาก paginate ใน app.js)
         ],
       }),
       handleKeyDown(view, ev) {
@@ -177,6 +186,29 @@ export class SPEditor {
     });
   }
   refreshMentions() { refreshMentions(this.view); }
+
+  /** แทนที่เนื้อหาทั้งเอกสารด้วย markdown ใหม่ (เก็บ undo history ไว้) */
+  setMarkdown(md) {
+    const v = this.view;
+    const doc = spDocFromMarkdown(md, this.resolveSrc);
+    v.dispatch(v.state.tr.replaceWith(0, v.state.doc.content.size, doc.content));
+    return true;
+  }
+
+  // [61][57] วาด decoration ของ "แสดงรูปแบบ" / เส้นคั่นหน้าใหม่ (เรียกหลังเปลี่ยนค่าตั้ง)
+  refreshGuides() { refreshFormatGuide(this.view); refreshPageBreaks(this.view); }
+
+  /** [78] ย้ายเคอร์เซอร์ไปตำแหน่ง pos แล้วเลื่อนจอให้เห็น */
+  gotoPos(pos) {
+    const v = this.view;
+    const max = v.state.doc.content.size;
+    const p = Math.max(0, Math.min(Number(pos) || 0, max));
+    const $p = v.state.doc.resolve(p);
+    const sel = TextSelection.near($p, 1);
+    v.dispatch(v.state.tr.setSelection(sel).scrollIntoView());
+    v.focus();
+    return true;
+  }
 
   curBlock() {
     const $f = this.view.state.selection.$from;

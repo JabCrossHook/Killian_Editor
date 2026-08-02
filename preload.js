@@ -17,7 +17,9 @@ contextBridge.exposeInMainWorld('kapi', {
   openProjectDialog: call('dialog:openProject'), openImageDialog: call('dialog:openImage'),
   saveAsDialog: call('dialog:saveAs'), savePdfDialog: call('dialog:savePdf'),
   openFileDialog: call('dialog:openFile'),   // เลือกไฟล์เดียว (นำเข้าสถานะฉาก ฯลฯ)
+  openDirDialog: call('dialog:openDir'),     // [70] เลือกโฟลเดอร์ปลายทางของ PDF ลายน้ำ
   print: call('win:print'), printToPdf: call('win:printToPdf'),
+  pdfFromHtml: call('pdf:fromHtml'),         // [70] สร้าง PDF จาก HTML (หน้าต่างซ่อน)
   pushRecent: call('recent:push'), listRecent: call('recent:list'),
   testShot: call('test:shot'), revealInOS: call('shell:reveal'),
   winMin: call('win:minimize'), winMax: call('win:maximize'), winClose: call('win:close'),

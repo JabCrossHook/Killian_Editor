@@ -132,7 +132,9 @@
       "format:quote": "คำพูดยกมา", "format:ul": "รายการหัวข้อย่อย",
       "format:ol": "รายการตัวเลข", "format:align:left": "ชิดซ้าย",
       "format:align:center": "กึ่งกลาง", "format:align:right": "ชิดขวา",
-      "format:align:justify": "เต็มบรรทัด"
+      "format:align:justify": "เต็มบรรทัด",
+      "goto": "ไปที่หน้า/ฉาก", "findError": "ตรวจหาข้อผิดพลาดถัดไป",
+      "selectScene": "เลือกทั้งฉาก", "nbsp": "ช่องว่างไม่ตัดคำ"
     },
     "panel": {
       "project": "โปรเจกต์", "properties": "คุณสมบัติ",

@@ -40,7 +40,7 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
 ## สถาปัตยกรรม (เสถียร)
 
 - **main.js** — electron main: IPC `H('channel', fn)` (fs/dialog/print/printToPdf/recent/spell/mtime/writeImageData), frameless titlebar (`frame:false`), contextIsolation
-- **preload.js** — บริดจ์ `kapi` (readFile/writeFile/readJson/exists/join/mkdir/move/remove/listFiles/listDirs/mtime/copyInto/writeImageData/spellBase/spellExtra/spellAddWord/spellDownload/spellHasBase/testShot/**openFileDialog**). **ไม่มี writeJson** (ใช้ writeFile + JSON.stringify) · `saveAsDialog(name, kind?)` เลือกฟิลเตอร์ตามนามสกุลให้เอง
+- **preload.js** — บริดจ์ `kapi` (readFile/writeFile/readJson/exists/join/mkdir/move/remove/listFiles/listDirs/mtime/copyInto/writeImageData/spellBase/spellExtra/spellAddWord/spellDownload/spellHasBase/testShot/**openFileDialog**/**openDirDialog**/**pdfFromHtml**). **ไม่มี writeJson** (ใช้ writeFile + JSON.stringify) · `saveAsDialog(name, kind?)` เลือกฟิลเตอร์ตามนามสกุลให้เอง (มี fdx/rtf แล้ว) · `pdfFromHtml(html,out,{width,height,margins})` = เขียน HTML ลงไฟล์ชั่วคราวแล้ว `printToPDF` ใน **BrowserWindow ซ่อน** (data: URL ยาวไม่พอ + `@font-face` file:// ต้องมี origin จริง)
 - **src/** (esbuild → `renderer/bundle.js`):
   - `md.js` — พาร์เซอร์ .md ↔ doc (พอร์ตตรงจาก v1 → ไฟล์เข้ากันได้ 100%)
   - `editor.js` — `KEditor` (นิยาย): schema + `mentionPlugin` + `spellPlugin` + export `imageLightbox`
@@ -75,6 +75,19 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
     `paginate()` (MORE/cont'd/CONTINUED · ไม่ทิ้งชื่อตัวละครท้ายหน้า) · `rosterToText()` · **unit test 74 ข้อ**
   - **`roster-ui.js`** (alpha.56, ข้อ 97) — หน้ารายชื่อตัวละคร: หน้าเดี่ยว**ประจำเล่ม** เก็บ `<Section>/roster.json`
     (ไม่อยู่ในฉากเลย) · แท็บ `::roster::<secPath>` · `saveTab()` แยกทางไป `saveRosterTab()` · ไม่มีเลขหน้า
+  - **`sp-validator.js`** (alpha.57, บริสุทธิ์ · **ข้อ 54**) — `SP_ERRORS` 8 ชนิด/`SP_SEVERITY`/`DEFAULT_LIMITS` ·
+    `validateScreenplay(blocks,{limits,checks})` → `[{type,block,el,msg,severity}]` (`block` = ดัชนีใน array ที่ส่งเข้ามา **รวม blank**) ·
+    `errorSummary`/`summaryText`/`nextError` (วนกลับต้น) · **unit test 35 ข้อ**
+  - **`sp-view.js`** (alpha.57, บริสุทธิ์ + ตัววาด DOM · **ข้อ 57/59/60/78**) —
+    `SP_VIEWS`/`SP_VIEW_CLASS`/`ALL_VIEW_CLASSES`/`isPageView` · `fitScale(w,pageW,gap)` (≤4 หน้า/แถว · ไม่ย่อต่ำกว่า 0.5) ·
+    `overviewScale(px)` (Courier 12pt = 9.6px/ตัว) · **`blocksFromDoc(doc)`** (บล็อกจาก doc จริง พร้อม `pos` — action ว่าง→`blank`) ·
+    `pagesOf`/`pageStartPositions`/`findPageStart`/`scenePositions`/`findNthScene` · `renderPageView(host,pages,fmt,opts)` · **unit test 45 ข้อ**
+  - **`sp-format-guide.js`** (alpha.57 · **ข้อ 61 + 57**) — PM plugin 2 ตัวใน SPEditor:
+    `spFormatGuidePlugin()` (เส้นขอบ element + `¶`/`·` ท้ายบล็อก · `setFormatGuide(on,fmt)`) ·
+    `spPageBreakPlugin()` (เส้นคั่นหน้า · **`setPageBreaks(list)` คืน `true` เมื่อเปลี่ยนจริง** → app.js dispatch เฉพาะตอนเปลี่ยน)
+  - **`export-fdx.js` / `export-rtf.js` / `export-watermark.js`** (alpha.57, บริสุทธิ์ · **ข้อ 67/68/70**) —
+    `generateFdx(blocks,meta)` (FDX_TYPE_MAP · TitlePage) · `generateRtf(blocks,meta,fmt)` (**ไทย → `\uNNNN?`** · twips · `paraCtrl`) ·
+    `buildWatermarkHtml(pages,fmt,opts)`+`generateWatermarkedPDFs(api,args)`+`parseRecipients` · **unit test 72 ข้อ**
   - `maps.js` — **เอนจินแผนที่** (บริสุทธิ์): `newMap/newPin`, `breadcrumb` (ลำดับชั้น world→city→room ตาม portal), `rootMaps`, `pinStats`, `deleteMap` (ล้าง portal ค้าง), `PIN_COLORS/PIN_KIND`
 - **build**: `node build.js` (esbuild bundle src/app.js) — dict แยกไฟล์ไม่ฝัง bundle
 
@@ -86,7 +99,7 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
 
 ## E2E test workflow (สำคัญ — ทำทุกครั้งก่อนเชื่อว่าแก้สำเร็จ)
 
-Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **1,052 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
+Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **1,124 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
 
 **Unit test โมดูลบริสุทธิ์ (alpha.39, รันเร็ว ไม่ต้องเปิด electron):**
 ```bash
@@ -200,6 +213,20 @@ grep -E "FAIL|STOP" /tmp/k2result.txt | head -3
 31. **`document.querySelector('.k-menu')` ไม่ได้คืนเมนูที่เพิ่งเปิด** — `#k-fab-menu` เป็น `.k-menu` ถาวรใน index.html
    และอยู่ก่อนใน document order → เทสเมนูป๊อปอัปผ่านทั้งที่เช็คผิดตัว. ใช้ `.k-menu:not(#k-fab-menu)` เสมอ
 
+42. **RTF เป็นไฟล์ ANSI — ไทยต้องเป็น `\uNNNN?` ทุกตัว** (ค่า >32767 เขียนเป็นเลข**ติดลบ** · นอก BMP = surrogate 2 ตัว)
+   ปล่อยไบต์ UTF-8 ดิบลงไป = Word เปิดได้แต่ตัวขยะทั้งไฟล์ · เทสยืนยันด้วย `[...rtf].every(c => c.codePointAt(0) < 128)`
+43. **`parseScript()` สร้าง "บทพูดกำพร้า" ไม่ได้** — `classify()` ให้ `dialogue` เฉพาะเมื่อบรรทัดก่อนเป็น
+   character/parenthetical/dialogue ข้อความหลังบรรยายจึงกลายเป็น action เสมอ
+   → เทส [54] ต้องสร้างเคสนี้จาก **ตัวแก้ไข** (`gotoPos` + `setElement('dialogue')`) ไม่ใช่จาก markdown
+44. **dispatch transaction ซ้ำ ๆ ตามจังหวะ debounce ไปกวนตำแหน่งเลื่อนของหน้ากระดาษ**
+   `scheduleCount` (300ms) เคยสั่ง `refreshGuides()` ทุกครั้ง → decoration ถูกวาดใหม่ระหว่างเทสซูม
+   ทำให้ `#5 ซูมยึดกึ่งกลาง` fail แบบสุ่ม (0.500 → 0.417) ทั้งที่โค้ดซูมไม่ผิด
+   **แก้: `setPageBreaks()` คืน `true` เมื่อลายเซ็นเปลี่ยนจริง แล้วค่อย dispatch**
+   (หลักทั่วไป: อย่า dispatch เมื่อผลลัพธ์เท่าเดิม — เหมือน `renderPanels()` ที่เทียบลายเซ็น JSON ก่อนวาด)
+45. **โหมดมุมมองที่ "ไม่ใช่ตัวแก้ไข" อย่าไปรื้อ ProseMirror** — เรียงหน้าคู่/ภาพรวมวาด `.sp-pageview`
+   เป็น overlay `position:absolute; inset:0` ทับ `.pane` แล้วซ่อน `.workspace` ด้วย CSS
+   (คลาสเดียว ถอดออกแล้วทุกอย่างกลับสภาพเดิม · ไม่ต้องยุ่งกับ selection/undo/decoration เลย)
+
 32. **`max-width:calc(100% - Xin)` บนหน้ากระดาษเพี้ยน 2px** — `* { box-sizing:border-box }` + เส้นขอบกระดาษ 1px×2
    ทำให้ 100% = ความกว้างเนื้อใน **ลบเส้นขอบไปแล้ว** → element ที่ควรกว้าง 3.8in ได้ 362.8px แทน 364.8px
    **แก้: หนีบความกว้างเป็น "นิ้ว" ตอนสร้าง CSS ใน JS** (`Math.min(width, textWidth - indent)`) ไม่ใช้ calc(%)
@@ -302,7 +329,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ---
 
-## เวอร์ชัน (ล่าสุด alpha.56a · e2e 1,052 + unit 805)
+## เวอร์ชัน (ล่าสุด alpha.57 · e2e 1,124 + unit 957)
 
 .13–.22 (v1→v2 พื้นฐาน): snapshot, line numbers, spellcheck ไทย+Chromium, ปุ่มลัดตั้งเอง, mac build, บทหนัง Ctrl+arrow, relationship sync, floating format bar, sidebar resize, SmartType Final Draft, wiki gallery/lightbox, explorer search+tags, panel docking, tree float+snap
 .24 batch 8 (drag-move explorer, panel snap, split compare, version tracking, scene lock, screenplay Final Draft look, screenplay images, wiki links) · .25–.27 **Planner board** (fabric.js) · .28 **floating windows** · .29 memo-in-chapter + scoped search
@@ -430,6 +457,24 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
   **`clampFloat()`** ใน panel-drag — หนีบตำแหน่ง+ขนาดแผงลอยให้อยู่ในจอ (ใช้ทุกครั้งที่วาด ไม่ใช่แค่ตอนลาก)
   **`-webkit-app-region:no-drag` บน `.k-float-panel *`** — ทับแถบหัวหน้าต่างแล้วยังลากได้
   **โหมดอ่าน/โฟกัส = แผงเอกสาร `position:fixed; inset:0`** + `#k-mode-hint` "กด Esc เพื่อออก"
+
+.57 **มุมมองบท + ตรวจข้อผิดพลาด + ส่งออกอุตสาหกรรม (54 · 57 · 59 · 60 · 61 · 67 · 68 · 70 · 78)**
+  โมดูลบริสุทธิ์ใหม่ 5 ตัว (`sp-validator` · `sp-view` · `export-fdx` · `export-rtf` · `export-watermark`)
+  + PM plugin `sp-format-guide.js` · **unit test เพิ่ม 152 ข้อ**
+  **[57] โหมดร่าง** — ถอดกระดาษ/เงา/ระยะเยื้องออกด้วยคลาส `sp-view-draft` (ต้อง `!important` เพราะกฎ
+    `body.paper-mode .pane…` specificity สูงกว่า) · **เส้นคั่นหน้าเป็น widget decoration** ตำแหน่งมาจาก
+    `paginate()` ที่คิดจาก **บล็อกในเอกสารจริง** (`blocksFromDoc`) → ตรงกับ "N หน้า" บนแถบสถานะเสมอ
+  **[59][60] เรียงหน้าคู่ / ภาพรวม 1px-4px** — overlay `.sp-pageview` วาดหน้ากระดาษจาก `paginate()`
+    (ไม่แตะ ProseMirror เลย · `.workspace` ถูกซ่อนด้วย CSS) · คลิกหน้า/บรรทัด = กลับโหมดปกติ + เคอร์เซอร์ไปที่นั่น
+    (`data-pos` บนทุกบล็อก) · `resize` → วาดใหม่แบบหน่วง 150ms
+  **[61] แสดงรูปแบบ** — `Deco.node` ใส่เส้นฟ้าซ้าย-ขวา + widget `¶`/`·` ท้ายบล็อก (soft = `wrapLines>1`)
+  **[78] Ctrl+G ไปที่หน้า/ฉาก** — กล่องเดียวสลับหน้า↔ฉาก + รายการหัวฉากคลิกได้ · `SPEditor.gotoPos()`
+  **[54] ตรวจบท** — ตรวจใน `scheduleCount` (debounce เดียวกับนับคำ) · ป้าย `#sp-errors` บนแถบสถานะ (คลิก=ข้อถัดไป) ·
+    `Ctrl+Shift+U` ไล่ทีละข้อ · `showErrorList()` รายการทั้งหมด · `checkBeforeExport()` ถามก่อนส่งออก
+  **[67][68][70] ส่งออก** — เมนู **ไฟล์** และ **บท** · เวิร์กโฟลว์ส่งออกเลือก `.fdx/.rtf` ได้ (`finalizeCompiled`) ·
+    PDF ลายน้ำใช้ `kapi.pdfFromHtml` (หน้าต่างซ่อน) + ฝัง Courier Prime ผ่าน `file://` · จำค่าที่ `meta.watermark`
+  ใหม่ใน SPEditor: `setMarkdown()` / `spDocFromMarkdown()` / `gotoPos()` / `refreshGuides()`
+  **เมนูใหม่ "บท"** (id `Script`) + toggles `spView`/`showFormat`/`checkBeforeExport` ใน main.js
 
 **ยังเหลือ**: `search-engine.js` ยังเป็น orphan — Global Search (`global-search.js`) ยังสแกนไฟล์ตรง ๆ ไม่ได้ใช้ inverted index (ควรสลับมาใช้เพื่อความเร็ว) · multiple-drafts-per-book UI (โครงรองรับแล้ว), screenplay align persistence, Campaign/D&D mode, electron-builder + code signing, .icns/.ico icon, native arm64 build. Top เคยบอก paper/indent "อาจต้องปรับปรุง ไว้ก่อน"
 

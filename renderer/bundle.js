@@ -7591,15 +7591,15 @@
     let text = view.someProp("clipboardTextSerializer", (f) => f(slice2, view)) || slice2.content.textBetween(0, slice2.content.size, "\n\n");
     return { dom: wrap2, text, slice: slice2 };
   }
-  function parseFromClipboard(view, text, html, plainText, $context) {
+  function parseFromClipboard(view, text, html, plainText3, $context) {
     let inCode = $context.parent.type.spec.code;
     let dom, slice2;
     if (!html && !text)
       return null;
-    let asText = !!text && (plainText || inCode || !html);
+    let asText = !!text && (plainText3 || inCode || !html);
     if (asText) {
       view.someProp("transformPastedText", (f) => {
-        text = f(text, inCode || plainText, view);
+        text = f(text, inCode || plainText3, view);
       });
       if (inCode) {
         slice2 = new Slice(Fragment.from(view.state.schema.text(text.replace(/\r\n?/g, "\n"))), 0, 0);
@@ -7608,7 +7608,7 @@
         });
         return slice2;
       }
-      let parsed = view.someProp("clipboardTextParser", (f) => f(text, $context, plainText, view));
+      let parsed = view.someProp("clipboardTextParser", (f) => f(text, $context, plainText3, view));
       if (parsed) {
         slice2 = parsed;
       } else {
@@ -8042,9 +8042,9 @@
   function capturePaste(view, event) {
     if (!view.dom.parentNode)
       return;
-    let plainText = view.input.shiftKey || view.state.selection.$from.parent.type.spec.code;
-    let target = view.dom.parentNode.appendChild(document.createElement(plainText ? "textarea" : "div"));
-    if (!plainText)
+    let plainText3 = view.input.shiftKey || view.state.selection.$from.parent.type.spec.code;
+    let target = view.dom.parentNode.appendChild(document.createElement(plainText3 ? "textarea" : "div"));
+    if (!plainText3)
       target.contentEditable = "true";
     target.style.cssText = "position: fixed; left: -10000px; top: 10px";
     target.focus();
@@ -8053,7 +8053,7 @@
       view.focus();
       if (target.parentNode)
         target.parentNode.removeChild(target);
-      if (plainText)
+      if (plainText3)
         doPaste(view, target.value, null, plain, event);
       else
         doPaste(view, target.textContent, target.innerHTML, plain, event);
@@ -13501,7 +13501,7 @@
           ...x.marks.length ? { marks: x.marks.map((t2) => ({ type: t2 })) } : {}
         }));
       }
-      function para(text) {
+      function para2(text) {
         const content = inlineNodes(text);
         return { type: "paragraph", ...content.length ? { content } : {} };
       }
@@ -13533,14 +13533,14 @@
           } else if (line.startsWith("> ")) {
             const ps = [];
             while (i2 < lines.length && lines[i2].startsWith("> ")) {
-              ps.push(para(lines[i2].slice(2)));
+              ps.push(para2(lines[i2].slice(2)));
               i2++;
             }
             out.push({ type: "blockquote", content: ps });
           } else if (RE_UL.test(line)) {
             const items = [];
             while (i2 < lines.length && RE_UL.test(lines[i2])) {
-              items.push({ type: "list_item", content: [para(lines[i2].slice(2))] });
+              items.push({ type: "list_item", content: [para2(lines[i2].slice(2))] });
               i2++;
             }
             out.push({ type: "bullet_list", content: items });
@@ -13548,7 +13548,7 @@
             const start = parseInt(m[1], 10);
             const items = [];
             while (i2 < lines.length && RE_OL.test(lines[i2])) {
-              items.push({ type: "list_item", content: [para(lines[i2].replace(RE_OL, ""))] });
+              items.push({ type: "list_item", content: [para2(lines[i2].replace(RE_OL, ""))] });
               i2++;
             }
             out.push({ type: "ordered_list", attrs: { order: start }, content: items });
@@ -13775,8 +13775,8 @@
     if (!names || !names.length) return null;
     const usable = names.filter((n) => n && n.length >= 2);
     if (!usable.length) return null;
-    const esc2 = usable.slice().sort((a, b) => b.length - a.length).map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-    return new RegExp("\\[\\[(?:[^\\]]+)\\]\\]|" + esc2.join("|"), "g");
+    const esc3 = usable.slice().sort((a, b) => b.length - a.length).map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    return new RegExp("\\[\\[(?:[^\\]]+)\\]\\]|" + esc3.join("|"), "g");
   }
   function mentionDecos(doc3, rx) {
     if (!rx) return DecorationSet.empty;
@@ -14307,9 +14307,9 @@
       ov.onclick = (e) => {
         if (e.target === ov) done(false);
       };
-      document.addEventListener("keydown", function esc2(e) {
+      document.addEventListener("keydown", function esc3(e) {
         if (e.key === "Escape") {
-          document.removeEventListener("keydown", esc2);
+          document.removeEventListener("keydown", esc3);
           done(false);
         }
       });
@@ -14865,8 +14865,8 @@
     const s = String(text ?? "");
     if (!s.trim()) return 1;
     let total = 0;
-    for (const para of s.split("\n")) {
-      const words = para.split(/\s+/).filter(Boolean);
+    for (const para2 of s.split("\n")) {
+      const words = para2.split(/\s+/).filter(Boolean);
       if (!words.length) {
         total += 1;
         continue;
@@ -15423,8 +15423,15 @@
         // [84] กฎ widow/orphan
         spStrings: null,
         // [92] (CONTINUED) / (MORE) / (cont'd) …
-        homeThumb: 190
+        homeThumb: 190,
         // [บั๊ก 12] ความกว้างการ์ดหน้าแรก (px) — ตั้งได้ในตั้งค่า
+        // ---- alpha.57 ----
+        spShowFormat: false,
+        // [61] แสดงเส้นขอบ element + เครื่องหมายจบบรรทัด
+        spCheckBeforeExport: true,
+        // [54] ตรวจหาข้อผิดพลาดก่อนพิมพ์/ส่งออก
+        spLineLimits: null
+        // [54] ความยาวสูงสุดต่อ element (null = ค่ามาตรฐาน)
       };
       DEFAULT_GOALS = { dailyWords: 500, projectWords: 5e4 };
       DEFAULT_SP_CYCLE = {
@@ -15559,7 +15566,7 @@
           },
           "errors": { "noProject": "No project open", "noFile": "File not found", "saveFailed": "Save failed", "loadFailed": "Load failed", "aiNoKey": "Please set AI API key", "aiFailed": "AI request failed", "openProjectFirst": "Open a project first", "notKillianProject": "This folder is not a Killian project", "needScene": "Open a scene first", "moveCrossDraft": "Moving across drafts not supported", "requiresCtrl": "Ctrl/\u2318 required", "pressShortcut": "Press shortcut..." },
           "status": { "ready": "Ready", "saving": "Saving...", "saved": "Saved", "loading": "Loading...", "searching": "Searching...", "settingsSaved": "Settings saved", "zoom": "Zoom", "zoomReset": "Zoom reset to 100%", "uiScale": "UI size", "copied": "Markdown copied", "movedScene": "Moved scene to", "typewriterOn": "Typewriter: ON", "typewriterOff": "Typewriter: OFF", "focusOn": "Focus mode: ON", "focusOff": "Focus mode: OFF", "paperOn": "Paper mode: ON", "paperOff": "Paper mode: OFF", "dirtyClose": "tabs with unsaved changes", "saveAllAndClose": "Save all and close", "closeWithoutSaving": "Close without saving" },
-          "shortcuts": { "save": "Save", "saveAll": "Save All", "saveAs": "Save As...", "newProject": "New Project", "openProject": "Open Project", "print": "Print", "closeTab": "Close Tab", "find": "Find", "settings": "Settings", "undo": "Undo", "redo": "Redo", "bold": "Bold", "italic": "Italic", "underline": "Underline", "strikethrough": "Strikethrough", "heading1": "Heading 1", "heading2": "Heading 2", "heading3": "Heading 3", "bodyText": "Body Text", "bulletList": "Bullet List", "numberedList": "Numbered List", "clearFormatting": "Clear Formatting", "alignLeft": "Align Left", "alignCenter": "Align Center", "alignRight": "Align Right", "justify": "Justify", "toggleFormat": "Toggle Mode", "paperMode": "Paper Mode", "globalSearch": "Search Project", "focusMode": "Focus Mode", "quickOpen": "Quick Open", "typewriter": "Typewriter Mode", "compile": "Compile", "splitView": "Split View", "kanban": "Kanban Board", "exportBlog": "Export as Blog HTML", "gallery": "Gallery", "spScene": "SP: Scene", "spAction": "SP: Action", "spCharacter": "SP: Character", "spParenthetical": "SP: Parenthetical", "spDialogue": "SP: Dialogue", "spTransition": "SP: Transition", "spShot": "SP: Shot", "spActBreak": "SP: Act Break", "spNote": "SP: Note", "selectScene": "Select Scene", "nbsp": "Non-Breaking Space" }
+          "shortcuts": { "save": "Save", "saveAll": "Save All", "saveAs": "Save As...", "newProject": "New Project", "openProject": "Open Project", "print": "Print", "closeTab": "Close Tab", "find": "Find", "settings": "Settings", "undo": "Undo", "redo": "Redo", "bold": "Bold", "italic": "Italic", "underline": "Underline", "strikethrough": "Strikethrough", "heading1": "Heading 1", "heading2": "Heading 2", "heading3": "Heading 3", "bodyText": "Body Text", "bulletList": "Bullet List", "numberedList": "Numbered List", "clearFormatting": "Clear Formatting", "alignLeft": "Align Left", "alignCenter": "Align Center", "alignRight": "Align Right", "justify": "Justify", "toggleFormat": "Toggle Mode", "paperMode": "Paper Mode", "globalSearch": "Search Project", "focusMode": "Focus Mode", "quickOpen": "Quick Open", "typewriter": "Typewriter Mode", "compile": "Compile", "splitView": "Split View", "kanban": "Kanban Board", "exportBlog": "Export as Blog HTML", "gallery": "Gallery", "spScene": "SP: Scene", "spAction": "SP: Action", "spCharacter": "SP: Character", "spParenthetical": "SP: Parenthetical", "spDialogue": "SP: Dialogue", "spTransition": "SP: Transition", "spShot": "SP: Shot", "spActBreak": "SP: Act Break", "spNote": "SP: Note", "selectScene": "Select Scene", "nbsp": "Non-Breaking Space", "goto": "Go to Page/Scene", "findError": "Find Next Error" }
         }
       };
       SHORTCUTS = [
@@ -15612,7 +15619,10 @@
         // [79] เลือกทั้งฉาก
         ["KeyA", true, true, "select-scene"],
         // [77] Non-breaking space
-        ["Space", true, true, "nbsp"]
+        ["Space", true, true, "nbsp"],
+        // [78] ไปที่หน้า/ฉาก · [54] ตรวจหาข้อผิดพลาดถัดไป (alpha.57)
+        ["KeyG", true, false, "goto"],
+        ["KeyU", true, true, "sp-find-error"]
       ];
       shortcutId = (s) => s.slice(3).join(":");
       SHORTCUT_LABELS = {
@@ -15662,7 +15672,9 @@
         "sp-element:act-break": "shortcuts.spActBreak",
         "sp-element:note": "shortcuts.spNote",
         "select-scene": "shortcuts.selectScene",
-        "nbsp": "shortcuts.nbsp"
+        "nbsp": "shortcuts.nbsp",
+        "goto": "shortcuts.goto",
+        "sp-find-error": "shortcuts.findError"
       };
       isMac = (() => {
         try {
@@ -16160,13 +16172,13 @@
     }
     const close2 = () => {
       ov.remove();
-      document.removeEventListener("keydown", esc2);
+      document.removeEventListener("keydown", esc3);
     };
-    function esc2(e) {
+    function esc3(e) {
       if (e.key === "Escape") close2();
     }
     ov.onclick = close2;
-    document.addEventListener("keydown", esc2);
+    document.addEventListener("keydown", esc3);
     document.body.appendChild(ov);
   }
   var CAT_TH, WikiEditor;
@@ -17004,6 +17016,294 @@
     }
   });
 
+  // src/sp-view.js
+  function fitScale(containerW, pageW, gap = 20, opts = {}) {
+    const minScale = opts.minScale ?? 0.5;
+    const maxScale = opts.maxScale ?? 1;
+    const maxPerRow = Math.max(1, opts.maxPerRow ?? 4);
+    const cw = Math.max(1, +containerW || 1);
+    const pw = Math.max(1, +pageW || 1);
+    let perRow = 1;
+    for (let n = maxPerRow; n >= 1; n--) {
+      const s = (cw - gap * (n + 1)) / (n * pw);
+      if (s >= minScale || n === 1) {
+        perRow = n;
+        break;
+      }
+    }
+    const raw = (cw - gap * (perRow + 1)) / (perRow * pw);
+    const scale = Math.max(0.05, Math.min(maxScale, raw));
+    return { perRow, scale: +scale.toFixed(4) };
+  }
+  function overviewScale(pxPerChar, cpi = CHARS_PER_INCH, dpi = 96) {
+    const full = dpi / Math.max(1, cpi);
+    return +(Math.max(0.25, +pxPerChar || 1) / full).toFixed(4);
+  }
+  function viewScale(mode, containerW, pageW, gap = 20) {
+    if (mode === "overview1") return { perRow: 0, scale: overviewScale(1) };
+    if (mode === "overview4") return { perRow: 0, scale: overviewScale(4) };
+    return fitScale(containerW, pageW, gap);
+  }
+  function lineEndingType(text, widthIn) {
+    return wrapLines(text, widthIn) > 1 ? "soft" : "hard";
+  }
+  function blocksFromDoc(doc3) {
+    const out = [];
+    if (!doc3 || typeof doc3.forEach !== "function") return out;
+    let i2 = 0;
+    doc3.forEach((node, offset) => {
+      if (node.type && node.type.name === "spimage") {
+        out.push({ el: "image", text: node.attrs.alt || "", pos: offset, idx: i2++ });
+        return;
+      }
+      const el3 = node.attrs && node.attrs.el || "action";
+      const text = node.textContent || "";
+      const blank = el3 === "action" && !text.trim();
+      out.push({ el: blank ? "blank" : el3, text, pos: offset, idx: i2++ });
+    });
+    return out;
+  }
+  function pageStartPositions(pages) {
+    const list = pages && pages.pages || pages || [];
+    return list.map((pg) => {
+      const b = (pg.blocks || []).find((x) => Number.isFinite(x && x.pos));
+      return b ? b.pos : null;
+    });
+  }
+  function findPageStart(pages, n) {
+    const arr = pageStartPositions(pages);
+    const i2 = Math.max(1, Math.round(+n || 1)) - 1;
+    if (i2 === 0) return arr.length ? arr[0] ?? 0 : 0;
+    return i2 < arr.length ? arr[i2] : null;
+  }
+  function scenePositions(blocks) {
+    const out = [];
+    let n = 0;
+    for (const b of blocks || []) {
+      if (!b || b.el !== "scene") continue;
+      n++;
+      out.push({
+        n,
+        pos: Number.isFinite(b.pos) ? b.pos : null,
+        idx: b.idx ?? null,
+        text: String(b.text || "").trim()
+      });
+    }
+    return out;
+  }
+  function findNthScene(blocks, n) {
+    const s = scenePositions(blocks)[Math.max(1, Math.round(+n || 1)) - 1];
+    return s ? s.pos : null;
+  }
+  function pagesOf(blocks, fmt, lines) {
+    const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+    return paginate(blocks, { fmt: f, lines });
+  }
+  function renderPageView(host2, pages, fmt, opts = {}) {
+    const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+    const list = pages && pages.pages || pages || [];
+    const scale = opts.scale ?? 1;
+    const gap = opts.gap ?? 20;
+    const showNums = opts.showPageNumbers !== false;
+    const pw = +f.paper.width, ph = +f.paper.height;
+    const pxW = pw * 96 * scale, pxH = ph * 96 * scale;
+    host2.innerHTML = "";
+    host2.style.setProperty("--sp-pv-scale", String(scale));
+    host2.style.setProperty("--sp-pv-gap", gap + "px");
+    const els = [];
+    for (const pg of list) {
+      const slot = document.createElement("div");
+      slot.className = "sp-page-slot";
+      slot.style.width = pxW + "px";
+      slot.style.height = pxH + "px";
+      const page = document.createElement("div");
+      page.className = "sp-page";
+      page.dataset.page = String(pg.index);
+      page.style.width = cssIn(pw);
+      page.style.minHeight = cssIn(ph);
+      page.style.paddingTop = cssIn(f.margins.top);
+      page.style.paddingBottom = cssIn(f.margins.bottom);
+      page.style.paddingLeft = cssIn(f.margins.left);
+      page.style.paddingRight = cssIn(f.margins.right);
+      page.style.transform = "scale(" + scale + ")";
+      if (showNums && pg.index > 1) {
+        const num4 = document.createElement("div");
+        num4.className = "sp-page-num";
+        num4.textContent = pg.index + ".";
+        page.append(num4);
+      }
+      if (pg.continuedTop) {
+        const ct = document.createElement("div");
+        ct.className = "sp-continued-top";
+        ct.textContent = pg.continuedTop;
+        page.append(ct);
+      }
+      for (const b of pg.blocks || []) {
+        const d = document.createElement("div");
+        d.className = "sp sp-" + (b.el || "action");
+        if (Number.isFinite(b.pos)) d.dataset.pos = String(b.pos);
+        d.textContent = b.text || "";
+        page.append(d);
+      }
+      if (pg.continuedBottom) {
+        const cb = document.createElement("div");
+        cb.className = "sp-continued-bottom";
+        cb.textContent = pg.continuedBottom;
+        page.append(cb);
+      }
+      slot.append(page);
+      host2.append(slot);
+      els.push(page);
+    }
+    return { pages: els, scale, perRow: opts.perRow ?? 0 };
+  }
+  function viewStatusText(mode, pageCount2) {
+    const name = SP_VIEW_LABELS[mode] || SP_VIEW_LABELS.normal;
+    return Number.isFinite(pageCount2) ? `\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07: ${name} \xB7 ${pageCount2} \u0E2B\u0E19\u0E49\u0E32` : "\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07: " + name;
+  }
+  var SP_VIEWS, SP_VIEW_LABELS, SP_VIEW_CLASS, ALL_VIEW_CLASSES, isPageView, isValidView, LINE_MARK, cssIn;
+  var init_sp_view = __esm({
+    "src/sp-view.js"() {
+      init_sp_format();
+      SP_VIEWS = ["normal", "draft", "side", "overview1", "overview4"];
+      SP_VIEW_LABELS = {
+        normal: "\u0E1B\u0E01\u0E15\u0E34 (\u0E2B\u0E19\u0E49\u0E32\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29)",
+        draft: "\u0E23\u0E48\u0E32\u0E07 \u2014 \u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21\u0E25\u0E49\u0E27\u0E19 (Draft)",
+        side: "\u0E40\u0E23\u0E35\u0E22\u0E07\u0E2B\u0E19\u0E49\u0E32\u0E04\u0E39\u0E48 (Side-by-Side)",
+        overview1: "\u0E20\u0E32\u0E1E\u0E23\u0E27\u0E21 1px/\u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23",
+        overview4: "\u0E20\u0E32\u0E1E\u0E23\u0E27\u0E21 4px/\u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23"
+      };
+      SP_VIEW_CLASS = {
+        normal: "",
+        draft: "sp-view-draft",
+        side: "sp-view-side",
+        overview1: "sp-view-overview sp-view-ov1",
+        overview4: "sp-view-overview sp-view-ov4"
+      };
+      ALL_VIEW_CLASSES = [
+        "sp-view-draft",
+        "sp-view-side",
+        "sp-view-overview",
+        "sp-view-ov1",
+        "sp-view-ov4"
+      ];
+      isPageView = (mode) => mode === "side" || mode === "overview1" || mode === "overview4";
+      isValidView = (mode) => SP_VIEWS.includes(mode);
+      LINE_MARK = { hard: "\xB6", soft: "\xB7" };
+      cssIn = (v) => (+v || 0) + "in";
+    }
+  });
+
+  // src/sp-format-guide.js
+  function setFormatGuide(on, fmt) {
+    _guideOn = !!on;
+    if (fmt) _guideFmt = fmt;
+  }
+  function isFormatGuide() {
+    return _guideOn;
+  }
+  function elWidth(el3) {
+    const c = _guideFmt && _guideFmt.elements && _guideFmt.elements[el3];
+    return c ? c.width : 6;
+  }
+  function guideDecos(doc3) {
+    if (!_guideOn || !doc3) return DecorationSet.empty;
+    const out = [];
+    doc3.forEach((node, pos) => {
+      if (!node.type || node.type.name !== "sp") return;
+      const el3 = node.attrs && node.attrs.el || "action";
+      out.push(Decoration.node(pos, pos + node.nodeSize, { class: "sp-fmt-guide" }));
+      const kind = lineEndingType(node.textContent || "", elWidth(el3));
+      out.push(Decoration.widget(pos + node.nodeSize - 1, () => {
+        const s = document.createElement("span");
+        s.className = "sp-line-marker " + kind;
+        s.textContent = LINE_MARK[kind];
+        s.title = kind === "soft" ? "\u0E15\u0E31\u0E14\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E40\u0E2D\u0E07 (soft wrap)" : "\u0E08\u0E1A\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E14\u0E49\u0E27\u0E22\u0E01\u0E32\u0E23\u0E02\u0E36\u0E49\u0E19\u0E1A\u0E25\u0E47\u0E2D\u0E01\u0E43\u0E2B\u0E21\u0E48 (hard)";
+        s.setAttribute("contenteditable", "false");
+        return s;
+      }, { side: 1, key: "lm" + pos + kind }));
+    });
+    return DecorationSet.create(doc3, out);
+  }
+  function spFormatGuidePlugin() {
+    return new Plugin({
+      key: guideKey,
+      state: {
+        init: (_c, st) => guideDecos(st.doc),
+        apply(tr2, prev, _o, st) {
+          if (!tr2.docChanged && !tr2.getMeta(guideKey)) return prev.map(tr2.mapping, tr2.doc);
+          return guideDecos(st.doc);
+        }
+      },
+      props: { decorations(state2) {
+        return guideKey.getState(state2);
+      } }
+    });
+  }
+  function refreshFormatGuide(view) {
+    if (view) view.dispatch(view.state.tr.setMeta(guideKey, true));
+  }
+  function setPageBreaks(list) {
+    const next = (list || []).filter((b) => b && Number.isFinite(b.pos) && b.pos > 0);
+    const sig = next.map((b) => b.pos + ":" + b.page).join(",");
+    if (sig === _breakSig) return false;
+    _breakSig = sig;
+    _breaks = next;
+    return true;
+  }
+  function pbDecos(doc3) {
+    if (!_breaks.length || !doc3) return DecorationSet.empty;
+    const max = doc3.content.size;
+    const out = [];
+    for (const b of _breaks) {
+      if (b.pos > max) continue;
+      out.push(Decoration.widget(b.pos, () => {
+        const d = document.createElement("div");
+        d.className = "sp-page-break";
+        d.dataset.page = String(b.page || "");
+        d.setAttribute("contenteditable", "false");
+        const lbl = document.createElement("span");
+        lbl.className = "sp-page-break-num";
+        lbl.textContent = "\u0E2B\u0E19\u0E49\u0E32 " + (b.page || "");
+        d.append(lbl);
+        return d;
+      }, { side: -1, key: "pb" + b.pos + "-" + b.page }));
+    }
+    return DecorationSet.create(doc3, out);
+  }
+  function spPageBreakPlugin() {
+    return new Plugin({
+      key: pbKey,
+      state: {
+        init: (_c, st) => pbDecos(st.doc),
+        apply(tr2, prev, _o, st) {
+          if (!tr2.docChanged && !tr2.getMeta(pbKey)) return prev.map(tr2.mapping, tr2.doc);
+          return pbDecos(st.doc);
+        }
+      },
+      props: { decorations(state2) {
+        return pbKey.getState(state2);
+      } }
+    });
+  }
+  function refreshPageBreaks(view) {
+    if (view) view.dispatch(view.state.tr.setMeta(pbKey, true));
+  }
+  var guideKey, _guideOn, _guideFmt, pbKey, _breaks, _breakSig;
+  var init_sp_format_guide = __esm({
+    "src/sp-format-guide.js"() {
+      init_dist4();
+      init_dist5();
+      init_sp_view();
+      guideKey = new PluginKey("kspguide");
+      _guideOn = false;
+      _guideFmt = null;
+      pbKey = new PluginKey("ksppagebreak");
+      _breaks = [];
+      _breakSig = "";
+    }
+  });
+
   // src/screenplay.js
   function inlineContent(text) {
     const doc3 = (0, import_md2.mdToDoc)(text);
@@ -17012,6 +17312,26 @@
   }
   function inlineToMd(content) {
     return (0, import_md2.docToMd)({ type: "doc", content: [{ type: "paragraph", content }] });
+  }
+  function spDocFromMarkdown(markdown, resolveSrc = (p) => p) {
+    const blocks = parseScript(markdown || "").map((b) => {
+      if (b.el === "image") {
+        const m = IMG_RE.exec(b.text) || [];
+        return { type: "spimage", attrs: {
+          alt: m[1] || "",
+          src: m[2] || "",
+          md: b.text,
+          resolved: resolveSrc(m[2] || "")
+        } };
+      }
+      return {
+        type: "sp",
+        attrs: { el: b.el === "blank" ? "action" : b.el },
+        content: b.el === "raw" ? b.text ? [{ type: "text", text: b.text }] : [] : inlineContent(b.text)
+      };
+    });
+    if (!blocks.length) blocks.push({ type: "sp", attrs: { el: "scene" } });
+    return spSchema.nodeFromJSON({ type: "doc", content: blocks });
   }
   var import_md2, marks, spSchema, SPEditor;
   var init_screenplay = __esm({
@@ -17026,6 +17346,7 @@
       init_core();
       import_md2 = __toESM(require_md());
       init_editor();
+      init_sp_format_guide();
       init_fountain();
       marks = {
         strong: { parseDOM: [{ tag: "strong" }], toDOM: () => ["strong", 0] },
@@ -17099,24 +17420,7 @@
           this.getChecker = getChecker;
           this.resolveSrc = resolveSrc;
           this.getNames = getNames;
-          const blocks = parseScript(markdown).map((b) => {
-            if (b.el === "image") {
-              const m = IMG_RE.exec(b.text) || [];
-              return { type: "spimage", attrs: {
-                alt: m[1] || "",
-                src: m[2] || "",
-                md: b.text,
-                resolved: resolveSrc(m[2] || "")
-              } };
-            }
-            return {
-              type: "sp",
-              attrs: { el: b.el === "blank" ? "action" : b.el },
-              content: b.el === "raw" ? b.text ? [{ type: "text", text: b.text }] : [] : inlineContent(b.text)
-            };
-          });
-          if (!blocks.length) blocks.push({ type: "sp", attrs: { el: "scene" } });
-          const doc3 = spSchema.nodeFromJSON({ type: "doc", content: blocks });
+          const doc3 = spDocFromMarkdown(markdown, resolveSrc);
           const self2 = this;
           this.view = new EditorView(mount, {
             editable: editable ? () => editable() : void 0,
@@ -17146,7 +17450,11 @@
                 history(),
                 ...getChecker ? [spellPlugin(getChecker)] : [],
                 focusLinePlugin(),
-                commentAnchorPlugin()
+                commentAnchorPlugin(),
+                spFormatGuidePlugin(),
+                // [61] เส้นขอบ element + เครื่องหมายจบบรรทัด
+                spPageBreakPlugin()
+                // [57] เส้นคั่นหน้า (ตำแหน่งมาจาก paginate ใน app.js)
               ]
             }),
             handleKeyDown(view, ev) {
@@ -17225,6 +17533,29 @@
         }
         refreshMentions() {
           refreshMentions(this.view);
+        }
+        /** แทนที่เนื้อหาทั้งเอกสารด้วย markdown ใหม่ (เก็บ undo history ไว้) */
+        setMarkdown(md) {
+          const v = this.view;
+          const doc3 = spDocFromMarkdown(md, this.resolveSrc);
+          v.dispatch(v.state.tr.replaceWith(0, v.state.doc.content.size, doc3.content));
+          return true;
+        }
+        // [61][57] วาด decoration ของ "แสดงรูปแบบ" / เส้นคั่นหน้าใหม่ (เรียกหลังเปลี่ยนค่าตั้ง)
+        refreshGuides() {
+          refreshFormatGuide(this.view);
+          refreshPageBreaks(this.view);
+        }
+        /** [78] ย้ายเคอร์เซอร์ไปตำแหน่ง pos แล้วเลื่อนจอให้เห็น */
+        gotoPos(pos) {
+          const v = this.view;
+          const max = v.state.doc.content.size;
+          const p = Math.max(0, Math.min(Number(pos) || 0, max));
+          const $p = v.state.doc.resolve(p);
+          const sel = TextSelection.near($p, 1);
+          v.dispatch(v.state.tr.setSelection(sel).scrollIntoView());
+          v.focus();
+          return true;
         }
         curBlock() {
           const $f = this.view.state.selection.$from;
@@ -20335,7 +20666,7 @@
         function capitalize(string, firstLetterOnly) {
           return string.charAt(0).toUpperCase() + (firstLetterOnly ? string.slice(1) : string.slice(1).toLowerCase());
         }
-        function escapeXml(string) {
+        function escapeXml2(string) {
           return string.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&apos;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
         }
         function graphemeSplit(textstring) {
@@ -20378,7 +20709,7 @@
         fabric2.util.string = {
           camelize,
           capitalize,
-          escapeXml,
+          escapeXml: escapeXml2,
           graphemeSplit
         };
       })();
@@ -34520,7 +34851,7 @@
               if (!elementToDraw) {
                 return;
               }
-              var scaleX = this._filterScalingX, scaleY = this._filterScalingY, w = this.width, h = this.height, min = Math.min, max = Math.max, cropX = max(this.cropX, 0), cropY = max(this.cropY, 0), elWidth = elementToDraw.naturalWidth || elementToDraw.width, elHeight = elementToDraw.naturalHeight || elementToDraw.height, sX = cropX * scaleX, sY = cropY * scaleY, sW = min(w * scaleX, elWidth - sX), sH = min(h * scaleY, elHeight - sY), x = -w / 2, y = -h / 2, maxDestW = min(w, elWidth / scaleX - cropX), maxDestH = min(h, elHeight / scaleY - cropY);
+              var scaleX = this._filterScalingX, scaleY = this._filterScalingY, w = this.width, h = this.height, min = Math.min, max = Math.max, cropX = max(this.cropX, 0), cropY = max(this.cropY, 0), elWidth2 = elementToDraw.naturalWidth || elementToDraw.width, elHeight = elementToDraw.naturalHeight || elementToDraw.height, sX = cropX * scaleX, sY = cropY * scaleY, sW = min(w * scaleX, elWidth2 - sX), sH = min(h * scaleY, elHeight - sY), x = -w / 2, y = -h / 2, maxDestW = min(w, elWidth2 / scaleX - cropX), maxDestH = min(h, elHeight / scaleY - cropY);
               elementToDraw && ctx.drawImage(elementToDraw, sX, sY, sW, sH, x, y, maxDestW, maxDestH);
             },
             /**
@@ -50274,10 +50605,10 @@ ${mdToHtmlBody(md)}
         await loadProject2(projectPath);
       }
     };
-    document.addEventListener("keydown", function esc2(e) {
+    document.addEventListener("keydown", function esc3(e) {
       if (e.key === "Escape") {
         ov.remove();
-        document.removeEventListener("keydown", esc2);
+        document.removeEventListener("keydown", esc3);
       }
     });
     const thumb = Math.max(120, Math.min(400, parseInt(state.settings?.homeThumb, 10) || 190));
@@ -61528,8 +61859,8 @@ ${h.text}`;
         if (cur) cur.text = cur.text ? cur.text + " " + line : line;
       }
     } else {
-      for (const para of text.split(/\n{2,}/)) {
-        const t2 = para.trim();
+      for (const para2 of text.split(/\n{2,}/)) {
+        const t2 = para2.trim();
         if (!t2) continue;
         const m = t2.match(/^([^"“”]{0,40}?)\s*[""“](.+)[""”]/);
         out.push({ speaker: m && m[1].trim() || "", paren: "", text: t2 });
@@ -63031,8 +63362,8 @@ ${s.body}`).join("\n\n");
           }
           continue;
         }
-        const esc2 = src[i2 + 1];
-        if (esc2 === "'") {
+        const esc3 = src[i2 + 1];
+        if (esc3 === "'") {
           const hex = src.slice(i2 + 2, i2 + 4);
           if (!skipDepth) {
             const code2 = parseInt(hex, 16);
@@ -63041,12 +63372,12 @@ ${s.body}`).join("\n\n");
           i2 += 4;
           continue;
         }
-        if (esc2 === "*") {
+        if (esc3 === "*") {
           skipDepth = depth;
           i2 += 2;
           continue;
         }
-        if (!skipDepth && (esc2 === "\\" || esc2 === "{" || esc2 === "}")) out += esc2;
+        if (!skipDepth && (esc3 === "\\" || esc3 === "{" || esc3 === "}")) out += esc3;
         i2 += 2;
         continue;
       }
@@ -63534,6 +63865,417 @@ ${sc.body || ""}
     }
   });
 
+  // src/sp-validator.js
+  function meaningful(b) {
+    if (!b) return false;
+    if (b.el === "blank") return false;
+    if (b.el === "action" && !String(b.text ?? "").trim()) return false;
+    return true;
+  }
+  function validateScreenplay(blocks, opts = {}) {
+    const list = Array.isArray(blocks) ? blocks : [];
+    const L = { ...DEFAULT_LIMITS, ...opts.limits || {} };
+    const only = Array.isArray(opts.checks) && opts.checks.length ? new Set(opts.checks) : null;
+    const errors = [];
+    const add = (type, i2, el3, msg) => {
+      if (only && !only.has(type)) return;
+      errors.push({ type, block: i2, el: el3, msg, severity: SP_SEVERITY[type] || "warn" });
+    };
+    const idx = [];
+    for (let i2 = 0; i2 < list.length; i2++) if (meaningful(list[i2])) idx.push(i2);
+    let sceneSeen = false;
+    let warnedNoScene = false;
+    for (let k = 0; k < idx.length; k++) {
+      const i2 = idx[k];
+      const b = list[i2];
+      const el3 = b.el;
+      const text = String(b.text ?? "").trim();
+      const prev = k > 0 ? list[idx[k - 1]] : null;
+      const next = k < idx.length - 1 ? list[idx[k + 1]] : null;
+      if (!text && NEED_TEXT.includes(el3)) {
+        add(SP_ERRORS.EMPTY_ELEMENT, i2, el3, `${elLabel(el3)}: \u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E27\u0E48\u0E32\u0E07`);
+      }
+      if (el3 === "scene") sceneSeen = true;
+      else if (!sceneSeen && !warnedNoScene && ["action", "character", "dialogue", "parenthetical"].includes(el3)) {
+        warnedNoScene = true;
+        add(SP_ERRORS.MISSING_SCENE_HEADING, i2, el3, "\u0E21\u0E35\u0E40\u0E19\u0E37\u0E49\u0E2D\u0E1A\u0E17\u0E01\u0E48\u0E2D\u0E19\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01\u0E41\u0E23\u0E01 \u2014 \u0E04\u0E27\u0E23\u0E02\u0E36\u0E49\u0E19\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01 (INT./EXT.) \u0E01\u0E48\u0E2D\u0E19");
+      }
+      if (el3 === "scene" && next && next.el === "scene") {
+        add(SP_ERRORS.DOUBLE_SCENE, i2, el3, `\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01\u0E15\u0E34\u0E14\u0E01\u0E31\u0E19\u0E2A\u0E2D\u0E07\u0E2D\u0E31\u0E19 \u2014 \u201C${text || "(\u0E27\u0E48\u0E32\u0E07)"}\u201D \u0E44\u0E21\u0E48\u0E21\u0E35\u0E40\u0E19\u0E37\u0E49\u0E2D\u0E09\u0E32\u0E01`);
+      }
+      if (el3 === "character" && (!next || !["dialogue", "parenthetical"].includes(next.el))) {
+        add(SP_ERRORS.ORPHAN_CHARACTER, i2, el3, `\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23 \u201C${text}\u201D \u0E44\u0E21\u0E48\u0E21\u0E35\u0E1A\u0E17\u0E2A\u0E19\u0E17\u0E19\u0E32\u0E15\u0E32\u0E21\u0E2B\u0E25\u0E31\u0E07`);
+      }
+      if (el3 === "dialogue" && (!prev || !["character", "parenthetical", "dialogue"].includes(prev.el))) {
+        add(SP_ERRORS.ORPHAN_DIALOGUE, i2, el3, "\u0E1A\u0E17\u0E1E\u0E39\u0E14\u0E01\u0E33\u0E1E\u0E23\u0E49\u0E32 \u2014 \u0E44\u0E21\u0E48\u0E21\u0E35\u0E0A\u0E37\u0E48\u0E2D\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E19\u0E33\u0E2B\u0E19\u0E49\u0E32");
+      }
+      if (el3 === "parenthetical" && (!prev || !["character", "dialogue"].includes(prev.el))) {
+        add(SP_ERRORS.ORPHAN_PARENTHETICAL, i2, el3, "\u0E27\u0E07\u0E40\u0E25\u0E47\u0E1A\u0E01\u0E33\u0E1E\u0E23\u0E49\u0E32 \u2014 \u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E2D\u0E22\u0E39\u0E48\u0E2B\u0E25\u0E31\u0E07\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23/\u0E1A\u0E17\u0E1E\u0E39\u0E14");
+      }
+      if (el3 === "parenthetical" && text) {
+        const opens = (text.match(/\(/g) || []).length;
+        const closes = (text.match(/\)/g) || []).length;
+        if (opens !== closes) {
+          add(SP_ERRORS.UNCLOSED_PARENTHETICAL, i2, el3, `\u0E27\u0E07\u0E40\u0E25\u0E47\u0E1A\u0E44\u0E21\u0E48\u0E04\u0E23\u0E1A\u0E04\u0E39\u0E48: ${text}`);
+        }
+      }
+      const lim = L[el3];
+      if (lim && text.length > lim) {
+        add(
+          SP_ERRORS.OVERLONG_LINE,
+          i2,
+          el3,
+          `${elLabel(el3)} \u0E22\u0E32\u0E27\u0E40\u0E01\u0E34\u0E19 (${text.length}/${lim} \u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23)`
+        );
+      }
+    }
+    return errors;
+  }
+  function errorSummary(errors) {
+    const list = errors || [];
+    const err = list.filter((e) => e.severity === "error").length;
+    return { total: list.length, errors: err, warnings: list.length - err };
+  }
+  function summaryText(errors) {
+    const s = errorSummary(errors);
+    if (!s.total) return "\u2705 \u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E02\u0E49\u0E2D\u0E1C\u0E34\u0E14\u0E1E\u0E25\u0E32\u0E14";
+    const parts = [];
+    if (s.errors) parts.push(`${s.errors} \u0E02\u0E49\u0E2D\u0E1C\u0E34\u0E14\u0E1E\u0E25\u0E32\u0E14`);
+    if (s.warnings) parts.push(`${s.warnings} \u0E02\u0E49\u0E2D\u0E04\u0E27\u0E23\u0E14\u0E39`);
+    return "\u26A0\uFE0F " + parts.join(" \xB7 ");
+  }
+  function nextError(errors, afterBlock) {
+    const list = (errors || []).slice().sort((a, b) => a.block - b.block);
+    if (!list.length) return null;
+    const n = Number.isFinite(afterBlock) ? afterBlock : -1;
+    return list.find((e) => e.block > n) || list[0];
+  }
+  var SP_ERRORS, SP_SEVERITY, DEFAULT_LIMITS, NEED_TEXT, TH_EL, elLabel;
+  var init_sp_validator = __esm({
+    "src/sp-validator.js"() {
+      SP_ERRORS = {
+        EMPTY_ELEMENT: "empty-element",
+        ORPHAN_CHARACTER: "orphan-character",
+        ORPHAN_DIALOGUE: "orphan-dialogue",
+        ORPHAN_PARENTHETICAL: "orphan-parenthetical",
+        OVERLONG_LINE: "overlong-line",
+        DOUBLE_SCENE: "double-scene",
+        MISSING_SCENE_HEADING: "missing-scene-heading",
+        UNCLOSED_PARENTHETICAL: "unclosed-parenthetical"
+      };
+      SP_SEVERITY = {
+        [SP_ERRORS.EMPTY_ELEMENT]: "warn",
+        [SP_ERRORS.ORPHAN_CHARACTER]: "error",
+        [SP_ERRORS.ORPHAN_DIALOGUE]: "error",
+        [SP_ERRORS.ORPHAN_PARENTHETICAL]: "error",
+        [SP_ERRORS.OVERLONG_LINE]: "warn",
+        [SP_ERRORS.DOUBLE_SCENE]: "warn",
+        [SP_ERRORS.MISSING_SCENE_HEADING]: "warn",
+        [SP_ERRORS.UNCLOSED_PARENTHETICAL]: "error"
+      };
+      DEFAULT_LIMITS = { dialogue: 60, action: 70, scene: 70, character: 40 };
+      NEED_TEXT = ["scene", "character", "dialogue", "parenthetical", "transition", "shot", "act-break"];
+      TH_EL = {
+        scene: "\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01",
+        action: "\u0E1A\u0E23\u0E23\u0E22\u0E32\u0E22",
+        character: "\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23",
+        dialogue: "\u0E1A\u0E17\u0E1E\u0E39\u0E14",
+        parenthetical: "\u0E27\u0E07\u0E40\u0E25\u0E47\u0E1A",
+        transition: "\u0E17\u0E23\u0E32\u0E19\u0E0B\u0E34\u0E0A\u0E31\u0E19",
+        shot: "\u0E0A\u0E47\u0E2D\u0E15",
+        "act-break": "\u0E15\u0E2D\u0E19",
+        note: "\u0E42\u0E19\u0E49\u0E15",
+        summary: "\u0E2A\u0E23\u0E38\u0E1B",
+        outline1: "\u0E42\u0E04\u0E23\u0E07 1",
+        outline2: "\u0E42\u0E04\u0E23\u0E07 2",
+        outline3: "\u0E42\u0E04\u0E23\u0E07 3",
+        image: "\u0E23\u0E39\u0E1B\u0E20\u0E32\u0E1E",
+        raw: "\u0E2D\u0E37\u0E48\u0E19 \u0E46"
+      };
+      elLabel = (el3) => TH_EL[el3] || el3;
+    }
+  });
+
+  // src/export-fdx.js
+  function escapeXml(s) {
+    return String(s ?? "").replace(XML_BAD, "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+  }
+  function plainText(s) {
+    return String(s ?? "").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/(^|[^*])\*([^*\n]+)\*/g, "$1$2").replace(/__([^_]+)__/g, "$1").replace(/~~([^~]+)~~/g, "$1").replace(/\[\[([^\]]+)\]\]/g, "$1").replace(/\u00A0/g, " ");
+  }
+  function generateFdx(blocks, meta2 = {}) {
+    const list = (blocks || []).filter((b) => b && b.el !== "blank" && String(b.text ?? "").trim() !== "");
+    const body = list.map((b) => para(fdxType(b.el), b.text)).join("\n");
+    const title = [];
+    const addTitle = (text, align = "Center") => {
+      if (!String(text ?? "").trim()) return;
+      for (const line of String(text).split("\n")) {
+        title.push(`      <Paragraph Alignment="${align}" Type="Action">
+        <Text>${escapeXml(plainText(line))}</Text>
+      </Paragraph>`);
+      }
+    };
+    addTitle(meta2.title);
+    addTitle(meta2.author ? "\u0E40\u0E02\u0E35\u0E22\u0E19\u0E42\u0E14\u0E22\n" + meta2.author : "");
+    addTitle(meta2.basedOn);
+    addTitle(meta2.contact, "Left");
+    addTitle(meta2.copyright, "Left");
+    const titlePage = title.length ? `  <TitlePage>
+    <Content>
+${title.join("\n")}
+    </Content>
+  </TitlePage>
+` : "";
+    return '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n<FinalDraft DocumentType="Script" Template="No" Version="1">\n  <Content>\n' + (body ? body + "\n" : "") + "  </Content>\n" + titlePage + "</FinalDraft>\n";
+  }
+  var FDX_TYPE_MAP, fdxType, XML_BAD, para;
+  var init_export_fdx = __esm({
+    "src/export-fdx.js"() {
+      FDX_TYPE_MAP = {
+        scene: "Scene Heading",
+        action: "Action",
+        character: "Character",
+        dialogue: "Dialogue",
+        parenthetical: "Parenthetical",
+        transition: "Transition",
+        shot: "Shot",
+        "act-break": "Act Break",
+        // element ที่ Final Draft ไม่มีตรง ๆ → ลงเป็น Action เพื่อไม่ให้เนื้อหาหาย
+        note: "Action",
+        summary: "Action",
+        outline1: "Action",
+        outline2: "Action",
+        outline3: "Action",
+        image: "Action",
+        raw: "Action"
+      };
+      fdxType = (el3) => FDX_TYPE_MAP[el3] || "Action";
+      XML_BAD = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g;
+      para = (type, text, indent = "    ") => `${indent}<Paragraph Type="${escapeXml(type)}">
+${indent}  <Text>${escapeXml(plainText(text))}</Text>
+${indent}</Paragraph>`;
+    }
+  });
+
+  // src/export-rtf.js
+  function escapeRtf(s) {
+    let out = "";
+    for (const ch of String(s ?? "")) {
+      const c = ch.codePointAt(0);
+      if (ch === "\\") {
+        out += "\\\\";
+        continue;
+      }
+      if (ch === "{") {
+        out += "\\{";
+        continue;
+      }
+      if (ch === "}") {
+        out += "\\}";
+        continue;
+      }
+      if (ch === "\n") {
+        out += "\\line ";
+        continue;
+      }
+      if (ch === "	") {
+        out += "\\tab ";
+        continue;
+      }
+      if (c < 32) continue;
+      if (c < 128) {
+        out += ch;
+        continue;
+      }
+      if (c <= 65535) {
+        out += "\\u" + (c > 32767 ? c - 65536 : c) + "?";
+        continue;
+      }
+      const v = c - 65536;
+      const hi = 55296 + (v >> 10), lo = 56320 + (v & 1023);
+      out += "\\u" + (hi > 32767 ? hi - 65536 : hi) + "?";
+      out += "\\u" + (lo > 32767 ? lo - 65536 : lo) + "?";
+    }
+    return out;
+  }
+  function plainText2(s) {
+    return String(s ?? "").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/(^|[^*])\*([^*\n]+)\*/g, "$1$2").replace(/__([^_]+)__/g, "$1").replace(/~~([^~]+)~~/g, "$1").replace(/\[\[([^\]]+)\]\]/g, "$1");
+  }
+  function paraCtrl(el3, fmt) {
+    const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+    const c = f.elements[el3] || f.elements.action;
+    const st = (f.styles[el3] || f.styles.action).print;
+    const tw = textWidth(f.paper, f.margins);
+    const li = Math.max(0, (+c.indent || 0) - f.margins.left);
+    const ri = Math.max(0, tw - li - (+c.width || tw));
+    const sb = Math.max(0, ((+c.linesBefore || 0) / 10 - 1) * TWIPS_PER_LINE);
+    let s = "\\pard\\plain\\f0\\fs24";
+    s += "\\li" + inTw(li) + "\\ri" + inTw(ri);
+    if (sb) s += "\\sb" + Math.round(sb);
+    if (KEEP_NEXT.includes(el3)) s += "\\keepn";
+    if (el3 === "transition") s += "\\qr";
+    if (st.bold) s += "\\b";
+    if (st.italic) s += "\\i";
+    if (st.underline) s += "\\ul";
+    return { ctrl: s, caps: !!st.caps };
+  }
+  function generateRtf(blocks, meta2 = {}, fmt = null) {
+    const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+    const m = f.margins;
+    const head = "{\\rtf1\\ansi\\ansicpg1252\\deff0\\uc1\n{\\fonttbl{\\f0\\fmodern\\fcharset0 Courier Prime;}{\\f1\\fmodern\\fcharset0 Courier New;}}\n\\paperw" + inTw(f.paper.width) + "\\paperh" + inTw(f.paper.height) + "\\margl" + inTw(m.left) + "\\margr" + inTw(m.right) + "\\margt" + inTw(m.top) + "\\margb" + inTw(m.bottom) + "\n\\f0\\fs24\n";
+    const out = [];
+    const title = String(meta2.title || "").trim();
+    if (title) {
+      out.push("\\pard\\plain\\f0\\fs24\\qc\\sb2880\\b " + escapeRtf(title.toUpperCase()) + "\\b0\\par");
+      if (meta2.author) {
+        out.push("\\pard\\plain\\f0\\fs24\\qc\\sb480 " + escapeRtf("\u0E40\u0E02\u0E35\u0E22\u0E19\u0E42\u0E14\u0E22") + "\\par");
+        out.push("\\pard\\plain\\f0\\fs24\\qc " + escapeRtf(String(meta2.author)) + "\\par");
+      }
+      if (meta2.basedOn) out.push("\\pard\\plain\\f0\\fs24\\qc\\sb480 " + escapeRtf(String(meta2.basedOn)) + "\\par");
+      if (meta2.contact) out.push("\\pard\\plain\\f0\\fs24\\ql\\sb2880 " + escapeRtf(String(meta2.contact)) + "\\par");
+      if (meta2.copyright) out.push("\\pard\\plain\\f0\\fs24\\ql " + escapeRtf(String(meta2.copyright)) + "\\par");
+      out.push("\\page");
+    }
+    for (const b of blocks || []) {
+      if (!b || b.el === "blank") continue;
+      const text = plainText2(b.text);
+      if (!text.trim() && b.el === "action") continue;
+      const { ctrl, caps } = paraCtrl(b.el, f);
+      out.push(ctrl + " " + escapeRtf(caps ? text.toUpperCase() : text) + "\\par");
+    }
+    return head + out.join("\n") + "\n}\n";
+  }
+  var TWIPS_PER_INCH, TWIPS_PER_LINE, inTw, KEEP_NEXT;
+  var init_export_rtf = __esm({
+    "src/export-rtf.js"() {
+      init_sp_format();
+      TWIPS_PER_INCH = 1440;
+      TWIPS_PER_LINE = 240;
+      inTw = (v) => Math.round((+v || 0) * TWIPS_PER_INCH);
+      KEEP_NEXT = ["scene", "character", "parenthetical", "act-break", "shot"];
+    }
+  });
+
+  // src/export-watermark.js
+  function safeFileName(s) {
+    return String(s ?? "").replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, " ").trim() || "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E0A\u0E37\u0E48\u0E2D";
+  }
+  function watermarkText(tpl, ctx = {}) {
+    const t2 = String(tpl ?? "").trim() || "{\u0E0A\u0E37\u0E48\u0E2D}";
+    return t2.replace(/\{ชื่อ\}|\{name\}/g, ctx.name ?? "").replace(/\{วันที่\}|\{date\}/g, ctx.date ?? "").replace(/\{เรื่อง\}|\{title\}/g, ctx.title ?? "").trim();
+  }
+  function parseRecipients(text) {
+    return String(text ?? "").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")).map((l) => {
+      const i2 = l.indexOf("|");
+      const name = (i2 >= 0 ? l.slice(0, i2) : l).trim();
+      const wm = i2 >= 0 ? l.slice(i2 + 1).trim() : "";
+      return { name, watermark: wm || name };
+    }).filter((r) => r.name);
+  }
+  function fontFaceCss(urls) {
+    if (!urls || !urls.regular) return "";
+    const face = (u, w, st) => u ? `@font-face{font-family:"Courier Prime";font-weight:${w};font-style:${st};src:url("${u}") format("truetype");}` : "";
+    return [
+      face(urls.regular, 400, "normal"),
+      face(urls.bold, 700, "normal"),
+      face(urls.italic, 400, "italic"),
+      face(urls.boldItalic, 700, "italic")
+    ].filter(Boolean).join("\n");
+  }
+  function buildWatermarkHtml(pages, fmt, opts = {}) {
+    const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+    const list = pages && pages.pages || pages || [];
+    const wm = { ...DEFAULT_WM, ...opts.wmOptions || {} };
+    const wmText = String(opts.watermark || "").trim();
+    const tw = textWidth(f.paper, f.margins);
+    const ph = +f.paper.height - f.margins.top - f.margins.bottom;
+    const body = list.map((pg) => {
+      const rows = [];
+      if (opts.showPageNumbers !== false && pg.index > 1) {
+        rows.push(`<div class="pg-num">${pg.index}.</div>`);
+      }
+      if (pg.continuedTop) rows.push(`<div class="sp sp-cont-top">${esc2(pg.continuedTop)}</div>`);
+      for (const b of pg.blocks || []) {
+        rows.push(`<div class="sp sp-${esc2(b.el || "action")}">${esc2(b.text || "")}</div>`);
+      }
+      if (pg.continuedBottom) rows.push(`<div class="sp sp-cont-bottom">${esc2(pg.continuedBottom)}</div>`);
+      const mark = wmText ? `<div class="wm">${esc2(wmText)}</div>` : "";
+      return `<section class="pg">${mark}<div class="pg-body">${rows.join("")}</div></section>`;
+    }).join("\n");
+    const css = [
+      fontFaceCss(opts.fontUrls),
+      "*{box-sizing:border-box;}",
+      `html,body{margin:0;padding:0;background:#fff;color:#000;font-family:"Courier Prime","Courier Final Draft","Courier New",monospace;font-size:12pt;line-height:1;}`,
+      `.pg{position:relative;width:${+tw.toFixed(4)}in;min-height:${+ph.toFixed(4)}in;page-break-after:always;break-after:page;overflow:hidden;}`,
+      ".pg:last-child{page-break-after:auto;break-after:auto;}",
+      ".pg-body{position:relative;z-index:1;}",
+      ".pg-num{text-align:right;margin-bottom:1em;}",
+      ".sp{white-space:pre-wrap;word-break:break-word;margin:0;}",
+      ".sp-cont-top{text-align:left;}",
+      ".sp-cont-bottom{text-align:right;}",
+      ".sp-more{margin-left:2.2in;}",
+      spCss(f),
+      // ลายน้ำอยู่ใต้ข้อความ (z-index 0) — อ่านบทได้ปกติแต่ถ่ายเอกสารแล้วยังติดไปด้วย
+      `.wm{position:absolute;inset:0;z-index:0;display:flex;align-items:center;justify-content:center;font-size:${wm.fontSize}px;color:${wm.color};transform:rotate(${wm.angle}deg);white-space:nowrap;pointer-events:none;-webkit-print-color-adjust:exact;print-color-adjust:exact;}`
+    ].join("\n");
+    return `<!doctype html>
+<html lang="th"><head><meta charset="utf-8">
+<title>${esc2(opts.title || "")}</title>
+<style>
+${css}
+</style>
+</head>
+<body>
+` + body + "\n</body></html>\n";
+  }
+  async function generateWatermarkedPDFs(api, args = {}) {
+    const {
+      pages,
+      fmt,
+      recipients = [],
+      outDir,
+      prefix = "script",
+      wmTemplate = "{\u0E0A\u0E37\u0E48\u0E2D}",
+      wmOptions,
+      fontUrls,
+      title,
+      date,
+      onProgress
+    } = args;
+    const made = [];
+    for (let i2 = 0; i2 < recipients.length; i2++) {
+      const r = recipients[i2];
+      const text = watermarkText(r.watermark || wmTemplate, { name: r.name, title, date });
+      const html = buildWatermarkHtml(pages, fmt, { watermark: text, wmOptions, fontUrls, title });
+      const file = `${safeFileName(prefix)}_${safeFileName(r.name)}.pdf`;
+      const dest = await api.join(outDir, file);
+      await api.pdfFromHtml(html, dest, {
+        width: fmt && fmt.paper && fmt.paper.width || 8.5,
+        height: fmt && fmt.paper && fmt.paper.height || 11,
+        margins: fmt && fmt.margins || null
+      });
+      made.push(dest);
+      if (onProgress) onProgress(i2 + 1, recipients.length, r.name);
+    }
+    return made;
+  }
+  var DEFAULT_WM, esc2;
+  var init_export_watermark = __esm({
+    "src/export-watermark.js"() {
+      init_sp_format();
+      DEFAULT_WM = {
+        fontSize: 54,
+        // px
+        color: "rgba(0,0,0,0.10)",
+        angle: -35,
+        // องศา
+        repeat: 1
+        // 1 = กลางหน้าเดียว · >1 = ปูทั้งหน้า
+      };
+      esc2 = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+  });
+
   // src/app.js
   var app_exports = {};
   __export(app_exports, {
@@ -63557,14 +64299,23 @@ ${sc.body || ""}
     catKeyFrom: () => catKeyFrom,
     catLabel: () => catLabel,
     centerPage: () => centerPage,
+    checkBeforeExport: () => checkBeforeExport,
+    checkScreenplay: () => checkScreenplay,
     clearFeaturePanels: () => clearFeaturePanels,
     closeTab: () => closeTab,
+    currentSpView: () => currentSpView,
     entityCreateDialog: () => entityCreateDialog,
     entitySearchBlob: () => entitySearchBlob,
     eventDialog: () => eventDialog,
+    exportScript: () => exportScript,
     fieldLabels: () => fieldLabels,
+    finalizeCompiled: () => finalizeCompiled,
     findEntityInScenes: () => findEntityInScenes,
+    findNextSpError: () => findNextSpError,
     fmtTs: () => fmtTs,
+    gotoDialog: () => gotoDialog,
+    gotoPage: () => gotoPage,
+    gotoScene: () => gotoScene,
     guid: () => guid,
     invertRole: () => invertRole,
     isFeaturePanel: () => isFeaturePanel,
@@ -63592,6 +64343,7 @@ ${sc.body || ""}
     refreshAllMentions: () => refreshAllMentions,
     refreshAllSpell: () => refreshAllSpell,
     refreshCommentsPanel: () => refreshCommentsPanel,
+    refreshSpView: () => refreshSpView,
     relationDialog: () => relationDialog,
     renderFeaturePanel: () => renderFeaturePanel,
     renderOpenFeaturePanels: () => renderOpenFeaturePanels,
@@ -63605,16 +64357,24 @@ ${sc.body || ""}
     saveTimeline: () => saveTimeline,
     sceneCtx: () => sceneCtx,
     sceneEventsFromProject: () => sceneEventsFromProject,
+    scriptMeta: () => scriptMeta,
+    setSpView: () => setSpView,
+    showErrorList: () => showErrorList,
     snapshotFile: () => snapshotFile,
+    spErrors: () => spErrors,
     spFormat: () => spFormat,
     spFormatSettings: () => spFormatSettings,
+    spPageModel: () => spPageModel,
     spellChecker: () => spellChecker,
     syncMenuToggles: () => syncMenuToggles,
     syncModeHint: () => syncModeHint,
     tb: () => tb,
+    toggleShowFormat: () => toggleShowFormat,
     uniqueSceneFileName: () => uniqueSceneFileName,
+    updateErrorBadge: () => updateErrorBadge,
     updateSceneRow: () => updateSceneRow,
     updateToolbarTitles: () => updateToolbarTitles,
+    watermarkDialog: () => watermarkDialog,
     wikiRoot: () => wikiRoot
   });
   function loadSettings(meta2) {
@@ -63627,7 +64387,9 @@ ${sc.body || ""}
     const off = parseInt(state.settings.uiFontSize, 10) || 0;
     applyZoomVars(off);
     applyUIScale();
-    applyPageVars();
+    const spFmt = applyPageVars();
+    setFormatGuide(!!state.settings.spShowFormat, spFmt);
+    document.body.classList.toggle("sp-show-format", !!state.settings.spShowFormat);
     document.documentElement.style.setProperty(
       "--home-thumb",
       Math.max(120, Math.min(400, parseInt(state.settings.homeThumb, 10) || 190)) + "px"
@@ -63709,12 +64471,14 @@ ${sc.body || ""}
       cy: (h.scrollTop + h.clientHeight / 2) / Math.max(1, h.scrollHeight)
     }));
     fn();
-    requestAnimationFrame(() => {
+    const restore = () => {
       for (const b of before) {
         b.h.scrollLeft = Math.max(0, b.cx * b.h.scrollWidth - b.h.clientWidth / 2);
         b.h.scrollTop = Math.max(0, b.cy * b.h.scrollHeight - b.h.clientHeight / 2);
       }
-    });
+    };
+    restore();
+    requestAnimationFrame(restore);
   }
   function setPageScale(z) {
     keepZoomCenter(() => {
@@ -63735,6 +64499,309 @@ ${sc.body || ""}
     const p = pane || state.active && state.active.pane;
     if (!p || !p.scrollWidth) return;
     p.scrollLeft = Math.max(0, (p.scrollWidth - p.clientWidth) / 2);
+  }
+  function currentSpView() {
+    return spViewMode;
+  }
+  function clearPageView(pane) {
+    if (!pane) return;
+    pane.querySelectorAll(":scope > .sp-pageview").forEach((n) => n.remove());
+  }
+  function drawPageView(tab) {
+    if (!tab || !tab.sp || !tab.pane) return 0;
+    const fmt = spFormat();
+    const blocks = blocksFromDoc(tab.sp.view.state.doc);
+    const pg = pagesOf(blocks, fmt, linesPerPage(fmt.paper, fmt.margins));
+    let host2 = tab.pane.querySelector(":scope > .sp-pageview");
+    if (!host2) {
+      host2 = el("div", "sp-pageview");
+      tab.pane.append(host2);
+      host2.addEventListener("click", (ev) => {
+        const blk = ev.target.closest && ev.target.closest(".sp[data-pos]");
+        const page = ev.target.closest && ev.target.closest(".sp-page");
+        if (!blk && !page) return;
+        const pos = blk ? parseInt(blk.dataset.pos, 10) : parseInt(page.querySelector(".sp[data-pos]")?.dataset.pos ?? "", 10);
+        setSpView("normal");
+        if (Number.isFinite(pos)) tab.sp.gotoPos(pos);
+      });
+    }
+    const pageWpx = fmt.paper.width * 96;
+    const vs = viewScale(spViewMode, tab.pane.clientWidth || 900, pageWpx, 20);
+    renderPageView(host2, pg, fmt, { scale: vs.scale, perRow: vs.perRow, gap: 20 });
+    return pg.count;
+  }
+  function setSpView(mode, quiet) {
+    const m = isValidView(mode) ? mode : "normal";
+    spViewMode = m;
+    const tab = state.active;
+    document.querySelectorAll(".pane").forEach((p) => {
+      p.classList.remove(...ALL_VIEW_CLASSES);
+      if (p !== (tab && tab.pane)) clearPageView(p);
+    });
+    let pages = null;
+    if (tab && tab.sp && tab.pane) {
+      const cls = SP_VIEW_CLASS[m].split(" ").filter(Boolean);
+      if (cls.length) tab.pane.classList.add(...cls);
+      if (isPageView(m)) pages = drawPageView(tab);
+      else clearPageView(tab.pane);
+    }
+    const sel = $("#sp-view-select");
+    if (sel) sel.value = m;
+    syncMenuToggles();
+    if (!quiet) setStatus(viewStatusText(m, pages ?? void 0));
+    return m;
+  }
+  function refreshSpView() {
+    if (!isPageView(spViewMode)) return;
+    const tab = state.active;
+    if (tab && tab.sp) drawPageView(tab);
+  }
+  function toggleShowFormat(on) {
+    const v = on ?? !isFormatGuide();
+    setFormatGuide(v, spFormat());
+    state.settings.spShowFormat = v;
+    document.body.classList.toggle("sp-show-format", v);
+    for (const tb2 of state.tabs.values()) if (tb2.sp) tb2.sp.refreshGuides();
+    saveProjectMeta();
+    syncMenuToggles();
+    setStatus(v ? "\u0E41\u0E2A\u0E14\u0E07\u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A: \u0E40\u0E1B\u0E34\u0E14 (\u0E40\u0E2A\u0E49\u0E19\u0E02\u0E2D\u0E1A element + \u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E2B\u0E21\u0E32\u0E22\u0E08\u0E1A\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14)" : "\u0E41\u0E2A\u0E14\u0E07\u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A: \u0E1B\u0E34\u0E14");
+    return v;
+  }
+  function spPageModel(tab) {
+    const t2 = tab || state.active;
+    if (!t2 || !t2.sp) return null;
+    const fmt = spFormat();
+    const blocks = blocksFromDoc(t2.sp.view.state.doc);
+    const pages = pagesOf(blocks, fmt, linesPerPage(fmt.paper, fmt.margins));
+    return { fmt, blocks, pages, tab: t2 };
+  }
+  function gotoPage(n) {
+    const m = spPageModel();
+    if (!m) {
+      setStatus("\u0E40\u0E1B\u0E34\u0E14\u0E09\u0E32\u0E01\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C\u0E01\u0E48\u0E2D\u0E19");
+      return false;
+    }
+    const pos = findPageStart(m.pages, n);
+    if (pos == null) {
+      setStatus(`\u0E44\u0E21\u0E48\u0E21\u0E35\u0E2B\u0E19\u0E49\u0E32 ${n} (\u0E1A\u0E17\u0E19\u0E35\u0E49\u0E21\u0E35 ${m.pages.count} \u0E2B\u0E19\u0E49\u0E32)`);
+      return false;
+    }
+    m.tab.sp.gotoPos(pos);
+    setStatus(`\u0E44\u0E1B\u0E17\u0E35\u0E48\u0E2B\u0E19\u0E49\u0E32 ${n} \u0E08\u0E32\u0E01 ${m.pages.count} \u0E2B\u0E19\u0E49\u0E32`);
+    return true;
+  }
+  function gotoScene(n) {
+    const m = spPageModel();
+    if (!m) {
+      setStatus("\u0E40\u0E1B\u0E34\u0E14\u0E09\u0E32\u0E01\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C\u0E01\u0E48\u0E2D\u0E19");
+      return false;
+    }
+    const list = scenePositions(m.blocks);
+    const pos = findNthScene(m.blocks, n);
+    if (pos == null) {
+      setStatus(`\u0E44\u0E21\u0E48\u0E21\u0E35\u0E09\u0E32\u0E01\u0E17\u0E35\u0E48 ${n} (\u0E1A\u0E17\u0E19\u0E35\u0E49\u0E21\u0E35 ${list.length} \u0E09\u0E32\u0E01)`);
+      return false;
+    }
+    m.tab.sp.gotoPos(pos);
+    setStatus(`\u0E44\u0E1B\u0E17\u0E35\u0E48\u0E09\u0E32\u0E01 ${n}: ${list[n - 1]?.text || ""}`);
+    return true;
+  }
+  function gotoDialog(kind) {
+    const m = spPageModel();
+    if (!m) {
+      setStatus("\u0E40\u0E1B\u0E34\u0E14\u0E09\u0E32\u0E01\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C\u0E01\u0E48\u0E2D\u0E19\u0E08\u0E36\u0E07\u0E08\u0E30\u0E44\u0E1B\u0E22\u0E31\u0E07\u0E2B\u0E19\u0E49\u0E32/\u0E09\u0E32\u0E01\u0E44\u0E14\u0E49");
+      return null;
+    }
+    const scenes = scenePositions(m.blocks);
+    const ov = el("div", "k-overlay");
+    const box = el("div", "k-dialog k-goto-dlg");
+    box.append(el("div", "k-dlg-title", "\u0E44\u0E1B\u0E17\u0E35\u0E48\u2026"));
+    const row = el("div", "k-goto-row");
+    const sel = el("select", "k-dlg-select");
+    sel.id = "goto-kind";
+    for (const [v, label] of [["page", "\u0E2B\u0E19\u0E49\u0E32"], ["scene", "\u0E09\u0E32\u0E01"]]) {
+      const o = el("option", null, label);
+      o.value = v;
+      sel.append(o);
+    }
+    sel.value = kind === "scene" ? "scene" : "page";
+    const inp = el("input", "k-dlg-input");
+    inp.id = "goto-num";
+    inp.type = "number";
+    inp.min = "1";
+    inp.value = "1";
+    const hint = el("span", "dim k-goto-hint");
+    const syncHint = () => {
+      const max = sel.value === "page" ? m.pages.count : scenes.length;
+      inp.max = String(Math.max(1, max));
+      hint.textContent = `1\u2013${max}`;
+    };
+    sel.onchange = () => {
+      syncHint();
+      renderList();
+    };
+    row.append(sel, inp, hint);
+    box.append(row);
+    const list = el("div", "k-goto-list");
+    const renderList = () => {
+      list.innerHTML = "";
+      if (sel.value !== "scene") {
+        list.style.display = "none";
+        return;
+      }
+      list.style.display = "";
+      if (!scenes.length) {
+        list.append(el("div", "cmp-empty", "(\u0E1A\u0E17\u0E19\u0E35\u0E49\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01)"));
+        return;
+      }
+      for (const s of scenes) {
+        const d = el("div", "k-menu-item", `${s.n}. ${s.text || "(\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01\u0E27\u0E48\u0E32\u0E07)"}`);
+        d.onclick = () => {
+          ov.remove();
+          gotoScene(s.n);
+        };
+        list.append(d);
+      }
+    };
+    box.append(list);
+    const go = () => {
+      const n = parseInt(inp.value, 10) || 1;
+      ov.remove();
+      if (sel.value === "scene") gotoScene(n);
+      else gotoPage(n);
+    };
+    inp.onkeydown = (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        go();
+      }
+    };
+    const btns = el("div", "k-dlg-btns");
+    const bCancel = el("button", "k-cancel", "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01");
+    bCancel.onclick = () => ov.remove();
+    const bGo = el("button", "k-ok", "\u0E44\u0E1B");
+    bGo.onclick = go;
+    btns.append(bCancel, bGo);
+    box.append(btns);
+    ov.append(box);
+    document.body.append(ov);
+    ov.onclick = (e) => {
+      if (e.target === ov) ov.remove();
+    };
+    syncHint();
+    renderList();
+    inp.focus();
+    inp.select();
+    return ov;
+  }
+  function spErrors() {
+    return _spErrors.slice();
+  }
+  function checkScreenplay(tab) {
+    const t2 = tab || state.active;
+    if (!t2 || !t2.sp) return [];
+    const blocks = blocksFromDoc(t2.sp.view.state.doc);
+    const errs = validateScreenplay(blocks, { limits: state.settings.spLineLimits || void 0 });
+    for (const e of errs) {
+      const b = blocks[e.block];
+      e.pos = b && Number.isFinite(b.pos) ? b.pos : null;
+      e.text = b ? String(b.text || "") : "";
+    }
+    _spErrors = errs;
+    return errs;
+  }
+  function findNextSpError() {
+    const t2 = state.active;
+    if (!t2 || !t2.sp) {
+      setStatus("\u0E40\u0E1B\u0E34\u0E14\u0E09\u0E32\u0E01\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C\u0E01\u0E48\u0E2D\u0E19\u0E08\u0E36\u0E07\u0E08\u0E30\u0E15\u0E23\u0E27\u0E08\u0E44\u0E14\u0E49");
+      return null;
+    }
+    const errs = checkScreenplay(t2);
+    updateErrorBadge();
+    if (!errs.length) {
+      setStatus(summaryText(errs));
+      return null;
+    }
+    const curPos = t2.sp.view.state.selection.from;
+    const blocks = blocksFromDoc(t2.sp.view.state.doc);
+    let curBlock = -1;
+    for (let i2 = 0; i2 < blocks.length; i2++) if (blocks[i2].pos < curPos) curBlock = i2;
+    const e = nextError(errs, curBlock);
+    if (!e) return null;
+    if (Number.isFinite(e.pos)) t2.sp.gotoPos(e.pos);
+    const sorted = errs.slice().sort((a, b) => a.block - b.block);
+    setStatus(`\u26A0\uFE0F ${e.msg}  [${sorted.indexOf(e) + 1}/${errs.length}]`);
+    return e;
+  }
+  function updateErrorBadge() {
+    const box = $("#sp-errors");
+    if (!box) return;
+    const t2 = state.active;
+    if (!t2 || !t2.sp) {
+      box.textContent = "";
+      box.classList.remove("has-err");
+      box.title = "";
+      return;
+    }
+    const s = errorSummary(_spErrors);
+    box.textContent = s.total ? `\u26A0\uFE0F ${s.total}` : "\u2705 0";
+    box.classList.toggle("has-err", s.total > 0);
+    box.title = summaryText(_spErrors) + " \u2014 \u0E04\u0E25\u0E34\u0E01\u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E44\u0E1B\u0E02\u0E49\u0E2D\u0E16\u0E31\u0E14\u0E44\u0E1B (Ctrl+Shift+U)";
+  }
+  function showErrorList() {
+    const t2 = state.active;
+    if (!t2 || !t2.sp) {
+      setStatus("\u0E40\u0E1B\u0E34\u0E14\u0E09\u0E32\u0E01\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C\u0E01\u0E48\u0E2D\u0E19\u0E08\u0E36\u0E07\u0E08\u0E30\u0E15\u0E23\u0E27\u0E08\u0E44\u0E14\u0E49");
+      return null;
+    }
+    const errs = checkScreenplay(t2);
+    updateErrorBadge();
+    const ov = el("div", "k-overlay");
+    const box = el("div", "k-dialog k-err-dlg");
+    box.append(el("div", "k-dlg-title", "\u0E15\u0E23\u0E27\u0E08\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C"));
+    box.append(el("div", "dim", summaryText(errs)));
+    const list = el("div", "k-err-list");
+    if (!errs.length) list.append(el("div", "cmp-empty", "\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E02\u0E49\u0E2D\u0E1C\u0E34\u0E14\u0E1E\u0E25\u0E32\u0E14 \u{1F389}"));
+    for (const e of errs.slice().sort((a, b) => a.block - b.block)) {
+      const row = el("div", "k-err-row " + e.severity);
+      row.append(el("span", "k-err-dot", e.severity === "error" ? "\u26D4" : "\u26A0\uFE0F"));
+      row.append(el("span", "k-err-msg", e.msg));
+      const snip = String(e.text || "").trim().slice(0, 40);
+      if (snip) row.append(el("span", "dim k-err-snip", "\u201C" + snip + "\u201D"));
+      row.onclick = () => {
+        ov.remove();
+        if (Number.isFinite(e.pos)) t2.sp.gotoPos(e.pos);
+      };
+      list.append(row);
+    }
+    box.append(list);
+    const btns = el("div", "k-dlg-btns");
+    const bRe = el("button", null, "\u{1F504} \u0E15\u0E23\u0E27\u0E08\u0E43\u0E2B\u0E21\u0E48");
+    bRe.onclick = () => {
+      ov.remove();
+      showErrorList();
+    };
+    const bOk = el("button", "k-ok", "\u0E1B\u0E34\u0E14");
+    bOk.onclick = () => ov.remove();
+    btns.append(bRe, bOk);
+    box.append(btns);
+    ov.append(box);
+    document.body.append(ov);
+    ov.onclick = (ev) => {
+      if (ev.target === ov) ov.remove();
+    };
+    return ov;
+  }
+  async function checkBeforeExport() {
+    if (state.settings.spCheckBeforeExport === false) return true;
+    const t2 = state.active;
+    if (!t2 || !t2.sp) return true;
+    const errs = checkScreenplay(t2);
+    updateErrorBadge();
+    const hard = errs.filter((e) => e.severity === "error");
+    if (!hard.length) return true;
+    return confirmBox(`\u0E1E\u0E1A ${hard.length} \u0E02\u0E49\u0E2D\u0E1C\u0E34\u0E14\u0E1E\u0E25\u0E32\u0E14\u0E43\u0E19\u0E1A\u0E17 (\u0E40\u0E0A\u0E48\u0E19 \u201C${hard[0].msg}\u201D)
+\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01\u0E15\u0E48\u0E2D\u0E44\u0E1B\u0E40\u0E25\u0E22\u0E44\u0E2B\u0E21?`, "\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01\u0E15\u0E48\u0E2D");
   }
   function applyUIScale(v) {
     const s = Math.max(UI_SCALE_MIN, Math.min(
@@ -65847,6 +66914,10 @@ ${sc.body || ""}
         lineNumbers: !!state.settings.lineNumbers,
         splitView: isSplit() ? splitDir() : false,
         format: state.active?.sp ? "screenplay" : "prose",
+        // alpha.57 — เมนู "บท": โหมดมุมมอง + แสดงรูปแบบ + ตรวจก่อนส่งออก
+        spView: currentSpView(),
+        showFormat: isFormatGuide(),
+        checkBeforeExport: state.settings.spCheckBeforeExport !== false,
         panels: {
           "tree-panel": !!ps.tree,
           "props-panel": !!ps.props,
@@ -66217,6 +67288,12 @@ ${sc.body || ""}
   function allWorkflows() {
     return [...PRESETS, ...userWorkflows()];
   }
+  function finalizeCompiled(r) {
+    if (!r) return "";
+    if (r.ext === "fdx") return generateFdx(parseScript(r.text), scriptMeta());
+    if (r.ext === "rtf") return generateRtf(parseScript(r.text), scriptMeta(), spFormat());
+    return r.text;
+  }
   async function openCompileDialog() {
     if (!state.root) return;
     const drafts = await listDrafts();
@@ -66308,7 +67385,7 @@ ${sc.body || ""}
       extRow.append(el("span", null, "\u0E19\u0E32\u0E21\u0E2A\u0E01\u0E38\u0E25\u0E44\u0E1F\u0E25\u0E4C"));
       const selExt = el("select", "k-dlg-select");
       selExt.id = "cmp-ext";
-      for (const e of ["md", "txt", "html"]) {
+      for (const e of ["md", "txt", "html", "fdx", "rtf"]) {
         const o = el("option", null, "." + e);
         o.value = e;
         selExt.append(o);
@@ -66404,9 +67481,9 @@ ${sc.body || ""}
     const bGo = el("button", "k-ok", "\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01\u2026");
     bGo.onclick = async () => {
       const r = await doRun();
-      const dest = await kapi.saveAsDialog(safeName(state.title) + "." + r.ext);
+      const dest = await kapi.saveAsDialog(safeName(state.title) + "." + r.ext, r.ext);
       if (!dest) return;
-      await kapi.writeFile(dest, r.text);
+      await kapi.writeFile(dest, finalizeCompiled(r));
       ov.remove();
       setStatus("\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01\u0E41\u0E25\u0E49\u0E27: " + dest);
     };
@@ -66439,6 +67516,185 @@ ${sc.body || ""}
     await kapi.writeFile(dest, text);
     setStatus("\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01\u0E23\u0E27\u0E21\u0E41\u0E25\u0E49\u0E27: " + dest);
     return dest;
+  }
+  function scriptMeta(title) {
+    const m = state.meta || {};
+    const contact = [
+      m.contact,
+      m.phone,
+      m.authorEmail,
+      m.agentName && "\u0E15\u0E31\u0E27\u0E41\u0E17\u0E19: " + m.agentName,
+      m.agentAddress,
+      m.agentPhone,
+      m.agentEmail
+    ].filter(Boolean).join("\n");
+    return {
+      title: title || state.title || "",
+      author: m.screenplayBy || m.author || "",
+      basedOn: m.basedOn || "",
+      contact,
+      copyright: m.copyright || ""
+    };
+  }
+  async function currentScriptSource() {
+    const t2 = state.active;
+    if (t2 && t2.sp) return { md: t2.sp.getMarkdown(), title: t2.title || state.title };
+    const drafts = await listDrafts();
+    if (!drafts.length) {
+      setStatus("\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E1A\u0E17\u0E43\u0E2B\u0E49\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01 \u2014 \u0E40\u0E1B\u0E34\u0E14\u0E09\u0E32\u0E01\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C\u0E01\u0E48\u0E2D\u0E19");
+      return null;
+    }
+    const pick2 = drafts.length === 1 ? drafts[0].label : await pickFromList("\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01\u0E1A\u0E17\u0E08\u0E32\u0E01\u0E09\u0E1A\u0E31\u0E1A\u0E23\u0E48\u0E32\u0E07\u0E44\u0E2B\u0E19", drafts.map((d2) => d2.label));
+    if (!pick2) return null;
+    const d = drafts.find((x) => x.label === pick2);
+    return { md: await compileDraftText(d.dPath), title: state.title };
+  }
+  async function exportScript(kind) {
+    if (!await checkBeforeExport()) return null;
+    const src = await currentScriptSource();
+    if (!src) return null;
+    const blocks = parseScript(src.md);
+    const meta2 = scriptMeta(src.title);
+    const text = kind === "fdx" ? generateFdx(blocks, meta2) : generateRtf(blocks, meta2, spFormat());
+    const dest = await kapi.saveAsDialog(safeName(src.title) + "." + kind, kind);
+    if (!dest) return null;
+    await kapi.writeFile(dest, text);
+    log("info", "\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01\u0E1A\u0E17 " + kind, dest);
+    setStatus(`\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01 .${kind} \u0E41\u0E25\u0E49\u0E27: ${dest}`);
+    return dest;
+  }
+  async function embeddedFontUrls() {
+    try {
+      const dir = await kapi.join(await kapi.appDir(), "renderer", "assets", "fonts");
+      const one = async (f) => await kapi.exists(await kapi.join(dir, f)) ? kapi.toFileURL(await kapi.join(dir, f)) : "";
+      return {
+        regular: await one("CourierPrime-Regular.ttf"),
+        bold: await one("CourierPrime-Bold.ttf"),
+        italic: await one("CourierPrime-Italic.ttf"),
+        boldItalic: await one("CourierPrime-BoldItalic.ttf")
+      };
+    } catch {
+      return null;
+    }
+  }
+  async function watermarkDialog() {
+    const src = await currentScriptSource();
+    if (!src) return null;
+    const fmt = spFormat();
+    const pages = pagesOf(parseScript(src.md), fmt, linesPerPage(fmt.paper, fmt.margins));
+    const saved = state.meta && state.meta.watermark || {};
+    const ov = el("div", "k-overlay");
+    const box = el("div", "k-dialog k-wm-dlg");
+    box.append(el("div", "k-dlg-title", "\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01 PDF \u0E25\u0E32\u0E22\u0E19\u0E49\u0E33\u0E23\u0E32\u0E22\u0E04\u0E19"));
+    box.append(el("div", "dim", `\u0E1A\u0E17 \u201C${src.title}\u201D \xB7 ${pages.count} \u0E2B\u0E19\u0E49\u0E32 \u2014 \u0E08\u0E30\u0E44\u0E14\u0E49\u0E44\u0E1F\u0E25\u0E4C\u0E25\u0E30\u0E04\u0E19 \u0E25\u0E32\u0E22\u0E19\u0E49\u0E33\u0E15\u0E48\u0E32\u0E07\u0E01\u0E31\u0E19`));
+    const mk = (label, node) => {
+      const r = el("div", "k-row");
+      r.append(el("label", null, label), node);
+      return r;
+    };
+    const ta = el("textarea", "k-dlg-input k-wm-list");
+    ta.rows = 6;
+    ta.placeholder = "\u0E2B\u0E19\u0E36\u0E48\u0E07\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14 = \u0E2B\u0E19\u0E36\u0E48\u0E07\u0E04\u0E19\n\u0E2A\u0E21\u0E0A\u0E32\u0E22\n\u0E2A\u0E21\u0E2B\u0E0D\u0E34\u0E07 | \u0E2A\u0E33\u0E40\u0E19\u0E32\u0E2A\u0E33\u0E2B\u0E23\u0E31\u0E1A\u0E1C\u0E39\u0E49\u0E01\u0E33\u0E01\u0E31\u0E1A";
+    ta.value = saved.recipients || "";
+    box.append(mk("\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E1C\u0E39\u0E49\u0E23\u0E31\u0E1A", ta));
+    const tpl = el("input", "k-dlg-input");
+    tpl.value = saved.template || "{\u0E0A\u0E37\u0E48\u0E2D} \xB7 {\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48}";
+    box.append(mk("\u0E41\u0E21\u0E48\u0E41\u0E1A\u0E1A\u0E25\u0E32\u0E22\u0E19\u0E49\u0E33", tpl));
+    box.append(el("div", "dim", '\u0E43\u0E0A\u0E49 {\u0E0A\u0E37\u0E48\u0E2D} {\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48} {\u0E40\u0E23\u0E37\u0E48\u0E2D\u0E07} \u0E44\u0E14\u0E49 \xB7 \u0E23\u0E30\u0E1A\u0E38\u0E25\u0E32\u0E22\u0E19\u0E49\u0E33\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E04\u0E19\u0E44\u0E14\u0E49\u0E14\u0E49\u0E27\u0E22 "\u0E0A\u0E37\u0E48\u0E2D | \u0E25\u0E32\u0E22\u0E19\u0E49\u0E33"'));
+    const pre = el("input", "k-dlg-input");
+    pre.value = saved.prefix || safeName(src.title);
+    box.append(mk("\u0E04\u0E33\u0E19\u0E33\u0E2B\u0E19\u0E49\u0E32\u0E0A\u0E37\u0E48\u0E2D\u0E44\u0E1F\u0E25\u0E4C", pre));
+    const size = el("input", "k-dlg-input");
+    size.type = "number";
+    size.min = "10";
+    size.max = "200";
+    size.value = String(saved.fontSize || DEFAULT_WM.fontSize);
+    box.append(mk("\u0E02\u0E19\u0E32\u0E14\u0E25\u0E32\u0E22\u0E19\u0E49\u0E33 (px)", size));
+    const ang = el("input", "k-dlg-input");
+    ang.type = "number";
+    ang.min = "-90";
+    ang.max = "90";
+    ang.value = String(saved.angle ?? DEFAULT_WM.angle);
+    box.append(mk("\u0E21\u0E38\u0E21\u0E40\u0E2D\u0E35\u0E22\u0E07 (\u0E2D\u0E07\u0E28\u0E32)", ang));
+    const dirRow = el("div", "k-row");
+    const dirLbl = el("span", "dim", saved.outDir || "(\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E42\u0E1F\u0E25\u0E40\u0E14\u0E2D\u0E23\u0E4C)");
+    let outDir = saved.outDir || "";
+    const bDir = el("button", "cmp-mini", "\u{1F4C2} \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E42\u0E1F\u0E25\u0E40\u0E14\u0E2D\u0E23\u0E4C\u0E1B\u0E25\u0E32\u0E22\u0E17\u0E32\u0E07");
+    bDir.onclick = async () => {
+      const p = await kapi.openDirDialog();
+      if (p) {
+        outDir = p;
+        dirLbl.textContent = p;
+      }
+    };
+    dirRow.append(bDir, dirLbl);
+    box.append(dirRow);
+    const prog = el("div", "dim k-wm-prog");
+    box.append(prog);
+    const btns = el("div", "k-dlg-btns");
+    const bCancel = el("button", "k-cancel", "\u0E1B\u0E34\u0E14");
+    bCancel.onclick = () => ov.remove();
+    const bGo = el("button", "k-ok", "\u0E2A\u0E23\u0E49\u0E32\u0E07 PDF");
+    bGo.onclick = async () => {
+      const rs = parseRecipients(ta.value);
+      if (!rs.length) {
+        prog.textContent = "\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E1C\u0E39\u0E49\u0E23\u0E31\u0E1A";
+        return;
+      }
+      if (!outDir) {
+        prog.textContent = "\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E42\u0E1F\u0E25\u0E40\u0E14\u0E2D\u0E23\u0E4C\u0E1B\u0E25\u0E32\u0E22\u0E17\u0E32\u0E07\u0E01\u0E48\u0E2D\u0E19";
+        return;
+      }
+      bGo.disabled = true;
+      const wmOptions = {
+        ...DEFAULT_WM,
+        fontSize: parseInt(size.value, 10) || DEFAULT_WM.fontSize,
+        angle: parseFloat(ang.value) || 0
+      };
+      try {
+        const made = await generateWatermarkedPDFs(kapi, {
+          pages,
+          fmt,
+          recipients: rs,
+          outDir,
+          prefix: pre.value,
+          wmTemplate: tpl.value,
+          wmOptions,
+          fontUrls: await embeddedFontUrls(),
+          title: src.title,
+          date: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+          onProgress: (i2, n, name) => {
+            prog.textContent = `\u0E01\u0E33\u0E25\u0E31\u0E07\u0E2A\u0E23\u0E49\u0E32\u0E07 ${i2}/${n} \u2014 ${name}`;
+          }
+        });
+        if (state.meta) {
+          state.meta.watermark = {
+            recipients: ta.value,
+            template: tpl.value,
+            prefix: pre.value,
+            outDir,
+            fontSize: wmOptions.fontSize,
+            angle: wmOptions.angle
+          };
+          await saveProjectMeta();
+        }
+        prog.textContent = `\u0E40\u0E2A\u0E23\u0E47\u0E08\u0E41\u0E25\u0E49\u0E27 ${made.length} \u0E44\u0E1F\u0E25\u0E4C`;
+        setStatus(`\u0E2A\u0E23\u0E49\u0E32\u0E07 PDF \u0E25\u0E32\u0E22\u0E19\u0E49\u0E33 ${made.length} \u0E44\u0E1F\u0E25\u0E4C\u0E17\u0E35\u0E48 ${outDir}`);
+        log("info", "PDF \u0E25\u0E32\u0E22\u0E19\u0E49\u0E33", { count: made.length, outDir });
+      } catch (e) {
+        prog.textContent = "\u0E1C\u0E34\u0E14\u0E1E\u0E25\u0E32\u0E14: " + (e && e.message ? e.message : e);
+        log("error", "\u0E2A\u0E23\u0E49\u0E32\u0E07 PDF \u0E25\u0E32\u0E22\u0E19\u0E49\u0E33\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08", e);
+      }
+      bGo.disabled = false;
+    };
+    btns.append(bCancel, bGo);
+    box.append(btns);
+    ov.append(box);
+    document.body.append(ov);
+    ov.onclick = (e) => {
+      if (e.target === ov) ov.remove();
+    };
+    return { ov, pages };
   }
   async function loadPlugins() {
     plugins.commands = [];
@@ -67300,7 +68556,10 @@ ${sc.body || ""}
     pane.classList.toggle("sp-pane", !!tab.sp);
     const ws = pane.querySelector(".workspace");
     if (ws) ws.style.minWidth = pageScale * 100 + "%";
-    requestAnimationFrame(() => centerPage(pane));
+    requestAnimationFrame(() => {
+      setSpView(currentSpView(), true);
+      centerPage(pane);
+    });
   }
   async function switchFormat(target) {
     const tab = state.active;
@@ -68087,6 +69346,11 @@ ${sc.body || ""}
         }
       }
     }
+    const spView = $("#sp-view-select");
+    if (spView) {
+      spView.style.display = sp ? "" : "none";
+      spView.value = currentSpView();
+    }
     document.querySelectorAll(".tb").forEach((b) => {
       if (b.id === "tb-paper") return;
       if (b.id === "tb-split") {
@@ -68126,13 +69390,27 @@ ${sc.body || ""}
       if (t2.sp) {
         try {
           const fmt = spFormat();
-          const n = pageCount(parseScript(body), { fmt, lines: linesPerPage(fmt.paper, fmt.margins) });
-          txt += ` \xB7 ${n} \u0E2B\u0E19\u0E49\u0E32`;
+          const blocks = blocksFromDoc(t2.sp.view.state.doc);
+          const pg = pagesOf(blocks, fmt, linesPerPage(fmt.paper, fmt.margins));
+          txt += ` \xB7 ${pg.count} \u0E2B\u0E19\u0E49\u0E32`;
+          const starts = pageStartPositions(pg);
+          const changed = setPageBreaks(starts.map((pos, i2) => ({ pos, page: i2 + 1 })).slice(1).filter((x) => Number.isFinite(x.pos)));
+          if (changed) t2.sp.refreshGuides();
+          refreshSpView();
         } catch (e) {
           log("warn", "\u0E19\u0E31\u0E1A\u0E2B\u0E19\u0E49\u0E32\u0E1A\u0E17\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08", e);
         }
+        try {
+          checkScreenplay(t2);
+        } catch (e) {
+          log("warn", "\u0E15\u0E23\u0E27\u0E08\u0E1A\u0E17\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08", e);
+        }
+      } else {
+        setPageBreaks([]);
+        _spErrors = [];
       }
       $("#wc").textContent = txt;
+      updateErrorBadge();
       updateProgressBar();
     }, 300);
   }
@@ -68674,6 +69952,43 @@ ${sc.body || ""}
         state.settings.autoSync = isAutoSyncOn();
         saveProjectMeta();
         break;
+      // ---- alpha.57: มุมมองบท (57/59/60/61) · ไปยังหน้า-ฉาก (78) · ตรวจบท (54) · ส่งออก (67/68/70) ----
+      case "sp-view":
+        setSpView(a[0]);
+        break;
+      case "sp-show-format":
+        toggleShowFormat(a[0]);
+        break;
+      case "goto":
+        gotoDialog(a[0]);
+        break;
+      case "goto-page":
+        gotoPage(a[0]);
+        break;
+      case "goto-scene":
+        gotoScene(a[0]);
+        break;
+      case "sp-find-error":
+        findNextSpError();
+        break;
+      case "sp-check-all":
+        showErrorList();
+        break;
+      case "sp-check-toggle":
+        state.settings.spCheckBeforeExport = state.settings.spCheckBeforeExport === false;
+        saveProjectMeta();
+        syncMenuToggles();
+        setStatus(state.settings.spCheckBeforeExport ? "\u0E15\u0E23\u0E27\u0E08\u0E1A\u0E17\u0E01\u0E48\u0E2D\u0E19\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01: \u0E40\u0E1B\u0E34\u0E14" : "\u0E15\u0E23\u0E27\u0E08\u0E1A\u0E17\u0E01\u0E48\u0E2D\u0E19\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01: \u0E1B\u0E34\u0E14");
+        break;
+      case "export-fdx":
+        await exportScript("fdx");
+        break;
+      case "export-rtf":
+        await exportScript("rtf");
+        break;
+      case "export-watermark":
+        await watermarkDialog();
+        break;
     }
   }
   function onShortcut(e) {
@@ -68840,6 +70155,7 @@ ${sc.body || ""}
     bar.append(handle);
     [
       "#tb-sp-elem",
+      "#sp-view-select",
       "#tb-paper",
       "#tb-mode",
       "#tb-style",
@@ -74539,6 +75855,363 @@ ${sc.body || ""}
           );
           resetPageScale();
           await new Promise((r) => setTimeout(r, 60));
+          setSpView("normal");
+          await new Promise((r) => setTimeout(r, 80));
+          check2("[57] \u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19\u0E40\u0E1B\u0E47\u0E19\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07\u0E1B\u0E01\u0E15\u0E34", currentSpView() === "normal");
+          const pmSp57 = spT.pane.querySelector(".ProseMirror");
+          const bgNormal = getComputedStyle(pmSp57).backgroundColor;
+          setSpView("draft");
+          await new Promise((r) => setTimeout(r, 120));
+          check2(
+            "[57] \u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E40\u0E1B\u0E47\u0E19\u0E42\u0E2B\u0E21\u0E14\u0E23\u0E48\u0E32\u0E07 \u2192 pane \u0E15\u0E34\u0E14\u0E04\u0E25\u0E32\u0E2A sp-view-draft",
+            spT.pane.classList.contains("sp-view-draft")
+          );
+          const cs57 = getComputedStyle(pmSp57);
+          check2(
+            "[57] \u0E42\u0E2B\u0E21\u0E14\u0E23\u0E48\u0E32\u0E07: \u0E1E\u0E37\u0E49\u0E19\u0E2B\u0E25\u0E31\u0E07\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E2B\u0E32\u0E22\u0E44\u0E1B (\u0E42\u0E1B\u0E23\u0E48\u0E07\u0E43\u0E2A)",
+            cs57.backgroundColor === "rgba(0, 0, 0, 0)" && bgNormal !== cs57.backgroundColor,
+            bgNormal + " \u2192 " + cs57.backgroundColor
+          );
+          check2("[57] \u0E42\u0E2B\u0E21\u0E14\u0E23\u0E48\u0E32\u0E07: \u0E44\u0E21\u0E48\u0E21\u0E35\u0E40\u0E07\u0E32\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29", cs57.boxShadow === "none", cs57.boxShadow);
+          const spBlk57 = spT.pane.querySelector(".sp-character") || spT.pane.querySelector(".sp");
+          check2(
+            "[57] \u0E42\u0E2B\u0E21\u0E14\u0E23\u0E48\u0E32\u0E07: \u0E44\u0E21\u0E48\u0E40\u0E22\u0E37\u0E49\u0E2D\u0E07\u0E41\u0E1A\u0E1A\u0E2A\u0E04\u0E23\u0E34\u0E1B\u0E15\u0E4C (margin-left = 0)",
+            parseFloat(getComputedStyle(spBlk57).marginLeft) === 0,
+            getComputedStyle(spBlk57).marginLeft
+          );
+          setSpView("normal");
+          await new Promise((r) => setTimeout(r, 120));
+          check2(
+            "[57] \u0E01\u0E25\u0E31\u0E1A\u0E21\u0E32\u0E42\u0E2B\u0E21\u0E14\u0E1B\u0E01\u0E15\u0E34\u0E41\u0E25\u0E49\u0E27\u0E04\u0E25\u0E32\u0E2A\u0E16\u0E39\u0E01\u0E16\u0E2D\u0E14\u0E2D\u0E2D\u0E01\u0E2B\u0E21\u0E14",
+            !spT.pane.classList.contains("sp-view-draft") && parseFloat(getComputedStyle(spT.pane.querySelector(".sp-character")).marginLeft) > 0
+          );
+          {
+            const before = spT.sp.getMarkdown();
+            const longMd = Array.from({ length: 90 }, (_, i2) => "!\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E22\u0E32\u0E27\u0E2A\u0E33\u0E2B\u0E23\u0E31\u0E1A\u0E17\u0E14\u0E2A\u0E2D\u0E1A\u0E01\u0E32\u0E23\u0E15\u0E31\u0E14\u0E2B\u0E19\u0E49\u0E32 " + i2).join("\n");
+            spT.sp.setMarkdown(longMd);
+            scheduleCount();
+            await new Promise((r) => setTimeout(r, 500));
+            check2(
+              "[57] \u0E1A\u0E17\u0E22\u0E32\u0E27 \u2192 \u0E21\u0E35\u0E40\u0E2A\u0E49\u0E19\u0E04\u0E31\u0E48\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E43\u0E19\u0E15\u0E31\u0E27\u0E41\u0E01\u0E49\u0E44\u0E02",
+              spT.pane.querySelectorAll(".sp-page-break").length >= 1,
+              spT.pane.querySelectorAll(".sp-page-break").length
+            );
+            check2(
+              "[57] \u0E40\u0E2A\u0E49\u0E19\u0E04\u0E31\u0E48\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E1A\u0E2D\u0E01\u0E40\u0E25\u0E02\u0E2B\u0E19\u0E49\u0E32",
+              /หน้า\s*\d+/.test(spT.pane.querySelector(".sp-page-break")?.textContent || ""),
+              spT.pane.querySelector(".sp-page-break")?.textContent
+            );
+            const m78 = spPageModel(spT);
+            check2("[78] \u0E04\u0E33\u0E19\u0E27\u0E13\u0E2B\u0E19\u0E49\u0E32\u0E08\u0E32\u0E01\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E08\u0E23\u0E34\u0E07\u0E44\u0E14\u0E49\u0E2B\u0E25\u0E32\u0E22\u0E2B\u0E19\u0E49\u0E32", m78.pages.count >= 2, m78.pages.count);
+            const p2 = findPageStart(m78.pages, 2);
+            check2("[78] \u0E2B\u0E32\u0E15\u0E33\u0E41\u0E2B\u0E19\u0E48\u0E07\u0E15\u0E49\u0E19\u0E2B\u0E19\u0E49\u0E32 2 \u0E44\u0E14\u0E49", Number.isFinite(p2) && p2 > 0, p2);
+            spT.sp.gotoPos(0);
+            check2(
+              "[78] gotoPage(2) \u0E22\u0E49\u0E32\u0E22\u0E40\u0E04\u0E2D\u0E23\u0E4C\u0E40\u0E0B\u0E2D\u0E23\u0E4C\u0E44\u0E1B\u0E2B\u0E19\u0E49\u0E32 2 \u0E08\u0E23\u0E34\u0E07",
+              gotoPage(2) && Math.abs(spT.sp.view.state.selection.from - p2) <= 2,
+              `${spT.sp.view.state.selection.from} \u2248 ${p2}`
+            );
+            check2(
+              "[78] \u0E02\u0E2D\u0E2B\u0E19\u0E49\u0E32\u0E17\u0E35\u0E48\u0E44\u0E21\u0E48\u0E21\u0E35 \u2192 \u0E44\u0E21\u0E48\u0E22\u0E49\u0E32\u0E22 \u0E41\u0E25\u0E30\u0E41\u0E08\u0E49\u0E07\u0E40\u0E15\u0E37\u0E2D\u0E19",
+              gotoPage(9999) === false && $("#status").textContent.includes("\u0E44\u0E21\u0E48\u0E21\u0E35\u0E2B\u0E19\u0E49\u0E32")
+            );
+            spT.sp.setMarkdown(before);
+            scheduleCount();
+            await new Promise((r) => setTimeout(r, 420));
+          }
+          {
+            const blocks78 = blocksFromDoc(spT.sp.view.state.doc);
+            const scenes78 = scenePositions(blocks78);
+            check2("[78] \u0E2D\u0E48\u0E32\u0E19\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01\u0E08\u0E32\u0E01\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E44\u0E14\u0E49", scenes78.length >= 1, scenes78.length);
+            if (scenes78.length) {
+              spT.sp.gotoPos(spT.sp.view.state.doc.content.size);
+              check2(
+                "[78] gotoScene(1) \u0E01\u0E25\u0E31\u0E1A\u0E44\u0E1B\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01\u0E41\u0E23\u0E01",
+                gotoScene(1) && spT.sp.view.state.selection.from <= scenes78[0].pos + 2,
+                spT.sp.view.state.selection.from
+              );
+            }
+            const ovG = gotoDialog();
+            check2(
+              '[78] \u0E01\u0E25\u0E48\u0E2D\u0E07 "\u0E44\u0E1B\u0E17\u0E35\u0E48\u2026" \u0E40\u0E1B\u0E34\u0E14\u0E44\u0E14\u0E49 + \u0E21\u0E35\u0E15\u0E31\u0E27\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E2B\u0E19\u0E49\u0E32/\u0E09\u0E32\u0E01',
+              !!ovG && !!ovG.querySelector("#goto-kind") && !!ovG.querySelector("#goto-num")
+            );
+            check2('[78] \u0E40\u0E25\u0E37\u0E2D\u0E01 "\u0E09\u0E32\u0E01" \u0E41\u0E25\u0E49\u0E27\u0E21\u0E35\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01\u0E43\u0E2B\u0E49\u0E04\u0E25\u0E34\u0E01', (() => {
+              const sel = ovG.querySelector("#goto-kind");
+              sel.value = "scene";
+              sel.dispatchEvent(new Event("change"));
+              return ovG.querySelectorAll(".k-goto-list .k-menu-item").length === scenes78.length;
+            })(), ovG.querySelectorAll(".k-goto-list .k-menu-item").length);
+            ovG.remove();
+          }
+          {
+            toggleShowFormat(false);
+            check2("[61] \u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19\u0E1B\u0E34\u0E14\u0E2D\u0E22\u0E39\u0E48", !isFormatGuide() && !spT.pane.querySelector(".sp-line-marker"));
+            toggleShowFormat(true);
+            await new Promise((r) => setTimeout(r, 120));
+            check2(
+              "[61] \u0E40\u0E1B\u0E34\u0E14\u0E41\u0E25\u0E49\u0E27\u0E21\u0E35\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E2B\u0E21\u0E32\u0E22\u0E08\u0E1A\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E43\u0E19\u0E17\u0E38\u0E01\u0E1A\u0E25\u0E47\u0E2D\u0E01",
+              spT.pane.querySelectorAll(".sp-line-marker").length >= 2,
+              spT.pane.querySelectorAll(".sp-line-marker").length
+            );
+            check2(
+              "[61] \u0E21\u0E35\u0E01\u0E23\u0E2D\u0E1A\u0E1A\u0E2D\u0E01\u0E02\u0E2D\u0E1A element (\u0E04\u0E25\u0E32\u0E2A sp-fmt-guide)",
+              !!spT.pane.querySelector(".sp.sp-fmt-guide") || !!spT.pane.querySelector(".sp-fmt-guide")
+            );
+            const gEl = spT.pane.querySelector(".sp-fmt-guide");
+            check2(
+              "[61] \u0E01\u0E23\u0E2D\u0E1A\u0E02\u0E2D\u0E1A element \u0E27\u0E32\u0E14\u0E14\u0E49\u0E27\u0E22\u0E40\u0E2A\u0E49\u0E19\u0E1F\u0E49\u0E32\u0E0B\u0E49\u0E32\u0E22-\u0E02\u0E27\u0E32",
+              getComputedStyle(gEl).boxShadow.includes("inset"),
+              getComputedStyle(gEl).boxShadow
+            );
+            check2("[61] \u0E2A\u0E16\u0E32\u0E19\u0E30\u0E16\u0E39\u0E01\u0E08\u0E33\u0E25\u0E07 settings", state.settings.spShowFormat === true);
+            toggleShowFormat(false);
+            await new Promise((r) => setTimeout(r, 120));
+            check2("[61] \u0E1B\u0E34\u0E14\u0E41\u0E25\u0E49\u0E27\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E2B\u0E21\u0E32\u0E22\u0E2B\u0E32\u0E22\u0E2B\u0E21\u0E14", !spT.pane.querySelector(".sp-line-marker"));
+          }
+          {
+            const nPages = pagesOf(
+              blocksFromDoc(spT.sp.view.state.doc),
+              spFormat(),
+              linesPerPage(spFormat().paper, spFormat().margins)
+            ).count;
+            setSpView("side");
+            await new Promise((r) => setTimeout(r, 200));
+            const pv = spT.pane.querySelector(".sp-pageview");
+            check2("[59] \u0E42\u0E2B\u0E21\u0E14\u0E40\u0E23\u0E35\u0E22\u0E07\u0E2B\u0E19\u0E49\u0E32: \u0E21\u0E35\u0E01\u0E25\u0E48\u0E2D\u0E07\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07\u0E2B\u0E19\u0E49\u0E32\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29", !!pv);
+            check2(
+              "[59] \u0E27\u0E32\u0E14\u0E2B\u0E19\u0E49\u0E32\u0E04\u0E23\u0E1A\u0E15\u0E32\u0E21\u0E08\u0E33\u0E19\u0E27\u0E19\u0E17\u0E35\u0E48\u0E04\u0E33\u0E19\u0E27\u0E13\u0E44\u0E14\u0E49",
+              pv.querySelectorAll(".sp-page").length === nPages,
+              `${pv.querySelectorAll(".sp-page").length} vs ${nPages}`
+            );
+            check2(
+              "[59] \u0E15\u0E31\u0E27\u0E41\u0E01\u0E49\u0E44\u0E02\u0E16\u0E39\u0E01\u0E0B\u0E48\u0E2D\u0E19\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E2D\u0E22\u0E39\u0E48\u0E42\u0E2B\u0E21\u0E14\u0E19\u0E35\u0E49 (\u0E2D\u0E48\u0E32\u0E19\u0E2D\u0E22\u0E48\u0E32\u0E07\u0E40\u0E14\u0E35\u0E22\u0E27)",
+              getComputedStyle(spT.pane.querySelector(".workspace")).display === "none"
+            );
+            const pg1 = pv.querySelector(".sp-page");
+            const sc59 = parseFloat((pg1.style.transform.match(/scale\(([\d.]+)\)/) || [])[1] || "1");
+            check2("[59] \u0E2B\u0E19\u0E49\u0E32\u0E16\u0E39\u0E01\u0E22\u0E48\u0E2D\u0E43\u0E2B\u0E49\u0E1E\u0E2D\u0E14\u0E35\u0E04\u0E27\u0E32\u0E21\u0E01\u0E27\u0E49\u0E32\u0E07 (\u0E2A\u0E40\u0E01\u0E25 \u2264 1)", sc59 > 0 && sc59 <= 1, sc59);
+            check2(
+              "[59] \u0E01\u0E23\u0E2D\u0E1A\u0E2B\u0E19\u0E49\u0E32\u0E01\u0E27\u0E49\u0E32\u0E07\u0E40\u0E17\u0E48\u0E32\u0E02\u0E19\u0E32\u0E14\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E08\u0E23\u0E34\u0E07 (8.5 \u0E19\u0E34\u0E49\u0E27)",
+              Math.abs(parseFloat(pg1.style.width) - 8.5) < 0.01,
+              pg1.style.width
+            );
+            const fit = fitScale(spT.pane.clientWidth, 8.5 * 96, 20);
+            check2(
+              "[59] \u0E2A\u0E40\u0E01\u0E25\u0E15\u0E23\u0E07\u0E01\u0E31\u0E1A\u0E17\u0E35\u0E48 fitScale \u0E04\u0E33\u0E19\u0E27\u0E13",
+              Math.abs(sc59 - fit.scale) < 2e-3,
+              `${sc59} vs ${fit.scale}`
+            );
+            check2(
+              "[59] \u0E1A\u0E25\u0E47\u0E2D\u0E01\u0E43\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E21\u0E35 data-pos \u0E44\u0E27\u0E49\u0E43\u0E2B\u0E49\u0E04\u0E25\u0E34\u0E01\u0E01\u0E23\u0E30\u0E42\u0E14\u0E14",
+              !!pv.querySelector(".sp[data-pos]")
+            );
+            setSpView("overview4");
+            await new Promise((r) => setTimeout(r, 200));
+            const pv4 = spT.pane.querySelector(".sp-pageview");
+            const pg4 = pv4.querySelector(".sp-page");
+            const sc4 = parseFloat((pg4.style.transform.match(/scale\(([\d.]+)\)/) || [])[1] || "1");
+            check2("[60] \u0E20\u0E32\u0E1E\u0E23\u0E27\u0E21 4px: \u0E2A\u0E40\u0E01\u0E25 = 4/9.6", Math.abs(sc4 - overviewScale(4)) < 1e-3, sc4);
+            setSpView("overview1");
+            await new Promise((r) => setTimeout(r, 200));
+            const pg1x = spT.pane.querySelector(".sp-pageview .sp-page");
+            const sc1 = parseFloat((pg1x.style.transform.match(/scale\(([\d.]+)\)/) || [])[1] || "1");
+            check2(
+              "[60] \u0E20\u0E32\u0E1E\u0E23\u0E27\u0E21 1px \u0E40\u0E25\u0E47\u0E01\u0E01\u0E27\u0E48\u0E32\u0E20\u0E32\u0E1E\u0E23\u0E27\u0E21 4px 4 \u0E40\u0E17\u0E48\u0E32",
+              Math.abs(sc1 * 4 - sc4) < 1e-3,
+              `${sc1} \xD7 4 vs ${sc4}`
+            );
+            check2("[60] pane \u0E15\u0E34\u0E14\u0E04\u0E25\u0E32\u0E2A sp-view-overview", spT.pane.classList.contains("sp-view-overview"));
+            setSpView("normal");
+            await new Promise((r) => setTimeout(r, 150));
+            check2(
+              "[59][60] \u0E01\u0E25\u0E31\u0E1A\u0E42\u0E2B\u0E21\u0E14\u0E1B\u0E01\u0E15\u0E34 \u2192 \u0E01\u0E25\u0E48\u0E2D\u0E07\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07\u0E2B\u0E19\u0E49\u0E32\u0E16\u0E39\u0E01\u0E25\u0E1A\u0E17\u0E34\u0E49\u0E07",
+              !spT.pane.querySelector(".sp-pageview")
+            );
+            check2(
+              "[59][60] \u0E15\u0E31\u0E27\u0E41\u0E01\u0E49\u0E44\u0E02\u0E01\u0E25\u0E31\u0E1A\u0E21\u0E32\u0E41\u0E2A\u0E14\u0E07\u0E15\u0E32\u0E21\u0E40\u0E14\u0E34\u0E21",
+              getComputedStyle(spT.pane.querySelector(".workspace")).display !== "none"
+            );
+          }
+          {
+            const before54 = spT.sp.getMarkdown();
+            const badMd = [
+              ".INT. \u0E2B\u0E49\u0E2D\u0E07\u0E17\u0E14\u0E2A\u0E2D\u0E1A - \u0E01\u0E25\u0E32\u0E07\u0E27\u0E31\u0E19",
+              ".EXT. \u0E0B\u0E49\u0E2D\u0E19\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01 - \u0E01\u0E25\u0E32\u0E07\u0E04\u0E37\u0E19",
+              "@\u0E17\u0E2D\u0E23\u0E48\u0E32",
+              "!\u0E40\u0E14\u0E34\u0E19\u0E2D\u0E2D\u0E01\u0E44\u0E1B",
+              "\u0E1A\u0E17\u0E1E\u0E39\u0E14\u0E17\u0E35\u0E48\u0E44\u0E21\u0E48\u0E21\u0E35\u0E43\u0E04\u0E23\u0E1E\u0E39\u0E14"
+            ].join("\n");
+            spT.sp.setMarkdown(badMd);
+            spT.sp.gotoPos(spT.sp.view.state.doc.content.size - 1);
+            spT.sp.setElement("dialogue");
+            await new Promise((r) => setTimeout(r, 80));
+            const errs = checkScreenplay(spT);
+            check2("[54] \u0E15\u0E23\u0E27\u0E08\u0E41\u0E25\u0E49\u0E27\u0E40\u0E08\u0E2D\u0E02\u0E49\u0E2D\u0E1C\u0E34\u0E14\u0E1E\u0E25\u0E32\u0E14", errs.length >= 3, errs.length);
+            check2('[54] \u0E40\u0E08\u0E2D "\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E44\u0E21\u0E48\u0E21\u0E35\u0E1A\u0E17\u0E1E\u0E39\u0E14"', errs.some((e) => e.type === SP_ERRORS.ORPHAN_CHARACTER));
+            check2('[54] \u0E40\u0E08\u0E2D "\u0E1A\u0E17\u0E1E\u0E39\u0E14\u0E01\u0E33\u0E1E\u0E23\u0E49\u0E32"', errs.some((e) => e.type === SP_ERRORS.ORPHAN_DIALOGUE));
+            check2('[54] \u0E40\u0E08\u0E2D "\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01\u0E15\u0E34\u0E14\u0E01\u0E31\u0E19"', errs.some((e) => e.type === SP_ERRORS.DOUBLE_SCENE));
+            check2(
+              "[54] \u0E17\u0E38\u0E01\u0E02\u0E49\u0E2D\u0E1C\u0E39\u0E01\u0E15\u0E33\u0E41\u0E2B\u0E19\u0E48\u0E07\u0E08\u0E23\u0E34\u0E07\u0E43\u0E19\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23 (pos)",
+              errs.every((e) => Number.isFinite(e.pos))
+            );
+            updateErrorBadge();
+            check2(
+              "[54] \u0E41\u0E16\u0E1A\u0E2A\u0E16\u0E32\u0E19\u0E30\u0E41\u0E2A\u0E14\u0E07\u0E08\u0E33\u0E19\u0E27\u0E19\u0E02\u0E49\u0E2D\u0E1C\u0E34\u0E14\u0E1E\u0E25\u0E32\u0E14",
+              $("#sp-errors").textContent.includes(String(errs.length)) && $("#sp-errors").classList.contains("has-err"),
+              $("#sp-errors").textContent
+            );
+            spT.sp.gotoPos(0);
+            const e1 = findNextSpError();
+            check2(
+              "[54] \u0E44\u0E1B\u0E02\u0E49\u0E2D\u0E1C\u0E34\u0E14\u0E1E\u0E25\u0E32\u0E14\u0E16\u0E31\u0E14\u0E44\u0E1B \u2192 \u0E40\u0E04\u0E2D\u0E23\u0E4C\u0E40\u0E0B\u0E2D\u0E23\u0E4C\u0E22\u0E49\u0E32\u0E22\u0E44\u0E1B\u0E15\u0E33\u0E41\u0E2B\u0E19\u0E48\u0E07\u0E19\u0E31\u0E49\u0E19",
+              !!e1 && Math.abs(spT.sp.view.state.selection.from - e1.pos) <= 2,
+              `${spT.sp.view.state.selection.from} vs ${e1 && e1.pos}`
+            );
+            const e22 = findNextSpError();
+            check2(
+              "[54] \u0E01\u0E14\u0E0B\u0E49\u0E33\u0E44\u0E14\u0E49\u0E02\u0E49\u0E2D\u0E16\u0E31\u0E14\u0E44\u0E1B (\u0E44\u0E21\u0E48\u0E04\u0E49\u0E32\u0E07\u0E02\u0E49\u0E2D\u0E40\u0E14\u0E34\u0E21)",
+              !!e22 && e22.block !== e1.block,
+              `${e1 && e1.block} \u2192 ${e22 && e22.block}`
+            );
+            const ovE = showErrorList();
+            check2(
+              "[54] \u0E01\u0E25\u0E48\u0E2D\u0E07\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E02\u0E49\u0E2D\u0E1C\u0E34\u0E14\u0E1E\u0E25\u0E32\u0E14\u0E40\u0E1B\u0E34\u0E14\u0E44\u0E14\u0E49 + \u0E04\u0E23\u0E1A\u0E17\u0E38\u0E01\u0E41\u0E16\u0E27",
+              !!ovE && ovE.querySelectorAll(".k-err-row").length === errs.length,
+              ovE && ovE.querySelectorAll(".k-err-row").length
+            );
+            ovE.remove();
+            const goodMd = [".INT. \u0E2B\u0E49\u0E2D\u0E07\u0E17\u0E14\u0E2A\u0E2D\u0E1A - \u0E01\u0E25\u0E32\u0E07\u0E27\u0E31\u0E19", "!\u0E17\u0E2D\u0E23\u0E48\u0E32\u0E22\u0E37\u0E19\u0E19\u0E34\u0E48\u0E07", "@\u0E17\u0E2D\u0E23\u0E48\u0E32", "\u0E09\u0E31\u0E19\u0E21\u0E32\u0E41\u0E25\u0E49\u0E27"].join("\n");
+            spT.sp.setMarkdown(goodMd);
+            await new Promise((r) => setTimeout(r, 80));
+            check2(
+              "[54] \u0E1A\u0E17\u0E17\u0E35\u0E48\u0E16\u0E39\u0E01\u0E01\u0E15\u0E34\u0E01\u0E32 \u2192 \u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E1C\u0E34\u0E14\u0E1E\u0E25\u0E32\u0E14",
+              checkScreenplay(spT).length === 0,
+              JSON.stringify(checkScreenplay(spT).map((e) => e.msg))
+            );
+            updateErrorBadge();
+            check2(
+              "[54] \u0E41\u0E16\u0E1A\u0E2A\u0E16\u0E32\u0E19\u0E30\u0E01\u0E25\u0E31\u0E1A\u0E40\u0E1B\u0E47\u0E19 \u2705",
+              !$("#sp-errors").classList.contains("has-err"),
+              $("#sp-errors").textContent
+            );
+            check2("[54] \u0E15\u0E23\u0E27\u0E08\u0E01\u0E48\u0E2D\u0E19\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01: \u0E1A\u0E17\u0E2A\u0E30\u0E2D\u0E32\u0E14\u0E1C\u0E48\u0E32\u0E19\u0E40\u0E25\u0E22", await checkBeforeExport() === true);
+            state.settings.spCheckBeforeExport = false;
+            check2("[54] \u0E1B\u0E34\u0E14\u0E2A\u0E27\u0E34\u0E15\u0E0A\u0E4C\u0E15\u0E23\u0E27\u0E08\u0E01\u0E48\u0E2D\u0E19\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01\u0E41\u0E25\u0E49\u0E27\u0E02\u0E49\u0E32\u0E21\u0E01\u0E32\u0E23\u0E15\u0E23\u0E27\u0E08", await checkBeforeExport() === true);
+            state.settings.spCheckBeforeExport = true;
+            const blocksEx = parseScript2(spT.sp.getMarkdown());
+            const xml = generateFdx(blocksEx, scriptMeta("\u0E1A\u0E17\u0E17\u0E14\u0E2A\u0E2D\u0E1A"));
+            check2(
+              "[67] \u0E2A\u0E23\u0E49\u0E32\u0E07 FDX \u0E08\u0E32\u0E01\u0E1A\u0E17\u0E1A\u0E19\u0E08\u0E2D\u0E44\u0E14\u0E49 + \u0E21\u0E35\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01/\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23/\u0E1A\u0E17\u0E1E\u0E39\u0E14",
+              xml.includes('<Paragraph Type="Scene Heading">') && xml.includes('<Paragraph Type="Character">') && xml.includes('<Paragraph Type="Dialogue">')
+            );
+            check2("[67] FDX \u0E41\u0E1B\u0E25\u0E07\u0E40\u0E1B\u0E47\u0E19 XML DOM \u0E44\u0E14\u0E49\u0E08\u0E23\u0E34\u0E07 (\u0E44\u0E21\u0E48\u0E21\u0E35 syntax error)", (() => {
+              const d = new DOMParser().parseFromString(xml, "application/xml");
+              return !d.querySelector("parsererror") && d.documentElement.tagName === "FinalDraft";
+            })());
+            const rtf = generateRtf(blocksEx, scriptMeta("\u0E1A\u0E17\u0E17\u0E14\u0E2A\u0E2D\u0E1A"), spFormat());
+            check2(
+              "[68] \u0E2A\u0E23\u0E49\u0E32\u0E07 RTF \u0E44\u0E14\u0E49 + \u0E44\u0E21\u0E48\u0E21\u0E35\u0E2D\u0E31\u0E01\u0E02\u0E23\u0E30 >127 (ANSI \u0E25\u0E49\u0E27\u0E19)",
+              rtf.startsWith("{\\rtf1") && [...rtf].every((c) => c.codePointAt(0) < 128)
+            );
+            check2(
+              "[68] RTF \u0E43\u0E0A\u0E49\u0E02\u0E19\u0E32\u0E14\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29/\u0E23\u0E30\u0E22\u0E30\u0E02\u0E2D\u0E1A\u0E15\u0E32\u0E21\u0E17\u0E35\u0E48\u0E15\u0E31\u0E49\u0E07\u0E44\u0E27\u0E49",
+              rtf.includes("\\paperw12240") && rtf.includes("\\margl2160")
+            );
+            const pgWm = pagesOf(
+              parseScript2(spT.sp.getMarkdown()),
+              spFormat(),
+              linesPerPage(spFormat().paper, spFormat().margins)
+            );
+            const wmHtml = buildWatermarkHtml(
+              pgWm,
+              spFormat(),
+              { watermark: "\u0E1C\u0E39\u0E49\u0E01\u0E33\u0E01\u0E31\u0E1A \u0E01", title: "\u0E1A\u0E17\u0E17\u0E14\u0E2A\u0E2D\u0E1A" }
+            );
+            check2(
+              "[70] HTML \u0E25\u0E32\u0E22\u0E19\u0E49\u0E33\u0E21\u0E35\u0E08\u0E33\u0E19\u0E27\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E15\u0E23\u0E07\u0E01\u0E31\u0E1A paginate",
+              (wmHtml.match(/<section class="pg"/g) || []).length === pgWm.count
+            );
+            check2(
+              "[70] \u0E25\u0E32\u0E22\u0E19\u0E49\u0E33\u0E16\u0E39\u0E01\u0E43\u0E2A\u0E48\u0E17\u0E38\u0E01\u0E2B\u0E19\u0E49\u0E32 + escape \u0E1B\u0E25\u0E2D\u0E14\u0E20\u0E31\u0E22",
+              (wmHtml.match(/class="wm"/g) || []).length === pgWm.count && wmHtml.includes("\u0E1C\u0E39\u0E49\u0E01\u0E33\u0E01\u0E31\u0E1A \u0E01")
+            );
+            check2(
+              "[70] \u0E21\u0E35 kapi.pdfFromHtml / openDirDialog \u0E43\u0E2B\u0E49\u0E40\u0E23\u0E35\u0E22\u0E01\u0E08\u0E23\u0E34\u0E07",
+              typeof kapi.pdfFromHtml === "function" && typeof kapi.openDirDialog === "function"
+            );
+            {
+              const outDir = await kapi.join(state.root, "Snapshots");
+              const made = await generateWatermarkedPDFs(kapi, {
+                pages: pgWm,
+                fmt: spFormat(),
+                outDir,
+                prefix: "wm-test",
+                recipients: parseRecipients("\u0E01\n\u0E02 | \u0E2A\u0E33\u0E40\u0E19\u0E32\u0E1C\u0E39\u0E49\u0E01\u0E33\u0E01\u0E31\u0E1A"),
+                fontUrls: await embeddedFontUrls(),
+                title: "\u0E1A\u0E17\u0E17\u0E14\u0E2A\u0E2D\u0E1A"
+              });
+              check2("[70] \u0E2A\u0E23\u0E49\u0E32\u0E07 PDF \u0E04\u0E23\u0E1A\u0E17\u0E38\u0E01\u0E04\u0E19", made.length === 2, JSON.stringify(made));
+              check2(
+                "[70] \u0E0A\u0E37\u0E48\u0E2D\u0E44\u0E1F\u0E25\u0E4C\u0E41\u0E22\u0E01\u0E15\u0E32\u0E21\u0E1C\u0E39\u0E49\u0E23\u0E31\u0E1A",
+                made[0].endsWith("wm-test_\u0E01.pdf") && made[1].endsWith("wm-test_\u0E02.pdf"),
+                JSON.stringify(made)
+              );
+              check2(
+                "[70] \u0E44\u0E1F\u0E25\u0E4C PDF \u0E16\u0E39\u0E01\u0E40\u0E02\u0E35\u0E22\u0E19\u0E25\u0E07\u0E14\u0E34\u0E2A\u0E01\u0E4C\u0E08\u0E23\u0E34\u0E07\u0E17\u0E31\u0E49\u0E07\u0E2A\u0E2D\u0E07\u0E44\u0E1F\u0E25\u0E4C",
+                await kapi.exists(made[0]) && await kapi.exists(made[1]),
+                made.join(" | ")
+              );
+              const bytes = await kapi.readBytes(made[0]);
+              check2(
+                "[70] \u0E44\u0E1F\u0E25\u0E4C\u0E40\u0E1B\u0E47\u0E19 PDF \u0E08\u0E23\u0E34\u0E07 (\u0E25\u0E32\u0E22\u0E40\u0E0B\u0E47\u0E19 %PDF) \u0E41\u0E25\u0E30\u0E44\u0E21\u0E48\u0E27\u0E48\u0E32\u0E07",
+                bytes.length > 1e3 && String.fromCharCode(...bytes.slice(0, 4)) === "%PDF",
+                bytes.length + " \u0E44\u0E1A\u0E15\u0E4C"
+              );
+              for (const f of made) await kapi.remove(f);
+            }
+            spT.sp.setMarkdown(before54);
+            scheduleCount();
+            await new Promise((r) => setTimeout(r, 400));
+          }
+          {
+            const ids = SHORTCUTS.map((s) => shortcutId(s));
+            check2("[57] \u0E04\u0E35\u0E22\u0E4C\u0E25\u0E31\u0E14 Ctrl+G = \u0E44\u0E1B\u0E17\u0E35\u0E48\u0E2B\u0E19\u0E49\u0E32/\u0E09\u0E32\u0E01", ids.includes("goto"));
+            check2("[54] \u0E04\u0E35\u0E22\u0E4C\u0E25\u0E31\u0E14 Ctrl+Shift+U = \u0E15\u0E23\u0E27\u0E08\u0E02\u0E49\u0E2D\u0E1C\u0E34\u0E14\u0E1E\u0E25\u0E32\u0E14\u0E16\u0E31\u0E14\u0E44\u0E1B", ids.includes("sp-find-error"));
+            check2("[57] \u0E44\u0E21\u0E48\u0E21\u0E35\u0E04\u0E35\u0E22\u0E4C\u0E25\u0E31\u0E14\u0E0B\u0E49\u0E33\u0E01\u0E31\u0E19 (code+ctrl+shift)", (() => {
+              const seen = /* @__PURE__ */ new Set();
+              for (const s of SHORTCUTS) {
+                const k = s[0] + "|" + s[1] + "|" + s[2];
+                if (seen.has(k)) return false;
+                seen.add(k);
+              }
+              return true;
+            })());
+            for (const ch of [
+              "sp-view",
+              "sp-show-format",
+              "goto",
+              "sp-find-error",
+              "sp-check-all",
+              "sp-check-toggle",
+              "export-fdx",
+              "export-rtf",
+              "export-watermark"
+            ]) {
+              check2(
+                "[57] handleCommand \u0E23\u0E39\u0E49\u0E08\u0E31\u0E01\u0E04\u0E33\u0E2A\u0E31\u0E48\u0E07 " + ch,
+                new RegExp(`case ['"]` + ch + `['"]`).test(String(handleCommand))
+              );
+            }
+            check2(
+              "[59] \u0E15\u0E31\u0E27\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07\u0E1A\u0E17\u0E2D\u0E22\u0E39\u0E48\u0E1A\u0E19\u0E41\u0E16\u0E1A\u0E40\u0E04\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E21\u0E37\u0E2D\u0E04\u0E23\u0E1A 5 \u0E42\u0E2B\u0E21\u0E14",
+              $("#sp-view-select").options.length === 5
+            );
+            check2(
+              "[59] \u0E15\u0E31\u0E27\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07\u0E42\u0E1C\u0E25\u0E48\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E41\u0E17\u0E47\u0E1A\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07",
+              getComputedStyle($("#sp-view-select")).display !== "none"
+            );
+          }
         }
         showPanel("kanban");
         await new Promise((r) => setTimeout(r, 60));
@@ -75231,7 +76904,7 @@ ${sc.body || ""}
     await kapi.writeFile("/tmp/k2result.txt", out.join("\n"));
     document.title = out[out.length - 1] === "ALL OK" ? "TESTOK" : "TESTFAIL";
   }
-  var import_md10, tr, pageScale, autosaveTimer, treeScope, _treeBuilding, _treeQueued, INV_C, FLOAT_Z_MIN, FLOAT_Z_MAX, _floatZ, mapsState_C, _menuTogSig, _readEsc, APP_VERSION, propsTarget_C, _propsGen, propsFlush_C, SECTION_STATUSES, plugins, TPL_CATS, FIELD_TYPES, _cmMigrated, uniqList, imgURLBase, FMTS, ALWAYS_ON_TB, countJob, outlineJob, navShowBeats, navTrunc, _logTimer, FEATURE_PANELS, _featInFlight, TB_SC_MAP, floatBar, TIP_GAP, _tipEl, _tipHost, _tipSaved, _tipJob, _tipKt;
+  var import_md10, tr, pageScale, autosaveTimer, spViewMode, _spViewJob, _spErrors, treeScope, _treeBuilding, _treeQueued, INV_C, FLOAT_Z_MIN, FLOAT_Z_MAX, _floatZ, mapsState_C, _menuTogSig, _readEsc, APP_VERSION, propsTarget_C, _propsGen, propsFlush_C, SECTION_STATUSES, plugins, TPL_CATS, FIELD_TYPES, _cmMigrated, uniqList, imgURLBase, FMTS, ALWAYS_ON_TB, countJob, outlineJob, navShowBeats, navTrunc, _logTimer, FEATURE_PANELS, _featInFlight, TB_SC_MAP, floatBar, TIP_GAP, _tipEl, _tipHost, _tipSaved, _tipJob, _tipKt;
   var init_app = __esm({
     "src/app.js"() {
       init_editor();
@@ -75302,9 +76975,23 @@ ${sc.body || ""}
       init_ai_bridge();
       init_icons();
       init_roster_ui();
+      init_sp_view();
+      init_sp_format_guide();
+      init_sp_validator();
+      init_export_fdx();
+      init_export_rtf();
+      init_export_watermark();
       tr = t;
       pageScale = 1;
       autosaveTimer = null;
+      spViewMode = "normal";
+      _spViewJob = null;
+      window.addEventListener("resize", () => {
+        if (!isPageView(spViewMode)) return;
+        clearTimeout(_spViewJob);
+        _spViewJob = setTimeout(refreshSpView, 150);
+      });
+      _spErrors = [];
       treeScope = null;
       _treeBuilding = false;
       _treeQueued = false;
@@ -75479,6 +77166,10 @@ ${sc.body || ""}
           setElementBadge(e.target.value);
           if (state.active) markDirty(state.active);
         };
+        const spViewSel = $("#sp-view-select");
+        if (spViewSel) spViewSel.onchange = (e) => setSpView(e.target.value);
+        const errBadge = $("#sp-errors");
+        if (errBadge) errBadge.onclick = () => findNextSpError();
         $("#open-btn").onclick = async () => {
           const p = await kapi.openProjectDialog();
           if (p) loadProject(p);

@@ -20,7 +20,7 @@ export KILLIAN_TEST=1 KILLIAN_TEST_PROJECT=/tmp/k2proj
 xvfb-run -a --server-args="-screen 0 1500x950x24" ./node_modules/.bin/electron . --no-sandbox --disable-gpu
 # ผลอยู่ /tmp/k2result.txt — บรรทัดสุดท้ายต้องเป็น "ALL OK"
 ```
-ปัจจุบัน **1,052 checks · ALL OK** — ห้ามทำให้จำนวนลดลง
+ปัจจุบัน **1,124 checks · ALL OK** — ห้ามทำให้จำนวนลดลง
 (บน Windows: `node test/fixture.js C:\tmp\k2proj` แล้วตั้ง `KILLIAN_TEST_PROJECT=C:\tmp\k2proj`
  ผลออกที่ `C:\tmp\k2result.txt` · unit test `.cjs` ใช้ `os.tmpdir()` แล้วรันได้ทั้งสองระบบ)
 
@@ -40,6 +40,18 @@ editor.js · screenplay.js · md.js (⚠️ CommonJS) · smart.js · spell.js ·
   `SP_STRINGS` · `mergeSpFormat(user)` · `pageCssVars()` · `spCss()` (สร้าง CSS + `@page` เป็นข้อความ) ·
   `paginate()`/`pageCount()`/`wrapLines()`/`splitText()` · `newRoster`/`normalizeRoster`/`rosterToText`
   → re-export ผ่าน core.js · **unit test 74 ข้อ** (`node test/sp-format.test.cjs`)
+- **sp-validator.js** (alpha.57, บริสุทธิ์ · ข้อ 54) — `validateScreenplay(blocks,{limits,checks})` ตรวจ 8 ชนิด
+  (`SP_ERRORS`/`SP_SEVERITY`/`DEFAULT_LIMITS`) + `errorSummary`/`summaryText`/`nextError`
+  · `block` ที่คืนมา = ดัชนีใน array ที่ส่งเข้าไป **นับ blank ด้วย** · **unit test 35 ข้อ**
+- **sp-view.js** (alpha.57 · ข้อ 57/59/60/78) — โหมดมุมมองบท: `SP_VIEWS`/`SP_VIEW_CLASS`/`isPageView` ·
+  `fitScale`/`overviewScale`/`viewScale` · `blocksFromDoc(doc)` (บล็อก+`pos` จริงจาก ProseMirror) ·
+  `pagesOf`/`findPageStart`/`scenePositions`/`findNthScene` · `renderPageView(host,…)` (ส่วนเดียวที่แตะ DOM)
+  · **unit test 45 ข้อ**
+- **sp-format-guide.js** (alpha.57 · ข้อ 61+57) — PM plugin: `spFormatGuidePlugin()` (เส้นขอบ element + `¶`/`·`)
+  · `spPageBreakPlugin()` + `setPageBreaks(list)` (**คืน true เมื่อเปลี่ยนจริง** — dispatch เฉพาะตอนนั้น)
+- **export-fdx.js / export-rtf.js / export-watermark.js** (alpha.57, บริสุทธิ์ · ข้อ 67/68/70) —
+  `generateFdx` · `generateRtf` (**ไทยต้องเป็น `\uNNNN?`** ไม่งั้น Word ได้ตัวขยะ) ·
+  `buildWatermarkHtml`/`generateWatermarkedPDFs(api,…)`/`parseRecipients` · **unit test 72 ข้อ**
 
 ### Core Infrastructure (pure logic — **ยังไม่มี UI · รอต่อ**) — spec อยู่ใน `docs/`
 - **panels/panel-layout.js + panel-store.js** (ข้อ 8) — dock/snap/tab group/float/collapse + `PanelManager` (registerPanel/showPanel/dockPanel/floatPanel/groupPanels) → [docs/08-panel-system.md](docs/08-panel-system.md)
@@ -65,7 +77,7 @@ editor.js · screenplay.js · md.js (⚠️ CommonJS) · smart.js · spell.js ·
 **กฎของโมดูล AI**: ไม่ยิงเน็ตเอง (รับ `client`/`http` เข้ามา) · ไม่ throw (คืน `{ok:false,error,code}` ภาษาไทย) ·
 `buildXPrompt`/`parseX` เป็น pure เสมอ · คีย์อยู่ `ai-key.json` เท่านั้น · ฟีเจอร์ตรวจสอบมีชั้นออฟไลน์ก่อน
 
-ทุกตัวไม่แตะ DOM/fs (ต่อไฟล์ผ่าน `io` adapter = `kapi`) · `npm run test:unit` = **805 checks**
+ทุกตัวไม่แตะ DOM/fs (ต่อไฟล์ผ่าน `io` adapter = `kapi`) · `npm run test:unit` = **957 checks**
 UI ที่ต้องทำต่อ: `panels/panel-ui.js` · `layout/split-ui.js` · `kanban/kanban-ui.js` · แผง "ฉากที่กล่าวถึง" ในหน้า Wiki ·
 แผง AI (ผู้ช่วยเขียน/ตรวจปม/บทสนทนา/สร้างโลก/แชท) · หน้านำเข้า Scrivener · แถบคอมเมนต์ข้างฉาก
 แล้วค่อยต่อ entry point ตามกฎข้อ 7 (เมนู main.js + `case` ใน `handleCommand`)

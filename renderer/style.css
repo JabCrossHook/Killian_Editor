@@ -2114,3 +2114,101 @@ body.reading-mode #k-mode-hint, body.focus-mode #k-mode-hint { display:block; }
 #k-mode-hint b { color:var(--bright); font-weight:600; }
 #k-mode-hint kbd { background:var(--bar); border:1px solid var(--border); border-radius:4px;
   padding:1px 7px; color:var(--bright); font-family:inherit; font-size:.95em; }
+
+/* ══════════ alpha.57 — โหมดมุมมองบทภาพยนตร์ (57 · 59 · 60 · 61) ══════════ */
+
+/* ---- [57] Draft View: ข้อความล้วนบนพื้นว่าง ไม่มีกระดาษ ---- */
+/* ใช้ !important เพราะกฎกระดาษของ paper-mode มี specificity สูงกว่า (body.paper-mode .pane…) */
+.pane.sp-view-draft > .workspace > .ProseMirror,
+body.paper-mode .pane.sp-view-draft > .workspace > .ProseMirror {
+  background:transparent !important;
+  box-shadow:none !important;
+  border:0 !important;
+  width:auto !important; max-width:none !important;
+  padding:20px 20px 40vh !important;
+  margin:0 !important;
+  color:var(--fg) !important;
+}
+/* โหมดร่าง = เห็นข้อความล้วน ไม่ต้องเยื้องแบบสคริปต์ (แต่ยังบอกชนิดด้วยสี) */
+.pane.sp-view-draft .sp { margin-left:0 !important; width:auto !important;
+  margin-top:.2em !important; margin-bottom:.2em !important; }
+.pane.sp-view-draft .sp-transition { text-align:left; }
+.pane.sp-view-draft .sp-act-break { text-align:left; }
+/* ตัวคั่นหน้าในโหมดร่าง = เส้นบาง ๆ · โหมดปกติ = เส้นประชัดขึ้นพร้อมเลขหน้า */
+.pane.sp-view-draft .sp-page-break { border-top:1px solid #4a4a46; margin:8px 0; }
+.pane.sp-view-draft .sp-page-break .sp-page-break-num { font-size:.7em; }
+
+/* ---- เส้นคั่นหน้าในตัวแก้ไข (widget decoration) ---- */
+.sp-page-break { position:relative; height:0; border-top:1px dashed var(--border);
+  margin:14px 0; user-select:none; pointer-events:none; }
+.sp-page-break-num { position:absolute; right:0; top:-.85em;
+  font-size:calc(10px * var(--ui-scale, 1)); color:var(--dim);
+  background:var(--bg); padding:0 6px; border-radius:3px; }
+body.paper-mode .sp-page-break { border-top-color:#c9c2ae; }
+body.paper-mode .sp-page-break-num { background:var(--paper); color:#8a836f; }
+
+/* ---- [61] แสดงรูปแบบ: เส้นฟ้าขอบ element + เครื่องหมายจบบรรทัด ---- */
+.sp-fmt-guide { box-shadow:inset 1px 0 0 #4fc3f7, inset -1px 0 0 #4fc3f7;
+  background:rgba(79,195,247,.05); }
+.sp-line-marker { color:#ef5350; font-size:.72em; margin-left:3px;
+  opacity:.85; user-select:none; }
+.sp-line-marker.soft { color:#8a8f98; }
+
+/* ---- [59][60] มุมมองหน้ากระดาษจริง (อ่านอย่างเดียว) ---- */
+/* ซ่อนตัวแก้ไขไว้ข้างหลัง แล้วปูมุมมองหน้าทับเต็ม pane */
+.pane.sp-view-side > .workspace,
+.pane.sp-view-overview > .workspace { display:none; }
+.sp-pageview { position:absolute; inset:0; overflow:auto; z-index:2;
+  display:flex; flex-wrap:wrap; align-content:flex-start; justify-content:center;
+  gap:var(--sp-pv-gap, 20px); padding:var(--sp-pv-gap, 20px);
+  background:var(--paper-surround); }
+.sp-page-slot { flex:0 0 auto; position:relative; }
+.sp-pageview .sp-page { position:absolute; left:0; top:0; transform-origin:top left;
+  background:var(--paper); color:var(--paper-ink);
+  border:1px solid var(--paper-edge); border-radius:2px;
+  box-shadow:0 2px 14px rgba(0,0,0,.30);
+  font-family:var(--sp-font, "Courier Prime", "Courier New", monospace);
+  font-size:var(--sp-fs, 16px); line-height:1.5; overflow:hidden; cursor:pointer; }
+.sp-pageview .sp-page:hover { outline:2px solid var(--accent-hi); }
+.sp-pageview .sp { color:var(--paper-ink); white-space:pre-wrap; }
+.sp-pageview .sp-scene, .sp-pageview .sp-character, .sp-pageview .sp-transition { color:#000; }
+.sp-pageview .sp-parenthetical { color:#555; }
+.sp-page-num { text-align:right; color:#555; margin-bottom:1em; }
+.sp-continued-top { color:#555; }
+.sp-continued-bottom { text-align:right; color:#555; margin-top:1em; }
+.sp-pageview .sp-more { margin-left:2.2in; color:#333; }
+/* [60] ภาพรวม — เล็กมากจนอ่านตัวอักษรไม่ออก แต่เห็น "รูปทรงหน้า" (คลิกเพื่อกระโดดไป) */
+.pane.sp-view-overview .sp-pageview .sp-page { cursor:pointer; }
+.pane.sp-view-overview .sp-pageview .sp-page:hover { outline-width:1px; }
+.pane.sp-view-ov1 .sp-pageview { gap:6px; padding:10px; }
+.pane.sp-view-ov4 .sp-pageview { gap:10px; padding:14px; }
+
+/* ---- [54] ป้ายข้อผิดพลาดบนแถบสถานะ ---- */
+#sp-errors:empty { display:none; }
+#sp-errors { cursor:pointer; padding:0 6px; border-radius:4px; color:var(--dim); }
+#sp-errors:hover { background:var(--bar); color:var(--bright); }
+#sp-errors.has-err { color:var(--warn, #d9b757); font-weight:600; }
+
+/* ---- [54] กล่องรายการข้อผิดพลาด ---- */
+.k-err-dlg { min-width:min(680px, 92vw); }
+.k-err-list { max-height:46vh; overflow:auto; margin:8px 0;
+  border:1px solid var(--border); border-radius:6px; }
+.k-err-row { display:flex; align-items:baseline; gap:8px; padding:6px 10px; cursor:pointer;
+  border-bottom:1px solid var(--border); }
+.k-err-row:last-child { border-bottom:0; }
+.k-err-row:hover { background:var(--bar); }
+.k-err-row.error .k-err-msg { color:var(--bright); }
+.k-err-msg { flex:0 1 auto; }
+.k-err-snip { flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* ---- [78] กล่องไปที่หน้า/ฉาก ---- */
+.k-goto-dlg { min-width:min(520px, 92vw); }
+.k-goto-row { display:flex; align-items:center; gap:8px; margin:10px 0; }
+.k-goto-row .k-dlg-input { width:110px; }
+.k-goto-hint { white-space:nowrap; }
+.k-goto-list { max-height:38vh; overflow:auto; border:1px solid var(--border); border-radius:6px; }
+
+/* ---- [70] กล่อง PDF ลายน้ำ ---- */
+.k-wm-dlg { min-width:min(620px, 92vw); }
+.k-wm-list { width:100%; font-family:var(--ed-font, monospace); }
+.k-wm-prog { min-height:1.4em; margin-top:6px; }

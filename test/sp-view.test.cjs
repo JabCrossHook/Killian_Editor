@@ -1,0 +1,136 @@
+// test/sp-view.test.cjs — unit test โหมดมุมมองบท + ไปยังหน้า/ฉาก (ข้อ 57, 59, 60, 78)
+const path = require('path');
+const os = require('os');
+const esbuild = require('esbuild');
+
+const tmp = path.join(os.tmpdir(), 'k2-spview-test.cjs');
+esbuild.buildSync({
+  entryPoints: [path.join(__dirname, '..', 'src', 'sp-view.js')],
+  outfile: tmp, bundle: true, format: 'cjs', platform: 'node', logLevel: 'silent',
+});
+const SV = require(tmp);
+
+let pass = 0, fail = 0;
+function check(name, cond, extra) {
+  if (cond) { pass++; console.log('PASS ' + name); }
+  else { fail++; console.log('FAIL ' + name + (extra !== undefined ? ' | ' + extra : '')); }
+}
+
+// ── รายการโหมด ──
+check('มี 5 โหมด: ปกติ/ร่าง/เรียงหน้า/ภาพรวม 2 ระดับ', SV.SP_VIEWS.length === 5, SV.SP_VIEWS.join(','));
+check('ทุกโหมดมีป้ายชื่อภาษาไทย', SV.SP_VIEWS.every((m) => (SV.SP_VIEW_LABELS[m] || '').length > 2));
+check('ทุกโหมดมีคลาส CSS กำกับ (normal = ว่าง)',
+  SV.SP_VIEW_CLASS.normal === '' && SV.SP_VIEWS.slice(1).every((m) => SV.SP_VIEW_CLASS[m].length > 3));
+check('คลาสทุกตัวที่ใช้อยู่ใน ALL_VIEW_CLASSES (ล้างได้หมด)',
+  SV.SP_VIEWS.every((m) => SV.SP_VIEW_CLASS[m].split(' ').filter(Boolean)
+    .every((c) => SV.ALL_VIEW_CLASSES.includes(c))));
+check('isPageView: side/overview = จริง · normal/draft = เท็จ',
+  SV.isPageView('side') && SV.isPageView('overview1') && SV.isPageView('overview4') &&
+  !SV.isPageView('normal') && !SV.isPageView('draft'));
+check('isValidView กันชื่อโหมดมั่ว', SV.isValidView('draft') && !SV.isValidView('zzz'));
+
+// ── 59 fitScale ──
+{
+  const pw = 8.5 * 96;   // 816px
+  const one = SV.fitScale(900, pw, 20);
+  check('กว้าง 900px → 2 หน้าต่อแถว (ครึ่งหน้าขึ้นไปยังอ่านได้)', one.perRow === 2, JSON.stringify(one));
+  check('กว้าง 900px → ไม่ขยายเกิน 1 เท่า', one.scale <= 1, one.scale);
+  check('ไม่ยัดหน้าจนเล็กกว่าครึ่ง (minScale 0.5)', one.scale >= 0.5, one.scale);
+  const two = SV.fitScale(1400, pw, 20);
+  check('กว้าง 1400px → 3 หน้าต่อแถว', two.perRow === 3, JSON.stringify(two));
+  check('หน้าต่อแถวมากขึ้นแล้วต้องย่อลง (<1)', two.scale < 1 && two.scale >= 0.5, two.scale);
+  check('หน้าที่ย่อแล้วรวมกันไม่ล้นความกว้าง',
+    two.perRow * pw * two.scale + 20 * (two.perRow + 1) <= 1400 + 1,
+    two.perRow * pw * two.scale + 80);
+  const wide = SV.fitScale(4000, pw, 20);
+  check('จอกว้างมาก → ไม่เกิน 4 หน้าต่อแถว (ค่าเริ่มต้น)', wide.perRow === 4, JSON.stringify(wide));
+  const tiny = SV.fitScale(200, pw, 20);
+  check('พื้นที่แคบมาก → ยังได้ 1 หน้า และสเกลไม่ติดลบ',
+    tiny.perRow === 1 && tiny.scale > 0 && tiny.scale < 0.35, JSON.stringify(tiny));
+  check('containerW ผิดรูป (0/NaN) ไม่ทำให้พัง', SV.fitScale(0, pw).scale > 0 && SV.fitScale(NaN, pw).perRow === 1);
+  const cap = SV.fitScale(4000, pw, 20, { maxPerRow: 2 });
+  check('ตั้ง maxPerRow เองได้', cap.perRow === 2, JSON.stringify(cap));
+}
+
+// ── 60 overviewScale ──
+{
+  check('1px/ตัวอักษร ≈ สเกล 0.1042 (9.6px ต่อตัว)',
+    Math.abs(SV.overviewScale(1) - 1 / 9.6) < 0.001, SV.overviewScale(1));
+  check('4px/ตัวอักษร = 4 เท่าของ 1px',
+    Math.abs(SV.overviewScale(4) - SV.overviewScale(1) * 4) < 0.001, SV.overviewScale(4));
+  check('ตาราง OVERVIEW_PX ตรงกับชื่อโหมด', SV.OVERVIEW_PX.overview1 === 1 && SV.OVERVIEW_PX.overview4 === 4);
+  check('viewScale โหมดภาพรวมไม่สนความกว้างหน้าต่าง',
+    SV.viewScale('overview1', 400, 816).scale === SV.viewScale('overview1', 4000, 816).scale);
+  check('viewScale โหมด side คำนวณตามความกว้าง',
+    SV.viewScale('side', 1400, 816).perRow === 3 && SV.viewScale('side', 700, 816).perRow === 1,
+    JSON.stringify(SV.viewScale('side', 1400, 816)));
+}
+
+// ── 61 ชนิดการจบบรรทัด ──
+check('ข้อความสั้น = hard', SV.lineEndingType('สั้น', 3.5) === 'hard');
+check('ข้อความยาวจนตัดบรรทัด = soft', SV.lineEndingType('word '.repeat(40), 3.5) === 'soft');
+check('มีสัญลักษณ์ประจำแต่ละชนิด', !!SV.LINE_MARK.hard && !!SV.LINE_MARK.soft);
+
+// ── blocksFromDoc (จำลอง doc ของ ProseMirror) ──
+{
+  const mkDoc = (nodes) => ({
+    forEach(fn) { let off = 0; for (const n of nodes) { fn(n, off); off += n.nodeSize; } },
+  });
+  const node = (el, text) => ({ type: { name: 'sp' }, attrs: { el }, textContent: text, nodeSize: text.length + 2 });
+  const img = { type: { name: 'spimage' }, attrs: { alt: 'ภาพ' }, nodeSize: 1 };
+  const doc = mkDoc([node('scene', 'INT. ห้อง'), node('action', ''), node('character', 'ทอร่า'), img]);
+  const blocks = SV.blocksFromDoc(doc);
+  check('blocksFromDoc คืนครบทุกบล็อก', blocks.length === 4, blocks.length);
+  check('บล็อกบรรยายที่ไม่มีข้อความ → el = blank', blocks[1].el === 'blank', blocks[1].el);
+  check('spimage → el = image พร้อม alt', blocks[3].el === 'image' && blocks[3].text === 'ภาพ');
+  check('ทุกบล็อกมี pos และ idx', blocks.every((b) => Number.isFinite(b.pos) && Number.isFinite(b.idx)));
+  check('pos ของบล็อกที่ 2 = ขนาดบล็อกแรก', blocks[1].pos === blocks[0].text.length + 2, blocks[1].pos);
+  check('doc ที่ไม่ถูกต้องคืน array ว่าง', SV.blocksFromDoc(null).length === 0);
+}
+
+// ── 78 หาตำแหน่งหน้า/ฉาก ──
+{
+  const pages = { pages: [
+    { index: 1, blocks: [{ el: 'scene', text: 'a', pos: 0 }, { el: 'action', text: 'b', pos: 10 }] },
+    { index: 2, blocks: [{ el: 'more', text: '(MORE)' }, { el: 'character', text: 'ทอร่า', pos: 50 }] },
+    { index: 3, blocks: [{ el: 'action', text: 'c', pos: 90 }] },
+  ] };
+  const starts = SV.pageStartPositions(pages);
+  check('pageStartPositions คืนตำแหน่งละหน้า', starts.length === 3, JSON.stringify(starts));
+  check('ข้ามบล็อกสังเคราะห์ (MORE) ที่ไม่มี pos', starts[1] === 50, starts[1]);
+  check('findPageStart หน้า 1 = ต้นเอกสาร', SV.findPageStart(pages, 1) === 0);
+  check('findPageStart หน้า 3', SV.findPageStart(pages, 3) === 90);
+  check('findPageStart เกินจำนวนหน้า → null', SV.findPageStart(pages, 9) === null);
+  check('findPageStart รับ array ของ pages ตรง ๆ ได้', SV.findPageStart(pages.pages, 2) === 50);
+
+  const blocks = [
+    { el: 'scene', text: 'INT. ห้อง - วัน', pos: 0, idx: 0 },
+    { el: 'action', text: 'x', pos: 20, idx: 1 },
+    { el: 'scene', text: 'EXT. สวน - คืน', pos: 30, idx: 2 },
+  ];
+  const scenes = SV.scenePositions(blocks);
+  check('scenePositions นับเฉพาะหัวฉาก', scenes.length === 2, scenes.length);
+  check('เลขฉากเริ่มที่ 1', scenes[0].n === 1 && scenes[1].n === 2);
+  check('เก็บข้อความหัวฉากไว้ให้เลือกในกล่อง', scenes[1].text.includes('สวน'));
+  check('findNthScene ฉากที่ 2', SV.findNthScene(blocks, 2) === 30);
+  check('findNthScene เกินจำนวน → null', SV.findNthScene(blocks, 5) === null);
+}
+
+// ── pagesOf ใช้เอนจิน paginate จริง ──
+{
+  const blocks = [];
+  for (let i = 0; i < 200; i++) blocks.push({ el: 'action', text: 'บรรทัดที่ ' + i, pos: i * 10, idx: i });
+  const pg = SV.pagesOf(blocks);
+  check('pagesOf แบ่งบทยาวเป็นหลายหน้า', pg.count > 1, pg.count);
+  check('ทุกหน้ามีบล็อกที่ยังมี pos ติดไปด้วย (สำหรับ goto)',
+    SV.pageStartPositions(pg).every((p) => Number.isFinite(p)));
+}
+
+// ── ข้อความแถบสถานะ ──
+check('viewStatusText บอกชื่อโหมด + จำนวนหน้า',
+  SV.viewStatusText('side', 12).includes('12 หน้า') && SV.viewStatusText('side', 12).includes('Side-by-Side'),
+  SV.viewStatusText('side', 12));
+check('viewStatusText ไม่มีจำนวนหน้าก็ยังใช้ได้', SV.viewStatusText('draft').includes('Draft'));
+
+console.log(`\n${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);

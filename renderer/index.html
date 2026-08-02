@@ -44,6 +44,14 @@
     <option value="dialogue">บทพูด</option>
     <option value="transition">ทรานซิชัน</option>
   </select>
+  <!-- alpha.57 [57][59][60] มุมมองบท — โผล่เฉพาะแท็บบทภาพยนตร์ -->
+  <select id="sp-view-select" class="tb" style="display:none" title="มุมมองบทภาพยนตร์">
+    <option value="normal">ปกติ (หน้ากระดาษ)</option>
+    <option value="draft">ร่าง — ข้อความล้วน</option>
+    <option value="side">เรียงหน้าคู่</option>
+    <option value="overview1">ภาพรวม 1px</option>
+    <option value="overview4">ภาพรวม 4px</option>
+  </select>
   <span class="sep"></span>
   <select id="tb-style" class="tb">
     <option value="p" data-i18n="toolbar.normalText">ข้อความปกติ</option>
@@ -157,6 +165,8 @@
   <span id="status-center"></span>
   <div id="status-right">
     <span id="wc"></span>
+    <!-- [54] จำนวนข้อผิดพลาดในบท — คลิกเพื่อไปข้อถัดไป -->
+    <span id="sp-errors" title="ตรวจบทภาพยนตร์ (Ctrl+Shift+U)"></span>
     <span id="status-mode"></span>
     <span id="status-save"></span>
     <span id="status-scenes"></span>

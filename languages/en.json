@@ -132,7 +132,9 @@
       "format:quote": "Blockquote", "format:ul": "Bullet List",
       "format:ol": "Numbered List", "format:align:left": "Align Left",
       "format:align:center": "Align Center", "format:align:right": "Align Right",
-      "format:align:justify": "Justify"
+      "format:align:justify": "Justify",
+      "goto": "Go to Page/Scene", "findError": "Find Next Error",
+      "selectScene": "Select Scene", "nbsp": "Non-Breaking Space"
     },
     "panel": {
       "project": "Project", "properties": "Properties",

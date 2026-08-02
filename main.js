@@ -30,6 +30,8 @@ const S = 'Shift';
 const toggles = {
   paperMode: true, readingMode: false, focusMode: false, typewriter: false,
   lineNumbers: false, splitView: false, format: 'prose',
+  // alpha.57 — โหมดมุมมองบท (normal/draft/side/overview1/overview4) + สวิตช์ของเมนู "บท"
+  spView: 'normal', showFormat: false, checkBeforeExport: true,
   panels: { 'tree-panel': true, 'props-panel': true, 'outline-panel': true },
 };
 // ตัวช่วยสร้างรายการสวิตช์ — ผู้ใช้เห็นชัดว่ากดแล้วเปิด/ปิด ไม่ใช่คำสั่งครั้งเดียว
@@ -56,6 +58,10 @@ function buildMenu() {
       { label: `ส่งออกเป็น HTML สำหรับบล็อก… (${C}+${S}+B)`, click: () => send('export-blog') },
       { label: 'ส่งออกทั้งโปรเจกต์เป็น .zip…', click: () => send('export-zip') },
       { label: 'ส่งออกทั้งโปรเจกต์เป็น .json…', click: () => send('export-json') },
+      { type: 'separator' },
+      { label: '🎬 ส่งออกบทเป็น Final Draft (.fdx)…', click: () => send('export-fdx') },
+      { label: '🎬 ส่งออกบทเป็น Rich Text (.rtf)…', click: () => send('export-rtf') },
+      { label: '💧 ส่งออก PDF ลายน้ำรายคน…', click: () => send('export-watermark') },
       { type: 'separator' },
       { label: 'สร้างโปรเจกต์จากเทมเพลต…', click: () => send('new-from-template') },
       { label: 'นำเข้าจาก Scrivener (.scriv)…', click: () => send('import-scrivener') },
@@ -128,6 +134,37 @@ function buildMenu() {
       chk('แสดงเลขบรรทัด', toggles.lineNumbers, () => send('line-numbers')),
       { type: 'separator' },
       { label: 'แทรกรูป…', click: () => send('insert-image') },
+    ] },
+    // ---- alpha.57: เมนูเฉพาะงานบทภาพยนตร์ ----
+    { id: 'Script', label: 'บท', submenu: [
+      { label: 'มุมมองบท', submenu: [
+        { label: 'ปกติ (หน้ากระดาษ)', type: 'radio', checked: toggles.spView === 'normal',
+          click: () => send('sp-view', 'normal') },
+        { label: 'ร่าง — ข้อความล้วน (Draft)', type: 'radio', checked: toggles.spView === 'draft',
+          click: () => send('sp-view', 'draft') },
+        { label: 'เรียงหน้าคู่ (Side-by-Side)', type: 'radio', checked: toggles.spView === 'side',
+          click: () => send('sp-view', 'side') },
+        { label: 'ภาพรวม 1px/ตัวอักษร', type: 'radio', checked: toggles.spView === 'overview1',
+          click: () => send('sp-view', 'overview1') },
+        { label: 'ภาพรวม 4px/ตัวอักษร', type: 'radio', checked: toggles.spView === 'overview4',
+          click: () => send('sp-view', 'overview4') },
+      ] },
+      chk('แสดงรูปแบบ (เส้นขอบ element + เครื่องหมายจบบรรทัด)', toggles.showFormat,
+          () => send('sp-show-format')),
+      { type: 'separator' },
+      { label: `ไปที่หน้า/ฉาก… (${C}+G)`, click: () => send('goto') },
+      { label: 'ไปที่ฉาก…', click: () => send('goto', 'scene') },
+      { type: 'separator' },
+      { label: `ตรวจหาข้อผิดพลาดถัดไป (${C}+${S}+U)`, click: () => send('sp-find-error') },
+      { label: 'ตรวจทั้งบท (รายการข้อผิดพลาด)…', click: () => send('sp-check-all') },
+      chk('ตรวจก่อนพิมพ์/ส่งออก', toggles.checkBeforeExport, () => send('sp-check-toggle')),
+      { type: 'separator' },
+      { label: '🎭 หน้ารายชื่อตัวละคร (Cast of Characters)…', click: () => send('roster') },
+      { label: '📐 หน้ากระดาษ · ระยะขอบ · รูปแบบบท…', click: () => send('page-setup') },
+      { type: 'separator' },
+      { label: '🎬 ส่งออกเป็น Final Draft (.fdx)…', click: () => send('export-fdx') },
+      { label: '🎬 ส่งออกเป็น Rich Text (.rtf)…', click: () => send('export-rtf') },
+      { label: '💧 ส่งออก PDF ลายน้ำรายคน…', click: () => send('export-watermark') },
     ] },
     { id: 'View', label: 'มุมมอง', submenu: [
       { label: 'แดชบอร์ด', click: () => send('dashboard') },
@@ -220,7 +257,11 @@ function createWindow() {
     backgroundColor: '#262624',
     frame: false,                                   // หน้าต่าง custom เต็มรูปแบบ
     webPreferences: { preload: path.join(__dirname, 'preload.js'),
-                      contextIsolation: true, nodeIntegration: false },
+                      contextIsolation: true, nodeIntegration: false,
+                      // Chromium หรี่ตัวจับเวลาเมื่อหน้าต่างถูกบัง (หลัง 5 นาที เหลือ 1 ครั้ง/นาที)
+                      // → บันทึกอัตโนมัติ/นับคำ/สำรองไฟล์ ค้างยาวเมื่อผู้ใช้สลับไปโปรแกรมอื่น
+                      //   (และทำ e2e ที่รันหลังหน้าต่าง คลานจนเหมือนแขวน)
+                      backgroundThrottling: false },
   });
   win.on('close', (e) => {
     if (!forceQuit) { e.preventDefault(); send('confirm-quit'); }
@@ -389,6 +430,8 @@ const SAVE_FILTERS = {
   json: { name: 'JSON', extensions: ['json'] },
   txt: { name: 'ข้อความ', extensions: ['txt'] },
   zip: { name: 'ZIP', extensions: ['zip'] },
+  fdx: { name: 'Final Draft', extensions: ['fdx'] },
+  rtf: { name: 'Rich Text', extensions: ['rtf'] },
 };
 H('dialog:saveAs', async (defName, kind) => {
   const ext = String(defName || '').split('.').pop().toLowerCase();
@@ -408,10 +451,54 @@ H('dialog:savePdf', async (defName) => {
     filters: [{ name: 'PDF', extensions: ['pdf'] }] });
   return r.canceled ? null : r.filePath;
 });
+H('dialog:openDir', async () => {
+  const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] });
+  return r.canceled ? null : r.filePaths[0];
+});
 H('win:print', () => win.webContents.print({}, () => {}));
 H('win:printToPdf', async (outPath) => {
   const data = await win.webContents.printToPDF({ printBackground: false, pageSize: 'A4' });
   fs.writeFileSync(outPath, data); return true;
+});
+// [70] สร้าง PDF จาก HTML ที่ renderer ประกอบมา (ลายน้ำรายคน) — ใช้หน้าต่างซ่อน
+// เขียน HTML ลงไฟล์ชั่วคราวก่อนแล้ว loadFile: data: URL ยาวเกินขีดจำกัดเมื่อบทยาว
+// และ @font-face ที่ชี้ไป file:// ต้องมี origin เป็นไฟล์จริงจึงโหลดฟอนต์ได้
+H('pdf:fromHtml', async (html, outPath, opts = {}) => {
+  const tmpDir = path.join(app.getPath('temp'), 'killian2-pdf');
+  fs.mkdirSync(tmpDir, { recursive: true });
+  const tmpFile = path.join(tmpDir, 'wm-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '.html');
+  fs.writeFileSync(tmpFile, html, 'utf-8');
+  // ห้ามใช้ offscreen:true — printToPDF บนหน้าต่าง offscreen ไม่เสถียรข้ามแพลตฟอร์ม
+  const w = new BrowserWindow({ show: false, width: 900, height: 1200 });
+  try {
+    await w.loadFile(tmpFile);
+    // รอฟอนต์ที่ฝังมา (@font-face file://) โหลดเสร็จก่อน ไม่งั้นได้ PDF ที่ตกไปฟอนต์สำรอง
+    try {
+      await w.webContents.executeJavaScript(
+        'document.fonts && document.fonts.ready ? document.fonts.ready.then(() => true) : true');
+    } catch {}
+    // ให้ `@page` ใน HTML (สร้างจาก sp-format → ขนาดกระดาษ+ระยะขอบชุดเดียวกับบนจอ) เป็นตัวกำหนด
+    // อย่าส่ง pageSize เป็นตัวเลขเอง — หน่วยของ Electron เปลี่ยนไปมาระหว่างรุ่น (นิ้ว/ไมครอน)
+    // ใส่ผิดหน่วยแล้วได้ "Failed to generate PDF: Printing failed" เฉย ๆ
+    let data;
+    try {
+      data = await w.webContents.printToPDF({ printBackground: true, preferCSSPageSize: true });
+    } catch (e) {
+      // เผื่อ HTML ที่ส่งมาไม่มี @page — ถอยไปใช้ชื่อขนาดมาตรฐาน
+      const h = +opts.height || 11;
+      data = await w.webContents.printToPDF({
+        printBackground: true,
+        pageSize: Math.abs(h - 11.69) < 0.1 ? 'A4' : Math.abs(h - 14) < 0.1 ? 'Legal' : 'Letter',
+        margins: { marginType: 'none' },
+      });
+    }
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    fs.writeFileSync(outPath, data);
+    return true;
+  } finally {
+    try { w.destroy(); } catch {}
+    try { fs.unlinkSync(tmpFile); } catch {}
+  }
 });
 H('recent:push', (p) => { pushRecent(p); return true; });
 H('recent:list', () => readRecent());
