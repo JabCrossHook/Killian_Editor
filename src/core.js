@@ -55,14 +55,28 @@ export const DEFAULT_SETTINGS = {
   autoSaveMinutes: 5, maxBackups: 10, autoBackup: true, lineNumbers: false,
   uiFontSize: 0, uiScale: 1, spellCheck: true, spellCheckDict: true, autoMention: true, recycleDays: 30,
   paperMode: true, shortcuts: {}, fontFamily: '', language: 'th',   // ไทยเป็นค่าเริ่มต้น (ไทย 100%)
-  spFontFamily: '',                // ฟอนต์บทหนัง (บั๊ก #2) — ว่าง = Courier New ตามมาตรฐานบท
+  spFontFamily: '',                // ฟอนต์บทหนัง (บั๊ก #2) — ว่าง = Courier Final Draft ตามมาตรฐานบท
+  // ขนาดฟอนต์เนื้อเรื่องเป็น "พอยต์" (มาตรฐานบท/ต้นฉบับ = 12pt ทุกภาษา) — ผู้ใช้กรอกเลขเองได้
+  edFontPt: 12, spFontPt: 12,
   autoSync: false,                 // auto-task: อัปเดตชื่อเอนทิตี้ทุกไฟล์อัตโนมัติ (ข้อ 88)
   // ค้นคำพ้องอังกฤษผ่าน datamuse.com — ปิดไว้ก่อน (ส่งคำที่เลือกออกอินเทอร์เน็ต)
   thesaurus: false,
   focusDim: 0.3,                   // ความจางของบรรทัดอื่นในโหมดโฟกัส (0.05–0.8)
   spCycle: null,                   // ตารางควบคุม Tab/Enter/Shift+Tab ในบทหนัง (null=ใช้ค่าเริ่มต้น)
+  spCycleKeys: null,               // [แก้ไข feature 1] ปุ่มที่ใช้แทน Tab/Enter/Shift+Tab (null=ค่าเริ่มต้น)
+  spCycleEnabled: true,            // [แก้ไข feature 1] สวิตช์เปิด/ปิดระบบสลับ element ด้วยปุ่ม
   spAutoCapitalize: true,          // [93] ขึ้นต้นประโยคด้วยตัวใหญ่ในบทหนังอัตโนมัติ
   spAutoCorrectI: true,            // [93] แก้ i เป็น I เมื่ออยู่เดี่ยว ๆ
+  // ---- [85] หน้ากระดาษ: ใช้ร่วมกันทั้งโหมดนิยายและโหมดบทภาพยนตร์ ----
+  paperSize: 'letter',             // letter | a4 | legal | custom
+  customPaper: { width: 8.5, height: 11 },
+  pageMargins: { top: 1, bottom: 1, left: 1.5, right: 1 },   // นิ้ว
+  // ---- [81][82][83] รูปแบบต่อ element (null = ใช้ค่ามาตรฐานทั้งหมด) ----
+  spElements: null,                // { character:{indent,width,linesBefore,linesBetween}, ... }
+  spStyles: null,                  // { character:{screen:{caps,bold,italic,underline}, print:{...}}, ... }
+  spPageRules: null,               // [84] กฎ widow/orphan
+  spStrings: null,                 // [92] (CONTINUED) / (MORE) / (cont'd) …
+  homeThumb: 190,                  // [บั๊ก 12] ความกว้างการ์ดหน้าแรก (px) — ตั้งได้ในตั้งค่า
 };
 export const DEFAULT_GOALS = { dailyWords: 500, projectWords: 50000 };
 // ตารางควบคุม Tab/Enter/Shift+Tab ในบทหนัง — ผู้ใช้ปรับได้ในตั้งค่า
@@ -83,8 +97,45 @@ export const DEFAULT_SP_CYCLE = {
   image:         { enter: 'action',    tab: 'action',    shiftTab: 'scene' },
   raw:           { enter: 'action',    tab: 'action',    shiftTab: 'scene' },
 };
-export const BASE_ED_FS = 15.5; // px — ขนาดฟอนต์ตัวแก้ไขพื้นฐาน (ตรงกับ .ProseMirror ใน style.css)
-export const BASE_SP_FS = 14.5; // px — ขนาดฟอนต์บทหนังพื้นฐาน (ตรงกับ .sp ใน style.css)
+
+// [แก้ไข feature 1] ปุ่มที่ใช้สลับ element ในบทหนัง — ผู้ใช้เปลี่ยนได้ ไม่ผูกกับ Tab/Enter/Shift+Tab
+// เก็บเป็น e.code (ปุ่มกายภาพ) ตามหลัก "คีย์ลัดทำงานทุกแป้นพิมพ์"
+export const DEFAULT_SP_CYCLE_KEYS = {
+  enter:    { code: 'Enter', shift: false, ctrl: false, alt: false },
+  tab:      { code: 'Tab',   shift: false, ctrl: false, alt: false },
+  shiftTab: { code: 'Tab',   shift: true,  ctrl: false, alt: false },
+};
+/** ปุ่มที่ใช้จริง = ค่าเริ่มต้น merge กับที่ผู้ใช้ตั้ง */
+export function spCycleKeys(settings) {
+  const u = (settings || state.settings || {}).spCycleKeys || {};
+  const out = {};
+  for (const k of ['enter', 'tab', 'shiftTab']) out[k] = { ...DEFAULT_SP_CYCLE_KEYS[k], ...(u[k] || {}) };
+  return out;
+}
+/** อีเวนต์คีย์บอร์ดตรงกับปุ่มที่ผูกไว้ไหม */
+export function spKeyMatch(b, ev) {
+  if (!b || !ev) return false;
+  return ev.code === b.code && !!ev.shiftKey === !!b.shift &&
+         !!(ev.ctrlKey || ev.metaKey) === !!b.ctrl && !!ev.altKey === !!b.alt;
+}
+/** ข้อความแสดงปุ่ม — "Shift+Tab", "Ctrl+Enter" */
+export function spKeyLabel(b) {
+  if (!b || !b.code) return '—';
+  const p = [];
+  if (b.ctrl) p.push('Ctrl');
+  if (b.alt) p.push('Alt');
+  if (b.shift) p.push('Shift');
+  p.push(String(b.code).replace(/^Key/, '').replace(/^Digit/, '').replace(/^Numpad/, 'Num'));
+  return p.join('+');
+}
+// 1pt = 4/3 px (CSS) — บทภาพยนตร์/ต้นฉบับนิยายใช้ 12pt เป็นมาตรฐานทุกภาษา
+export const PT_PX = 4 / 3;
+export const ptToPx = (pt) => +(((parseFloat(pt) || 12) * PT_PX).toFixed(2));
+export const BASE_ED_FS = ptToPx(12); // 16px = 12pt (ตรงกับ .ProseMirror ใน style.css)
+export const BASE_SP_FS = ptToPx(12); // 16px = 12pt (ตรงกับ .sp ใน style.css)
+// ฟอนต์มาตรฐานของเนื้อเรื่อง — Courier Final Draft ทุกภาษา (มี fallback ให้เครื่องที่ยังไม่ลงฟอนต์)
+export const DEFAULT_SCRIPT_FONT =
+  '"Courier Final Draft", "Courier Prime", "Courier New", "TH Sarabun New", monospace';
 // ซูมหน้ากระดาษ = ย่อ/ขยาย "ทั้งหน้า" ด้วย CSS zoom (ฟอนต์+ระยะขอบ+ความกว้าง ไปพร้อมกัน)
 export const SCALE_MIN = 0.5, SCALE_MAX = 2.5;
 // ขนาด UI (แถบเครื่องมือ/แผง/กล่อง) — คนละตัวกับซูมหน้ากระดาษ
@@ -107,6 +158,11 @@ export const CAT_ICON = { characters: 'user', locations: 'map', items: 'briefcas
 // ประเภทความสัมพันธ์ (ครอบครัว/คนรัก/ศัตรู…) — โมดูลบริสุทธิ์ ส่งต่อจาก relationship-types.js
 // เพื่อให้ feature module ดึงจาก core.js ที่เดียวเหมือนค่าคงที่ตัวอื่น
 export { REL_TYPES, REL_COLOR, REL_ICON, REL_LABEL, categorizeRole, categorizeWith } from './relationship-types.js';
+// รูปแบบบทภาพยนตร์ระดับใช้งานจริง (ข้อ 81–85, 92, 97) — โมดูลบริสุทธิ์ ส่งต่อจาก sp-format.js
+export { PAPER_SIZES, MARGIN_DEFAULTS, SP_ELEMENT_CONFIG, SP_ELEMENT_STYLES, SP_ELEMENT_KEYS,
+         PAGE_BREAK_RULES, SP_STRINGS, DEFAULT_SP_FORMAT, mergeSpFormat, pageCssVars, spCss,
+         linesPerPage, textWidth, wrapLines, paginate, pageCount, splitText,
+         newRoster, normalizeRoster, rosterToText, ROSTER_VERSION } from './sp-format.js';
 
 // ---- ระบบภาษา (i18n) ----
 export const i18n = { lang: 'en', strings: {}, fallback: null, available: ['en'] };

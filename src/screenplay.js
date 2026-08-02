@@ -7,7 +7,7 @@ import { history, undo, redo } from 'prosemirror-history';
 import { keymap } from 'prosemirror-keymap';
 import { baseKeymap, toggleMark, chainCommands } from 'prosemirror-commands';
 import { parseScript, lineFor, SP_ELEMS, TAB_CYCLE, NEXT_ELEM } from './fountain.js';
-import { state, DEFAULT_SP_CYCLE } from './core.js';
+import { state, DEFAULT_SP_CYCLE, spCycleKeys, spKeyMatch } from './core.js';
 
 const marks = {
   strong: { parseDOM: [{ tag: 'strong' }], toDOM: () => ['strong', 0] },
@@ -88,12 +88,14 @@ export class SPEditor {
         doc, schema: spSchema,
         plugins: [
           ...(getNames ? [mentionPlugin(getNames)] : []),
+          // [แก้ไข feature 1] ปุ่มควบคุม element ย้ายไปที่ handleKeyDown ทั้งหมด
+          // (ผู้ใช้ตั้งปุ่มเองได้ + ปิดระบบได้ → ผูกกับ keymap ที่เป็นชื่อปุ่มตายตัวไม่ได้)
+          // ที่เหลือไว้กัน Tab ย้ายโฟกัสออกจากตัวแก้ไขเมื่อผู้ใช้ย้ายคำสั่งไปปุ่มอื่น
           keymap({
-            Tab: () => self._tabCycle('tab'),
-            'Shift-Tab': () => self._tabCycle('shiftTab'),
+            Tab: () => true,
+            'Shift-Tab': () => true,
             'Mod-ArrowDown': () => { self.cycle(1); return true; },   // สลับรูปแบบถัดไป
             'Mod-ArrowUp': () => { self.cycle(-1); return true; },    // สลับรูปแบบก่อนหน้า
-            Enter: () => self.enter(),
           }),
           keymap(baseKeymap),
           history(),
@@ -124,6 +126,21 @@ export class SPEditor {
           ev.preventDefault();
           view.dispatch(view.state.tr.insertText('\u00A0'));
           return true;
+        }
+        // [แก้ไข feature 1] ปุ่มสลับ element — ค่าเริ่มต้น Tab / Shift+Tab / Enter แต่ผู้ใช้เปลี่ยนได้
+        // และปิดทั้งระบบได้ (spCycleEnabled=false → Enter ขึ้นบรรทัดใหม่ชนิดเดิมเท่านั้น)
+        const cycleOn = state.settings?.spCycleEnabled !== false;
+        const K = spCycleKeys(state.settings);
+        for (const dir of ['shiftTab', 'tab', 'enter']) {
+          if (!spKeyMatch(K[dir], ev)) continue;
+          // SmartType มาก่อนเสมอ (ปุ่มยืนยันคำเดา = Tab · บั๊ก #1 ห้ามใช้ Enter)
+          if (onKeyDown && onKeyDown(ev)) { ev.preventDefault(); return true; }
+          if (!cycleOn) {
+            if (dir !== 'enter') return false;
+            ev.preventDefault(); return self.enter(true);   // ปิดระบบ = ขึ้นบรรทัดใหม่ชนิดเดิม
+          }
+          ev.preventDefault();
+          return dir === 'enter' ? self.enter() : self._tabCycle(dir);
         }
         return onKeyDown ? onKeyDown(ev) : false;
       },
@@ -253,11 +270,12 @@ export class SPEditor {
     v.focus();
   }
 
-  enter() {
+  // sameEl = true → ขึ้นบรรทัดใหม่ชนิดเดิม (ใช้ตอนผู้ใช้ปิดระบบปุ่มสลับ element)
+  enter(sameEl) {
     const v = this.view;
     const cur = this.curElement();
     const spCycle = state.settings?.spCycle || DEFAULT_SP_CYCLE;
-    const nextEl = (spCycle[cur]?.enter) || NEXT_ELEM[cur] || 'action';
+    const nextEl = sameEl ? cur : ((spCycle[cur]?.enter) || NEXT_ELEM[cur] || 'action');
     const sp = spSchema.nodes.sp.create({ el: nextEl });
     const { $from } = v.state.selection;
     const insertAt = $from.after(1);

@@ -14748,6 +14748,9 @@
           view.focus();
         }
         // คืน true = กิน key แล้ว
+        // บั๊ก #1: เดิม Enter ก็ยืนยันคำเดา → ในบล็อก "ตัวละคร" ของบทหนัง พิมพ์อะไรก็ตามแล้ว SmartType เด้ง
+        //   กด Enter จึงกลายเป็นเติมคำแทนขึ้นบรรทัดใหม่ → วนไม่จบ
+        //   กติกาใหม่: **ยืนยันด้วย Tab อย่างเดียว** · Enter = ปิด popup แล้วขึ้นบรรทัดใหม่ตามปกติ
         onKey(ev) {
           if (!this.visible) return false;
           if (ev.key === "ArrowDown") {
@@ -14760,9 +14763,13 @@
             this.render();
             return true;
           }
-          if (ev.key === "Enter" || ev.key === "Tab") {
+          if (ev.key === "Tab") {
             this._accept();
             return true;
+          }
+          if (ev.key === "Enter") {
+            this.hide();
+            return false;
           }
           if (ev.key === "Escape") {
             this.hide();
@@ -14771,6 +14778,336 @@
           return false;
         }
       };
+    }
+  });
+
+  // src/sp-format.js
+  function linesPerPage(paper, margins, lineHeightIn = LINE_HEIGHT_IN) {
+    const p = paper || PAPER_SIZES.letter;
+    const m = { ...MARGIN_DEFAULTS, ...margins || {} };
+    const usable = num(p.height, 11) - num(m.top, 1) - num(m.bottom, 1);
+    return Math.max(1, Math.floor(usable / (lineHeightIn || LINE_HEIGHT_IN)));
+  }
+  function textWidth(paper, margins) {
+    const p = paper || PAPER_SIZES.letter;
+    const m = { ...MARGIN_DEFAULTS, ...margins || {} };
+    return Math.max(0.5, num(p.width, 8.5) - num(m.left, 1.5) - num(m.right, 1));
+  }
+  function num(v, d) {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : d;
+  }
+  function mergeSpFormat(user) {
+    const u = user || {};
+    const paperSize = PAPER_SIZES[u.paperSize] ? u.paperSize : "letter";
+    const basePaper = PAPER_SIZES[paperSize];
+    const paper = paperSize === "custom" ? { width: num(u.paper?.width, basePaper.width), height: num(u.paper?.height, basePaper.height), unit: "in" } : { ...basePaper };
+    const elements = {};
+    for (const k of SP_ELEMENT_KEYS) elements[k] = { ...SP_ELEMENT_CONFIG[k], ...u.elements?.[k] || {} };
+    const styles = {};
+    for (const k of SP_ELEMENT_KEYS) {
+      styles[k] = {
+        screen: { ...SP_ELEMENT_STYLES[k].screen, ...u.styles?.[k]?.screen || {} },
+        print: { ...SP_ELEMENT_STYLES[k].print, ...u.styles?.[k]?.print || {} }
+      };
+    }
+    return {
+      paperSize,
+      paper,
+      margins: { ...MARGIN_DEFAULTS, ...u.margins || {} },
+      elements,
+      styles,
+      rules: { ...PAGE_BREAK_RULES, ...u.rules || {} },
+      strings: { ...SP_STRINGS, ...u.strings || {} }
+    };
+  }
+  function pageCssVars(fmt) {
+    const f = fmt && fmt.margins ? fmt : mergeSpFormat(fmt);
+    const m = f.margins;
+    return {
+      "--page-w": f.paper.width + "in",
+      "--page-h": f.paper.height + "in",
+      "--mg-top": m.top + "in",
+      "--mg-bottom": m.bottom + "in",
+      "--mg-left": m.left + "in",
+      "--mg-right": m.right + "in",
+      "--text-w": +textWidth(f.paper, m).toFixed(4) + "in"
+    };
+  }
+  function spCss(fmt) {
+    const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+    const left = f.margins.left;
+    const out = [];
+    const decl = (st) => [
+      "text-transform:" + (st.caps ? "uppercase" : "none"),
+      "font-weight:" + (st.bold ? "700" : "400"),
+      "font-style:" + (st.italic ? "italic" : "normal"),
+      "text-decoration:" + (st.underline ? "underline" : "none")
+    ].join(";");
+    const tw = textWidth(f.paper, f.margins);
+    for (const k of SP_ELEMENT_KEYS) {
+      const c = f.elements[k];
+      const s = f.styles[k];
+      const ml = Math.max(0, +(num(c.indent, left) - left).toFixed(4));
+      const w = Math.max(0.3, Math.min(num(c.width, 6), +(tw - ml).toFixed(4)));
+      const mt = num(c.linesBefore, 10) / 10;
+      const mb = num(c.linesBetween, 10) / 10 - 1;
+      out.push(`.sp.sp-${k}{margin-left:${ml}in;width:${w}in;max-width:none;margin-top:${mt}em;margin-bottom:${Math.max(0, mb)}em;${decl(s.screen)}}`);
+    }
+    const m = f.margins;
+    out.push(`@page{size:${f.paper.width}in ${f.paper.height}in;margin:${m.top}in ${m.right}in ${m.bottom}in ${m.left}in;orphans:${Math.max(1, f.rules.minActionLinesAtBottom)};widows:${Math.max(1, f.rules.minActionLinesAtTop)};}`);
+    const printRules = SP_ELEMENT_KEYS.map((k) => `.sp.sp-${k}{${decl(f.styles[k].print)}}`).join("");
+    out.push("@media print{" + printRules + "}");
+    return out.join("\n");
+  }
+  function wrapLines(text, widthIn, cpi = CHARS_PER_INCH) {
+    const cols = Math.max(1, Math.floor(num(widthIn, 6) * cpi));
+    const s = String(text ?? "");
+    if (!s.trim()) return 1;
+    let total = 0;
+    for (const para of s.split("\n")) {
+      const words = para.split(/\s+/).filter(Boolean);
+      if (!words.length) {
+        total += 1;
+        continue;
+      }
+      let line = 0, used = 0;
+      for (const w of words) {
+        const need = used ? used + 1 + w.length : w.length;
+        if (need <= cols) {
+          used = need;
+        } else {
+          line++;
+          used = w.length;
+          while (used > cols) {
+            line++;
+            used -= cols;
+          }
+        }
+      }
+      total += line + 1;
+    }
+    return Math.max(1, total);
+  }
+  function paginate(blocks, opts = {}) {
+    const fmt = opts.fmt && opts.fmt.elements ? opts.fmt : mergeSpFormat(opts.fmt);
+    const perPage = Math.max(4, opts.lines || linesPerPage(fmt.paper, fmt.margins));
+    const R = fmt.rules, S = fmt.strings;
+    const cfg = (el3) => fmt.elements[el3] || fmt.elements.action;
+    const pages = [];
+    let cur = [], used = 0, lastChar = "";
+    const pushPage = () => {
+      pages.push({ index: pages.length + 1, blocks: cur });
+      cur = [];
+      used = 0;
+    };
+    const list = (blocks || []).filter((b) => b && b.el !== "blank");
+    for (let i2 = 0; i2 < list.length; i2++) {
+      const b = list[i2];
+      const c = cfg(b.el);
+      if (b.el === "character") lastChar = String(b.text || "");
+      const before = cur.length ? Math.round(num(c.linesBefore, 10) / 10) : 0;
+      const body = wrapLines(b.text, c.width);
+      const need = before + body;
+      const free = perPage - used;
+      if (need <= free) {
+        cur.push({ ...b, lines: body });
+        used += need;
+        continue;
+      }
+      const isDlg = b.el === "dialogue";
+      const isAct = b.el === "action" || b.el === "note" || b.el === "summary";
+      const minBot = isDlg ? R.minDialogueLinesAtBottom : R.minActionLinesAtBottom;
+      const minTop = isDlg ? R.minDialogueLinesAtTop : R.minActionLinesAtTop;
+      const canBottom = free - before;
+      if ((isDlg || isAct) && canBottom >= minBot && body - canBottom >= minTop) {
+        const head = splitText(b.text, c.width, canBottom);
+        cur.push({ ...b, text: head.head, lines: canBottom, split: "head" });
+        if (isDlg) cur.push({ el: "more", text: S.dialogueMore, lines: 1 });
+        pushPage();
+        if (isDlg && lastChar) {
+          cur.push({ el: "character", text: lastChar + " " + S.dialogueContd, lines: 1, contd: true });
+          used += 1;
+        }
+        cur.push({ ...b, text: head.rest, lines: body - canBottom, split: "tail" });
+        used += body - canBottom;
+        continue;
+      }
+      const carry = [];
+      if (b.el === "dialogue" || b.el === "parenthetical") {
+        while (cur.length && ["character", "parenthetical"].includes(cur[cur.length - 1].el)) {
+          carry.unshift(cur.pop());
+        }
+      }
+      for (const x of carry) used -= x.lines || 1;
+      pushPage();
+      for (const x of carry) {
+        cur.push(x);
+        used += x.lines || 1;
+      }
+      cur.push({ ...b, lines: body });
+      used += body;
+    }
+    if (cur.length) pushPage();
+    if (!pages.length) pages.push({ index: 1, blocks: [] });
+    for (let i2 = 0; i2 < pages.length - 1; i2++) {
+      pages[i2].continuedBottom = S.continuedBottom;
+      pages[i2 + 1].continuedTop = S.continuedTop;
+    }
+    return { pages, count: pages.length };
+  }
+  function splitText(text, widthIn, n) {
+    const cols = Math.max(1, Math.floor(num(widthIn, 6) * CHARS_PER_INCH));
+    const words = String(text ?? "").split(/\s+/).filter(Boolean);
+    const lines = [];
+    let cur = "";
+    for (const w of words) {
+      const next = cur ? cur + " " + w : w;
+      if (next.length <= cols) cur = next;
+      else {
+        if (cur) lines.push(cur);
+        cur = w;
+      }
+    }
+    if (cur) lines.push(cur);
+    const k = Math.max(1, Math.min(n, lines.length - 1 >= 1 ? lines.length - 1 : 1));
+    return { head: lines.slice(0, k).join(" "), rest: lines.slice(k).join(" ") };
+  }
+  function pageCount(blocks, opts) {
+    return paginate(blocks, opts).count;
+  }
+  function newRoster() {
+    return {
+      version: ROSTER_VERSION,
+      title: SP_STRINGS.castTitle,
+      characters: [],
+      scene: "",
+      time: "",
+      showScene: true,
+      showTime: true,
+      includeInExport: true
+    };
+  }
+  function normalizeRoster(r) {
+    const base3 = newRoster();
+    if (!r || typeof r !== "object") return base3;
+    return {
+      ...base3,
+      ...r,
+      version: ROSTER_VERSION,
+      title: typeof r.title === "string" && r.title.trim() ? r.title : base3.title,
+      characters: (Array.isArray(r.characters) ? r.characters : []).map((c) => ({ name: String(c?.name ?? ""), detail: String(c?.detail ?? "") })),
+      scene: String(r.scene ?? ""),
+      time: String(r.time ?? ""),
+      showScene: r.showScene !== false,
+      showTime: r.showTime !== false,
+      includeInExport: r.includeInExport !== false
+    };
+  }
+  function rosterToText(roster, fmt) {
+    const r = normalizeRoster(roster);
+    const f = fmt && fmt.margins ? fmt : mergeSpFormat(fmt);
+    const cols = Math.max(20, Math.floor(textWidth(f.paper, f.margins) * CHARS_PER_INCH));
+    const mid = (s) => " ".repeat(Math.max(0, Math.floor((cols - s.length) / 2))) + s;
+    const out = [mid(r.title)];
+    out.push("");
+    for (const c of r.characters) {
+      if (!c.name && !c.detail) continue;
+      out.push(c.name + ":" + (c.detail ? "	" + c.detail : ""));
+      out.push("");
+    }
+    if (r.showScene && (r.scene || "").trim()) {
+      out.push(mid(f.strings.sceneTitle), "", r.scene.trim(), "", "");
+    }
+    if (r.showTime && (r.time || "").trim()) {
+      out.push(mid(f.strings.timeTitle), "", r.time.trim());
+    }
+    while (out.length && out[out.length - 1] === "") out.pop();
+    return out.join("\n");
+  }
+  var PAPER_SIZES, MARGIN_DEFAULTS, CHARS_PER_INCH, LINES_PER_INCH, LINE_HEIGHT_IN, SP_ELEMENT_CONFIG, ST, SP_ELEMENT_STYLES, PAGE_BREAK_RULES, SP_STRINGS, DEFAULT_SP_FORMAT, SP_ELEMENT_KEYS, ROSTER_VERSION;
+  var init_sp_format = __esm({
+    "src/sp-format.js"() {
+      PAPER_SIZES = {
+        letter: { name: "Letter (8.5 \xD7 11 \u0E19\u0E34\u0E49\u0E27)", width: 8.5, height: 11, unit: "in" },
+        a4: { name: "A4 (8.27 \xD7 11.69 \u0E19\u0E34\u0E49\u0E27)", width: 8.27, height: 11.69, unit: "in" },
+        legal: { name: "Legal (8.5 \xD7 14 \u0E19\u0E34\u0E49\u0E27)", width: 8.5, height: 14, unit: "in" },
+        custom: { name: "\u0E01\u0E33\u0E2B\u0E19\u0E14\u0E40\u0E2D\u0E07", width: 8.5, height: 11, unit: "in" }
+      };
+      MARGIN_DEFAULTS = { top: 1, bottom: 1, left: 1.5, right: 1 };
+      CHARS_PER_INCH = 10;
+      LINES_PER_INCH = 6;
+      LINE_HEIGHT_IN = 1 / LINES_PER_INCH;
+      SP_ELEMENT_CONFIG = {
+        scene: { indent: 1.5, width: 6, linesBefore: 20, linesBetween: 10 },
+        action: { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 },
+        character: { indent: 3.7, width: 3.8, linesBefore: 10, linesBetween: 10 },
+        parenthetical: { indent: 3.1, width: 2.9, linesBefore: 0, linesBetween: 10 },
+        dialogue: { indent: 2.5, width: 3.5, linesBefore: 0, linesBetween: 10 },
+        transition: { indent: 6, width: 2, linesBefore: 10, linesBetween: 10 },
+        shot: { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 },
+        "act-break": { indent: 1.5, width: 6, linesBefore: 20, linesBetween: 10 },
+        note: { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 },
+        summary: { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 },
+        outline1: { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 },
+        outline2: { indent: 1.7, width: 5.8, linesBefore: 10, linesBetween: 10 },
+        outline3: { indent: 1.9, width: 5.6, linesBefore: 10, linesBetween: 10 },
+        image: { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 },
+        raw: { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 }
+      };
+      ST = (caps, bold, italic, underline) => ({ caps, bold, italic, underline });
+      SP_ELEMENT_STYLES = {
+        scene: { screen: ST(true, true, false, false), print: ST(true, true, false, false) },
+        action: { screen: ST(false, false, false, false), print: ST(false, false, false, false) },
+        character: { screen: ST(true, false, false, false), print: ST(true, false, false, false) },
+        parenthetical: { screen: ST(false, false, true, false), print: ST(false, false, false, false) },
+        dialogue: { screen: ST(false, false, false, false), print: ST(false, false, false, false) },
+        transition: { screen: ST(true, false, false, false), print: ST(true, false, false, false) },
+        shot: { screen: ST(true, false, false, false), print: ST(true, false, false, false) },
+        "act-break": { screen: ST(true, true, false, false), print: ST(true, true, false, true) },
+        note: { screen: ST(false, false, true, false), print: ST(false, false, true, false) },
+        summary: { screen: ST(false, false, true, false), print: ST(false, false, true, false) },
+        outline1: { screen: ST(false, true, false, false), print: ST(false, true, false, false) },
+        outline2: { screen: ST(false, true, false, false), print: ST(false, true, false, false) },
+        outline3: { screen: ST(false, true, false, false), print: ST(false, true, false, false) },
+        image: { screen: ST(false, false, false, false), print: ST(false, false, false, false) },
+        raw: { screen: ST(false, false, false, false), print: ST(false, false, false, false) }
+      };
+      PAGE_BREAK_RULES = {
+        minActionLinesAtBottom: 2,
+        // ต้องเหลือ action อย่างน้อยกี่บรรทัดท้ายหน้าจึงยอมตัด
+        minDialogueLinesAtBottom: 2,
+        // ต้องเหลือบทพูดอย่างน้อยกี่บรรทัดท้ายหน้า
+        minActionLinesAtTop: 3,
+        // ส่วนที่ยกไปหน้าใหม่ต้องได้อย่างน้อยกี่บรรทัด
+        minDialogueLinesAtTop: 3,
+        maxConsecutiveHyphens: 2,
+        // ห้ามลงท้ายบรรทัดด้วยขีดติดกันเกินกี่บรรทัด
+        keepSceneWithNext: 2
+        // หัวฉากท้ายหน้าต้องมีเนื้อตามอย่างน้อยกี่บรรทัด ไม่งั้นยกทั้งก้อน
+      };
+      SP_STRINGS = {
+        continuedBottom: "(CONTINUED)",
+        continuedTop: "CONTINUED:",
+        dialogueMore: "(MORE)",
+        dialogueContd: "(cont'd)",
+        sceneContinued: "\u0E15\u0E48\u0E2D",
+        castTitle: "Cast of Characters",
+        sceneTitle: "Scene",
+        timeTitle: "Time"
+      };
+      DEFAULT_SP_FORMAT = {
+        paperSize: "letter",
+        paper: { width: 8.5, height: 11 },
+        // ใช้เมื่อ paperSize === 'custom'
+        margins: { ...MARGIN_DEFAULTS },
+        elements: SP_ELEMENT_CONFIG,
+        styles: SP_ELEMENT_STYLES,
+        rules: PAGE_BREAK_RULES,
+        strings: SP_STRINGS
+      };
+      SP_ELEMENT_KEYS = Object.keys(SP_ELEMENT_CONFIG);
+      ROSTER_VERSION = 1;
     }
   });
 
@@ -14783,20 +15120,32 @@
     BUILTIN_CATS: () => BUILTIN_CATS,
     CAT_ICON: () => CAT_ICON,
     DEFAULT_GOALS: () => DEFAULT_GOALS,
+    DEFAULT_SCRIPT_FONT: () => DEFAULT_SCRIPT_FONT,
     DEFAULT_SETTINGS: () => DEFAULT_SETTINGS,
     DEFAULT_SP_CYCLE: () => DEFAULT_SP_CYCLE,
+    DEFAULT_SP_CYCLE_KEYS: () => DEFAULT_SP_CYCLE_KEYS,
+    DEFAULT_SP_FORMAT: () => DEFAULT_SP_FORMAT,
     DEFAULT_STATUS_COLOR: () => DEFAULT_STATUS_COLOR,
     LOG_BUF: () => LOG_BUF,
+    MARGIN_DEFAULTS: () => MARGIN_DEFAULTS,
+    PAGE_BREAK_RULES: () => PAGE_BREAK_RULES,
+    PAPER_SIZES: () => PAPER_SIZES,
+    PT_PX: () => PT_PX,
     REL_COLOR: () => REL_COLOR,
     REL_ICON: () => REL_ICON,
     REL_LABEL: () => REL_LABEL,
     REL_TYPES: () => REL_TYPES,
+    ROSTER_VERSION: () => ROSTER_VERSION,
     SCALE_MAX: () => SCALE_MAX,
     SCALE_MIN: () => SCALE_MIN,
     SCENE_COLORS: () => SCENE_COLORS,
     SCENE_STATUSES: () => SCENE_STATUSES,
     SHORTCUTS: () => SHORTCUTS,
     SHORTCUT_LABELS: () => SHORTCUT_LABELS,
+    SP_ELEMENT_CONFIG: () => SP_ELEMENT_CONFIG,
+    SP_ELEMENT_KEYS: () => SP_ELEMENT_KEYS,
+    SP_ELEMENT_STYLES: () => SP_ELEMENT_STYLES,
+    SP_STRINGS: () => SP_STRINGS,
     STATUS_COLORS: () => STATUS_COLORS,
     UI_SCALE_MAX: () => UI_SCALE_MAX,
     UI_SCALE_MIN: () => UI_SCALE_MIN,
@@ -14807,15 +15156,31 @@
     el: () => el,
     formatShortcut: () => formatShortcut,
     i18n: () => i18n,
+    linesPerPage: () => linesPerPage,
     loadLanguage: () => loadLanguage,
     log: () => log,
+    mergeSpFormat: () => mergeSpFormat,
+    newRoster: () => newRoster,
+    normalizeRoster: () => normalizeRoster,
     onLanguageChanged: () => onLanguageChanged,
+    pageCount: () => pageCount,
+    pageCssVars: () => pageCssVars,
+    paginate: () => paginate,
+    ptToPx: () => ptToPx,
+    rosterToText: () => rosterToText,
     setStatus: () => setStatus,
     shortcutId: () => shortcutId,
     smart: () => smart,
+    spCss: () => spCss,
+    spCycleKeys: () => spCycleKeys,
+    spKeyLabel: () => spKeyLabel,
+    spKeyMatch: () => spKeyMatch,
+    splitText: () => splitText,
     state: () => state,
     t: () => t,
-    withShortcut: () => withShortcut
+    textWidth: () => textWidth,
+    withShortcut: () => withShortcut,
+    wrapLines: () => wrapLines
   });
   function log(level, msg, extra) {
     const ts = (/* @__PURE__ */ new Date()).toISOString();
@@ -14840,6 +15205,25 @@
   }
   function setStatus(s) {
     $("#status").textContent = s;
+  }
+  function spCycleKeys(settings) {
+    const u = (settings || state.settings || {}).spCycleKeys || {};
+    const out = {};
+    for (const k of ["enter", "tab", "shiftTab"]) out[k] = { ...DEFAULT_SP_CYCLE_KEYS[k], ...u[k] || {} };
+    return out;
+  }
+  function spKeyMatch(b, ev) {
+    if (!b || !ev) return false;
+    return ev.code === b.code && !!ev.shiftKey === !!b.shift && !!(ev.ctrlKey || ev.metaKey) === !!b.ctrl && !!ev.altKey === !!b.alt;
+  }
+  function spKeyLabel(b) {
+    if (!b || !b.code) return "\u2014";
+    const p = [];
+    if (b.ctrl) p.push("Ctrl");
+    if (b.alt) p.push("Alt");
+    if (b.shift) p.push("Shift");
+    p.push(String(b.code).replace(/^Key/, "").replace(/^Digit/, "").replace(/^Numpad/, "Num"));
+    return p.join("+");
   }
   function onLanguageChanged(fn) {
     langHooks.push(fn);
@@ -14951,11 +15335,12 @@
     const sc = formatShortcut(code2, ctrl, shift2);
     return label + " (" + sc + ")";
   }
-  var $, el, state, smart, LOG_BUF, LOG_MAX, DEFAULT_SETTINGS, DEFAULT_GOALS, DEFAULT_SP_CYCLE, BASE_ED_FS, BASE_SP_FS, SCALE_MIN, SCALE_MAX, UI_SCALE_MIN, UI_SCALE_MAX, SCENE_STATUSES, SCENE_COLORS, STATUS_COLORS, DEFAULT_STATUS_COLOR, BUILTIN_CATS, CAT_ICON, i18n, langHooks, BUILTIN_EN, SHORTCUTS, shortcutId, SHORTCUT_LABELS, isMac, accelText;
+  var $, el, state, smart, LOG_BUF, LOG_MAX, DEFAULT_SETTINGS, DEFAULT_GOALS, DEFAULT_SP_CYCLE, DEFAULT_SP_CYCLE_KEYS, PT_PX, ptToPx, BASE_ED_FS, BASE_SP_FS, DEFAULT_SCRIPT_FONT, SCALE_MIN, SCALE_MAX, UI_SCALE_MIN, UI_SCALE_MAX, SCENE_STATUSES, SCENE_COLORS, STATUS_COLORS, DEFAULT_STATUS_COLOR, BUILTIN_CATS, CAT_ICON, i18n, langHooks, BUILTIN_EN, SHORTCUTS, shortcutId, SHORTCUT_LABELS, isMac, accelText;
   var init_core = __esm({
     "src/core.js"() {
       init_smart();
       init_relationship_types();
+      init_sp_format();
       $ = (s) => document.querySelector(s);
       el = (tag, cls, text) => {
         const e = document.createElement(tag);
@@ -15003,7 +15388,10 @@
         language: "th",
         // ไทยเป็นค่าเริ่มต้น (ไทย 100%)
         spFontFamily: "",
-        // ฟอนต์บทหนัง (บั๊ก #2) — ว่าง = Courier New ตามมาตรฐานบท
+        // ฟอนต์บทหนัง (บั๊ก #2) — ว่าง = Courier Final Draft ตามมาตรฐานบท
+        // ขนาดฟอนต์เนื้อเรื่องเป็น "พอยต์" (มาตรฐานบท/ต้นฉบับ = 12pt ทุกภาษา) — ผู้ใช้กรอกเลขเองได้
+        edFontPt: 12,
+        spFontPt: 12,
         autoSync: false,
         // auto-task: อัปเดตชื่อเอนทิตี้ทุกไฟล์อัตโนมัติ (ข้อ 88)
         // ค้นคำพ้องอังกฤษผ่าน datamuse.com — ปิดไว้ก่อน (ส่งคำที่เลือกออกอินเทอร์เน็ต)
@@ -15012,10 +15400,31 @@
         // ความจางของบรรทัดอื่นในโหมดโฟกัส (0.05–0.8)
         spCycle: null,
         // ตารางควบคุม Tab/Enter/Shift+Tab ในบทหนัง (null=ใช้ค่าเริ่มต้น)
+        spCycleKeys: null,
+        // [แก้ไข feature 1] ปุ่มที่ใช้แทน Tab/Enter/Shift+Tab (null=ค่าเริ่มต้น)
+        spCycleEnabled: true,
+        // [แก้ไข feature 1] สวิตช์เปิด/ปิดระบบสลับ element ด้วยปุ่ม
         spAutoCapitalize: true,
         // [93] ขึ้นต้นประโยคด้วยตัวใหญ่ในบทหนังอัตโนมัติ
-        spAutoCorrectI: true
+        spAutoCorrectI: true,
         // [93] แก้ i เป็น I เมื่ออยู่เดี่ยว ๆ
+        // ---- [85] หน้ากระดาษ: ใช้ร่วมกันทั้งโหมดนิยายและโหมดบทภาพยนตร์ ----
+        paperSize: "letter",
+        // letter | a4 | legal | custom
+        customPaper: { width: 8.5, height: 11 },
+        pageMargins: { top: 1, bottom: 1, left: 1.5, right: 1 },
+        // นิ้ว
+        // ---- [81][82][83] รูปแบบต่อ element (null = ใช้ค่ามาตรฐานทั้งหมด) ----
+        spElements: null,
+        // { character:{indent,width,linesBefore,linesBetween}, ... }
+        spStyles: null,
+        // { character:{screen:{caps,bold,italic,underline}, print:{...}}, ... }
+        spPageRules: null,
+        // [84] กฎ widow/orphan
+        spStrings: null,
+        // [92] (CONTINUED) / (MORE) / (cont'd) …
+        homeThumb: 190
+        // [บั๊ก 12] ความกว้างการ์ดหน้าแรก (px) — ตั้งได้ในตั้งค่า
       };
       DEFAULT_GOALS = { dailyWords: 500, projectWords: 5e4 };
       DEFAULT_SP_CYCLE = {
@@ -15035,8 +15444,16 @@
         image: { enter: "action", tab: "action", shiftTab: "scene" },
         raw: { enter: "action", tab: "action", shiftTab: "scene" }
       };
-      BASE_ED_FS = 15.5;
-      BASE_SP_FS = 14.5;
+      DEFAULT_SP_CYCLE_KEYS = {
+        enter: { code: "Enter", shift: false, ctrl: false, alt: false },
+        tab: { code: "Tab", shift: false, ctrl: false, alt: false },
+        shiftTab: { code: "Tab", shift: true, ctrl: false, alt: false }
+      };
+      PT_PX = 4 / 3;
+      ptToPx = (pt) => +((parseFloat(pt) || 12) * PT_PX).toFixed(2);
+      BASE_ED_FS = ptToPx(12);
+      BASE_SP_FS = ptToPx(12);
+      DEFAULT_SCRIPT_FONT = '"Courier Final Draft", "Courier Prime", "Courier New", "TH Sarabun New", monospace';
       SCALE_MIN = 0.5;
       SCALE_MAX = 2.5;
       UI_SCALE_MIN = 0.75;
@@ -16708,9 +17125,12 @@
               schema: spSchema,
               plugins: [
                 ...getNames ? [mentionPlugin(getNames)] : [],
+                // [แก้ไข feature 1] ปุ่มควบคุม element ย้ายไปที่ handleKeyDown ทั้งหมด
+                // (ผู้ใช้ตั้งปุ่มเองได้ + ปิดระบบได้ → ผูกกับ keymap ที่เป็นชื่อปุ่มตายตัวไม่ได้)
+                // ที่เหลือไว้กัน Tab ย้ายโฟกัสออกจากตัวแก้ไขเมื่อผู้ใช้ย้ายคำสั่งไปปุ่มอื่น
                 keymap({
-                  Tab: () => self2._tabCycle("tab"),
-                  "Shift-Tab": () => self2._tabCycle("shiftTab"),
+                  Tab: () => true,
+                  "Shift-Tab": () => true,
                   "Mod-ArrowDown": () => {
                     self2.cycle(1);
                     return true;
@@ -16719,9 +17139,8 @@
                   "Mod-ArrowUp": () => {
                     self2.cycle(-1);
                     return true;
-                  },
+                  }
                   // สลับรูปแบบก่อนหน้า
-                  Enter: () => self2.enter()
                 }),
                 keymap(baseKeymap),
                 history(),
@@ -16750,6 +17169,22 @@
                 ev.preventDefault();
                 view.dispatch(view.state.tr.insertText("\xA0"));
                 return true;
+              }
+              const cycleOn = state.settings?.spCycleEnabled !== false;
+              const K = spCycleKeys(state.settings);
+              for (const dir of ["shiftTab", "tab", "enter"]) {
+                if (!spKeyMatch(K[dir], ev)) continue;
+                if (onKeyDown && onKeyDown(ev)) {
+                  ev.preventDefault();
+                  return true;
+                }
+                if (!cycleOn) {
+                  if (dir !== "enter") return false;
+                  ev.preventDefault();
+                  return self2.enter(true);
+                }
+                ev.preventDefault();
+                return dir === "enter" ? self2.enter() : self2._tabCycle(dir);
               }
               return onKeyDown ? onKeyDown(ev) : false;
             },
@@ -16891,11 +17326,12 @@
           v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, start, end)));
           v.focus();
         }
-        enter() {
+        // sameEl = true → ขึ้นบรรทัดใหม่ชนิดเดิม (ใช้ตอนผู้ใช้ปิดระบบปุ่มสลับ element)
+        enter(sameEl) {
           const v = this.view;
           const cur = this.curElement();
           const spCycle = state.settings?.spCycle || DEFAULT_SP_CYCLE;
-          const nextEl = spCycle[cur]?.enter || NEXT_ELEM[cur] || "action";
+          const nextEl = sameEl ? cur : spCycle[cur]?.enter || NEXT_ELEM[cur] || "action";
           const sp = spSchema.nodes.sp.create({ el: nextEl });
           const { $from } = v.state.selection;
           const insertAt = $from.after(1);
@@ -45650,8 +46086,9 @@ ${mdToHtmlBody(md)}
       const r = e.getBoundingClientRect();
       if (!r.width || !r.height) continue;
       const rect = { x: r.left, y: r.top, w: r.width, h: r.height };
-      const zone = snapZone(mx, my, rect);
+      let zone = snapZone(mx, my, rect);
       if (!zone) continue;
+      if (zone === "center" && e.dataset.panelId === "docs") continue;
       const area = r.width * r.height;
       if (!best || area < best.area) best = { targetId: e.dataset.panelId, zone, rect, area };
     }
@@ -45680,6 +46117,7 @@ ${mdToHtmlBody(md)}
       }
       if (!ctx.floatOnly) {
         hit = detectSnapTarget(ev.clientX, ev.clientY, host2, panelId2);
+        if (hit && hit.zone === "center" && !ctx.allowGroup) hit = null;
         if (hit) ov.show(zoneRect(hit.rect, hit.zone), hit.zone);
         else ov.hide();
       }
@@ -45710,12 +46148,19 @@ ${mdToHtmlBody(md)}
     document.addEventListener("mouseup", up);
     e.preventDefault();
   }
+  function inGroupHandle(header, clientX) {
+    const r = header.getBoundingClientRect();
+    if (!r.width) return false;
+    return clientX >= r.right - r.width * GROUP_ZONE;
+  }
   function makePanelDraggable(header, panelId2, pm2, ctx = {}) {
     header.addEventListener("mousedown", (e) => {
       if (e.target.closest(".k-panel-btn") || e.target.closest(".k-panel-ctrls")) return;
       const onTitle = !!e.target.closest(".k-panel-head-title");
-      startPanelDrag(e, panelId2, pm2, { ...ctx, floatOnly: onTitle });
+      const allowGroup = onTitle || inGroupHandle(header, e.clientX);
+      startPanelDrag(e, panelId2, pm2, { ...ctx, allowGroup });
     });
+    header.classList.add("k-can-group");
   }
   function makeTabDraggable(tab, panelId2, tabsId, index, pm2, ctx = {}) {
     tab.addEventListener("mousedown", (e) => {
@@ -45723,6 +46168,8 @@ ${mdToHtmlBody(md)}
       const bar = tab.parentNode;
       startPanelDrag(e, panelId2, pm2, {
         ...ctx,
+        allowGroup: true,
+        // ลากหัวแท็บ = ตั้งใจจัดกลุ่มอยู่แล้ว
         ghostLabel: ctx.ghostLabel || tab.textContent.trim(),
         onReorder: (mx, my) => {
           if (!bar) return false;
@@ -45745,31 +46192,72 @@ ${mdToHtmlBody(md)}
       });
     });
   }
+  function snapEdges(selfEl) {
+    const xs = [0, window.innerWidth], ys = [0, window.innerHeight];
+    for (const p of document.querySelectorAll(".k-float-panel")) {
+      if (p === selfEl) continue;
+      const r = p.getBoundingClientRect();
+      xs.push(r.left, r.right);
+      ys.push(r.top, r.bottom);
+    }
+    return { xs, ys };
+  }
+  function snapToEdges(x, y, w, h, edges, tol = SNAP_PX) {
+    let sx = x, sy = y, snapped = false;
+    for (const e of edges.xs) {
+      if (Math.abs(x - e) <= tol) {
+        sx = e;
+        snapped = true;
+        break;
+      }
+      if (Math.abs(x + w - e) <= tol) {
+        sx = e - w;
+        snapped = true;
+        break;
+      }
+    }
+    for (const e of edges.ys) {
+      if (Math.abs(y - e) <= tol) {
+        sy = e;
+        snapped = true;
+        break;
+      }
+      if (Math.abs(y + h - e) <= tol) {
+        sy = e - h;
+        snapped = true;
+        break;
+      }
+    }
+    return { x: sx, y: sy, snapped };
+  }
   function makeFloatDraggable(header, popup, panelId2, pm2, ctx = {}) {
     header.addEventListener("mousedown", (e) => {
       if (e.button !== 0) return;
       if (e.target.closest(".k-panel-btn")) return;
       const host2 = ctx.host || document.getElementById("app-root") || document.body;
+      const canDock = !!e.target.closest(".k-panel-head-title") || inGroupHandle(header, e.clientX);
       const sx = e.clientX, sy = e.clientY;
       const x0 = popup.offsetLeft, y0 = popup.offsetTop;
       const ov = createDropOverlay();
+      const edges = snapEdges(popup);
       let hit = null, moved = false;
       const move = (ev) => {
         if (!moved && Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < DRAG_MIN) return;
         moved = true;
-        popup.style.left = x0 + ev.clientX - sx + "px";
-        popup.style.top = y0 + ev.clientY - sy + "px";
-        hit = detectSnapTarget(ev.clientX, ev.clientY, host2, panelId2);
-        if (hit && hit.zone === "center") ov.show(zoneRect(hit.rect, hit.zone), hit.zone);
-        else {
-          hit = null;
-          ov.hide();
-        }
+        const w = popup.offsetWidth, h = popup.offsetHeight;
+        const s = snapToEdges(x0 + ev.clientX - sx, y0 + ev.clientY - sy, w, h, edges);
+        popup.style.left = s.x + "px";
+        popup.style.top = s.y + "px";
+        popup.classList.toggle("k-float-snapped", s.snapped);
+        hit = canDock ? detectSnapTarget(ev.clientX, ev.clientY, host2, panelId2) : null;
+        if (hit) ov.show(zoneRect(hit.rect, hit.zone), hit.zone);
+        else ov.hide();
       };
       const up = () => {
         document.removeEventListener("mousemove", move);
         document.removeEventListener("mouseup", up);
         ov.hide();
+        popup.classList.remove("k-float-snapped");
         if (!moved) return;
         if (hit) {
           pm2.dockPanel(panelId2, hit.zone, hit.targetId);
@@ -45782,11 +46270,13 @@ ${mdToHtmlBody(md)}
       e.preventDefault();
     });
   }
-  var DRAG_MIN, _ov;
+  var DRAG_MIN, GROUP_ZONE, SNAP_PX, _ov;
   var init_panel_drag = __esm({
     "src/panels/panel-drag.js"() {
       init_panel_layout();
       DRAG_MIN = 8;
+      GROUP_ZONE = 0.2;
+      SNAP_PX = 10;
       _ov = null;
     }
   });
@@ -46092,6 +46582,7 @@ ${mdToHtmlBody(md)}
     panelToggleState: () => panelToggleState,
     registerPanels: () => registerPanels,
     renderPanels: () => renderPanels,
+    resetPanelHomes: () => resetPanelHomes,
     resetPanelSystem: () => resetPanelSystem,
     resetPanels: () => resetPanels,
     savePanelLayout: () => savePanelLayout,
@@ -46178,8 +46669,22 @@ ${mdToHtmlBody(md)}
       }
     };
   }
+  function ensureDocsVisible() {
+    if (_fixingDocs || !pm || !pm.store.root) return;
+    const grp = tabGroupOf(pm.store.root, "docs");
+    if (!grp) return;
+    const i2 = grp.children.findIndex((c) => c.id === "docs");
+    if (i2 < 0 || grp.active === i2) return;
+    _fixingDocs = true;
+    try {
+      pm.store.update(activatePanel(pm.store.root, "docs"));
+    } finally {
+      _fixingDocs = false;
+    }
+  }
   function renderPanels(force) {
     if (!pm) return;
+    ensureDocsVisible();
     const sig = JSON.stringify({ r: pm.store.root, f: pm.store.floats });
     if (!force && sig === lastSig) return;
     lastSig = sig;
@@ -46191,6 +46696,9 @@ ${mdToHtmlBody(md)}
   function onPanelLayoutChange(fn) {
     _onLayoutChange = fn;
   }
+  function sideOf(d) {
+    return lastSide.get(d.id) || d.defaultSide || "left";
+  }
   function initPanelSystem() {
     const m = getPanelManager();
     if (started) {
@@ -46200,6 +46708,7 @@ ${mdToHtmlBody(md)}
     started = true;
     registerPanels();
     srcHolder();
+    loadHomes();
     m.load();
     if (!m.store.root) m.store.update(defaultLayout());
     else if (!hasPanel(m.store.root, "docs")) {
@@ -46220,17 +46729,77 @@ ${mdToHtmlBody(md)}
   function setPanelShowHook(fn) {
     onShowHook = fn;
   }
+  function loadHomes() {
+    try {
+      const o = JSON.parse(localStorage.getItem(HOME_KEY) || "{}");
+      for (const k of Object.keys(o)) homes.set(k, o[k]);
+    } catch {
+    }
+  }
+  function saveHomes() {
+    try {
+      localStorage.setItem(HOME_KEY, JSON.stringify(Object.fromEntries(homes)));
+    } catch {
+    }
+  }
+  function rememberHome(pid) {
+    const m = getPanelManager();
+    const f = (m.floats || []).find((x) => x.panel.id === pid);
+    if (f) {
+      homes.set(pid, { float: { x: f.x, y: f.y, w: f.w, h: f.h } });
+      saveHomes();
+      return;
+    }
+    if (!m.isDocked(pid)) return;
+    const grp = tabGroupOf(m.root, pid);
+    if (grp && (grp.children || []).length > 1) {
+      const other = grp.children.find((c) => c.id !== pid);
+      if (other) {
+        homes.set(pid, { targetId: other.id, side: "center" });
+        saveHomes();
+        return;
+      }
+    }
+    const sib = panelIds(m.root).filter((x) => x !== pid && !(meta.get(x) || {}).fixed);
+    const node = document.querySelector(`#${HOST_ID} .k-panel[data-panel-id="${pid}"]`);
+    const r = node && node.getBoundingClientRect();
+    let best = null;
+    if (r && r.width) {
+      for (const s of sib) {
+        const n2 = document.querySelector(`#${HOST_ID} .k-panel[data-panel-id="${s}"]`);
+        const r2 = n2 && n2.getBoundingClientRect();
+        if (!r2 || !r2.width) continue;
+        const d = Math.hypot(r2.left - r.left, r2.top - r.top);
+        if (!best || d < best.d) best = { d, id: s, side: r2.left < r.left ? "right" : "left" };
+      }
+    }
+    homes.set(pid, { targetId: best ? best.id : "docs", side: best ? best.side : sideOf({ id: pid }) });
+    saveHomes();
+  }
   function showPanel(id, opts = {}) {
     const m = getPanelManager();
     const pid = panelId(id);
+    const def = m.registry.get(pid) || {};
     let ok;
     if (m.isDocked(pid) && !m.isCollapsed(pid)) {
       m.activatePanel(pid);
       ok = true;
+    } else if (m.isCollapsed(pid)) {
+      m.collapsePanel(pid, false);
+      ok = true;
     } else {
-      const o = { ...opts };
-      if (!o.targetId && m.isDocked("docs") && pid !== "docs") o.targetId = "docs";
-      ok = m.showPanel(pid, o);
+      const home = homes.get(pid);
+      if (!opts.side && !opts.targetId && home && home.float) {
+        ok = m.floatPanel(pid, home.float);
+      } else {
+        const o = { ...opts };
+        if (!o.targetId) o.targetId = home && home.targetId || "docs";
+        if (!o.side && home && home.side) o.side = home.side;
+        if (!m.isDocked(o.targetId)) o.targetId = m.isDocked("docs") ? "docs" : void 0;
+        if (o.side === "center" && o.targetId === "docs") o.side = def.defaultSide || "right";
+        if (o.side !== "center" && tabGroupOf(m.root, o.targetId) && m.isDocked("docs")) o.targetId = "docs";
+        ok = m.showPanel(pid, o);
+      }
     }
     if (ok && onShowHook) {
       try {
@@ -46241,21 +46810,19 @@ ${mdToHtmlBody(md)}
     return ok;
   }
   function hidePanel(id) {
-    return getPanelManager().hidePanel(panelId(id));
+    const pid = panelId(id);
+    rememberHome(pid);
+    return getPanelManager().hidePanel(pid);
   }
   function togglePanel(id, opts) {
     const m = getPanelManager();
     const pid = panelId(id);
-    if (m.isOpen(pid) && !m.isCollapsed(pid)) {
-      return m.collapsePanel(pid, true);
-    }
-    if (m.isCollapsed(pid)) {
-      return m.collapsePanel(pid, false);
-    }
+    if (m.isOpen(pid)) return hidePanel(pid);
     return showPanel(pid, opts);
   }
   function resetPanels() {
     const m = getPanelManager();
+    resetPanelHomes();
     m.store.reset();
     m.store.update(defaultLayout());
     renderPanels(true);
@@ -46322,8 +46889,16 @@ ${mdToHtmlBody(md)}
   }
   function resetPanelSystem() {
     lastSig = "";
+    resetPanelHomes();
   }
-  var HOST_ID, SRC_ID, ALIAS, panelId, PANEL_DEFS, pm, started, lastSig, adopted, extras, meta, _onLayoutChange, onShowHook;
+  function resetPanelHomes() {
+    homes.clear();
+    try {
+      localStorage.removeItem(HOME_KEY);
+    } catch {
+    }
+  }
+  var HOST_ID, SRC_ID, ALIAS, panelId, PANEL_DEFS, pm, started, lastSig, adopted, extras, meta, _fixingDocs, _onLayoutChange, lastSide, onShowHook, HOME_KEY, homes;
   var init_panel_ui = __esm({
     "src/panels/panel-ui.js"() {
       init_core();
@@ -46368,8 +46943,12 @@ ${mdToHtmlBody(md)}
       adopted = /* @__PURE__ */ new Map();
       extras = /* @__PURE__ */ new Map();
       meta = /* @__PURE__ */ new Map();
+      _fixingDocs = false;
       _onLayoutChange = null;
+      lastSide = /* @__PURE__ */ new Map();
       onShowHook = null;
+      HOME_KEY = "k2-panel-home";
+      homes = /* @__PURE__ */ new Map();
     }
   });
 
@@ -46686,7 +47265,7 @@ ${mdToHtmlBody(md)}
     showLog: () => showLog,
     versionDialog: () => versionDialog
   });
-  function settingsDialog() {
+  function settingsDialog(openTab) {
     if (!state.root) {
       alert(t("errors.openProjectFirst"));
       return;
@@ -46695,6 +47274,17 @@ ${mdToHtmlBody(md)}
     const origFont = parseInt(s.uiFontSize, 10) || 0;
     const origFontFamily = s.fontFamily || "";
     const origSpFontFamily = s.spFontFamily || "";
+    const W = {
+      paperSize: PAPER_SIZES[s.paperSize] ? s.paperSize : "letter",
+      customPaper: { width: 8.5, height: 11, ...s.customPaper || {} },
+      margins: { ...MARGIN_DEFAULTS, ...s.pageMargins || {} },
+      elements: JSON.parse(JSON.stringify(mergeSpFormat({ elements: s.spElements }).elements)),
+      styles: JSON.parse(JSON.stringify(mergeSpFormat({ styles: s.spStyles }).styles)),
+      rules: { ...PAGE_BREAK_RULES, ...s.spPageRules || {} },
+      strings: { ...SP_STRINGS, ...s.spStrings || {} },
+      keys: spCycleKeys(s),
+      cycleOn: s.spCycleEnabled !== false
+    };
     const ov = el("div", "k-overlay");
     const box = el("div", "k-dialog k-settings");
     box.innerHTML = `
@@ -46703,7 +47293,10 @@ ${mdToHtmlBody(md)}
       <div class="k-set-tab on" data-p="gen">${t("settings.general")}</div>
       <div class="k-set-tab" data-p="write">${t("settings.writing")}</div>
       <div class="k-set-tab" data-p="auto">${t("settings.automation")}</div>
-      <div class="k-set-tab" data-p="sp">\u{1F3AC} \u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07</div>
+      <div class="k-set-tab" data-p="setup">\u{1F39E} \u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E1C\u0E25\u0E07\u0E32\u0E19</div>
+      <div class="k-set-tab" data-p="page">\u{1F4D0} \u0E2B\u0E19\u0E49\u0E32\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29</div>
+      <div class="k-set-tab" data-p="spfmt">\u{1F3AC} \u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A\u0E1A\u0E17</div>
+      <div class="k-set-tab" data-p="sp">\u2328 \u0E1B\u0E38\u0E48\u0E21\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07</div>
       <div class="k-set-tab" data-p="lang">${t("settings.language")}</div>
       <div class="k-set-tab" data-p="keys">${t("settings.shortcuts")}</div>
     </div>
@@ -46719,7 +47312,10 @@ ${mdToHtmlBody(md)}
     <div class="k-set-page" data-p="write">
       <div class="k-row"><label>${t("settings.fontFamily")}<span class="k-hint">${t("settings.fontFamilyHint")}</span></label><select id="st-fontfamily" class="k-dlg-select" style="width:100%"></select></div>
       <div class="k-row"><label>${t("settings.spFontFamily")}<span class="k-hint">${t("settings.spFontFamilyHint")}</span></label><select id="st-spfontfamily" class="k-dlg-select" style="width:100%"></select></div>
+      <div class="k-row"><label>\u0E02\u0E19\u0E32\u0E14\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E19\u0E34\u0E22\u0E32\u0E22 (pt)<span class="k-hint">\u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19\u0E15\u0E49\u0E19\u0E09\u0E1A\u0E31\u0E1A = 12pt (Courier Final Draft)</span></label><input type="number" id="st-edpt" class="k-narrow" min="6" max="48" step="0.5"></div>
+      <div class="k-row"><label>\u0E02\u0E19\u0E32\u0E14\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C (pt)<span class="k-hint">\u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19\u0E1A\u0E17 = 12pt \u0E17\u0E38\u0E01\u0E20\u0E32\u0E29\u0E32</span></label><input type="number" id="st-sppt" class="k-narrow" min="6" max="48" step="0.5"></div>
       <div class="k-row"><label>${t("settings.fontSize")}<span class="k-hint">${t("settings.fontSizeHint")} (${BASE_ED_FS}px)</span></label><input type="number" id="st-font" min="-6" max="16" step="1"></div>
+      <div class="k-row"><label>\u0E02\u0E19\u0E32\u0E14\u0E01\u0E32\u0E23\u0E4C\u0E14\u0E2B\u0E19\u0E49\u0E32\u0E41\u0E23\u0E01 (px)<span class="k-hint">\u0E04\u0E27\u0E32\u0E21\u0E01\u0E27\u0E49\u0E32\u0E07\u0E01\u0E32\u0E23\u0E4C\u0E14 4 \u0E04\u0E2D\u0E25\u0E31\u0E21\u0E19\u0E4C\u0E1A\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E41\u0E23\u0E01</span></label><input type="number" id="st-homethumb" class="k-narrow" min="120" max="400" step="10"></div>
       <div class="k-row"><label>${t("settings.lineNumbers")}<span class="k-hint">${t("settings.lineNumbersHint")}</span></label><input type="checkbox" id="st-ln"></div>
       <div class="k-row"><label>${t("settings.spellCheck")}<span class="k-hint">${t("settings.spellCheckHint")}</span></label><input type="checkbox" id="st-spell"></div>
       <div class="k-row"><label>${t("settings.spellCheckDict")}<span class="k-hint">${t("settings.spellCheckDictHint")}</span></label><input type="checkbox" id="st-spelldict"></div>
@@ -46731,9 +47327,78 @@ ${mdToHtmlBody(md)}
     <div class="k-set-page" data-p="auto">
       <div class="k-row"><label>${iconHtml("cloud-lightning", 14)} ${t("settings.autoSync")}<span class="k-hint">${t("settings.autoSyncHint")}</span></label><input type="checkbox" id="st-autosync"></div>
     </div>
+    <div class="k-set-page" data-p="setup">
+      <div class="k-hint" style="margin-bottom:10px">[98] \u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E1A\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E1B\u0E01\u0E1A\u0E17/\u0E15\u0E49\u0E19\u0E09\u0E1A\u0E31\u0E1A \u2014 \u0E43\u0E0A\u0E49\u0E15\u0E2D\u0E19\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E41\u0E25\u0E30\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01</div>
+      <div class="k-set-sub">\u0E1C\u0E39\u0E49\u0E40\u0E02\u0E35\u0E22\u0E19</div>
+      <div class="k-row"><label>\u0E2D\u0E35\u0E40\u0E21\u0E25\u0E1C\u0E39\u0E49\u0E40\u0E02\u0E35\u0E22\u0E19</label><input type="text" id="st-email"></div>
+      <div class="k-row"><label>\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E15\u0E34\u0E14\u0E15\u0E48\u0E2D (Contact information)</label><input type="text" id="st-contact"></div>
+      <div class="k-row"><label>\u0E42\u0E17\u0E23\u0E28\u0E31\u0E1E\u0E17\u0E4C (Phone)</label><input type="text" id="st-phone"></div>
+      <div class="k-set-sub">\u0E40\u0E04\u0E23\u0E14\u0E34\u0E15\u0E1A\u0E17</div>
+      <div class="k-row"><label>Screenplay By</label><input type="text" id="st-spby"></div>
+      <div class="k-row"><label>Based On</label><input type="text" id="st-basedon"></div>
+      <div class="k-row"><label>Revisions by</label><input type="text" id="st-revby"></div>
+      <div class="k-set-sub">\u0E15\u0E31\u0E27\u0E41\u0E17\u0E19 (Agent)</div>
+      <div class="k-row"><label>Agent's Name</label><input type="text" id="st-agname"></div>
+      <div class="k-row"><label>Agent's Address</label><input type="text" id="st-agaddr"></div>
+      <div class="k-row"><label>Agent's Phone</label><input type="text" id="st-agphone"></div>
+      <div class="k-row"><label>Agent's Email</label><input type="text" id="st-agemail"></div>
+      <div class="k-set-sub">\u0E25\u0E34\u0E02\u0E2A\u0E34\u0E17\u0E18\u0E34\u0E4C</div>
+      <div class="k-row"><label>Copyright by</label><input type="text" id="st-copyright"></div>
+    </div>
+    <div class="k-set-page" data-p="page">
+      <div class="k-hint" style="margin-bottom:10px">[85] \u0E02\u0E19\u0E32\u0E14\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E41\u0E25\u0E30\u0E23\u0E30\u0E22\u0E30\u0E02\u0E2D\u0E1A \u2014 \u0E43\u0E0A\u0E49\u0E23\u0E48\u0E27\u0E21\u0E01\u0E31\u0E19\u0E17\u0E31\u0E49\u0E07\u0E42\u0E2B\u0E21\u0E14\u0E19\u0E34\u0E22\u0E32\u0E22\u0E41\u0E25\u0E30\u0E42\u0E2B\u0E21\u0E14\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C</div>
+      <div class="k-row"><label>\u0E02\u0E19\u0E32\u0E14\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29</label><select id="st-paper" class="k-dlg-select"></select></div>
+      <div class="k-row" id="st-paper-custom"><label>\u0E01\u0E27\u0E49\u0E32\u0E07 \xD7 \u0E2A\u0E39\u0E07 (\u0E19\u0E34\u0E49\u0E27)</label>
+        <span><input type="number" id="st-paper-w" class="k-narrow" min="3" max="30" step="0.01">
+        \xD7 <input type="number" id="st-paper-h" class="k-narrow" min="3" max="40" step="0.01"></span></div>
+      <div class="k-set-sub">\u0E23\u0E30\u0E22\u0E30\u0E02\u0E2D\u0E1A (\u0E19\u0E34\u0E49\u0E27)</div>
+      <div class="k-set-grid2">
+        <div class="k-row"><label>\u0E1A\u0E19 (Top)</label><input type="number" id="st-mg-top" class="k-narrow" min="0" max="5" step="0.05"></div>
+        <div class="k-row"><label>\u0E25\u0E48\u0E32\u0E07 (Bottom)</label><input type="number" id="st-mg-bottom" class="k-narrow" min="0" max="5" step="0.05"></div>
+        <div class="k-row"><label>\u0E0B\u0E49\u0E32\u0E22 (Left)</label><input type="number" id="st-mg-left" class="k-narrow" min="0" max="5" step="0.05"></div>
+        <div class="k-row"><label>\u0E02\u0E27\u0E32 (Right)</label><input type="number" id="st-mg-right" class="k-narrow" min="0" max="5" step="0.05"></div>
+      </div>
+      <div class="k-hint" id="st-page-info" style="margin-top:8px"></div>
+      <div class="k-set-sub">[84] \u0E01\u0E0E\u0E01\u0E32\u0E23\u0E15\u0E31\u0E14\u0E2B\u0E19\u0E49\u0E32 (widow / orphan)</div>
+      <div class="k-set-grid2">
+        <div class="k-row"><label>\u0E1A\u0E23\u0E23\u0E22\u0E32\u0E22: \u0E40\u0E2B\u0E25\u0E37\u0E2D\u0E17\u0E49\u0E32\u0E22\u0E2B\u0E19\u0E49\u0E32\u0E2D\u0E22\u0E48\u0E32\u0E07\u0E19\u0E49\u0E2D\u0E22</label><input type="number" id="st-pb-ab" class="k-narrow" min="0" max="20"></div>
+        <div class="k-row"><label>\u0E1A\u0E23\u0E23\u0E22\u0E32\u0E22: \u0E22\u0E01\u0E44\u0E1B\u0E2B\u0E19\u0E49\u0E32\u0E43\u0E2B\u0E21\u0E48\u0E2D\u0E22\u0E48\u0E32\u0E07\u0E19\u0E49\u0E2D\u0E22</label><input type="number" id="st-pb-at" class="k-narrow" min="0" max="20"></div>
+        <div class="k-row"><label>\u0E1A\u0E17\u0E1E\u0E39\u0E14: \u0E40\u0E2B\u0E25\u0E37\u0E2D\u0E17\u0E49\u0E32\u0E22\u0E2B\u0E19\u0E49\u0E32\u0E2D\u0E22\u0E48\u0E32\u0E07\u0E19\u0E49\u0E2D\u0E22</label><input type="number" id="st-pb-db" class="k-narrow" min="0" max="20"></div>
+        <div class="k-row"><label>\u0E1A\u0E17\u0E1E\u0E39\u0E14: \u0E22\u0E01\u0E44\u0E1B\u0E2B\u0E19\u0E49\u0E32\u0E43\u0E2B\u0E21\u0E48\u0E2D\u0E22\u0E48\u0E32\u0E07\u0E19\u0E49\u0E2D\u0E22</label><input type="number" id="st-pb-dt" class="k-narrow" min="0" max="20"></div>
+        <div class="k-row"><label>\u0E02\u0E35\u0E14\u0E17\u0E49\u0E32\u0E22\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E15\u0E34\u0E14\u0E01\u0E31\u0E19\u0E44\u0E21\u0E48\u0E40\u0E01\u0E34\u0E19</label><input type="number" id="st-pb-hy" class="k-narrow" min="0" max="10"></div>
+        <div class="k-row"><label>\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01\u0E17\u0E49\u0E32\u0E22\u0E2B\u0E19\u0E49\u0E32\u0E15\u0E49\u0E2D\u0E07\u0E21\u0E35\u0E40\u0E19\u0E37\u0E49\u0E2D\u0E15\u0E32\u0E21</label><input type="number" id="st-pb-ks" class="k-narrow" min="0" max="20"></div>
+      </div>
+      <div class="k-set-sub">[92] \u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21\u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19</div>
+      <div class="k-row"><label>\u0E17\u0E49\u0E32\u0E22\u0E2B\u0E19\u0E49\u0E32\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E09\u0E32\u0E01\u0E15\u0E48\u0E2D\u0E40\u0E19\u0E37\u0E48\u0E2D\u0E07</label><input type="text" id="st-str-cb"></div>
+      <div class="k-row"><label>\u0E15\u0E49\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E09\u0E32\u0E01\u0E15\u0E48\u0E2D\u0E40\u0E19\u0E37\u0E48\u0E2D\u0E07</label><input type="text" id="st-str-ct"></div>
+      <div class="k-row"><label>\u0E1A\u0E17\u0E1E\u0E39\u0E14\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E08\u0E1A (MORE)</label><input type="text" id="st-str-more"></div>
+      <div class="k-row"><label>\u0E17\u0E27\u0E19\u0E0A\u0E37\u0E48\u0E2D\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23 (cont'd)</label><input type="text" id="st-str-contd"></div>
+      <div class="k-row"><label>\u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D Scene / Time (\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D)</label>
+        <span><input type="text" id="st-str-scene" style="width:46%"> <input type="text" id="st-str-time" style="width:46%"></span></div>
+      <div style="margin-top:12px; text-align:right"><button id="st-page-reset" class="k-reset-btn">\u21BA \u0E04\u0E37\u0E19\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19</button></div>
+    </div>
+    <div class="k-set-page" data-p="spfmt">
+      <div class="k-hint" style="margin-bottom:10px">[81][82][83] \u0E23\u0E30\u0E22\u0E30\u0E40\u0E22\u0E37\u0E49\u0E2D\u0E07 (\u0E27\u0E31\u0E14\u0E08\u0E32\u0E01\u0E02\u0E2D\u0E1A\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29) \xB7 \u0E04\u0E27\u0E32\u0E21\u0E01\u0E27\u0E49\u0E32\u0E07 \xB7 \u0E23\u0E30\u0E22\u0E30\u0E40\u0E27\u0E49\u0E19\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14 (10 = 1 \u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14) \xB7 \u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23\u0E1A\u0E19\u0E08\u0E2D / \u0E15\u0E2D\u0E19\u0E1E\u0E34\u0E21\u0E1E\u0E4C</div>
+      <div class="k-spfmt-scroll">
+        <table class="k-spfmt-tbl" id="st-spfmt">
+          <thead><tr>
+            <th rowspan="2">Element</th><th rowspan="2">\u0E40\u0E22\u0E37\u0E49\u0E2D\u0E07"</th><th rowspan="2">\u0E01\u0E27\u0E49\u0E32\u0E07"</th>
+            <th rowspan="2">\u0E40\u0E27\u0E49\u0E19\u0E01\u0E48\u0E2D\u0E19</th><th rowspan="2">\u0E23\u0E30\u0E22\u0E30\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14</th>
+            <th colspan="4">\u0E1A\u0E19\u0E08\u0E2D</th><th colspan="4">\u0E15\u0E2D\u0E19\u0E1E\u0E34\u0E21\u0E1E\u0E4C</th>
+          </tr><tr>
+            <th>\u0E43\u0E2B\u0E0D\u0E48</th><th>\u0E2B\u0E19\u0E32</th><th>\u0E40\u0E2D\u0E35\u0E22\u0E07</th><th>\u0E02\u0E35\u0E14</th>
+            <th>\u0E43\u0E2B\u0E0D\u0E48</th><th>\u0E2B\u0E19\u0E32</th><th>\u0E40\u0E2D\u0E35\u0E22\u0E07</th><th>\u0E02\u0E35\u0E14</th>
+          </tr></thead><tbody></tbody>
+        </table>
+      </div>
+      <div style="margin-top:12px; text-align:right"><button id="st-spfmt-reset" class="k-reset-btn">\u21BA \u0E04\u0E37\u0E19\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19</button></div>
+    </div>
     <div class="k-set-page" data-p="sp">
-      <div class="k-hint" style="margin-bottom:12px">\u0E04\u0E27\u0E1A\u0E04\u0E38\u0E21\u0E1B\u0E38\u0E48\u0E21 Tab/Enter/Shift+Tab \u0E43\u0E19\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07 \u2014 \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E27\u0E48\u0E32\u0E15\u0E49\u0E2D\u0E07\u0E01\u0E32\u0E23\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E2B\u0E23\u0E37\u0E2D\u0E2A\u0E25\u0E31\u0E1A\u0E40\u0E1B\u0E47\u0E19 element \u0E43\u0E14\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E01\u0E14\u0E41\u0E15\u0E48\u0E25\u0E30\u0E1B\u0E38\u0E48\u0E21</div>
-      <table class="k-sp-cycle-tbl" id="st-spcycle"><thead><tr><th>Element</th><th>Enter \u2192</th><th>Tab \u2192</th><th>Shift+Tab \u2192</th></tr></thead><tbody></tbody></table>
+      <div class="k-row"><label>\u0E40\u0E1B\u0E34\u0E14\u0E23\u0E30\u0E1A\u0E1A\u0E1B\u0E38\u0E48\u0E21\u0E2A\u0E25\u0E31\u0E1A element<span class="k-hint">\u0E1B\u0E34\u0E14 = Enter \u0E02\u0E36\u0E49\u0E19\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E43\u0E2B\u0E21\u0E48\u0E0A\u0E19\u0E34\u0E14\u0E40\u0E14\u0E34\u0E21 \xB7 \u0E1B\u0E38\u0E48\u0E21\u0E2D\u0E37\u0E48\u0E19\u0E44\u0E21\u0E48\u0E17\u0E33\u0E07\u0E32\u0E19</span></label><input type="checkbox" id="st-spcycle-on"></div>
+      <div class="k-set-sub">\u0E1B\u0E38\u0E48\u0E21\u0E17\u0E35\u0E48\u0E43\u0E0A\u0E49 (\u0E01\u0E14 "\u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19" \u0E41\u0E25\u0E49\u0E27\u0E01\u0E14\u0E1B\u0E38\u0E48\u0E21\u0E43\u0E2B\u0E21\u0E48)</div>
+      <div id="st-spkeys"></div>
+      <div class="k-hint" style="margin:12px 0">\u0E04\u0E27\u0E1A\u0E04\u0E38\u0E21\u0E27\u0E48\u0E32\u0E1B\u0E38\u0E48\u0E21\u0E41\u0E15\u0E48\u0E25\u0E30\u0E15\u0E31\u0E27\u0E08\u0E30\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E2B\u0E23\u0E37\u0E2D\u0E2A\u0E25\u0E31\u0E1A\u0E40\u0E1B\u0E47\u0E19 element \u0E43\u0E14</div>
+      <table class="k-sp-cycle-tbl" id="st-spcycle"><thead><tr><th>Element</th><th id="st-hd-enter">Enter \u2192</th><th id="st-hd-tab">Tab \u2192</th><th id="st-hd-stab">Shift+Tab \u2192</th></tr></thead><tbody></tbody></table>
       <div style="margin-top:12px; text-align:right"><button id="st-spcycle-reset" class="k-reset-btn">\u21BA \u0E04\u0E37\u0E19\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19</button></div>
     </div>
     <div class="k-set-page" data-p="lang">
@@ -46826,6 +47491,245 @@ ${mdToHtmlBody(md)}
     q("#st-uiscale-lbl").textContent = Math.round(origUiScale * 100) + "%";
     q("#st-uiscale").oninput = () => applyUIScale(parseFloat(q("#st-uiscale").value) || 1);
     q("#st-autosync").checked = isAutoSyncOn() || !!s.autoSync;
+    q("#st-edpt").value = s.edFontPt ?? 12;
+    q("#st-sppt").value = s.spFontPt ?? 12;
+    q("#st-homethumb").value = s.homeThumb ?? 190;
+    const origEdPt = s.edFontPt ?? 12, origSpPt = s.spFontPt ?? 12;
+    const previewPt = () => {
+      s.edFontPt = parseFloat(q("#st-edpt").value) || 12;
+      s.spFontPt = parseFloat(q("#st-sppt").value) || 12;
+      applyZoomVars(parseInt(q("#st-font").value, 10) || 0);
+    };
+    q("#st-edpt").oninput = previewPt;
+    q("#st-sppt").oninput = previewPt;
+    const SETUP_FIELDS = [
+      ["#st-email", "authorEmail"],
+      ["#st-contact", "contact"],
+      ["#st-phone", "phone"],
+      ["#st-spby", "screenplayBy"],
+      ["#st-basedon", "basedOn"],
+      ["#st-revby", "revisionsBy"],
+      ["#st-agname", "agentName"],
+      ["#st-agaddr", "agentAddress"],
+      ["#st-agphone", "agentPhone"],
+      ["#st-agemail", "agentEmail"],
+      ["#st-copyright", "copyright"]
+    ];
+    for (const [sel, key] of SETUP_FIELDS) q(sel).value = m[key] || "";
+    const paperSel = q("#st-paper");
+    for (const key of Object.keys(PAPER_SIZES)) {
+      const o = el("option");
+      o.value = key;
+      o.textContent = PAPER_SIZES[key].name;
+      if (key === W.paperSize) o.selected = true;
+      paperSel.append(o);
+    }
+    const pageInfo = () => {
+      const fmt = mergeSpFormat({ paperSize: W.paperSize, paper: W.customPaper, margins: W.margins });
+      q("#st-paper-custom").style.display = W.paperSize === "custom" ? "" : "none";
+      q("#st-page-info").textContent = `\u0E1E\u0E37\u0E49\u0E19\u0E17\u0E35\u0E48\u0E1E\u0E34\u0E21\u0E1E\u0E4C ${(fmt.paper.width - W.margins.left - W.margins.right).toFixed(2)} \xD7 ${(fmt.paper.height - W.margins.top - W.margins.bottom).toFixed(2)} \u0E19\u0E34\u0E49\u0E27 \xB7 ${linesPerPage(fmt.paper, fmt.margins)} \u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14/\u0E2B\u0E19\u0E49\u0E32`;
+    };
+    paperSel.onchange = () => {
+      W.paperSize = paperSel.value;
+      pageInfo();
+      previewPage();
+    };
+    const numIn = (sel, get3, set, step) => {
+      const inp = q(sel);
+      inp.value = get3();
+      inp.oninput = () => {
+        const v = parseFloat(inp.value);
+        if (Number.isFinite(v)) {
+          set(v);
+          pageInfo();
+          previewPage();
+        }
+      };
+      return inp;
+    };
+    numIn("#st-paper-w", () => W.customPaper.width, (v) => {
+      W.customPaper.width = v;
+    });
+    numIn("#st-paper-h", () => W.customPaper.height, (v) => {
+      W.customPaper.height = v;
+    });
+    for (const side of ["top", "bottom", "left", "right"])
+      numIn("#st-mg-" + side, () => W.margins[side], (v) => {
+        W.margins[side] = v;
+      });
+    const RULE_MAP = {
+      "#st-pb-ab": "minActionLinesAtBottom",
+      "#st-pb-at": "minActionLinesAtTop",
+      "#st-pb-db": "minDialogueLinesAtBottom",
+      "#st-pb-dt": "minDialogueLinesAtTop",
+      "#st-pb-hy": "maxConsecutiveHyphens",
+      "#st-pb-ks": "keepSceneWithNext"
+    };
+    for (const sel of Object.keys(RULE_MAP)) {
+      const k = RULE_MAP[sel];
+      numIn(sel, () => W.rules[k], (v) => {
+        W.rules[k] = Math.max(0, Math.round(v));
+      });
+    }
+    const STR_MAP = {
+      "#st-str-cb": "continuedBottom",
+      "#st-str-ct": "continuedTop",
+      "#st-str-more": "dialogueMore",
+      "#st-str-contd": "dialogueContd",
+      "#st-str-scene": "sceneTitle",
+      "#st-str-time": "timeTitle"
+    };
+    for (const sel of Object.keys(STR_MAP)) {
+      const k = STR_MAP[sel];
+      const inp = q(sel);
+      inp.value = W.strings[k];
+      inp.oninput = () => {
+        W.strings[k] = inp.value;
+      };
+    }
+    pageInfo();
+    function previewPage() {
+      const keep = {
+        paperSize: s.paperSize,
+        customPaper: s.customPaper,
+        pageMargins: s.pageMargins,
+        spElements: s.spElements,
+        spStyles: s.spStyles
+      };
+      Object.assign(s, {
+        paperSize: W.paperSize,
+        customPaper: W.customPaper,
+        pageMargins: W.margins,
+        spElements: W.elements,
+        spStyles: W.styles
+      });
+      applyPageVars();
+      Object.assign(s, keep);
+    }
+    const fmtBody = q("#st-spfmt tbody");
+    function renderSpFmt() {
+      fmtBody.innerHTML = "";
+      for (const k of SP_ELEMENT_KEYS) {
+        const row = el("tr");
+        row.append(el("td", "", SP_ELEMS[k] && SP_ELEMS[k].th || k));
+        const numCell = (field, step, min, max) => {
+          const td = el("td");
+          const i2 = el("input");
+          i2.type = "number";
+          i2.step = String(step);
+          i2.min = String(min);
+          i2.max = String(max);
+          i2.value = String(W.elements[k][field]);
+          i2.oninput = () => {
+            const v = parseFloat(i2.value);
+            if (Number.isFinite(v)) {
+              W.elements[k][field] = v;
+              previewPage();
+            }
+          };
+          td.append(i2);
+          return td;
+        };
+        row.append(
+          numCell("indent", 0.1, 0, 12),
+          numCell("width", 0.1, 0.3, 12),
+          numCell("linesBefore", 5, 0, 100),
+          numCell("linesBetween", 5, 0, 100)
+        );
+        for (const mode of ["screen", "print"]) {
+          for (const prop of ["caps", "bold", "italic", "underline"]) {
+            const td = el("td");
+            const c = el("input");
+            c.type = "checkbox";
+            c.checked = !!W.styles[k][mode][prop];
+            c.onchange = () => {
+              W.styles[k][mode][prop] = c.checked;
+              previewPage();
+            };
+            td.append(c);
+            row.append(td);
+          }
+        }
+        fmtBody.append(row);
+      }
+    }
+    renderSpFmt();
+    q("#st-spfmt-reset").onclick = () => {
+      W.elements = JSON.parse(JSON.stringify(SP_ELEMENT_CONFIG));
+      W.styles = JSON.parse(JSON.stringify(SP_ELEMENT_STYLES));
+      renderSpFmt();
+      previewPage();
+    };
+    q("#st-page-reset").onclick = () => {
+      W.paperSize = "letter";
+      W.customPaper = { width: 8.5, height: 11 };
+      W.margins = { ...MARGIN_DEFAULTS };
+      W.rules = { ...PAGE_BREAK_RULES };
+      W.strings = { ...SP_STRINGS };
+      paperSel.value = "letter";
+      for (const side of ["top", "bottom", "left", "right"]) q("#st-mg-" + side).value = W.margins[side];
+      q("#st-paper-w").value = W.customPaper.width;
+      q("#st-paper-h").value = W.customPaper.height;
+      for (const sel of Object.keys(RULE_MAP)) q(sel).value = W.rules[RULE_MAP[sel]];
+      for (const sel of Object.keys(STR_MAP)) q(sel).value = W.strings[STR_MAP[sel]];
+      pageInfo();
+      previewPage();
+    };
+    q("#st-spcycle-on").checked = W.cycleOn;
+    q("#st-spcycle-on").onchange = () => {
+      W.cycleOn = q("#st-spcycle-on").checked;
+    };
+    const KEY_LABELS = {
+      enter: "\u0E44\u0E1B element \u0E16\u0E31\u0E14\u0E44\u0E1B (\u0E40\u0E14\u0E34\u0E21 Enter)",
+      tab: "\u0E2A\u0E25\u0E31\u0E1A\u0E44\u0E1B\u0E02\u0E49\u0E32\u0E07\u0E2B\u0E19\u0E49\u0E32 (\u0E40\u0E14\u0E34\u0E21 Tab)",
+      shiftTab: "\u0E2A\u0E25\u0E31\u0E1A\u0E22\u0E49\u0E2D\u0E19\u0E01\u0E25\u0E31\u0E1A (\u0E40\u0E14\u0E34\u0E21 Shift+Tab)"
+    };
+    function renderSpKeys() {
+      const host2 = q("#st-spkeys");
+      host2.innerHTML = "";
+      for (const dir of ["enter", "tab", "shiftTab"]) {
+        const row = el("div", "k-key-row");
+        row.append(el("span", "k-key-label", KEY_LABELS[dir]));
+        const accel = el("span", "k-key-accel", spKeyLabel(W.keys[dir]));
+        row.append(accel);
+        const edit = el("button", "k-key-btn", "\u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19");
+        const reset = el("button", "k-key-btn", "\u21BA");
+        reset.title = "\u0E04\u0E37\u0E19\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19";
+        edit.onclick = () => {
+          accel.textContent = "\u0E01\u0E14\u0E1B\u0E38\u0E48\u0E21\u0E17\u0E35\u0E48\u0E15\u0E49\u0E2D\u0E07\u0E01\u0E32\u0E23\u2026";
+          accel.classList.add("rec");
+          const grab = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
+            window.removeEventListener("keydown", grab, true);
+            W.keys[dir] = {
+              code: e.code,
+              shift: e.shiftKey,
+              ctrl: e.ctrlKey || e.metaKey,
+              alt: e.altKey
+            };
+            renderSpKeys();
+            syncCycleHeads();
+          };
+          window.addEventListener("keydown", grab, true);
+        };
+        reset.onclick = () => {
+          W.keys[dir] = { ...DEFAULT_SP_CYCLE_KEYS[dir] };
+          renderSpKeys();
+          syncCycleHeads();
+        };
+        row.append(edit, reset);
+        host2.append(row);
+      }
+    }
+    function syncCycleHeads() {
+      q("#st-hd-enter").textContent = spKeyLabel(W.keys.enter) + " \u2192";
+      q("#st-hd-tab").textContent = spKeyLabel(W.keys.tab) + " \u2192";
+      q("#st-hd-stab").textContent = spKeyLabel(W.keys.shiftTab) + " \u2192";
+    }
+    renderSpKeys();
+    syncCycleHeads();
     const cycleKeys = ["scene", "action", "character", "parenthetical", "dialogue", "transition", "shot", "act-break", "note"];
     const cycleOpts = [
       "scene",
@@ -46952,14 +47856,19 @@ ${mdToHtmlBody(md)}
       }
     }
     renderShortcuts();
-    box.querySelectorAll(".k-set-tab").forEach((t2) => t2.onclick = () => {
-      box.querySelectorAll(".k-set-tab").forEach((x) => x.classList.toggle("on", x === t2));
-      box.querySelectorAll(".k-set-page").forEach((p) => p.classList.toggle("on", p.dataset.p === t2.dataset.p));
-    });
+    const gotoTab = (name) => {
+      box.querySelectorAll(".k-set-tab").forEach((x) => x.classList.toggle("on", x.dataset.p === name));
+      box.querySelectorAll(".k-set-page").forEach((p) => p.classList.toggle("on", p.dataset.p === name));
+    };
+    box.querySelectorAll(".k-set-tab").forEach((tabEl) => tabEl.onclick = () => gotoTab(tabEl.dataset.p));
+    if (openTab) gotoTab(openTab);
     q("#st-font").oninput = () => applyZoomVars(parseInt(q("#st-font").value, 10) || 0);
     const close2 = () => ov.remove();
     const cancel = () => {
+      s.edFontPt = origEdPt;
+      s.spFontPt = origSpPt;
       applyZoomVars(origFont);
+      applyPageVars();
       applyUIScale(origUiScale);
       s.spFontFamily = origSpFontFamily;
       applySpFont(origSpFontFamily);
@@ -46974,7 +47883,7 @@ ${mdToHtmlBody(md)}
       refreshAllSpell();
       close2();
     };
-    const num3 = (id, d) => {
+    const num4 = (id, d) => {
       const n = parseInt(q(id).value, 10);
       return Number.isFinite(n) ? Math.max(0, n) : d;
     };
@@ -46985,9 +47894,9 @@ ${mdToHtmlBody(md)}
     box.querySelector(".k-ok").onclick = async () => {
       m.title = q("#st-title").value.trim() || m.title;
       m.author = q("#st-author").value.trim();
-      s.autoSaveMinutes = num3("#st-auto", 5);
+      s.autoSaveMinutes = num4("#st-auto", 5);
       s.autoBackup = q("#st-backup").checked;
-      s.maxBackups = Math.max(1, num3("#st-maxbak", 10));
+      s.maxBackups = Math.max(1, num4("#st-maxbak", 10));
       s.uiFontSize = Math.max(-6, Math.min(16, parseInt(q("#st-font").value, 10) || 0));
       s.fontFamily = q("#st-fontfamily")?.value || "";
       s.spFontFamily = q("#st-spfontfamily")?.value || "";
@@ -46995,7 +47904,7 @@ ${mdToHtmlBody(md)}
       s.spellCheck = q("#st-spell").checked;
       s.spellCheckDict = q("#st-spelldict").checked;
       s.autoMention = q("#st-mention").checked;
-      s.recycleDays = Math.max(0, num3("#st-recycle", 30));
+      s.recycleDays = Math.max(0, num4("#st-recycle", 30));
       s.focusDim = Math.min(0.8, Math.max(0.05, parseFloat(q("#st-fmdim").value) || 0.3));
       applyFocusDim();
       s.uiScale = Math.min(2, Math.max(0.75, parseFloat(q("#st-uiscale").value) || 1));
@@ -47003,8 +47912,21 @@ ${mdToHtmlBody(md)}
       s.autoSync = q("#st-autosync").checked;
       setAutoSync(s.autoSync);
       s.spCycle = JSON.parse(JSON.stringify(workSpCycle));
-      g.dailyWords = num3("#st-daily", 500);
-      g.projectWords = num3("#st-proj", 5e4);
+      s.spCycleKeys = JSON.parse(JSON.stringify(W.keys));
+      s.spCycleEnabled = W.cycleOn;
+      s.edFontPt = Math.min(48, Math.max(6, parseFloat(q("#st-edpt").value) || 12));
+      s.spFontPt = Math.min(48, Math.max(6, parseFloat(q("#st-sppt").value) || 12));
+      s.homeThumb = Math.min(400, Math.max(120, parseInt(q("#st-homethumb").value, 10) || 190));
+      s.paperSize = W.paperSize;
+      s.customPaper = { ...W.customPaper };
+      s.pageMargins = { ...W.margins };
+      s.spElements = JSON.parse(JSON.stringify(W.elements));
+      s.spStyles = JSON.parse(JSON.stringify(W.styles));
+      s.spPageRules = { ...W.rules };
+      s.spStrings = { ...W.strings };
+      for (const [sel, key] of SETUP_FIELDS) m[key] = q(sel).value.trim();
+      g.dailyWords = num4("#st-daily", 500);
+      g.projectWords = num4("#st-proj", 5e4);
       try {
         await saveProjectMeta();
         applySettings();
@@ -49285,9 +50207,15 @@ ${mdToHtmlBody(md)}
         document.removeEventListener("keydown", esc2);
       }
     });
+    const thumb = Math.max(120, Math.min(400, parseInt(state.settings?.homeThumb, 10) || 190));
+    box.style.setProperty("--home-thumb", thumb + "px");
+    const listOn = localStorage.getItem("k2-home-view") === "list";
+    grid.classList.toggle("list", listOn);
+    viewBtn.textContent = listOn ? "\u{1F4F1}" : "\u{1F4CB}";
     viewBtn.onclick = () => {
-      grid.classList.toggle("list");
-      viewBtn.textContent = grid.classList.contains("list") ? "\u{1F4F1}" : "\u{1F4CB}";
+      const on = grid.classList.toggle("list");
+      localStorage.setItem("k2-home-view", on ? "list" : "card");
+      viewBtn.textContent = on ? "\u{1F4F1}" : "\u{1F4CB}";
     };
     await loadPanelProjects(grid, () => ov.remove());
     return ov;
@@ -54550,7 +55478,7 @@ ${mdToHtmlBody(md)}
     if (position == null) return null;
     if (typeof position === "number") return { start: position, end: position, quote: "" };
     const { start = 0, end = start, quote = "" } = position;
-    return { start: num(start), end: num(end), quote: String(quote || "") };
+    return { start: num2(start), end: num2(end), quote: String(quote || "") };
   }
   function parseComments(md) {
     const m = BLOCK_RE.exec(String(md || ""));
@@ -54699,7 +55627,7 @@ ${BLOCK_END}
     }
     return out;
   }
-  var BLOCK_START, BLOCK_END, BLOCK_RE, _seq, newId, num, CommentStore;
+  var BLOCK_START, BLOCK_END, BLOCK_RE, _seq, newId, num2, CommentStore;
   var init_comment_core = __esm({
     "src/comments/comment-core.js"() {
       BLOCK_START = "<!-- k2-comments";
@@ -54707,7 +55635,7 @@ ${BLOCK_END}
       BLOCK_RE = /\n*<!--\s*k2-comments\s*([\s\S]*?)-->\s*$/;
       _seq = 0;
       newId = (now) => "c" + Number(now).toString(36) + (_seq++).toString(36);
-      num = (v) => typeof v === "number" && isFinite(v) ? v : 0;
+      num2 = (v) => typeof v === "number" && isFinite(v) ? v : 0;
       CommentStore = class {
         constructor({ io, now = () => Date.now(), author = "" } = {}) {
           this.io = io;
@@ -58620,9 +59548,9 @@ ${preview}` + (found2.length > 8 ? `
     const byCat = {};
     for (const e of entities) byCat[e.cat || e.entityTypeKey || "\u0E2D\u0E37\u0E48\u0E19 \u0E46"] = (byCat[e.cat || e.entityTypeKey || "\u0E2D\u0E37\u0E48\u0E19 \u0E46"] || 0) + 1;
     const grid = el("div", "cent-stats-grid");
-    const statCard = (num3, label) => {
+    const statCard = (num4, label) => {
       const c = el("div", "cent-stat-card");
-      c.append(el("div", "cent-stat-num", String(num3)), el("div", "cent-stat-lbl", label));
+      c.append(el("div", "cent-stat-num", String(num4)), el("div", "cent-stat-lbl", label));
       grid.append(c);
     };
     statCard(scenes.length.toLocaleString(), "\u0E09\u0E32\u0E01");
@@ -59268,8 +60196,8 @@ ${preview}` + (found2.length > 8 ? `
     }
   }
   function usageOf(input, output, total, text) {
-    const i2 = num2(input), o = num2(output) || (text ? estimateTokens(text) : 0);
-    return { input: i2, output: o, total: num2(total) || i2 + o };
+    const i2 = num3(input), o = num3(output) || (text ? estimateTokens(text) : 0);
+    return { input: i2, output: o, total: num3(total) || i2 + o };
   }
   function safeJson(s) {
     try {
@@ -59288,7 +60216,7 @@ ${preview}` + (found2.length > 8 ? `
   function estimateCost(provider, model, usage = {}) {
     const table = PRICES[provider] || PRICES.openai;
     const p = table[model] || table.default;
-    const inTok = num2(usage.input), outTok = num2(usage.output);
+    const inTok = num3(usage.input), outTok = num3(usage.output);
     return { usd: +((inTok * p.in + outTok * p.out) / 1e6).toFixed(6), in: inTok, out: outTok };
   }
   function mask(key) {
@@ -59447,7 +60375,7 @@ ${h.text}`;
     }
     return out;
   }
-  var PROVIDERS, PROVIDER_IDS, num2, PRICES, CostTracker, KEY_FILE2, SECRET_KEYS, KeyStore2, RateLimiter, defaultSleep, DEFAULT_AI, AIClient, retryable, backoff, EMBED_DIM, VectorIndex, INDEX_FILE, RagPipeline;
+  var PROVIDERS, PROVIDER_IDS, num3, PRICES, CostTracker, KEY_FILE2, SECRET_KEYS, KeyStore2, RateLimiter, defaultSleep, DEFAULT_AI, AIClient, retryable, backoff, EMBED_DIM, VectorIndex, INDEX_FILE, RagPipeline;
   var init_ai_core = __esm({
     "src/ai/ai-core.js"() {
       init_search_engine();
@@ -59563,7 +60491,7 @@ ${h.text}`;
         }
       };
       PROVIDER_IDS = Object.keys(PROVIDERS);
-      num2 = (v) => typeof v === "number" && isFinite(v) ? v : 0;
+      num3 = (v) => typeof v === "number" && isFinite(v) ? v : 0;
       PRICES = {
         openai: {
           "gpt-4o-mini": { in: 0.15, out: 0.6 },
@@ -59612,8 +60540,8 @@ ${h.text}`;
         summary() {
           return this.rows().reduce((s, r) => ({
             calls: s.calls + 1,
-            tokens: s.tokens + num2(r.tokens),
-            usd: +(s.usd + num2(r.usd)).toFixed(6)
+            tokens: s.tokens + num3(r.tokens),
+            usd: +(s.usd + num3(r.usd)).toFixed(6)
           }), { calls: 0, tokens: 0, usd: 0 });
         }
         byFeature() {
@@ -59622,8 +60550,8 @@ ${h.text}`;
             const k = r.feature || "\u0E2D\u0E37\u0E48\u0E19 \u0E46";
             m[k] = m[k] || { calls: 0, tokens: 0, usd: 0 };
             m[k].calls++;
-            m[k].tokens += num2(r.tokens);
-            m[k].usd = +(m[k].usd + num2(r.usd)).toFixed(6);
+            m[k].tokens += num3(r.tokens);
+            m[k].usd = +(m[k].usd + num3(r.usd)).toFixed(6);
           }
           return m;
         }
@@ -62282,6 +63210,251 @@ ${sc.body || ""}
     }
   });
 
+  // src/roster-ui.js
+  async function rosterPath(secPath) {
+    return kapi.join(secPath, "roster.json");
+  }
+  async function loadRoster(secPath) {
+    try {
+      const p = await rosterPath(secPath);
+      if (await kapi.exists(p)) return normalizeRoster(await kapi.readJson(p));
+    } catch (e) {
+      log("warn", "\u0E2D\u0E48\u0E32\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08", e);
+    }
+    return newRoster();
+  }
+  async function saveRoster(secPath, roster) {
+    const p = await rosterPath(secPath);
+    await kapi.writeFile(p, JSON.stringify(normalizeRoster(roster), null, 2));
+    return p;
+  }
+  async function openRosterFlow() {
+    if (!state.root) {
+      setStatus("\u0E40\u0E1B\u0E34\u0E14\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C\u0E01\u0E48\u0E2D\u0E19");
+      return;
+    }
+    const secs = await listSections();
+    if (!secs.length) {
+      setStatus("\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E40\u0E25\u0E48\u0E21\u0E43\u0E19\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C\u0E19\u0E35\u0E49");
+      return;
+    }
+    if (secs.length === 1) return openRoster(secs[0].secPath, secs[0].title);
+    const pick2 = await pickFromList("\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E40\u0E25\u0E48\u0E21\u0E17\u0E35\u0E48\u0E08\u0E30\u0E40\u0E1B\u0E34\u0E14\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23", secs.map((s) => s.title));
+    const sec = secs.find((s) => s.title === pick2);
+    if (sec) return openRoster(sec.secPath, sec.title);
+  }
+  async function openRoster(secPath, secTitle) {
+    const key = rosterKey(secPath);
+    if (state.tabs.has(key)) {
+      activate(key);
+      return renderRoster(state.tabs.get(key));
+    }
+    const pane = el("div", "pane");
+    $("#panes").append(pane);
+    const title = "\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23" + (secTitle ? " \u2014 " + secTitle : "");
+    const tabBtn = el("div", "tab");
+    tabBtn.append(el("span", "tab-title", title));
+    const x = el("span", "tab-x", "\xD7");
+    tabBtn.append(x);
+    $("#tabs").append(tabBtn);
+    const tab = {
+      file: key,
+      title,
+      pane,
+      tabBtn,
+      dirty: false,
+      secPath,
+      editor: null,
+      plain: null,
+      wiki: null,
+      roster: null
+    };
+    tabBtn.onclick = (e) => {
+      if (e.target !== x) activate(key);
+    };
+    x.onclick = () => closeTab(key);
+    state.tabs.set(key, tab);
+    activate(key);
+    await renderRoster(tab);
+  }
+  async function wikiCharacters() {
+    const out = [];
+    const scan = async (base3) => {
+      const dir = await kapi.join(base3, "characters");
+      if (!await kapi.exists(dir)) return;
+      for (const f of await kapi.listFiles(dir, ".json")) {
+        try {
+          const e = await kapi.readJson(await kapi.join(dir, f));
+          if (e && e.name) out.push({ name: e.name, detail: (e.summary || e.desc || e.role || "").replace(/\s+/g, " ").trim() });
+        } catch {
+        }
+      }
+    };
+    await scan(await kapi.join(state.root, "Wiki"));
+    await scan(await kapi.join(state.root, "Bible"));
+    return out;
+  }
+  async function renderRoster(tab) {
+    const pane = tab.pane;
+    pane.innerHTML = "";
+    const r = tab.roster || (tab.roster = await loadRoster(tab.secPath));
+    const fmt = mergeSpFormat(spFormatFromSettings());
+    const dirty = () => {
+      if (!tab.dirty) {
+        tab.dirty = true;
+        tab.tabBtn.querySelector(".tab-title").textContent = "\u25CF " + tab.title;
+      }
+    };
+    const clean = () => {
+      tab.dirty = false;
+      tab.tabBtn.querySelector(".tab-title").textContent = tab.title;
+    };
+    const bar = el("div", "roster-bar");
+    const bAdd = el("button", null, "+ \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23");
+    const bWiki = el("button", null, "\u2193 \u0E14\u0E36\u0E07\u0E08\u0E32\u0E01 Wiki");
+    const bSave = el("button", "k-ok", "\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01");
+    const bCopy = el("button", null, "\u{1F4CB} \u0E04\u0E31\u0E14\u0E25\u0E2D\u0E01\u0E40\u0E1B\u0E47\u0E19\u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21");
+    const mkChk = (label, key, tip) => {
+      const w = el("label", "roster-chk");
+      const c = el("input");
+      c.type = "checkbox";
+      c.checked = r[key] !== false;
+      c.onchange = () => {
+        r[key] = c.checked;
+        dirty();
+        paint();
+      };
+      w.append(c, document.createTextNode(" " + label));
+      if (tip) w.title = tip;
+      return w;
+    };
+    bar.append(
+      bAdd,
+      bWiki,
+      mkChk("\u0E41\u0E2A\u0E14\u0E07\u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D Scene", "showScene"),
+      mkChk("\u0E41\u0E2A\u0E14\u0E07\u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D Time", "showTime"),
+      mkChk("\u0E43\u0E2A\u0E48\u0E15\u0E2D\u0E19\u0E1E\u0E34\u0E21\u0E1E\u0E4C/\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01", "includeInExport", "\u0E1B\u0E34\u0E14 = \u0E02\u0E49\u0E32\u0E21\u0E2B\u0E19\u0E49\u0E32\u0E19\u0E35\u0E49\u0E15\u0E2D\u0E19\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E41\u0E25\u0E30\u0E15\u0E2D\u0E19\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01"),
+      bCopy,
+      bSave
+    );
+    const ws = el("div", "workspace");
+    const page = el("div", "roster-page");
+    ws.append(page);
+    const wrap2 = el("div", "roster-wrap");
+    wrap2.append(bar, ws);
+    pane.append(wrap2);
+    function ce(cls, text, onInput) {
+      const d = el("div", cls, text);
+      d.contentEditable = "true";
+      d.spellcheck = false;
+      d.addEventListener("input", () => {
+        onInput(d.textContent);
+        dirty();
+      });
+      return d;
+    }
+    function paint() {
+      page.innerHTML = "";
+      page.append(ce("roster-title", r.title, (v) => {
+        r.title = v;
+      }));
+      const cast = el("div", "roster-cast");
+      r.characters.forEach((c, i2) => {
+        const row = el("div", "roster-row");
+        const name = ce("roster-name", c.name, (v) => {
+          c.name = v.replace(/:$/, "");
+        });
+        const detail = ce("roster-detail", c.detail, (v) => {
+          c.detail = v;
+        });
+        const del2 = el("span", "roster-del", "\u2715");
+        del2.title = "\u0E25\u0E1A\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E19\u0E35\u0E49\u0E2D\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D";
+        del2.onclick = () => {
+          r.characters.splice(i2, 1);
+          dirty();
+          paint();
+        };
+        row.append(name, el("span", "roster-colon", ":"), detail, del2);
+        cast.append(row);
+      });
+      if (!r.characters.length) cast.append(el("div", "roster-empty", '(\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D \u2014 \u0E01\u0E14 "\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23")'));
+      page.append(cast);
+      const sec = (key, headText) => {
+        const box = el("div", "roster-sec");
+        box.dataset.k = key;
+        box.append(el("div", "roster-sec-head", headText));
+        box.append(ce("roster-sec-body", r[key], (v) => {
+          r[key] = v;
+        }));
+        return box;
+      };
+      if (r.showScene !== false) page.append(sec("scene", fmt.strings.sceneTitle));
+      if (r.showTime !== false) page.append(sec("time", fmt.strings.timeTitle));
+    }
+    paint();
+    bAdd.onclick = () => {
+      r.characters.push({ name: "", detail: "" });
+      dirty();
+      paint();
+    };
+    bWiki.onclick = async () => {
+      const chars = await wikiCharacters();
+      if (!chars.length) {
+        setStatus("\u0E44\u0E21\u0E48\u0E1E\u0E1A\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E43\u0E19 Wiki");
+        return;
+      }
+      const have = new Set(r.characters.map((c) => c.name.trim()));
+      let added = 0;
+      for (const c of chars) if (c.name && !have.has(c.name.trim())) {
+        r.characters.push(c);
+        added++;
+      }
+      dirty();
+      paint();
+      setStatus(added ? "\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E08\u0E32\u0E01 Wiki " + added + " \u0E04\u0E19" : "\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E08\u0E32\u0E01 Wiki \u0E2D\u0E22\u0E39\u0E48\u0E04\u0E23\u0E1A\u0E41\u0E25\u0E49\u0E27");
+    };
+    bCopy.onclick = () => {
+      const txt = rosterToText(r, fmt);
+      navigator.clipboard.writeText(txt).then(() => setStatus("\u0E04\u0E31\u0E14\u0E25\u0E2D\u0E01\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E41\u0E25\u0E49\u0E27"));
+    };
+    bSave.onclick = async () => {
+      await saveRosterTab(tab);
+    };
+    return wrap2;
+  }
+  async function saveRosterTab(tab) {
+    if (!tab || !tab.secPath || !tab.roster) return false;
+    await saveRoster(tab.secPath, tab.roster);
+    tab.dirty = false;
+    const ttl = tab.tabBtn && tab.tabBtn.querySelector(".tab-title");
+    if (ttl) ttl.textContent = tab.title;
+    setStatus("\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E41\u0E25\u0E49\u0E27");
+    return true;
+  }
+  function spFormatFromSettings(s) {
+    const st = s || state.settings || {};
+    return {
+      paperSize: st.paperSize,
+      paper: st.customPaper,
+      margins: st.pageMargins,
+      elements: st.spElements,
+      styles: st.spStyles,
+      rules: st.spPageRules,
+      strings: st.spStrings
+    };
+  }
+  var ROSTER_PREFIX, rosterKey, isRosterTab;
+  var init_roster_ui = __esm({
+    "src/roster-ui.js"() {
+      init_core();
+      init_app();
+      init_section_ops();
+      ROSTER_PREFIX = "::roster::";
+      rosterKey = (secPath) => ROSTER_PREFIX + secPath;
+      isRosterTab = (tab) => !!(tab && typeof tab.file === "string" && tab.file.startsWith(ROSTER_PREFIX));
+    }
+  });
+
   // src/app.js
   var app_exports = {};
   __export(app_exports, {
@@ -62291,6 +63464,7 @@ ${sc.body || ""}
     activate: () => activate,
     addMapFlow: () => addMapFlow,
     allCatKeys: () => allCatKeys,
+    applyPageVars: () => applyPageVars,
     applySettings: () => applySettings,
     applySpellcheck: () => applySpellcheck,
     applyTemplate: () => applyTemplate,
@@ -62303,9 +63477,11 @@ ${sc.body || ""}
     catIconHtml: () => catIconHtml,
     catKeyFrom: () => catKeyFrom,
     catLabel: () => catLabel,
+    centerPage: () => centerPage,
     clearFeaturePanels: () => clearFeaturePanels,
     closeTab: () => closeTab,
     entityCreateDialog: () => entityCreateDialog,
+    entitySearchBlob: () => entitySearchBlob,
     eventDialog: () => eventDialog,
     fieldLabels: () => fieldLabels,
     findEntityInScenes: () => findEntityInScenes,
@@ -62350,6 +63526,8 @@ ${sc.body || ""}
     sceneCtx: () => sceneCtx,
     sceneEventsFromProject: () => sceneEventsFromProject,
     snapshotFile: () => snapshotFile,
+    spFormat: () => spFormat,
+    spFormatSettings: () => spFormatSettings,
     spellChecker: () => spellChecker,
     syncMenuToggles: () => syncMenuToggles,
     tb: () => tb,
@@ -62368,17 +63546,22 @@ ${sc.body || ""}
     const off = parseInt(state.settings.uiFontSize, 10) || 0;
     applyZoomVars(off);
     applyUIScale();
+    applyPageVars();
+    document.documentElement.style.setProperty(
+      "--home-thumb",
+      Math.max(120, Math.min(400, parseInt(state.settings.homeThumb, 10) || 190)) + "px"
+    );
     document.body.classList.toggle("k-ln", !!state.settings.lineNumbers);
     document.body.classList.toggle("paper-mode", state.settings.paperMode !== false);
     if (state.settings.fontFamily) {
       document.documentElement.style.setProperty("--ed-font", state.settings.fontFamily);
     } else {
-      document.documentElement.style.removeProperty("--ed-font");
+      document.documentElement.style.setProperty("--ed-font", DEFAULT_SCRIPT_FONT);
     }
     if (state.settings.spFontFamily) {
       document.documentElement.style.setProperty("--sp-font", state.settings.spFontFamily);
     } else {
-      document.documentElement.style.removeProperty("--sp-font");
+      document.documentElement.style.setProperty("--sp-font", DEFAULT_SCRIPT_FONT);
     }
     applySpellcheck();
     refreshAllSpell();
@@ -62387,12 +63570,14 @@ ${sc.body || ""}
   function applyZoomVars(off) {
     if (off === void 0) off = parseInt(state.settings.uiFontSize, 10) || 0;
     const R = document.documentElement.style;
-    const edfs = +(BASE_ED_FS + off).toFixed(2);
-    const spfs = Math.max(9, +(BASE_SP_FS + off).toFixed(2));
+    const edBase = ptToPx(state.settings.edFontPt ?? 12);
+    const spBase = ptToPx(state.settings.spFontPt ?? 12);
+    const edfs = +(edBase + off).toFixed(2);
+    const spfs = Math.max(9, +(spBase + off).toFixed(2));
     R.setProperty("--ed-fs", edfs + "px");
     R.setProperty("--sp-fs", spfs + "px");
     R.setProperty("--page-scale", pageScale.toFixed(3));
-    document.querySelectorAll(".pane > .workspace").forEach((ws) => {
+    document.querySelectorAll(".pane > .workspace, .roster-wrap > .workspace").forEach((ws) => {
       ws.style.minWidth = pageScale * 100 + "%";
     });
     const slider = $("#zoom-slider");
@@ -62400,20 +63585,75 @@ ${sc.body || ""}
     const lbl = $("#zoom-label");
     if (lbl) lbl.textContent = Math.round(pageScale * 100) + "%";
   }
+  function spFormatSettings() {
+    const s = state.settings || {};
+    return {
+      paperSize: s.paperSize,
+      paper: s.customPaper,
+      margins: s.pageMargins,
+      elements: s.spElements,
+      styles: s.spStyles,
+      rules: s.spPageRules,
+      strings: s.spStrings
+    };
+  }
+  function spFormat() {
+    return mergeSpFormat(spFormatSettings());
+  }
+  function applyPageVars() {
+    const fmt = spFormat();
+    const R = document.documentElement.style;
+    const vars = pageCssVars(fmt);
+    for (const k of Object.keys(vars)) R.setProperty(k, vars[k]);
+    let st = document.getElementById("k-sp-format");
+    if (!st) {
+      st = document.createElement("style");
+      st.id = "k-sp-format";
+      document.head.appendChild(st);
+    }
+    st.textContent = spCss(fmt);
+    return fmt;
+  }
   function bumpPageScale(dir) {
     setPageScale(pageScale + (dir > 0 ? 0.1 : -0.1));
   }
+  function scrollHosts() {
+    return [...document.querySelectorAll(".pane.on, .k-split-pane > .pane, .roster-wrap > .workspace")].filter((e) => e && e.scrollWidth);
+  }
+  function keepZoomCenter(fn) {
+    const hosts = scrollHosts();
+    const before = hosts.map((h) => ({
+      h,
+      cx: (h.scrollLeft + h.clientWidth / 2) / Math.max(1, h.scrollWidth),
+      cy: (h.scrollTop + h.clientHeight / 2) / Math.max(1, h.scrollHeight)
+    }));
+    fn();
+    requestAnimationFrame(() => {
+      for (const b of before) {
+        b.h.scrollLeft = Math.max(0, b.cx * b.h.scrollWidth - b.h.clientWidth / 2);
+        b.h.scrollTop = Math.max(0, b.cy * b.h.scrollHeight - b.h.clientHeight / 2);
+      }
+    });
+  }
   function setPageScale(z) {
-    pageScale = Math.max(SCALE_MIN, Math.min(SCALE_MAX, Math.round(z * 100) / 100));
-    applyZoomVars();
+    keepZoomCenter(() => {
+      pageScale = Math.max(SCALE_MIN, Math.min(SCALE_MAX, Math.round(z * 100) / 100));
+      applyZoomVars();
+    });
     setStatus(t("status.zoom") + ": " + Math.round(pageScale * 100) + "% (Ctrl+Shift+0 = " + t("status.zoomReset") + ")");
   }
   function resetPageScale() {
-    if (pageScale !== 1) {
+    if (pageScale === 1) return;
+    keepZoomCenter(() => {
       pageScale = 1;
       applyZoomVars();
-      setStatus(t("status.zoomReset"));
-    }
+    });
+    setStatus(t("status.zoomReset"));
+  }
+  function centerPage(pane) {
+    const p = pane || state.active && state.active.pane;
+    if (!p || !p.scrollWidth) return;
+    p.scrollLeft = Math.max(0, (p.scrollWidth - p.clientWidth) / 2);
   }
   function applyUIScale(v) {
     const s = Math.max(UI_SCALE_MIN, Math.min(
@@ -62656,6 +63896,37 @@ ${sc.body || ""}
     x.title = "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01\u0E02\u0E2D\u0E1A\u0E40\u0E02\u0E15";
     x.onclick = () => setTreeScope(null);
     chip.append(x);
+  }
+  function entitySearchBlob(name, ent, cat, secName) {
+    const parts = [name, cat || "", secName || ""];
+    const push = (v, depth = 0) => {
+      if (v == null || depth > 3) return;
+      if (typeof v === "string") {
+        parts.push(v);
+        return;
+      }
+      if (typeof v === "number" || typeof v === "boolean") {
+        parts.push(String(v));
+        return;
+      }
+      if (Array.isArray(v)) {
+        for (const x of v) push(x, depth + 1);
+        return;
+      }
+      if (typeof v === "object") {
+        for (const k of Object.keys(v)) {
+          parts.push(k);
+          push(v[k], depth + 1);
+        }
+      }
+    };
+    if (ent && typeof ent === "object") {
+      for (const k of Object.keys(ent)) {
+        if (k === "images" || k === "cover" || k === "guid" || k === "id") continue;
+        push(ent[k]);
+      }
+    }
+    return parts.join(" ").replace(/\s+/g, " ").toLowerCase().slice(0, 4e3);
   }
   function filterTree(q) {
     const raw = (q || "").trim();
@@ -63343,13 +64614,16 @@ ${sc.body || ""}
         for (const f of await kapi.listFiles(catDir, ".json")) {
           const p = await kapi.join(catDir, f);
           let name = f.replace(/\.json$/, "");
+          let ent = null;
           try {
-            name = (await kapi.readJson(p)).name || name;
+            ent = await kapi.readJson(p);
+            name = ent.name || name;
           } catch {
           }
-          const it = el("div", "scene");
+          const it = el("div", "scene wiki-ent");
           it.innerHTML = catIconHtml(cat) + " " + name;
-          it.dataset.search = name.toLowerCase();
+          it.dataset.search = entitySearchBlob(name, ent, cat, scopeLabel);
+          it.title = name + (ent && ent.summary ? " \u2014 " + String(ent.summary).slice(0, 120) : "");
           it.dataset.path = p;
           it.onclick = () => openEntity(p);
           it.draggable = true;
@@ -65908,6 +67182,9 @@ ${sc.body || ""}
     }
     pane.classList.toggle("pane-locked", !!tab.locked);
     pane.classList.toggle("sp-pane", !!tab.sp);
+    const ws = pane.querySelector(".workspace");
+    if (ws) ws.style.minWidth = pageScale * 100 + "%";
+    requestAnimationFrame(() => centerPage(pane));
   }
   async function switchFormat(target) {
     const tab = state.active;
@@ -66073,6 +67350,7 @@ ${sc.body || ""}
     syncActiveSplit(file);
     setElementBadge(state.active?.sp ? state.active.sp.curElement() : null);
     smart.hide();
+    if (state.active) requestAnimationFrame(() => centerPage(state.active && state.active.pane));
     refreshToolbar();
     refreshModeBtn();
     scheduleCount();
@@ -66118,6 +67396,10 @@ ${sc.body || ""}
   }
   async function saveTab(tab) {
     if (!tab) return;
+    if (isRosterTab(tab)) {
+      await saveRosterTab(tab);
+      return;
+    }
     if (tab.planner) {
       await tab.planner.save();
       tab.dirty = false;
@@ -66695,8 +67977,10 @@ ${sc.body || ""}
         b.classList.toggle("dis", state.tabs.size === 0);
         return;
       }
-      if (b.id === "tb-close" || b.id === "tb-close-all" || b.id === "tb-focus" || b.id === "tb-typewriter" || b.id === "tb-linenum" || b.id === "tb-quickopen" || b.id === "tb-gallery" || b.id === "tb-sp-elem") return;
-      if (b.id === "tb-tree-panel" || b.id === "tb-outline-panel" || b.id === "tb-props-panel" || b.id === "tb-search-panel") return;
+      if (ALWAYS_ON_TB.has(b.id)) {
+        b.classList.remove("dis");
+        return;
+      }
       b.classList.toggle("dis", !canEdit);
     });
     $("#tb-paper").classList.toggle("on", state.settings.paperMode !== false);
@@ -66709,6 +67993,7 @@ ${sc.body || ""}
     $("#tb-outline-panel")?.classList.toggle("on", isPanelOpen("outline"));
     $("#tb-props-panel")?.classList.toggle("on", isPanelOpen("props"));
     $("#tb-search-panel")?.classList.toggle("on", isPanelOpen("search"));
+    $("#tb-kanban")?.classList.toggle("on", isPanelOpen("kanban"));
     syncFloatBarVisible();
     syncMenuToggles();
   }
@@ -66721,7 +68006,17 @@ ${sc.body || ""}
         return;
       }
       const body = t2.editor ? t2.editor.getMarkdown() : t2.sp ? t2.sp.getMarkdown() : t2.plain.value;
-      $("#wc").textContent = `\u0E04\u0E33 ${(0, import_md10.countWords)(body).toLocaleString()} \xB7 \u0E2D\u0E31\u0E01\u0E02\u0E23\u0E30 ${body.length.toLocaleString()}`;
+      let txt = `\u0E04\u0E33 ${(0, import_md10.countWords)(body).toLocaleString()} \xB7 \u0E2D\u0E31\u0E01\u0E02\u0E23\u0E30 ${body.length.toLocaleString()}`;
+      if (t2.sp) {
+        try {
+          const fmt = spFormat();
+          const n = pageCount(parseScript(body), { fmt, lines: linesPerPage(fmt.paper, fmt.margins) });
+          txt += ` \xB7 ${n} \u0E2B\u0E19\u0E49\u0E32`;
+        } catch (e) {
+          log("warn", "\u0E19\u0E31\u0E1A\u0E2B\u0E19\u0E49\u0E32\u0E1A\u0E17\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08", e);
+        }
+      }
+      $("#wc").textContent = txt;
       updateProgressBar();
     }, 300);
   }
@@ -67208,6 +68503,18 @@ ${sc.body || ""}
         break;
       case "char-map":
         showCharMap();
+        break;
+      // [97] หน้ารายชื่อตัวละคร (Cast of Characters) ประจำเล่ม
+      case "roster":
+        await openRosterFlow();
+        break;
+      // [98] ข้อมูลโปรเจกต์เพิ่มเติม (ผู้เขียน/ตัวแทน/ลิขสิทธิ์) — เปิดตั้งค่าที่แท็บนั้น
+      case "project-setup":
+        settingsDialog("setup");
+        break;
+      // [81-85][92] หน้ากระดาษ · ระยะขอบ · รูปแบบ element · กฎตัดหน้า · ข้อความมาตรฐาน
+      case "page-setup":
+        settingsDialog("page");
         break;
       // ---- Part 1+2: ฟีเจอร์ใหม่ (Kanban, Panel, Split, AI, Thesaurus, Auto-sync) ----
       case "kanban":
@@ -68009,7 +69316,12 @@ ${sc.body || ""}
       }, imageLightboxTest = function() {
         imageLightbox("file:///tmp/nope.png", "\u0E17\u0E14\u0E2A\u0E2D\u0E1A");
       };
+      for (const k of ["k2-ui-layout", "k2-panel-layout", "k2-panel-home", "k2-split-layout", "k2-home-view"])
+        localStorage.removeItem(k);
+      resetPanelSystem();
       if (projectPath) await loadProject(projectPath);
+      resetPanels();
+      await new Promise((r) => setTimeout(r, 60));
       check2("tree \u0E21\u0E35\u0E09\u0E32\u0E01", document.querySelectorAll(".scene").length >= 2);
       document.querySelector(".scene").click();
       await new Promise((r) => setTimeout(r, 800));
@@ -70066,7 +71378,8 @@ ${sc.body || ""}
       toggleFocus(true);
       check2(
         "\u0E42\u0E2B\u0E21\u0E14\u0E42\u0E1F\u0E01\u0E31\u0E2A\u0E0B\u0E48\u0E2D\u0E19 UI \u0E40\u0E2B\u0E25\u0E37\u0E2D\u0E2B\u0E19\u0E49\u0E32\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29",
-        document.body.classList.contains("focus-mode") && $("#tree-panel").offsetParent === null && $("#panes").offsetParent !== null
+        document.body.classList.contains("focus-mode") && $("#tree-panel").offsetParent === null && $("#panes").offsetParent !== null,
+        "docsChain=" + (document.querySelector('#app-root .k-panel[data-panel-id="docs"]')?.className || "\u0E44\u0E21\u0E48\u0E21\u0E35\u0E41\u0E1C\u0E07\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23") + " panesDisplay=" + ($("#panes") ? getComputedStyle($("#panes")).display : "-")
       );
       toggleFocus(false);
       const chP = (await kapi.readJson(await kapi.join(dPath, "draft.json"))).chapters[0];
@@ -70502,8 +71815,8 @@ ${sc.body || ""}
       fontInp.value = "4";
       fontInp.dispatchEvent(new Event("input"));
       check2(
-        "\u0E1E\u0E23\u0E35\u0E27\u0E34\u0E27\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E17\u0E31\u0E19\u0E17\u0E35 (--ed-fs = 19.5px)",
-        getComputedStyle(document.documentElement).getPropertyValue("--ed-fs").trim() === "19.5px",
+        "\u0E1E\u0E23\u0E35\u0E27\u0E34\u0E27\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E17\u0E31\u0E19\u0E17\u0E35 (--ed-fs = \u0E10\u0E32\u0E19+4px)",
+        getComputedStyle(document.documentElement).getPropertyValue("--ed-fs").trim() === BASE_ED_FS + 4 + "px",
         getComputedStyle(document.documentElement).getPropertyValue("--ed-fs")
       );
       const uiSl = document.querySelector("#st-uiscale");
@@ -70540,8 +71853,8 @@ ${sc.body || ""}
       check2("\u0E40\u0E02\u0E35\u0E22\u0E19\u0E0A\u0E37\u0E48\u0E2D/\u0E1C\u0E39\u0E49\u0E40\u0E02\u0E35\u0E22\u0E19\u0E25\u0E07\u0E44\u0E1F\u0E25\u0E4C", pj.title === "\u0E0A\u0E37\u0E48\u0E2D\u0E43\u0E2B\u0E21\u0E48\u0E17\u0E14\u0E2A\u0E2D\u0E1A" && pj.author === "\u0E1C\u0E39\u0E49\u0E40\u0E02\u0E35\u0E22\u0E19\u0E17\u0E14\u0E2A\u0E2D\u0E1A");
       check2("\u0E0A\u0E37\u0E48\u0E2D\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C\u0E1A\u0E19\u0E08\u0E2D\u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E15\u0E32\u0E21", $("#projname").textContent === "\u0E0A\u0E37\u0E48\u0E2D\u0E43\u0E2B\u0E21\u0E48\u0E17\u0E14\u0E2A\u0E2D\u0E1A");
       check2(
-        "\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E15\u0E31\u0E27\u0E41\u0E01\u0E49\u0E44\u0E02\u0E16\u0E39\u0E01\u0E19\u0E33\u0E44\u0E1B\u0E43\u0E0A\u0E49\u0E08\u0E23\u0E34\u0E07 (19.5px)",
-        getComputedStyle(document.documentElement).getPropertyValue("--ed-fs").trim() === "19.5px"
+        "\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E15\u0E31\u0E27\u0E41\u0E01\u0E49\u0E44\u0E02\u0E16\u0E39\u0E01\u0E19\u0E33\u0E44\u0E1B\u0E43\u0E0A\u0E49\u0E08\u0E23\u0E34\u0E07 (\u0E10\u0E32\u0E19+4px)",
+        getComputedStyle(document.documentElement).getPropertyValue("--ed-fs").trim() === BASE_ED_FS + 4 + "px"
       );
       check2("autosave \u0E19\u0E32\u0E17\u0E35\u0E16\u0E39\u0E01\u0E1B\u0E23\u0E31\u0E1A\u0E43\u0E19 state", state.settings.autoSaveMinutes === 2);
       openDashboard();
@@ -70556,8 +71869,8 @@ ${sc.body || ""}
       document.querySelector(".k-settings .k-cancel").click();
       await new Promise((r) => setTimeout(r, 20));
       check2(
-        '\u0E01\u0E14 "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01" \u0E04\u0E37\u0E19\u0E02\u0E19\u0E32\u0E14\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E40\u0E14\u0E34\u0E21 (19.5px)',
-        getComputedStyle(document.documentElement).getPropertyValue("--ed-fs").trim() === "19.5px",
+        '\u0E01\u0E14 "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01" \u0E04\u0E37\u0E19\u0E02\u0E19\u0E32\u0E14\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E40\u0E14\u0E34\u0E21 (\u0E10\u0E32\u0E19+4px)',
+        getComputedStyle(document.documentElement).getPropertyValue("--ed-fs").trim() === BASE_ED_FS + 4 + "px",
         getComputedStyle(document.documentElement).getPropertyValue("--ed-fs")
       );
       window.dispatchEvent(new KeyboardEvent("keydown", { code: "Comma", ctrlKey: true, bubbles: true }));
@@ -72323,9 +73636,9 @@ ${sc.body || ""}
             );
             const paneOn = document.querySelector("#split-root .k-split-body > .pane > .workspace > .ProseMirror");
             check2(
-              "\u0E42\u0E2B\u0E21\u0E14\u0E41\u0E22\u0E01\u0E08\u0E2D: \u0E2B\u0E19\u0E49\u0E32\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E2B\u0E14\u0E15\u0E32\u0E21\u0E0A\u0E48\u0E2D\u0E07\u0E17\u0E35\u0E48\u0E41\u0E04\u0E1A\u0E25\u0E07 (sync \u0E01\u0E31\u0E1A\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29)",
-              !!paneOn && getComputedStyle(paneOn).maxWidth.includes("px"),
-              paneOn && getComputedStyle(paneOn).maxWidth
+              "\u0E42\u0E2B\u0E21\u0E14\u0E41\u0E22\u0E01\u0E08\u0E2D: \u0E2B\u0E19\u0E49\u0E32\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E01\u0E27\u0E49\u0E32\u0E07\u0E04\u0E07\u0E17\u0E35\u0E48\u0E15\u0E32\u0E21\u0E02\u0E19\u0E32\u0E14\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29 \u0E44\u0E21\u0E48\u0E2B\u0E14\u0E15\u0E32\u0E21\u0E0A\u0E48\u0E2D\u0E07",
+              !!paneOn && getComputedStyle(paneOn).width.includes("px") && getComputedStyle(paneOn).maxWidth === "none",
+              paneOn && getComputedStyle(paneOn).width + " / " + getComputedStyle(paneOn).maxWidth
             );
             clearCompare();
             check2(
@@ -72759,8 +74072,9 @@ ${sc.body || ""}
         state.settings.spFontFamily = "";
         applySettings();
         check2(
-          "#2 \u0E44\u0E21\u0E48\u0E15\u0E31\u0E49\u0E07\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07 \u2192 \u0E44\u0E21\u0E48\u0E21\u0E35 --sp-font (\u0E43\u0E0A\u0E49 Courier New \u0E15\u0E32\u0E21\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19)",
-          !document.documentElement.style.getPropertyValue("--sp-font")
+          "#2 \u0E44\u0E21\u0E48\u0E15\u0E31\u0E49\u0E07\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07 \u2192 \u0E43\u0E0A\u0E49 Courier Final Draft \u0E40\u0E1B\u0E47\u0E19\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19",
+          document.documentElement.style.getPropertyValue("--sp-font").includes("Courier Final Draft"),
+          document.documentElement.style.getPropertyValue("--sp-font")
         );
         state.settings.spFontFamily = '"TH Sarabun New", sans-serif';
         applySettings();
@@ -72877,6 +74191,651 @@ ${sc.body || ""}
         );
         renderPanels(true);
       }
+      {
+        resetPanels();
+        await new Promise((r) => setTimeout(r, 40));
+        resetPageScale();
+        const S = state.settings;
+        const CS = (sel) => getComputedStyle(document.querySelector(sel));
+        const rootVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+        check2(
+          "[85] \u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19\u0E23\u0E30\u0E22\u0E30\u0E02\u0E2D\u0E1A \u0E1A\u0E191 \u0E25\u0E48\u0E32\u0E071 \u0E0B\u0E49\u0E32\u0E221.5 \u0E02\u0E27\u0E321 \u0E19\u0E34\u0E49\u0E27",
+          S.pageMargins.top === 1 && S.pageMargins.bottom === 1 && S.pageMargins.left === 1.5 && S.pageMargins.right === 1,
+          JSON.stringify(S.pageMargins)
+        );
+        check2("[85] \u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E40\u0E1B\u0E47\u0E19 Letter", S.paperSize === "letter");
+        check2(
+          "[85] --page-w / --mg-left \u0E16\u0E39\u0E01\u0E15\u0E31\u0E49\u0E07\u0E1A\u0E19 :root",
+          rootVar("--page-w") === "8.5in" && rootVar("--mg-left") === "1.5in",
+          rootVar("--page-w") + " | " + rootVar("--mg-left")
+        );
+        check2(
+          "[85] Letter + \u0E02\u0E2D\u0E1A\u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19 = 54 \u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14/\u0E2B\u0E19\u0E49\u0E32",
+          linesPerPage(spFormat().paper, spFormat().margins) === 54,
+          String(linesPerPage(spFormat().paper, spFormat().margins))
+        );
+        S.paperSize = "a4";
+        applyPageVars();
+        check2("[85] \u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E02\u0E19\u0E32\u0E14\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E40\u0E1B\u0E47\u0E19 A4 \u2192 --page-w \u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E15\u0E32\u0E21", rootVar("--page-w") === "8.27in", rootVar("--page-w"));
+        S.paperSize = "letter";
+        S.pageMargins = { top: 1, bottom: 1, left: 2, right: 1 };
+        applyPageVars();
+        check2("[85] \u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E02\u0E2D\u0E1A\u0E0B\u0E49\u0E32\u0E22\u0E40\u0E1B\u0E47\u0E19 2 \u0E19\u0E34\u0E49\u0E27 \u2192 --mg-left \u0E15\u0E32\u0E21", rootVar("--mg-left") === "2in", rootVar("--mg-left"));
+        S.pageMargins = { top: 1, bottom: 1, left: 1.5, right: 1 };
+        applyPageVars();
+        check2(
+          "[\u0E1F\u0E2D\u0E19\u0E15\u0E4C] \u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19\u0E40\u0E1B\u0E47\u0E19 Courier Final Draft",
+          rootVar("--ed-font").includes("Courier Final Draft") && rootVar("--sp-font").includes("Courier Final Draft"),
+          rootVar("--ed-font")
+        );
+        check2(
+          "[\u0E1F\u0E2D\u0E19\u0E15\u0E4C] \u0E02\u0E19\u0E32\u0E14\u0E10\u0E32\u0E19 12pt = 16px \u0E17\u0E31\u0E49\u0E07\u0E19\u0E34\u0E22\u0E32\u0E22\u0E41\u0E25\u0E30\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07",
+          S.edFontPt === 12 && S.spFontPt === 12 && BASE_ED_FS === 16 && BASE_SP_FS === 16
+        );
+        const fsOff = parseInt(S.uiFontSize, 10) || 0;
+        applyZoomVars();
+        const edFsBefore = rootVar("--ed-fs");
+        S.spFontPt = 14;
+        applyZoomVars();
+        check2(
+          "[\u0E1F\u0E2D\u0E19\u0E15\u0E4C] \u0E01\u0E23\u0E2D\u0E01\u0E02\u0E19\u0E32\u0E14\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07 14pt \u2192 --sp-fs \u0E15\u0E32\u0E21\u0E04\u0E48\u0E32\u0E17\u0E35\u0E48\u0E01\u0E23\u0E2D\u0E01",
+          Math.abs(parseFloat(rootVar("--sp-fs")) - (14 * 4 / 3 + fsOff)) < 0.05,
+          rootVar("--sp-fs")
+        );
+        check2(
+          "[\u0E1F\u0E2D\u0E19\u0E15\u0E4C] \u0E02\u0E19\u0E32\u0E14\u0E19\u0E34\u0E22\u0E32\u0E22\u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E01\u0E23\u0E30\u0E17\u0E1A",
+          rootVar("--ed-fs") === edFsBefore,
+          edFsBefore + " \u2192 " + rootVar("--ed-fs")
+        );
+        S.spFontPt = 12;
+        applyZoomVars();
+        const spStyleEl = document.getElementById("k-sp-format");
+        check2('[81] \u0E21\u0E35 <style id="k-sp-format"> \u0E17\u0E35\u0E48\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E08\u0E32\u0E01\u0E04\u0E48\u0E32\u0E15\u0E31\u0E49\u0E07', !!spStyleEl && spStyleEl.textContent.includes(".sp.sp-character{"));
+        check2("[83] CSS \u0E21\u0E35\u0E1A\u0E25\u0E47\u0E2D\u0E01\u0E2A\u0E44\u0E15\u0E25\u0E4C\u0E15\u0E2D\u0E19\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E41\u0E22\u0E01\u0E08\u0E32\u0E01\u0E1A\u0E19\u0E08\u0E2D", spStyleEl.textContent.includes("@media print{"));
+        check2(
+          "[85] CSS \u0E21\u0E35 @page \u0E15\u0E32\u0E21\u0E02\u0E19\u0E32\u0E14\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29/\u0E23\u0E30\u0E22\u0E30\u0E02\u0E2D\u0E1A",
+          spStyleEl.textContent.includes("@page{size:8.5in 11in") && spStyleEl.textContent.includes("margin:1in 1in 1in 1.5in")
+        );
+        const spScene2 = [...document.querySelectorAll(".scene")].find((x) => x.textContent.includes("\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07\u0E17\u0E14\u0E2A\u0E2D\u0E1A"));
+        if (spScene2) {
+          spScene2.click();
+          await new Promise((r) => setTimeout(r, 350));
+          const spT = state.active;
+          check2("[81] \u0E41\u0E17\u0E47\u0E1A\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07\u0E40\u0E1B\u0E34\u0E14\u0E44\u0E14\u0E49\u0E2A\u0E33\u0E2B\u0E23\u0E31\u0E1A\u0E17\u0E14\u0E2A\u0E2D\u0E1A\u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A", !!spT.sp);
+          const chEl = spT.pane.querySelector(".sp-character") || spT.pane.querySelector(".sp");
+          check2("[81] \u0E21\u0E35\u0E1A\u0E25\u0E47\u0E2D\u0E01\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E1A\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29", !!spT.pane.querySelector(".sp-character"));
+          const cs = getComputedStyle(spT.pane.querySelector(".sp-character"));
+          check2(
+            "[81] \u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E40\u0E22\u0E37\u0E49\u0E2D\u0E07 2.2 \u0E19\u0E34\u0E49\u0E27\u0E08\u0E32\u0E01\u0E02\u0E2D\u0E1A\u0E1E\u0E37\u0E49\u0E19\u0E17\u0E35\u0E48\u0E1E\u0E34\u0E21\u0E1E\u0E4C (3.7-1.5)",
+            Math.abs(parseFloat(cs.marginLeft) - 2.2 * 96) < 2,
+            cs.marginLeft
+          );
+          check2("[81] \u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E01\u0E27\u0E49\u0E32\u0E07 3.8 \u0E19\u0E34\u0E49\u0E27", Math.abs(parseFloat(cs.width) - 3.8 * 96) < 2, cs.width);
+          check2("[83] \u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E40\u0E1B\u0E47\u0E19\u0E15\u0E31\u0E27\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E43\u0E2B\u0E0D\u0E48\u0E1A\u0E19\u0E08\u0E2D", cs.textTransform === "uppercase", cs.textTransform);
+          const dl = spT.pane.querySelector(".sp-dialogue");
+          if (dl) {
+            const ds = getComputedStyle(dl);
+            check2("[81] \u0E1A\u0E17\u0E1E\u0E39\u0E14\u0E40\u0E22\u0E37\u0E49\u0E2D\u0E07 1.0 \u0E19\u0E34\u0E49\u0E27 (2.5-1.5)", Math.abs(parseFloat(ds.marginLeft) - 1 * 96) < 2, ds.marginLeft);
+            check2("[82] \u0E1A\u0E17\u0E1E\u0E39\u0E14\u0E44\u0E21\u0E48\u0E40\u0E27\u0E49\u0E19\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E01\u0E48\u0E2D\u0E19 (linesBefore 0)", parseFloat(ds.marginTop) === 0, ds.marginTop);
+          }
+          const scEl = spT.pane.querySelector(".sp-scene");
+          check2(
+            "[82] \u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01\u0E40\u0E27\u0E49\u0E19 2 \u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E01\u0E48\u0E2D\u0E19 (margin-top = 2em)",
+            !!scEl && Math.abs(parseFloat(getComputedStyle(scEl).marginTop) - 2 * parseFloat(getComputedStyle(scEl).fontSize)) < 2,
+            scEl && getComputedStyle(scEl).marginTop
+          );
+          S.spElements = { character: { indent: 4.5, width: 3, linesBefore: 30, linesBetween: 10 } };
+          applyPageVars();
+          const cs2 = getComputedStyle(spT.pane.querySelector(".sp-character"));
+          check2(
+            "[81] \u0E41\u0E01\u0E49\u0E23\u0E30\u0E22\u0E30\u0E40\u0E22\u0E37\u0E49\u0E2D\u0E07\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E43\u0E19 settings \u2192 \u0E21\u0E35\u0E1C\u0E25\u0E17\u0E31\u0E19\u0E17\u0E35 (4.5-1.5=3in)",
+            Math.abs(parseFloat(cs2.marginLeft) - 3 * 96) < 2,
+            cs2.marginLeft
+          );
+          check2(
+            "[82] \u0E41\u0E01\u0E49\u0E23\u0E30\u0E22\u0E30\u0E40\u0E27\u0E49\u0E19\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E01\u0E48\u0E2D\u0E19 (30 = 3 \u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14) \u2192 \u0E21\u0E35\u0E1C\u0E25\u0E17\u0E31\u0E19\u0E17\u0E35",
+            Math.abs(parseFloat(cs2.marginTop) - 3 * parseFloat(cs2.fontSize)) < 2,
+            cs2.marginTop
+          );
+          S.spStyles = { character: {
+            screen: { caps: false, bold: true, italic: false, underline: false },
+            print: { caps: true, bold: false, italic: false, underline: true }
+          } };
+          applyPageVars();
+          const cs3 = getComputedStyle(spT.pane.querySelector(".sp-character"));
+          check2("[83] \u0E1B\u0E34\u0E14\u0E15\u0E31\u0E27\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E43\u0E2B\u0E0D\u0E48\u0E1A\u0E19\u0E08\u0E2D \u2192 text-transform none", cs3.textTransform === "none", cs3.textTransform);
+          check2("[83] \u0E40\u0E1B\u0E34\u0E14\u0E15\u0E31\u0E27\u0E2B\u0E19\u0E32\u0E1A\u0E19\u0E08\u0E2D \u2192 font-weight 700", cs3.fontWeight === "700", cs3.fontWeight);
+          check2(
+            "[83] \u0E2A\u0E44\u0E15\u0E25\u0E4C\u0E15\u0E2D\u0E19\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E41\u0E22\u0E01\u0E08\u0E32\u0E01\u0E1A\u0E19\u0E08\u0E2D (\u0E02\u0E35\u0E14\u0E40\u0E2A\u0E49\u0E19\u0E43\u0E15\u0E49\u0E40\u0E09\u0E1E\u0E32\u0E30\u0E15\u0E2D\u0E19\u0E1E\u0E34\u0E21\u0E1E\u0E4C)",
+            /@media print\{[\s\S]*\.sp\.sp-character\{[^}]*text-decoration:underline/.test(document.getElementById("k-sp-format").textContent)
+          );
+          S.spElements = null;
+          S.spStyles = null;
+          applyPageVars();
+          const blocks = parseScript2(spT.sp.getMarkdown());
+          const pgInfo = paginate(blocks, { fmt: spFormat() });
+          check2("[84] \u0E04\u0E33\u0E19\u0E27\u0E13\u0E08\u0E33\u0E19\u0E27\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E02\u0E2D\u0E07\u0E1A\u0E17\u0E44\u0E14\u0E49", pgInfo.count >= 1, String(pgInfo.count));
+          scheduleCount();
+          await new Promise((r) => setTimeout(r, 400));
+          check2("[84] \u0E41\u0E16\u0E1A\u0E2A\u0E16\u0E32\u0E19\u0E30\u0E1A\u0E2D\u0E01\u0E08\u0E33\u0E19\u0E27\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E02\u0E2D\u0E07\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07", /\d+ หน้า/.test($("#wc").textContent), $("#wc").textContent);
+          const longBlocks = [
+            { el: "action", text: "x ".repeat(30) },
+            { el: "character", text: "\u0E17\u0E2D\u0E23\u0E48\u0E32" },
+            { el: "dialogue", text: "\u0E1E\u0E39\u0E14\u0E22\u0E32\u0E27\u0E21\u0E32\u0E01 ".repeat(40) }
+          ];
+          const split1 = paginate(longBlocks, { lines: 14, fmt: spFormat() });
+          S.spPageRules = { minDialogueLinesAtBottom: 99 };
+          const split22 = paginate(longBlocks, { lines: 14, fmt: spFormat() });
+          check2(
+            "[84] \u0E1B\u0E23\u0E31\u0E1A\u0E01\u0E0E minDialogueLinesAtBottom \u2192 \u0E01\u0E32\u0E23\u0E41\u0E1A\u0E48\u0E07\u0E2B\u0E19\u0E49\u0E32\u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E08\u0E23\u0E34\u0E07",
+            split1.pages.flatMap((p) => p.blocks).some((b) => b.split === "head") && !split22.pages.flatMap((p) => p.blocks).some((b) => b.split === "head")
+          );
+          S.spPageRules = null;
+          S.spStrings = { dialogueMore: "(\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E08\u0E1A)" };
+          const pgTh = paginate(longBlocks, { lines: 14, fmt: spFormat() });
+          check2(
+            "[92] \u0E41\u0E01\u0E49\u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21 (MORE) \u0E41\u0E25\u0E49\u0E27\u0E43\u0E0A\u0E49\u0E04\u0E48\u0E32\u0E43\u0E2B\u0E21\u0E48\u0E08\u0E23\u0E34\u0E07",
+            pgTh.pages.flatMap((p) => p.blocks).some((b) => b.el === "more" && b.text === "(\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E08\u0E1A)")
+          );
+          S.spStrings = null;
+          spT.sp.setElement("character");
+          smart.items = ["\u0E17\u0E14\u0E2A\u0E2D\u0E1A\u0E0A\u0E37\u0E48\u0E2D\u0E22\u0E32\u0E27"];
+          smart.sel = 0;
+          smart.prefixLen = 2;
+          smart.box.style.display = "block";
+          const entHandled = smart.onKey({ key: "Enter" });
+          check2("#1 SmartType: Enter \u0E44\u0E21\u0E48\u0E22\u0E37\u0E19\u0E22\u0E31\u0E19\u0E04\u0E33\u0E40\u0E14\u0E32 (\u0E04\u0E37\u0E19 false \u2192 \u0E02\u0E36\u0E49\u0E19\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E43\u0E2B\u0E21\u0E48)", entHandled === false);
+          check2("#1 SmartType: Enter \u0E1B\u0E34\u0E14 popup \u0E17\u0E34\u0E49\u0E07", !smart.visible);
+          smart.items = ["\u0E17\u0E14\u0E2A\u0E2D\u0E1A\u0E0A\u0E37\u0E48\u0E2D\u0E22\u0E32\u0E27"];
+          smart.sel = 0;
+          smart.prefixLen = 0;
+          smart.box.style.display = "block";
+          check2("#1 SmartType: Tab \u0E22\u0E31\u0E07\u0E22\u0E37\u0E19\u0E22\u0E31\u0E19\u0E04\u0E33\u0E40\u0E14\u0E32\u0E44\u0E14\u0E49", smart.onKey({ key: "Tab" }) === true);
+          smart.hide();
+          const nBefore = spT.sp.view.state.doc.childCount;
+          spT.sp.setElement("character");
+          spT.sp.enter();
+          check2(
+            "#1 \u0E01\u0E14 Enter \u0E43\u0E19\u0E1A\u0E25\u0E47\u0E2D\u0E01\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23 \u2192 \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E43\u0E2B\u0E21\u0E48\u0E08\u0E23\u0E34\u0E07",
+            spT.sp.view.state.doc.childCount === nBefore + 1
+          );
+          check2(
+            "[\u0E1B\u0E38\u0E48\u0E21\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07] \u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19\u0E04\u0E37\u0E2D Tab / Shift+Tab / Enter",
+            spCycleKeys(S).tab.code === "Tab" && spCycleKeys(S).shiftTab.shift === true && spCycleKeys(S).enter.code === "Enter"
+          );
+          S.spCycleKeys = { tab: { code: "BracketRight", shift: false, ctrl: false, alt: false } };
+          check2("[\u0E1B\u0E38\u0E48\u0E21\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07] \u0E15\u0E31\u0E49\u0E07\u0E1B\u0E38\u0E48\u0E21\u0E40\u0E2D\u0E07\u0E41\u0E25\u0E49\u0E27\u0E04\u0E48\u0E32\u0E17\u0E35\u0E48\u0E43\u0E0A\u0E49\u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E15\u0E32\u0E21", spCycleKeys(S).tab.code === "BracketRight");
+          check2("[\u0E1B\u0E38\u0E48\u0E21\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07] \u0E1B\u0E38\u0E48\u0E21\u0E17\u0E35\u0E48\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E15\u0E31\u0E49\u0E07\u0E22\u0E31\u0E07\u0E40\u0E1B\u0E47\u0E19\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19", spCycleKeys(S).enter.code === "Enter");
+          check2(
+            "[\u0E1B\u0E38\u0E48\u0E21\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07] \u0E1B\u0E49\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E1B\u0E38\u0E48\u0E21\u0E2D\u0E48\u0E32\u0E19\u0E2D\u0E2D\u0E01",
+            spKeyLabel({ code: "Tab", shift: true }) === "Shift+Tab",
+            spKeyLabel({ code: "Tab", shift: true })
+          );
+          S.spCycleKeys = null;
+          S.spCycleEnabled = false;
+          spT.sp.setElement("character");
+          spT.sp.enter(true);
+          check2("[\u0E1B\u0E38\u0E48\u0E21\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07] \u0E1B\u0E34\u0E14\u0E23\u0E30\u0E1A\u0E1A \u2192 Enter \u0E44\u0E14\u0E49\u0E1A\u0E25\u0E47\u0E2D\u0E01\u0E0A\u0E19\u0E34\u0E14\u0E40\u0E14\u0E34\u0E21 (\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23)", spT.sp.curElement() === "character");
+          S.spCycleEnabled = true;
+          spT.sp.setElement("character");
+          spT.sp.enter();
+          check2("[\u0E1B\u0E38\u0E48\u0E21\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07] \u0E40\u0E1B\u0E34\u0E14\u0E23\u0E30\u0E1A\u0E1A \u2192 Enter \u0E2B\u0E25\u0E31\u0E07\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E44\u0E14\u0E49\u0E1A\u0E17\u0E1E\u0E39\u0E14", spT.sp.curElement() === "dialogue");
+          const pmSp = spT.pane.querySelector(".ProseMirror");
+          const wWide = pmSp.getBoundingClientRect().width;
+          const docsPanel = document.querySelector('#app-root .k-panel[data-panel-id="docs"]');
+          const oldFlex = docsPanel.style.flexGrow;
+          docsPanel.style.flexGrow = "0.15";
+          await new Promise((r) => setTimeout(r, 60));
+          const wNarrow = pmSp.getBoundingClientRect().width;
+          check2(
+            "#6 \u0E41\u0E1C\u0E07\u0E41\u0E04\u0E1A\u0E25\u0E07\u0E41\u0E25\u0E49\u0E27\u0E2B\u0E19\u0E49\u0E32\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E01\u0E27\u0E49\u0E32\u0E07\u0E40\u0E17\u0E48\u0E32\u0E40\u0E14\u0E34\u0E21 (\u0E44\u0E21\u0E48\u0E15\u0E31\u0E14\u0E04\u0E33)",
+            Math.abs(wNarrow - wWide) < 2,
+            `${Math.round(wWide)} \u2192 ${Math.round(wNarrow)}`
+          );
+          check2(
+            "#6 \u0E41\u0E1C\u0E07\u0E41\u0E04\u0E1A \u2192 \u0E21\u0E35\u0E41\u0E16\u0E1A\u0E40\u0E25\u0E37\u0E48\u0E2D\u0E19\u0E41\u0E19\u0E27\u0E19\u0E2D\u0E19\u0E41\u0E17\u0E19\u0E01\u0E32\u0E23\u0E1A\u0E35\u0E1A\u0E2B\u0E19\u0E49\u0E32\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29",
+            spT.pane.scrollWidth > spT.pane.clientWidth + 2,
+            `${spT.pane.scrollWidth} > ${spT.pane.clientWidth}`
+          );
+          docsPanel.style.flexGrow = oldFlex;
+          await new Promise((r) => setTimeout(r, 60));
+          spT.pane.scrollLeft = 0;
+          centerPage(spT.pane);
+          const wantMid = Math.max(0, (spT.pane.scrollWidth - spT.pane.clientWidth) / 2);
+          check2(
+            "#7 \u0E40\u0E1B\u0E34\u0E14\u0E09\u0E32\u0E01\u0E41\u0E25\u0E49\u0E27\u0E2B\u0E19\u0E49\u0E32\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E16\u0E39\u0E01\u0E08\u0E31\u0E14\u0E01\u0E36\u0E48\u0E07\u0E01\u0E25\u0E32\u0E07 \u0E44\u0E21\u0E48\u0E15\u0E34\u0E14\u0E21\u0E38\u0E21\u0E0B\u0E49\u0E32\u0E22",
+            Math.abs(spT.pane.scrollLeft - wantMid) < 2,
+            `${spT.pane.scrollLeft} \u2248 ${wantMid}`
+          );
+          resetPageScale();
+          await new Promise((r) => setTimeout(r, 40));
+          centerPage(spT.pane);
+          const midRatio0 = (spT.pane.scrollLeft + spT.pane.clientWidth / 2) / Math.max(1, spT.pane.scrollWidth);
+          bumpPageScale(1);
+          await new Promise((r) => setTimeout(r, 120));
+          bumpPageScale(1);
+          await new Promise((r) => setTimeout(r, 120));
+          const midRatio1 = (spT.pane.scrollLeft + spT.pane.clientWidth / 2) / Math.max(1, spT.pane.scrollWidth);
+          check2(
+            "#5 \u0E0B\u0E39\u0E21\u0E41\u0E25\u0E49\u0E27\u0E08\u0E38\u0E14\u0E01\u0E36\u0E48\u0E07\u0E01\u0E25\u0E32\u0E07\u0E2B\u0E19\u0E49\u0E32\u0E08\u0E2D\u0E2D\u0E22\u0E39\u0E48\u0E17\u0E35\u0E48\u0E40\u0E14\u0E34\u0E21 (\u0E44\u0E21\u0E48\u0E01\u0E23\u0E30\u0E42\u0E14\u0E14\u0E44\u0E1B\u0E21\u0E38\u0E21\u0E0B\u0E49\u0E32\u0E22)",
+            Math.abs(midRatio1 - midRatio0) < 0.06,
+            `${midRatio0.toFixed(3)} \u2192 ${midRatio1.toFixed(3)}`
+          );
+          resetPageScale();
+          await new Promise((r) => setTimeout(r, 60));
+        }
+        showPanel("kanban");
+        await new Promise((r) => setTimeout(r, 60));
+        check2("#10 \u0E40\u0E1B\u0E34\u0E14\u0E41\u0E1C\u0E07 Kanban \u0E44\u0E14\u0E49", isPanelOpen("kanban"));
+        refreshToolbar();
+        check2(
+          "#10 \u0E1B\u0E38\u0E48\u0E21 Kanban \u0E40\u0E1B\u0E47\u0E19\u0E2A\u0E27\u0E34\u0E15\u0E0A\u0E4C (\u0E21\u0E35\u0E04\u0E25\u0E32\u0E2A tb-toggle + \u0E15\u0E34\u0E14 .on)",
+          $("#tb-kanban").classList.contains("tb-toggle") && $("#tb-kanban").classList.contains("on")
+        );
+        togglePanel("kanban");
+        await new Promise((r) => setTimeout(r, 60));
+        check2(
+          '#2 \u0E01\u0E14\u0E2A\u0E27\u0E34\u0E15\u0E0A\u0E4C\u0E0B\u0E49\u0E33 = "\u0E1B\u0E34\u0E14\u0E41\u0E1C\u0E07" \u0E44\u0E21\u0E48\u0E43\u0E0A\u0E48\u0E1E\u0E31\u0E1A',
+          !isPanelOpen("kanban") && !getPanelManager().isCollapsed("kanban")
+        );
+        check2(
+          "#2 \u0E1B\u0E34\u0E14\u0E41\u0E25\u0E49\u0E27\u0E44\u0E21\u0E48\u0E21\u0E35 element \u0E02\u0E2D\u0E07\u0E41\u0E1C\u0E07\u0E04\u0E49\u0E32\u0E07\u0E2D\u0E22\u0E39\u0E48\u0E43\u0E19 #app-root",
+          !document.querySelector('#app-root .k-panel[data-panel-id="kanban"]')
+        );
+        refreshToolbar();
+        check2("#10 \u0E1B\u0E34\u0E14\u0E41\u0E25\u0E49\u0E27\u0E1B\u0E38\u0E48\u0E21 Kanban \u0E44\u0E21\u0E48\u0E15\u0E34\u0E14 .on", !$("#tb-kanban").classList.contains("on"));
+        resetPanels();
+        await new Promise((r) => setTimeout(r, 40));
+        const grpBefore = tabGroupOf(getPanelManager().root, "outline");
+        check2(
+          "#4 \u0E01\u0E48\u0E2D\u0E19\u0E1B\u0E34\u0E14: Navigation \u0E2D\u0E22\u0E39\u0E48\u0E01\u0E25\u0E38\u0E48\u0E21\u0E41\u0E17\u0E47\u0E1A\u0E40\u0E14\u0E35\u0E22\u0E27\u0E01\u0E31\u0E1A\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C",
+          !!grpBefore && grpBefore.children.some((c) => c.id === "tree")
+        );
+        hidePanel("outline");
+        await new Promise((r) => setTimeout(r, 40));
+        check2(
+          "#4 \u0E08\u0E33\u0E15\u0E33\u0E41\u0E2B\u0E19\u0E48\u0E07\u0E40\u0E14\u0E34\u0E21\u0E25\u0E07 localStorage (k2-panel-home)",
+          (localStorage.getItem("k2-panel-home") || "").includes("outline")
+        );
+        showPanel("outline");
+        await new Promise((r) => setTimeout(r, 60));
+        const grpAfter = tabGroupOf(getPanelManager().root, "outline");
+        check2(
+          "#4 \u0E40\u0E1B\u0E34\u0E14\u0E01\u0E25\u0E31\u0E1A\u0E41\u0E25\u0E49\u0E27\u0E01\u0E25\u0E31\u0E1A\u0E40\u0E02\u0E49\u0E32\u0E01\u0E25\u0E38\u0E48\u0E21\u0E41\u0E17\u0E47\u0E1A\u0E40\u0E14\u0E34\u0E21 \u0E44\u0E21\u0E48\u0E41\u0E22\u0E01\u0E44\u0E1B\u0E0A\u0E48\u0E2D\u0E07\u0E43\u0E2B\u0E21\u0E48",
+          !!grpAfter && grpAfter.children.some((c) => c.id === "tree"),
+          JSON.stringify(getPanelManager().root && panelIds(getPanelManager().root))
+        );
+        getPanelManager().floatPanel("props", { x: 220, y: 160, w: 300, h: 240 });
+        await new Promise((r) => setTimeout(r, 60));
+        hidePanel("props");
+        await new Promise((r) => setTimeout(r, 40));
+        showPanel("props");
+        await new Promise((r) => setTimeout(r, 60));
+        const flProps = getPanelManager().floats.find((f) => f.panel.id === "props");
+        check2(
+          "#4 \u0E41\u0E1C\u0E07\u0E17\u0E35\u0E48\u0E40\u0E04\u0E22\u0E25\u0E2D\u0E22 \u2192 \u0E40\u0E1B\u0E34\u0E14\u0E01\u0E25\u0E31\u0E1A\u0E21\u0E32\u0E25\u0E2D\u0E22\u0E17\u0E35\u0E48\u0E1E\u0E34\u0E01\u0E31\u0E14\u0E40\u0E14\u0E34\u0E21",
+          !!flProps && flProps.x === 220 && flProps.y === 160,
+          JSON.stringify(flProps && { x: flProps.x, y: flProps.y })
+        );
+        resetPanels();
+        await new Promise((r) => setTimeout(r, 40));
+        {
+          const head = document.querySelector('#app-root .k-panel[data-panel-id="docs"] > .k-panel-head') || document.querySelector("#app-root .k-panel-head");
+          check2(
+            "#3 \u0E2B\u0E31\u0E27\u0E41\u0E1C\u0E07\u0E15\u0E34\u0E14\u0E04\u0E25\u0E32\u0E2A\u0E1A\u0E2D\u0E01\u0E40\u0E02\u0E15\u0E08\u0E31\u0E1A\u0E01\u0E25\u0E38\u0E48\u0E21 (k-can-group)",
+            !!document.querySelector("#app-root .k-panel-head.k-can-group")
+          );
+          const h2 = document.querySelector("#app-root .k-panel-head.k-can-group");
+          const hr = h2.getBoundingClientRect();
+          check2(
+            "#3 \u0E08\u0E31\u0E1A\u0E1D\u0E31\u0E48\u0E07\u0E02\u0E27\u0E32 ~20% = \u0E2D\u0E19\u0E38\u0E0D\u0E32\u0E15\u0E43\u0E2B\u0E49\u0E23\u0E27\u0E21\u0E40\u0E1B\u0E47\u0E19\u0E41\u0E17\u0E47\u0E1A",
+            inGroupHandle(h2, hr.right - hr.width * 0.05) === true
+          );
+          check2(
+            "#3 \u0E08\u0E31\u0E1A\u0E15\u0E23\u0E07\u0E01\u0E25\u0E32\u0E07/\u0E0B\u0E49\u0E32\u0E22\u0E02\u0E2D\u0E07\u0E2B\u0E31\u0E27\u0E41\u0E1C\u0E07 = \u0E44\u0E21\u0E48\u0E2D\u0E19\u0E38\u0E0D\u0E32\u0E15 (\u0E01\u0E31\u0E19\u0E40\u0E1C\u0E25\u0E2D\u0E23\u0E27\u0E21\u0E41\u0E17\u0E47\u0E1A)",
+            inGroupHandle(h2, hr.left + hr.width * 0.5) === false
+          );
+        }
+        {
+          const edges = { xs: [0, 500, 900], ys: [0, 300, 700] };
+          const s1 = snapToEdges(496, 20, 200, 150, edges);
+          check2("#9 \u0E25\u0E32\u0E01\u0E41\u0E1C\u0E07\u0E25\u0E2D\u0E22\u0E40\u0E02\u0E49\u0E32\u0E43\u0E01\u0E25\u0E49\u0E02\u0E2D\u0E1A \u2192 \u0E14\u0E39\u0E14\u0E0A\u0E34\u0E14\u0E1E\u0E2D\u0E14\u0E35", s1.x === 500 && s1.snapped === true, JSON.stringify(s1));
+          const s2 = snapToEdges(300, 150, 120, 90, edges);
+          check2("#9 \u0E2D\u0E22\u0E39\u0E48\u0E44\u0E01\u0E25\u0E02\u0E2D\u0E1A \u2192 \u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E14\u0E39\u0E14", s2.x === 300 && s2.snapped === false, JSON.stringify(s2));
+          const s3 = snapToEdges(296, 20, 200, 150, edges);
+          check2("#9 \u0E02\u0E2D\u0E1A\u0E02\u0E27\u0E32\u0E02\u0E2D\u0E07\u0E41\u0E1C\u0E07\u0E0A\u0E19\u0E02\u0E2D\u0E1A\u0E01\u0E47\u0E14\u0E39\u0E14\u0E40\u0E2B\u0E21\u0E37\u0E2D\u0E19\u0E01\u0E31\u0E19", s3.x === 300, JSON.stringify(s3));
+        }
+        {
+          showPanel("props");
+          await new Promise((r) => setTimeout(r, 60));
+          toggleReading(true);
+          await new Promise((r) => setTimeout(r, 120));
+          const propsEl = document.querySelector('#app-root .k-panel[data-panel-id="props"]');
+          check2(
+            "#8 \u0E42\u0E2B\u0E21\u0E14\u0E2D\u0E48\u0E32\u0E19: \u0E41\u0E1C\u0E07\u0E04\u0E38\u0E13\u0E2A\u0E21\u0E1A\u0E31\u0E15\u0E34\u0E16\u0E39\u0E01\u0E0B\u0E48\u0E2D\u0E19\u0E08\u0E23\u0E34\u0E07 (\u0E44\u0E21\u0E48\u0E40\u0E2B\u0E25\u0E37\u0E2D\u0E01\u0E25\u0E48\u0E2D\u0E07\u0E40\u0E1B\u0E25\u0E48\u0E32)",
+            !propsEl || getComputedStyle(propsEl).display === "none",
+            propsEl && getComputedStyle(propsEl).display
+          );
+          check2(
+            "#8 \u0E42\u0E2B\u0E21\u0E14\u0E2D\u0E48\u0E32\u0E19: \u0E17\u0E38\u0E01\u0E41\u0E1C\u0E07\u0E17\u0E35\u0E48\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E16\u0E37\u0E2D\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E16\u0E39\u0E01\u0E0B\u0E48\u0E2D\u0E19\u0E2B\u0E21\u0E14",
+            [...document.querySelectorAll("#app-root .k-panel")].every((e) => e.classList.contains("k-holds-docs") || getComputedStyle(e).display === "none")
+          );
+          toggleReading(false);
+          await new Promise((r) => setTimeout(r, 120));
+          toggleFocus(true);
+          await new Promise((r) => setTimeout(r, 120));
+          check2(
+            "#8 \u0E42\u0E2B\u0E21\u0E14\u0E42\u0E1F\u0E01\u0E31\u0E2A: \u0E17\u0E38\u0E01\u0E41\u0E1C\u0E07\u0E17\u0E35\u0E48\u0E44\u0E21\u0E48\u0E44\u0E14\u0E49\u0E16\u0E37\u0E2D\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E16\u0E39\u0E01\u0E0B\u0E48\u0E2D\u0E19\u0E2B\u0E21\u0E14",
+            [...document.querySelectorAll("#app-root .k-panel")].every((e) => e.classList.contains("k-holds-docs") || getComputedStyle(e).display === "none")
+          );
+          toggleFocus(false);
+          await new Promise((r) => setTimeout(r, 120));
+          resetPanels();
+          await new Promise((r) => setTimeout(r, 40));
+        }
+        {
+          const keepTabs = [...state.tabs.keys()];
+          closeAllTabs();
+          await new Promise((r) => setTimeout(r, 200));
+          refreshToolbar();
+          for (const id of ["tb-note", "tb-panels", "tb-kanban", "tb-gsearch", "tb-quickopen"]) {
+            check2(
+              "#11 \u0E44\u0E21\u0E48\u0E21\u0E35\u0E41\u0E17\u0E47\u0E1A\u0E09\u0E32\u0E01\u0E41\u0E15\u0E48\u0E1B\u0E38\u0E48\u0E21 " + id + " \u0E22\u0E31\u0E07\u0E43\u0E0A\u0E49\u0E44\u0E14\u0E49",
+              !$("#" + id).classList.contains("dis"),
+              $("#" + id).className
+            );
+          }
+          check2("#11 \u0E1B\u0E38\u0E48\u0E21\u0E17\u0E35\u0E48\u0E15\u0E49\u0E2D\u0E07\u0E21\u0E35\u0E15\u0E31\u0E27\u0E41\u0E01\u0E49\u0E44\u0E02\u0E08\u0E23\u0E34\u0E07 \u0E46 \u0E22\u0E31\u0E07\u0E16\u0E39\u0E01\u0E1B\u0E34\u0E14\u0E15\u0E32\u0E21\u0E40\u0E14\u0E34\u0E21", $("#tb-bold").classList.contains("dis"));
+          const anyScene2 = document.querySelector("#tree .scene:not(.add-row)");
+          if (anyScene2) {
+            anyScene2.click();
+            await new Promise((r) => setTimeout(r, 350));
+          }
+        }
+        {
+          S.homeThumb = 220;
+          applySettings();
+          check2(
+            "#12 \u0E15\u0E31\u0E49\u0E07\u0E02\u0E19\u0E32\u0E14\u0E01\u0E32\u0E23\u0E4C\u0E14\u0E2B\u0E19\u0E49\u0E32\u0E41\u0E23\u0E01\u0E43\u0E19 settings \u0E44\u0E14\u0E49 (--home-thumb)",
+            rootVar("--home-thumb") === "220px",
+            rootVar("--home-thumb")
+          );
+          const ovHome = await showHomeDialog();
+          await new Promise((r) => setTimeout(r, 250));
+          const grid = ovHome.querySelector(".home-grid");
+          check2("#12 \u0E2B\u0E19\u0E49\u0E32\u0E41\u0E23\u0E01\u0E41\u0E2A\u0E14\u0E07\u0E01\u0E23\u0E34\u0E14", !!grid);
+          const cols = getComputedStyle(grid).gridTemplateColumns.split(" ").filter(Boolean).length;
+          check2("#12 \u0E2B\u0E19\u0E49\u0E32\u0E41\u0E23\u0E01\u0E40\u0E1B\u0E47\u0E19 4 \u0E04\u0E2D\u0E25\u0E31\u0E21\u0E19\u0E4C", cols === 4, String(cols));
+          const card1 = grid.querySelector(".home-card");
+          if (card1) {
+            const h12 = card1.getBoundingClientRect().height;
+            grid.classList.add("list");
+            await new Promise((r) => setTimeout(r, 60));
+            const hList = card1.getBoundingClientRect().height;
+            grid.classList.remove("list");
+            await new Promise((r) => setTimeout(r, 60));
+            const h2c = card1.getBoundingClientRect().height;
+            check2(
+              "#12 \u0E2A\u0E25\u0E31\u0E1A\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23 \u2194 \u0E01\u0E32\u0E23\u0E4C\u0E14 \u0E41\u0E25\u0E49\u0E27\u0E02\u0E19\u0E32\u0E14\u0E01\u0E32\u0E23\u0E4C\u0E14\u0E01\u0E25\u0E31\u0E1A\u0E21\u0E32\u0E40\u0E17\u0E48\u0E32\u0E40\u0E14\u0E34\u0E21 (fixed)",
+              Math.abs(h12 - h2c) < 1 && hList !== h12,
+              `${h12} / ${hList} / ${h2c}`
+            );
+          }
+          ovHome.remove();
+          S.homeThumb = 190;
+          applySettings();
+        }
+        {
+          const blob = entitySearchBlob("\u0E17\u0E2D\u0E23\u0E48\u0E32", {
+            name: "\u0E17\u0E2D\u0E23\u0E48\u0E32",
+            aliases: ["Tora"],
+            tags: ["\u0E2B\u0E25\u0E31\u0E01"],
+            fields: { \u0E1A\u0E17\u0E1A\u0E32\u0E17: "\u0E40\u0E08\u0E49\u0E32\u0E02\u0E2D\u0E07\u0E23\u0E49\u0E32\u0E19\u0E40\u0E1A\u0E40\u0E01\u0E2D\u0E23\u0E35\u0E48" }
+          }, "characters", "");
+          check2("#13 blob \u0E04\u0E49\u0E19\u0E2B\u0E32\u0E23\u0E27\u0E21\u0E0A\u0E37\u0E48\u0E2D\u0E40\u0E25\u0E48\u0E19", blob.includes("tora"));
+          check2("#13 blob \u0E04\u0E49\u0E19\u0E2B\u0E32\u0E23\u0E27\u0E21\u0E41\u0E17\u0E47\u0E01", blob.includes("\u0E2B\u0E25\u0E31\u0E01"));
+          check2("#13 blob \u0E04\u0E49\u0E19\u0E2B\u0E32\u0E23\u0E27\u0E21\u0E04\u0E48\u0E32\u0E43\u0E19\u0E1F\u0E34\u0E25\u0E14\u0E4C\u0E40\u0E17\u0E21\u0E40\u0E1E\u0E25\u0E15", blob.includes("\u0E40\u0E1A\u0E40\u0E01\u0E2D\u0E23\u0E35\u0E48"));
+          check2(
+            "#13 blob \u0E44\u0E21\u0E48\u0E40\u0E2D\u0E32\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E23\u0E39\u0E1B/guid \u0E21\u0E32\u0E1B\u0E19",
+            !entitySearchBlob("x", { guid: "k2-zzz", images: ["a.png"] }, "c", "").includes("k2-zzz")
+          );
+          const entEls = [...document.querySelectorAll("#tree .wiki-ent")];
+          check2(
+            "#13 \u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E40\u0E2D\u0E19\u0E17\u0E34\u0E15\u0E35\u0E49\u0E43\u0E19 Explorer \u0E21\u0E35 dataset.search \u0E17\u0E35\u0E48\u0E21\u0E32\u0E08\u0E32\u0E01\u0E44\u0E1F\u0E25\u0E4C\u0E08\u0E23\u0E34\u0E07",
+            entEls.length > 0 && entEls.some((e) => (e.dataset.search || "").length > (e.textContent || "").length),
+            String(entEls.length)
+          );
+        }
+        {
+          const secs = await listSections();
+          check2("[97] \u0E21\u0E35\u0E40\u0E25\u0E48\u0E21\u0E43\u0E2B\u0E49\u0E1C\u0E39\u0E01\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23", secs.length > 0);
+          const secPath = secs[0].secPath;
+          await openRoster(secPath, secs[0].title);
+          await new Promise((r) => setTimeout(r, 200));
+          const rTab = state.active;
+          check2(
+            "[97] \u0E40\u0E1B\u0E34\u0E14\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E40\u0E1B\u0E47\u0E19\u0E41\u0E17\u0E47\u0E1A\u0E02\u0E2D\u0E07\u0E15\u0E31\u0E27\u0E40\u0E2D\u0E07",
+            !!rTab && String(rTab.file).startsWith("::roster::"),
+            rTab && rTab.file
+          );
+          check2(
+            "[97] \u0E2B\u0E19\u0E49\u0E32\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E43\u0E0A\u0E49\u0E01\u0E23\u0E2D\u0E1A\u0E2B\u0E19\u0E49\u0E32\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E40\u0E14\u0E35\u0E22\u0E27\u0E01\u0E31\u0E1A\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07",
+            !!rTab.pane.querySelector(".roster-page")
+          );
+          const rp = rTab.pane.querySelector(".roster-page");
+          const rpCS = getComputedStyle(rp);
+          check2(
+            "[97] \u0E23\u0E30\u0E22\u0E30\u0E02\u0E2D\u0E1A\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D = \u0E0B\u0E49\u0E32\u0E22 1.5 \u0E19\u0E34\u0E49\u0E27 / \u0E1A\u0E19 1 \u0E19\u0E34\u0E49\u0E27",
+            Math.abs(parseFloat(rpCS.paddingLeft) - 1.5 * 96) < 2 && Math.abs(parseFloat(rpCS.paddingTop) - 1 * 96) < 2,
+            rpCS.paddingLeft + " / " + rpCS.paddingTop
+          );
+          check2(
+            "[97] \u0E04\u0E27\u0E32\u0E21\u0E01\u0E27\u0E49\u0E32\u0E07\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D = \u0E04\u0E27\u0E32\u0E21\u0E01\u0E27\u0E49\u0E32\u0E07\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29",
+            Math.abs(rp.getBoundingClientRect().width - 8.5 * 96) < 3,
+            String(rp.getBoundingClientRect().width)
+          );
+          const ttl = rp.querySelector(".roster-title");
+          const ttlCS = getComputedStyle(ttl);
+          check2(
+            '[97] "Cast of Characters" \u0E40\u0E1B\u0E47\u0E19\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E41\u0E23\u0E01 \u0E2D\u0E22\u0E39\u0E48\u0E01\u0E25\u0E32\u0E07\u0E2B\u0E19\u0E49\u0E32 \u0E02\u0E35\u0E14\u0E40\u0E2A\u0E49\u0E19\u0E43\u0E15\u0E49',
+            ttl.textContent === "Cast of Characters" && ttlCS.textAlign === "center" && ttlCS.textDecorationLine.includes("underline"),
+            ttl.textContent + " | " + ttlCS.textAlign + " | " + ttlCS.textDecorationLine
+          );
+          check2("[97] \u0E2B\u0E19\u0E49\u0E32\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E44\u0E21\u0E48\u0E21\u0E35\u0E40\u0E25\u0E02\u0E2B\u0E19\u0E49\u0E32", !rp.querySelector(".page-number, .k-page-no"));
+          [...rTab.pane.querySelectorAll(".roster-bar button")].find((b) => b.textContent.includes("\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23")).click();
+          await new Promise((r) => setTimeout(r, 60));
+          const nameEl = rp.querySelector(".roster-name");
+          const detEl = rp.querySelector(".roster-detail");
+          check2("[97] \u0E40\u0E1E\u0E34\u0E48\u0E21\u0E41\u0E16\u0E27\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E44\u0E14\u0E49 (\u0E0A\u0E37\u0E48\u0E2D + \u0E23\u0E32\u0E22\u0E25\u0E30\u0E40\u0E2D\u0E35\u0E22\u0E14)", !!nameEl && !!detEl);
+          const nameCS = getComputedStyle(nameEl);
+          check2("[97] \u0E0A\u0E37\u0E48\u0E2D\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E02\u0E35\u0E14\u0E40\u0E2A\u0E49\u0E19\u0E43\u0E15\u0E49\u0E40\u0E2A\u0E21\u0E2D", nameCS.textDecorationLine.includes("underline"), nameCS.textDecorationLine);
+          check2('[97] \u0E21\u0E35 ":" \u0E15\u0E48\u0E2D\u0E17\u0E49\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D', !!rp.querySelector(".roster-colon"));
+          const rowCS = getComputedStyle(rp.querySelector(".roster-row"));
+          check2(
+            "[97] \u0E02\u0E36\u0E49\u0E19\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E43\u0E2B\u0E21\u0E48\u0E0A\u0E34\u0E14\u0E04\u0E2D\u0E25\u0E31\u0E21\u0E19\u0E4C\u0E23\u0E32\u0E22\u0E25\u0E30\u0E40\u0E2D\u0E35\u0E22\u0E14 (hanging indent)",
+            parseFloat(rowCS.paddingLeft) > 100 && parseFloat(rowCS.textIndent) < -100,
+            rowCS.paddingLeft + " / " + rowCS.textIndent
+          );
+          check2(
+            "[97] \u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23\u0E16\u0E31\u0E14\u0E44\u0E1B\u0E40\u0E27\u0E49\u0E19 1 \u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14 (margin-bottom \u2248 1.5em)",
+            parseFloat(rowCS.marginBottom) > parseFloat(rowCS.fontSize),
+            rowCS.marginBottom
+          );
+          nameEl.textContent = "Donald Bradleyson";
+          nameEl.dispatchEvent(new Event("input"));
+          detEl.textContent = "\u0E19\u0E31\u0E01\u0E2A\u0E37\u0E1A\u0E27\u0E31\u0E22 40";
+          detEl.dispatchEvent(new Event("input"));
+          const sceneBody = rp.querySelector('.roster-sec[data-k="scene"] .roster-sec-body');
+          check2(
+            "[97] \u0E21\u0E35\u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D Scene + Time (\u0E1C\u0E39\u0E49\u0E43\u0E0A\u0E49\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E40\u0E2D\u0E32/\u0E44\u0E21\u0E48\u0E40\u0E2D\u0E32\u0E44\u0E14\u0E49)",
+            !!rp.querySelector('.roster-sec[data-k="scene"]') && !!rp.querySelector('.roster-sec[data-k="time"]')
+          );
+          const secHeadCS = getComputedStyle(rp.querySelector(".roster-sec-head"));
+          check2(
+            "[97] \u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D Scene \u0E2D\u0E22\u0E39\u0E48\u0E01\u0E25\u0E32\u0E07\u0E2B\u0E19\u0E49\u0E32 \u0E02\u0E35\u0E14\u0E40\u0E2A\u0E49\u0E19\u0E43\u0E15\u0E49",
+            secHeadCS.textAlign === "center" && secHeadCS.textDecorationLine.includes("underline")
+          );
+          check2("[97] \u0E04\u0E33\u0E2D\u0E18\u0E34\u0E1A\u0E32\u0E22\u0E43\u0E15\u0E49\u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D\u0E0A\u0E34\u0E14\u0E0B\u0E49\u0E32\u0E22", getComputedStyle(sceneBody).textAlign === "left");
+          sceneBody.textContent = "\u0E01\u0E23\u0E38\u0E07\u0E40\u0E17\u0E1E\u0E2F 2025";
+          sceneBody.dispatchEvent(new Event("input"));
+          await saveTab(rTab);
+          const rFile = await kapi.join(secPath, "roster.json");
+          check2("[97] \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E25\u0E07 <\u0E40\u0E25\u0E48\u0E21>/roster.json (\u0E2D\u0E22\u0E39\u0E48\u0E43\u0E19\u0E40\u0E25\u0E48\u0E21 \u0E44\u0E21\u0E48\u0E2D\u0E22\u0E39\u0E48\u0E43\u0E19\u0E09\u0E32\u0E01)", await kapi.exists(rFile));
+          const rJson = JSON.parse(await kapi.readFile(rFile));
+          check2(
+            "[97] \u0E44\u0E1F\u0E25\u0E4C\u0E40\u0E01\u0E47\u0E1A\u0E0A\u0E37\u0E48\u0E2D+\u0E23\u0E32\u0E22\u0E25\u0E30\u0E40\u0E2D\u0E35\u0E22\u0E14\u0E15\u0E31\u0E27\u0E25\u0E30\u0E04\u0E23",
+            rJson.characters[0].name === "Donald Bradleyson" && rJson.characters[0].detail === "\u0E19\u0E31\u0E01\u0E2A\u0E37\u0E1A\u0E27\u0E31\u0E22 40",
+            JSON.stringify(rJson.characters)
+          );
+          check2("[97] \u0E44\u0E1F\u0E25\u0E4C\u0E40\u0E01\u0E47\u0E1A Scene \u0E17\u0E35\u0E48\u0E01\u0E23\u0E2D\u0E01", rJson.scene === "\u0E01\u0E23\u0E38\u0E07\u0E40\u0E17\u0E1E\u0E2F 2025");
+          check2('[97] \u0E21\u0E35\u0E2A\u0E27\u0E34\u0E15\u0E0A\u0E4C "\u0E43\u0E2A\u0E48\u0E15\u0E2D\u0E19\u0E1E\u0E34\u0E21\u0E1E\u0E4C/\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01"', rJson.includeInExport === true);
+          const chkScene = [...rTab.pane.querySelectorAll(".roster-chk")].find((l) => l.textContent.includes("Scene")).querySelector("input");
+          chkScene.click();
+          await new Promise((r) => setTimeout(r, 60));
+          check2(
+            "[97] \u0E1B\u0E34\u0E14\u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D Scene \u2192 \u0E2B\u0E32\u0E22\u0E08\u0E32\u0E01\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D",
+            !rTab.pane.querySelector('.roster-sec[data-k="scene"]')
+          );
+          chkScene.click();
+          await new Promise((r) => setTimeout(r, 60));
+          const rTxt = rosterToText(rTab.roster, spFormat());
+          check2(
+            '[97] \u0E41\u0E1B\u0E25\u0E07\u0E40\u0E1B\u0E47\u0E19\u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21: \u0E0A\u0E37\u0E48\u0E2D\u0E15\u0E32\u0E21\u0E14\u0E49\u0E27\u0E22 ":" \u0E41\u0E25\u0E49\u0E27 tab',
+            rTxt.includes("Donald Bradleyson:	\u0E19\u0E31\u0E01\u0E2A\u0E37\u0E1A\u0E27\u0E31\u0E22 40"),
+            rTxt.slice(0, 160)
+          );
+          check2("[97] \u0E41\u0E1B\u0E25\u0E07\u0E40\u0E1B\u0E47\u0E19\u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21: \u0E2B\u0E31\u0E27\u0E40\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E31\u0E14\u0E01\u0E25\u0E32\u0E07", rTxt.split("\n")[0].startsWith(" "));
+          [...rTab.pane.querySelectorAll(".roster-bar button")].find((b) => b.textContent.includes("Wiki")).click();
+          await new Promise((r) => setTimeout(r, 250));
+          check2(
+            "[97] \u0E14\u0E36\u0E07\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D\u0E08\u0E32\u0E01 Wiki \u0E40\u0E02\u0E49\u0E32\u0E21\u0E32\u0E44\u0E14\u0E49",
+            rTab.roster.characters.length >= 1,
+            String(rTab.roster.characters.length)
+          );
+          closeTab(rTab.file);
+        }
+        {
+          settingsDialog("setup");
+          await new Promise((r) => setTimeout(r, 60));
+          const need = [
+            "#st-email",
+            "#st-contact",
+            "#st-spby",
+            "#st-basedon",
+            "#st-revby",
+            "#st-phone",
+            "#st-agname",
+            "#st-agaddr",
+            "#st-agphone",
+            "#st-agemail",
+            "#st-copyright"
+          ];
+          check2(
+            '[98] \u0E41\u0E17\u0E47\u0E1A "\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E1C\u0E25\u0E07\u0E32\u0E19" \u0E40\u0E1B\u0E34\u0E14\u0E15\u0E23\u0E07\u0E08\u0E32\u0E01\u0E40\u0E21\u0E19\u0E39\u0E44\u0E14\u0E49',
+            document.querySelector('.k-set-page[data-p="setup"]').classList.contains("on")
+          );
+          check2(
+            "[98] \u0E21\u0E35\u0E04\u0E23\u0E1A\u0E17\u0E31\u0E49\u0E07 11 \u0E0A\u0E48\u0E2D\u0E07",
+            need.every((s) => !!document.querySelector(".k-settings " + s)),
+            need.filter((s) => !document.querySelector(".k-settings " + s)).join(",")
+          );
+          const vals = {
+            "#st-email": "top@example.com",
+            "#st-contact": "\u0E01\u0E23\u0E38\u0E07\u0E40\u0E17\u0E1E\u0E2F",
+            "#st-spby": "Top",
+            "#st-basedon": "\u0E40\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E23\u0E34\u0E07",
+            "#st-revby": "\u0E1A\u0E01.",
+            "#st-phone": "02-000-0000",
+            "#st-agname": "\u0E40\u0E2D\u0E40\u0E08\u0E19\u0E15\u0E4C \u0E01",
+            "#st-agaddr": "\u0E16\u0E19\u0E19\u0E2A\u0E38\u0E02\u0E38\u0E21\u0E27\u0E34\u0E17",
+            "#st-agphone": "02-111-1111",
+            "#st-agemail": "agent@example.com",
+            "#st-copyright": "2026 Top"
+          };
+          for (const k of Object.keys(vals)) document.querySelector(".k-settings " + k).value = vals[k];
+          document.querySelector(".k-settings .k-ok").click();
+          await new Promise((r) => setTimeout(r, 200));
+          const pjm = JSON.parse(await kapi.readFile(await kapi.join(state.root, "project.khn.json")));
+          check2(
+            "[98] \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E2D\u0E35\u0E40\u0E21\u0E25/\u0E15\u0E34\u0E14\u0E15\u0E48\u0E2D/\u0E42\u0E17\u0E23\u0E28\u0E31\u0E1E\u0E17\u0E4C\u0E25\u0E07 project.khn.json",
+            pjm.authorEmail === "top@example.com" && pjm.contact === "\u0E01\u0E23\u0E38\u0E07\u0E40\u0E17\u0E1E\u0E2F" && pjm.phone === "02-000-0000",
+            JSON.stringify({ e: pjm.authorEmail, c: pjm.contact, p: pjm.phone })
+          );
+          check2(
+            "[98] \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E40\u0E04\u0E23\u0E14\u0E34\u0E15\u0E1A\u0E17 (Screenplay By / Based On / Revisions by)",
+            pjm.screenplayBy === "Top" && pjm.basedOn === "\u0E40\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E08\u0E23\u0E34\u0E07" && pjm.revisionsBy === "\u0E1A\u0E01."
+          );
+          check2(
+            "[98] \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E15\u0E31\u0E27\u0E41\u0E17\u0E19 4 \u0E0A\u0E48\u0E2D\u0E07",
+            pjm.agentName === "\u0E40\u0E2D\u0E40\u0E08\u0E19\u0E15\u0E4C \u0E01" && pjm.agentAddress === "\u0E16\u0E19\u0E19\u0E2A\u0E38\u0E02\u0E38\u0E21\u0E27\u0E34\u0E17" && pjm.agentPhone === "02-111-1111" && pjm.agentEmail === "agent@example.com"
+          );
+          check2("[98] \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E25\u0E34\u0E02\u0E2A\u0E34\u0E17\u0E18\u0E34\u0E4C", pjm.copyright === "2026 Top");
+        }
+        {
+          settingsDialog("page");
+          await new Promise((r) => setTimeout(r, 60));
+          check2(
+            '[85] \u0E15\u0E31\u0E49\u0E07\u0E04\u0E48\u0E32\u0E21\u0E35\u0E41\u0E17\u0E47\u0E1A "\u0E2B\u0E19\u0E49\u0E32\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29" \u0E1E\u0E23\u0E49\u0E2D\u0E21\u0E0A\u0E48\u0E2D\u0E07\u0E02\u0E19\u0E32\u0E14/\u0E23\u0E30\u0E22\u0E30\u0E02\u0E2D\u0E1A',
+            !!document.querySelector(".k-settings #st-paper") && !!document.querySelector(".k-settings #st-mg-left")
+          );
+          check2(
+            "[84] \u0E15\u0E31\u0E49\u0E07\u0E04\u0E48\u0E32\u0E21\u0E35\u0E0A\u0E48\u0E2D\u0E07\u0E01\u0E0E\u0E01\u0E32\u0E23\u0E15\u0E31\u0E14\u0E2B\u0E19\u0E49\u0E32\u0E04\u0E23\u0E1A",
+            ["#st-pb-ab", "#st-pb-at", "#st-pb-db", "#st-pb-dt", "#st-pb-hy", "#st-pb-ks"].every((s) => !!document.querySelector(".k-settings " + s))
+          );
+          check2(
+            "[92] \u0E15\u0E31\u0E49\u0E07\u0E04\u0E48\u0E32\u0E21\u0E35\u0E0A\u0E48\u0E2D\u0E07\u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21\u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19\u0E04\u0E23\u0E1A",
+            ["#st-str-cb", "#st-str-ct", "#st-str-more", "#st-str-contd"].every((s) => !!document.querySelector(".k-settings " + s))
+          );
+          const mgLeft = document.querySelector(".k-settings #st-mg-left");
+          mgLeft.value = "1.25";
+          mgLeft.dispatchEvent(new Event("input"));
+          await new Promise((r) => setTimeout(r, 40));
+          check2(
+            "[85] \u0E41\u0E01\u0E49\u0E23\u0E30\u0E22\u0E30\u0E02\u0E2D\u0E1A\u0E43\u0E19\u0E01\u0E25\u0E48\u0E2D\u0E07\u0E15\u0E31\u0E49\u0E07\u0E04\u0E48\u0E32 \u2192 \u0E40\u0E2B\u0E47\u0E19\u0E1C\u0E25\u0E17\u0E31\u0E19\u0E17\u0E35 (\u0E1E\u0E23\u0E35\u0E27\u0E34\u0E27)",
+            rootVar("--mg-left") === "1.25in",
+            rootVar("--mg-left")
+          );
+          const moreIn = document.querySelector(".k-settings #st-str-more");
+          moreIn.value = "(\u0E22\u0E31\u0E07\u0E1E\u0E39\u0E14\u0E15\u0E48\u0E2D)";
+          moreIn.dispatchEvent(new Event("input"));
+          [...document.querySelectorAll(".k-set-tab")].find((x) => x.dataset.p === "spfmt").click();
+          const rows = document.querySelectorAll(".k-settings #st-spfmt tbody tr");
+          check2(
+            "[81] \u0E15\u0E31\u0E49\u0E07\u0E04\u0E48\u0E32\u0E21\u0E35\u0E15\u0E32\u0E23\u0E32\u0E07\u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A\u0E04\u0E23\u0E1A\u0E17\u0E38\u0E01 element",
+            rows.length === SP_ELEMENT_KEYS.length,
+            `${rows.length}/${SP_ELEMENT_KEYS.length}`
+          );
+          check2(
+            "[83] \u0E41\u0E15\u0E48\u0E25\u0E30\u0E41\u0E16\u0E27\u0E21\u0E35\u0E15\u0E34\u0E4A\u0E01 \u0E43\u0E2B\u0E0D\u0E48/\u0E2B\u0E19\u0E32/\u0E40\u0E2D\u0E35\u0E22\u0E07/\u0E02\u0E35\u0E14 \u0E17\u0E31\u0E49\u0E07\u0E08\u0E2D\u0E41\u0E25\u0E30\u0E15\u0E2D\u0E19\u0E1E\u0E34\u0E21\u0E1E\u0E4C (8 \u0E0A\u0E48\u0E2D\u0E07)",
+            rows[0].querySelectorAll("input[type=checkbox]").length === 8,
+            String(rows[0].querySelectorAll("input[type=checkbox]").length)
+          );
+          check2(
+            "[81][82] \u0E41\u0E15\u0E48\u0E25\u0E30\u0E41\u0E16\u0E27\u0E21\u0E35\u0E0A\u0E48\u0E2D\u0E07\u0E15\u0E31\u0E27\u0E40\u0E25\u0E02 4 \u0E0A\u0E48\u0E2D\u0E07 (\u0E40\u0E22\u0E37\u0E49\u0E2D\u0E07/\u0E01\u0E27\u0E49\u0E32\u0E07/\u0E40\u0E27\u0E49\u0E19\u0E01\u0E48\u0E2D\u0E19/\u0E23\u0E30\u0E22\u0E30\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14)",
+            rows[0].querySelectorAll("input[type=number]").length === 4
+          );
+          [...document.querySelectorAll(".k-set-tab")].find((x) => x.dataset.p === "sp").click();
+          check2("[\u0E1B\u0E38\u0E48\u0E21\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07] \u0E21\u0E35\u0E2A\u0E27\u0E34\u0E15\u0E0A\u0E4C\u0E40\u0E1B\u0E34\u0E14/\u0E1B\u0E34\u0E14\u0E23\u0E30\u0E1A\u0E1A\u0E1B\u0E38\u0E48\u0E21", !!document.querySelector(".k-settings #st-spcycle-on"));
+          check2(
+            "[\u0E1B\u0E38\u0E48\u0E21\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07] \u0E21\u0E35\u0E17\u0E35\u0E48\u0E15\u0E31\u0E49\u0E07\u0E1B\u0E38\u0E48\u0E21\u0E40\u0E2D\u0E07\u0E04\u0E23\u0E1A 3 \u0E1B\u0E38\u0E48\u0E21",
+            document.querySelectorAll(".k-settings #st-spkeys .k-key-row").length === 3
+          );
+          document.querySelector(".k-settings .k-ok").click();
+          await new Promise((r) => setTimeout(r, 200));
+          check2(
+            "[85] \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E23\u0E30\u0E22\u0E30\u0E02\u0E2D\u0E1A\u0E25\u0E07 settings",
+            state.settings.pageMargins.left === 1.25,
+            JSON.stringify(state.settings.pageMargins)
+          );
+          check2("[92] \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21 (MORE) \u0E17\u0E35\u0E48\u0E41\u0E01\u0E49\u0E40\u0E2D\u0E07", state.settings.spStrings.dialogueMore === "(\u0E22\u0E31\u0E07\u0E1E\u0E39\u0E14\u0E15\u0E48\u0E2D)");
+          const pjm2 = JSON.parse(await kapi.readFile(await kapi.join(state.root, "project.khn.json")));
+          check2("[85] \u0E23\u0E30\u0E22\u0E30\u0E02\u0E2D\u0E1A\u0E16\u0E39\u0E01\u0E40\u0E02\u0E35\u0E22\u0E19\u0E25\u0E07 project.khn.json", pjm2.settings.pageMargins.left === 1.25);
+          state.settings.pageMargins = { top: 1, bottom: 1, left: 1.5, right: 1 };
+          state.settings.spStrings = null;
+          applySettings();
+          check2("[85] \u0E04\u0E37\u0E19\u0E23\u0E30\u0E22\u0E30\u0E02\u0E2D\u0E1A\u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19\u0E41\u0E25\u0E49\u0E27", rootVar("--mg-left") === "1.5in");
+        }
+      }
       out.push("ALL OK");
     } catch (e) {
       out.push("STOP: " + e.message + "\n" + (e.stack || ""));
@@ -72888,7 +74847,7 @@ ${sc.body || ""}
     await kapi.writeFile("/tmp/k2result.txt", out.join("\n"));
     document.title = out[out.length - 1] === "ALL OK" ? "TESTOK" : "TESTFAIL";
   }
-  var import_md10, tr, pageScale, autosaveTimer, treeScope, _treeBuilding, _treeQueued, INV_C, FLOAT_Z_MIN, FLOAT_Z_MAX, _floatZ, mapsState_C, _menuTogSig, _readEsc, APP_VERSION, propsTarget_C, _propsGen, propsFlush_C, SECTION_STATUSES, plugins, TPL_CATS, FIELD_TYPES, _cmMigrated, uniqList, imgURLBase, FMTS, countJob, outlineJob, navShowBeats, navTrunc, _logTimer, FEATURE_PANELS, _featInFlight, TB_SC_MAP, floatBar, TIP_GAP, _tipEl, _tipHost, _tipSaved, _tipJob, _tipKt;
+  var import_md10, tr, pageScale, autosaveTimer, treeScope, _treeBuilding, _treeQueued, INV_C, FLOAT_Z_MIN, FLOAT_Z_MAX, _floatZ, mapsState_C, _menuTogSig, _readEsc, APP_VERSION, propsTarget_C, _propsGen, propsFlush_C, SECTION_STATUSES, plugins, TPL_CATS, FIELD_TYPES, _cmMigrated, uniqList, imgURLBase, FMTS, ALWAYS_ON_TB, countJob, outlineJob, navShowBeats, navTrunc, _logTimer, FEATURE_PANELS, _featInFlight, TB_SC_MAP, floatBar, TIP_GAP, _tipEl, _tipHost, _tipSaved, _tipJob, _tipKt;
   var init_app = __esm({
     "src/app.js"() {
       init_editor();
@@ -72947,6 +74906,7 @@ ${sc.body || ""}
       init_centralize_ui();
       init_kanban_ui();
       init_panel_layout();
+      init_panel_drag();
       init_panel_ui();
       init_split_ui();
       init_auto_link_ui();
@@ -72957,6 +74917,7 @@ ${sc.body || ""}
       init_import_ui();
       init_ai_bridge();
       init_icons();
+      init_roster_ui();
       tr = t;
       pageScale = 1;
       autosaveTimer = null;
@@ -72990,6 +74951,28 @@ ${sc.body || ""}
       uniqList = (arr) => [...new Set(arr.filter(Boolean))];
       imgURLBase = /* @__PURE__ */ new Map();
       FMTS = ["bold", "italic", "underline", "strike"];
+      ALWAYS_ON_TB = /* @__PURE__ */ new Set([
+        "tb-close",
+        "tb-close-all",
+        "tb-focus",
+        "tb-typewriter",
+        "tb-linenum",
+        "tb-quickopen",
+        "tb-gallery",
+        "tb-sp-elem",
+        "tb-tree-panel",
+        "tb-outline-panel",
+        "tb-props-panel",
+        "tb-search-panel",
+        "tb-note",
+        "tb-panels",
+        "tb-kanban",
+        "tb-gsearch",
+        "tb-read",
+        "tb-ai",
+        "tb-ai-chat",
+        "tb-plug"
+      ]);
       countJob = null;
       outlineJob = null;
       navShowBeats = (localStorage.getItem("k2-nav-beats") ?? "1") === "1";
@@ -73158,7 +75141,10 @@ ${sc.body || ""}
           e.preventDefault();
           showAllNotes();
         };
-        $("#tb-kanban").onclick = () => togglePanel("kanban");
+        $("#tb-kanban").onclick = () => {
+          togglePanel("kanban");
+          refreshToolbar();
+        };
         $("#tb-ai").onclick = () => openAIAssistant();
         $("#tb-ai-chat").onclick = () => openAIChat();
         $("#tb-tree-panel").onclick = () => {

@@ -189,9 +189,18 @@ body.k-panel-dragging, body.k-resizing { user-select:none; }
    → ProseMirror, decoration ตรวจคำผิด และ dropdown SmartType ทำงานถูกโดยไม่ต้องแก้โค้ด
    (Electron = Chromium เท่านั้น จึงใช้ zoom ได้เต็มที่)
    workspace เป็น display:flow-root → กว้างตาม content จริง (ไม่ inherit parent) → zoom แล้ว overflow ที่ .pane */
-.pane > .workspace { zoom:var(--page-scale, 1); display:flow-root; width:fit-content; }
-.ProseMirror { outline:none; max-width:940px; margin:24px auto 40vh; padding:0 72px;
-  font-size:var(--ed-fs, 15.5px); line-height:1.75; caret-color:var(--accent-hi); }
+/* ── [85] ขนาดกระดาษ + ระยะขอบ (ตั้งจาก settings ผ่าน applyPageVars ใน app.js) ──
+   ค่าเริ่มต้น = Letter 8.5×11 นิ้ว · ขอบ บน1 ล่าง1 ซ้าย1.5 ขวา1 (มาตรฐานบทภาพยนตร์)
+   ใช้ร่วมกันทั้งโหมดนิยายและโหมดบทหนัง — หน้ากระดาษจึงเท่ากันเป๊ะทั้งสองโหมด */
+:root { --page-w:8.5in; --page-h:11in;
+  --mg-top:1in; --mg-bottom:1in; --mg-left:1.5in; --mg-right:1in; --text-w:6in; }
+/* บั๊ก #6: ขนาดของแผงต้องไม่มีผลกับหน้ากระดาษ
+   workspace = max-content (กว้างตามหน้ากระดาษเสมอ) + min-width 100% (จาก JS ตามระดับซูม)
+   → แผงแคบ = มีแถบเลื่อนแนวนอน ไม่ใช่ตัดคำ · แผงกว้าง = หน้ากระดาษอยู่กึ่งกลาง (บั๊ก #7) */
+.pane > .workspace { zoom:var(--page-scale, 1); display:flow-root; width:max-content; min-width:100%; }
+.ProseMirror { outline:none; width:var(--page-w); max-width:none; margin:24px auto 40vh;
+  padding:0 var(--mg-right) 0 var(--mg-left);
+  font-size:var(--ed-fs, 16px); line-height:1.75; caret-color:var(--accent-hi); }
 .ProseMirror p { margin:0 0 .35em; }
 .ProseMirror h1,.ProseMirror h2,.ProseMirror h3,.ProseMirror h4,
 .ProseMirror h5,.ProseMirror h6 { color:var(--link); margin:1em 0 .4em; line-height:1.3; }
@@ -229,7 +238,8 @@ body.k-ln .ProseMirror > *::before {
 /* ---------- พิมพ์: เหลือเฉพาะหน้ากระดาษ ---------- */
 @media print {
   #topbar,#toolbar,#tabs,#statusbar,.k-tab-bar,.k-panel-head { display:none !important; }
-  .k-dock > *:not(.k-holds-docs), .k-resize-handle, .k-float-panel { display:none !important; }
+  .k-panel:not(.k-holds-docs), .k-tab-group:not(.k-holds-docs), .k-dock:not(.k-holds-docs),
+  .k-resize-handle, .k-float-panel, .k-min-tray { display:none !important; }
   body { background:#fff; color:#000; }
   .pane { position:static; overflow:visible; }
   .pane:not(.on) { display:none; }
@@ -668,26 +678,24 @@ body.printing #tabs, body.printing #statusbar { visibility:hidden; }
 /* พื้นที่แก้บทหนังทำเป็น "หน้ากระดาษ" กว้างคงที่ กึ่งกลาง อ่านง่ายเหมือนสคริปต์จริง
    ระยะเยื้องใช้หน่วย ch (ความกว้างตัวอักษร courier) = ตรงตามมาตรฐานสคริปต์จริง
    และไม่เพี้ยนเมื่อซูมด้วย Ctrl+ล้อเมาส์ (ซูมทั้งหน้าผ่าน CSS zoom ที่ .pane > .workspace > .ProseMirror) */
-.pane.sp-pane .ProseMirror { max-width:940px; background:var(--side);
-  border:1px solid var(--border); border-radius:4px; padding:64px 96px 40vh;
+.pane.sp-pane .ProseMirror { width:var(--page-w); max-width:none; background:var(--side);
+  border:1px solid var(--border); border-radius:4px;
+  padding:var(--mg-top) var(--mg-right) 40vh var(--mg-left);
   margin:24px auto 40vh; box-shadow:0 2px 18px rgba(0,0,0,.28); }
-.sp { font-family:var(--sp-font, "Courier New", "TH Sarabun New", monospace); font-size:var(--sp-fs, 14.5px);
+.sp { font-family:var(--sp-font, "Courier Final Draft", "Courier Prime", "Courier New", "TH Sarabun New", monospace);
+  font-size:var(--sp-fs, 16px);
   line-height:1.5; margin:0 0 2px; min-height:1.5em; white-space:pre-wrap; }
-.sp-scene { font-weight:700; color:var(--link); margin-top:1.4em; margin-bottom:.4em;
-  text-transform:uppercase; letter-spacing:.5px; }
-.sp-action { margin:.3em 0; }
-/* ระยะเยื้องมาตรฐาน Final Draft/Trelby คิดเป็น % ของความกว้างเนื้อหา → scale ตามซูมหน้ากระดาษ
-   ตัวละคร ~ค่อนไปทางกลาง(กึ่งกลางเยื้องขวา) · บทพูดเยื้องเข้าซ้าย/ขวา · วงเล็บอยู่ระหว่างกลาง */
-.sp-character { margin-left:38%; margin-right:0; margin-top:1em; color:var(--bright); font-weight:600;
-  text-transform:uppercase; }
-.sp-parenthetical { margin-left:29%; margin-right:24%; color:var(--dim); font-style:italic; }
-.sp-dialogue { margin-left:19%; margin-right:19%; color:var(--fg); }
-.sp-transition { text-align:right; color:var(--orange); margin-top:.7em;
-  text-transform:uppercase; letter-spacing:.5px; }
-.sp-outline1,.sp-outline2,.sp-outline3 { color:var(--accent-hi); font-weight:700; margin-top:1em; }
+/* [81][82][83] ระยะเยื้อง/ความกว้าง/ระยะเว้นบรรทัด/ตัวพิมพ์ ของแต่ละ element
+   ค่าจริงถูก "สร้างเป็น CSS" จาก sp-format.js แล้วยัดใน <style id="k-sp-format"> (specificity .sp.sp-x)
+   กฎด้านล่างจึงเหลือแค่ "สี" + fallback สำหรับตอนที่ยังไม่มีโปรเจกต์เปิด */
+.sp-scene { color:var(--link); letter-spacing:.5px; }
+.sp-character { color:var(--bright); }
+.sp-parenthetical { color:var(--dim); }
+.sp-dialogue { color:var(--fg); }
+.sp-transition { text-align:right; color:var(--orange); letter-spacing:.5px; }
+.sp-outline1,.sp-outline2,.sp-outline3 { color:var(--accent-hi); }
 .sp-summary { color:var(--green); font-style:italic; }
-.sp-shot { text-transform:uppercase; margin-top:.5em; }    /* [50] 9-element system */
-.sp-act-break { text-align:center; text-transform:uppercase; font-weight:bold; font-size:1.1em; margin-top:1.2em; }
+.sp-act-break { text-align:center; }
 .sp-note { background:#fff3cd; border-left:3px solid #ffc107; color:#856404; padding:4px 8px; font-style:italic; border-radius:0 4px 4px 0; margin:0; }
 .sp-raw { color:var(--dim); }
 /* รูปในบทหนัง — จัดกลาง คลิกเลือกได้ (atom) ไม่กลายเป็น markdown */
@@ -781,8 +789,13 @@ body.k-ln .pane.sp-pane .ProseMirror { padding-left:64px; }
 body.focus-mode #titlebar, body.focus-mode #topbar, body.focus-mode #toolbar,
 body.focus-mode #tabs, body.focus-mode #statusbar,
 body.focus-mode #findbar { display:none !important; }
-/* แผงข้างทั้งหมดหายไป — เหลือเฉพาะสายที่ถือแผงเอกสาร (แทนกฎ #sidebar เดิม) */
-body.focus-mode .k-dock > *:not(.k-holds-docs),
+/* แผงข้างทั้งหมดหายไป — เหลือเฉพาะสายที่ถือแผงเอกสาร (แทนกฎ #sidebar เดิม)
+   บั๊ก #8: กฎเดิมจับแค่ "ลูกตรงของ .k-dock" → แผงที่ซ้อนอยู่ในกลุ่มแท็บ/dock ชั้นในไม่โดนซ่อน
+   เหลือกล่องเปล่า ๆ ค้างฝั่งขวา ปิดไม่ได้ · ตอนนี้ซ่อน "ทุกโหนดที่ไม่ได้อยู่ในสายของแผงเอกสาร" */
+body.focus-mode .k-panel:not(.k-holds-docs),
+body.focus-mode .k-tab-group:not(.k-holds-docs),
+body.focus-mode .k-dock:not(.k-holds-docs),
+body.focus-mode .k-min-tray,
 body.focus-mode .k-float-panel,
 body.focus-mode .k-resize-handle,
 body.focus-mode .k-tab-group .k-tab-bar { display:none !important; }
@@ -920,14 +933,10 @@ body.k-split-on #tabs { display:none !important; }
 .k-mtab-x:hover { opacity:1; background:var(--border); }
 .k-split-tabs-empty { color:var(--dim); font-size:calc(11px * var(--ui-scale, 1));
   padding:4px 8px; user-select:none; }
-/* โหมดหน้ากระดาษ + แยกจอ (บั๊กข้อ 7): หน้ากระดาษกว้างคงที่ 940px*zoom
-   พอถูกบีบเหลือครึ่งจอจะล้นออกนอกช่อง → กระดาษแต่ละช่องดูไม่ตรงกัน
-   ให้ตัวกระดาษหดตามความกว้างจริงของช่อง แล้วระยะขอบลดลงตาม */
-.k-split-body > .pane > .workspace > .ProseMirror { max-width:min(940px, 100%); }
-body.paper-mode .k-split-body > .pane:not(.sp-pane):not(.wiki-pane) > .workspace > .ProseMirror,
-body.paper-mode .k-split-body > .pane.sp-pane > .workspace > .ProseMirror {
-  padding-left:clamp(18px, 6%, 84px); padding-right:clamp(18px, 6%, 84px);
-}
+/* แยกจอ: หน้ากระดาษยังกว้างคงที่ตามขนาดกระดาษจริง (บั๊ก #6 — ขนาดช่องต้องไม่มีผลกับหน้ากระดาษ)
+   ช่องแคบกว่ากระดาษ = มีแถบเลื่อนแนวนอนในช่องนั้น ไม่ใช่บีบคำจนตัดบรรทัดผิด */
+.k-split-body > .pane > .workspace { width:max-content; min-width:100%; }
+.k-split-body > .pane > .workspace > .ProseMirror { width:var(--page-w); max-width:none; }
 .cmp-close { position:absolute; top:0; right:12px; z-index:6; cursor:pointer;
   background:var(--accent); color:#fff; font-size:calc(11px * var(--ui-scale, 1)); padding:2px 10px; border-radius:0 0 8px 8px; }
 .cmp-close:hover { background:var(--accent-hi); }
@@ -1048,14 +1057,16 @@ body.paper-mode .pane { background:var(--paper-surround); }
    ไม่ลงไปโดน wiki (ProseMirror ซ้อนลึกใน .wiki-wrap) — กันบั๊กกระดาษขาวบัง field wiki */
 body.paper-mode .pane:not(.wiki-pane) > .workspace > .ProseMirror {
   background:var(--paper); color:var(--paper-ink);
-  max-width:940px;
+  width:var(--page-w); max-width:none;
   border:1px solid var(--paper-edge);
   border-radius:2px;
   box-shadow:0 4px 26px rgba(0,0,0,.45);
   caret-color:var(--paper-ink);
 }
-body.paper-mode .pane:not(.sp-pane):not(.wiki-pane) > .workspace > .ProseMirror { padding:72px 84px 40vh; margin:28px auto 40vh; }
-body.paper-mode .pane.sp-pane > .workspace > .ProseMirror { padding:80px 96px 40vh; margin:28px auto 40vh; }
+/* ระยะขอบกระดาษ = ค่าที่ตั้งใน "ตั้งค่า → หน้ากระดาษ" (นิยายและบทหนังใช้ชุดเดียวกัน) */
+body.paper-mode .pane:not(.wiki-pane) > .workspace > .ProseMirror {
+  padding:var(--mg-top) var(--mg-right) calc(var(--mg-bottom) + 32vh) var(--mg-left);
+  margin:28px auto 40vh; }
 
 /* นิยาย: หัวข้อ/ยกคำพูด/ลิงก์ ให้อ่านชัดบนกระดาษนวล */
 body.paper-mode .pane:not(.wiki-pane) > .workspace > .ProseMirror h1,
@@ -1099,11 +1110,18 @@ body.paper-mode .sp-raw { color:#888; }
 .home-sub { color:var(--dim); font-size:calc(15px * var(--ui-scale, 1)); margin:0; }
 .home-actions { display:flex; justify-content:center; gap:12px; margin-bottom:36px; }
 .home-new-btn { font-size:calc(15px * var(--ui-scale, 1)); padding:10px 24px; }
-.home-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:18px; }
+/* บั๊ก #12: หน้าแรกต้องได้ 4 คอลัมน์ และ "ขนาดนิ่ง" — ไม่เปลี่ยนตอนสลับการ์ด ↔ รายการ
+   --home-thumb = ความกว้างการ์ด (ตั้งได้ที่ ตั้งค่า → ทั่วไป) · การ์ดสูงคงที่ ไม่ยืดตามเนื้อหา */
+:root { --home-thumb:190px; }
+.home-grid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:18px;
+  align-content:start; }
+@media (max-width:900px){ .home-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); } }
 .home-card { background:var(--side); border:1px solid var(--border); border-radius:12px;
-  overflow:hidden; cursor:pointer; transition:transform .15s, box-shadow .15s; }
+  overflow:hidden; cursor:pointer; transition:transform .15s, box-shadow .15s;
+  height:calc(var(--home-thumb) * 1.55); display:flex; flex-direction:column; }
 .home-card:hover { transform:translateY(-3px); box-shadow:0 8px 30px rgba(0,0,0,.35); }
-.home-card-cover { height:140px; background:var(--bar); display:flex; align-items:center; justify-content:center;
+.home-card-cover { height:calc(var(--home-thumb) * .74); flex:0 0 auto;
+  background:var(--bar); display:flex; align-items:center; justify-content:center;
   overflow:hidden; }
 .home-card-img { width:100%; height:100%; object-fit:cover; }
 .home-card-cover-ph { font-size:calc(48px * var(--ui-scale, 1)); opacity:.6; }
@@ -1119,9 +1137,9 @@ body.paper-mode .sp-raw { color:#888; }
 .home-empty h2 { color:var(--fg); margin-bottom:8px; }
 .home-empty p { max-width:400px; margin:0 auto; line-height:1.7; }
 /* list view toggle */
-.home-grid.list { display:flex; flex-direction:column; gap:8px; }
+.home-grid.list { display:grid; grid-template-columns:1fr; gap:8px; }
 .home-grid.list .home-card { display:flex; flex-direction:row; align-items:center;
-  padding:12px 16px; border-radius:8px; height:auto; }
+  padding:12px 16px; border-radius:8px; height:72px; }
 .home-grid.list .home-card-cover { width:48px; height:48px; border-radius:6px; flex-shrink:0; }
 .home-grid.list .home-card-body { flex:1; flex-direction:row; gap:16px; padding:0; }
 .home-grid.list .home-card-title { font-size:calc(15px * var(--ui-scale, 1)); }
@@ -1275,8 +1293,11 @@ html, body, .k-panel-body, .pane, #panes { scroll-behavior:smooth; }
 body.reading-mode #titlebar { display:none !important; }
 body.reading-mode #toolbar { display:none !important; }
 body.reading-mode .k-fmtbar { display:none !important; }
-/* โหมดอ่าน: ซ่อนทุกแผงที่ไม่ได้อยู่บนสายของแผงเอกสาร (แทนกฎ #sidebar เดิม) */
-body.reading-mode .k-dock > *:not(.k-holds-docs),
+/* โหมดอ่าน: ซ่อนทุกแผงที่ไม่ได้อยู่บนสายของแผงเอกสาร (บั๊ก #8 — ดูคำอธิบายที่โหมดโฟกัส) */
+body.reading-mode .k-panel:not(.k-holds-docs),
+body.reading-mode .k-tab-group:not(.k-holds-docs),
+body.reading-mode .k-dock:not(.k-holds-docs),
+body.reading-mode .k-min-tray,
 body.reading-mode .k-float-panel,
 body.reading-mode .k-resize-handle,
 body.reading-mode .k-panel-head,
@@ -1387,23 +1408,29 @@ body.reading-mode.paper-mode .pane.on > .workspace > .ProseMirror .sp { color:va
 .wiki-sec-empty { text-align:center; padding:20px; color:var(--dim); font-size:calc(12.5px * var(--ui-scale, 1)); }
 
 /* ====== Font Family (ข้อ 27) ====== */
-.ProseMirror { font-family:var(--ed-font, inherit); }
+/* ฟอนต์เนื้อเรื่อง — ค่าเริ่มต้นคือ Courier Final Draft 12pt ทุกภาษา (ทั้งนิยายและบทหนัง)
+   ผู้ใช้เปลี่ยนฟอนต์/ขนาดได้ที่ ตั้งค่า → การเขียน (--ed-font / --ed-fs ถูกตั้งจาก app.js) */
+.ProseMirror { font-family:var(--ed-font, "Courier Final Draft", "Courier Prime", "Courier New", "TH Sarabun New", monospace); }
 
 /* ====== Screenplay Print CSS @page (ข้อ 30) ====== */
+/* @page (ขนาดกระดาษ+ระยะขอบตอนพิมพ์) ถูกสร้างจาก sp-format.js → <style id="k-sp-format">
+   เพราะ @page ใช้ CSS variable ไม่ได้ · ที่นี่เหลือแค่กฎที่ไม่ขึ้นกับขนาดกระดาษ */
 @media print {
-  @page { size:A4; margin:2.54cm 3.18cm; orphans:2; widows:2; }
   body { background:#fff !important; color:#000 !important; }
   #titlebar,#topbar,#toolbar,#statusbar,#k-fab,#tabs { display:none !important; }
-  .k-dock > *:not(.k-holds-docs), .k-resize-handle, .k-tab-bar, .k-panel-head { display:none !important; }
+  .k-panel:not(.k-holds-docs), .k-tab-group:not(.k-holds-docs), .k-dock:not(.k-holds-docs),
+  .k-resize-handle, .k-tab-bar, .k-panel-head, .k-min-tray { display:none !important; }
   #panes { position:static !important; }
   /* บั๊ก #10: เดิมเป็น `.pane { display:block !important }` → override กฎซ่อนของบล็อกแรก
      ทำให้พิมพ์ออกมาทุกแท็บที่เปิดอยู่ ต้องจำกัดเฉพาะแท็บที่ active เท่านั้น */
   .pane.on { position:static !important; display:block !important; }
   .pane:not(.on) { display:none !important; }
+  .pane > .workspace { zoom:1 !important; width:auto !important; min-width:0 !important; }
+  .pane > .workspace > .ProseMirror { width:auto !important; padding:0 !important;
+    margin:0 !important; border:0 !important; box-shadow:none !important; background:#fff !important; }
   .pane .sp { background:#fff; color:#000;
-    font:12pt var(--sp-font, "Courier New", "TH Sarabun New", monospace); }
-  .pane .sp-scene,.pane .sp-character,.pane .sp-transition { font-weight:bold; }
-  .pane .sp-dialogue { max-width:15cm; margin:0 auto 0 3.8cm; }
+    font-family:var(--sp-font, "Courier Final Draft", "Courier Prime", "Courier New", "TH Sarabun New", monospace);
+    font-size:var(--sp-fs, 12pt); }
 }
 
 /* ====== Archive Filter (ข้อ 38) ====== */
@@ -1949,3 +1976,77 @@ button, select { padding:calc(4px * var(--uis)) calc(10px * var(--uis)); border-
 .k-cm-btn:hover { background:var(--accent); color:#fff; border-color:var(--accent); }
 /* [76] Remove Elements dialog */
 #rm-el-list label { display:flex; align-items:center; gap:6px; padding:3px 0; cursor:pointer; }
+
+/* ====== [97] หน้ารายชื่อตัวละคร (Cast of Characters) ====== */
+/* หน้าเดี่ยวประจำเล่ม — ใช้ขนาดกระดาษ/ระยะขอบชุดเดียวกับโหมดบทภาพยนตร์ และ "ไม่มีเลขหน้า" */
+.roster-wrap { display:flex; flex-direction:column; height:100%; }
+.roster-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; flex:0 0 auto;
+  padding:8px 12px; background:var(--bar); border-bottom:1px solid var(--border); }
+.roster-chk { display:flex; align-items:center; gap:4px; color:var(--dim);
+  font-size:calc(12px * var(--ui-scale, 1)); cursor:pointer; }
+.roster-wrap > .workspace { flex:1; min-height:0; overflow:auto;
+  zoom:var(--page-scale, 1); display:block; }
+.roster-page {
+  width:var(--page-w); max-width:none; margin:28px auto 40vh;
+  padding:var(--mg-top) var(--mg-right) calc(var(--mg-bottom) + 20vh) var(--mg-left);
+  background:var(--side); color:var(--fg);
+  border:1px solid var(--border); border-radius:2px; box-shadow:0 4px 26px rgba(0,0,0,.45);
+  font-family:var(--sp-font, "Courier Final Draft", "Courier Prime", "Courier New", "TH Sarabun New", monospace);
+  font-size:var(--sp-fs, 16px); line-height:1.5;
+  /* คอลัมน์ที่รายละเอียดตัวละครเริ่ม (1 tab จากชื่อ) — บรรทัดที่ขึ้นใหม่ต้องชิดคอลัมน์นี้ */
+  --roster-tab:2.5in;
+}
+body.paper-mode .roster-page { background:var(--paper); color:var(--paper-ink); border-color:var(--paper-edge); }
+.roster-page [contenteditable] { outline:none; }
+.roster-page [contenteditable]:focus { background:rgba(217,119,87,.10); border-radius:2px; }
+.roster-title { text-align:center; text-decoration:underline; text-underline-offset:3px;
+  margin:0 0 1.5em; min-height:1.5em; }
+.roster-cast { margin:0; }
+/* ชื่อขีดเส้นใต้ + ":" แล้ว 1 tab เป็นรายละเอียด · บรรทัดถัดไปชิดคอลัมน์รายละเอียด (hanging indent)
+   ตัวละครถัดไปเว้น 1 บรรทัด */
+.roster-row { position:relative; margin:0 0 1.5em;
+  padding-left:var(--roster-tab); text-indent:calc(var(--roster-tab) * -1); }
+/* ชื่อ + ":" กินความกว้างเท่า "1 tab" เสมอ → รายละเอียดเริ่มที่คอลัมน์เดียวกันทุกคน
+   (ชื่อยาวเกิน tab ก็ดันรายละเอียดไปเอง เหมือนแท็บจริงในเครื่องพิมพ์ดีด) */
+.roster-name { display:inline-block; min-width:calc(var(--roster-tab) - 1.2em);
+  text-decoration:underline; text-underline-offset:2px; white-space:pre-wrap; }
+.roster-colon { display:inline; }
+.roster-detail { display:inline; white-space:pre-wrap; margin-left:.5em; }
+.roster-del { position:absolute; right:-1.6em; top:0; text-indent:0;
+  color:var(--dim); cursor:pointer; opacity:0; font-size:.8em; }
+.roster-row:hover .roster-del { opacity:.7; }
+.roster-del:hover { color:var(--accent-hi); opacity:1; }
+.roster-empty { color:var(--dim); font-style:italic; }
+.roster-sec { margin-top:3em; }              /* ระหว่างหัวข้อเว้น 2 บรรทัด */
+.roster-sec:first-of-type { margin-top:1.5em; }
+.roster-sec-head { text-align:center; text-decoration:underline; text-underline-offset:3px;
+  margin-bottom:1.5em; }                      /* หัวข้อกลางหน้า แล้วเว้น 1 บรรทัด */
+.roster-sec-body { text-align:left; white-space:pre-wrap; min-height:1.5em; }
+
+/* ====== [81-85][92] ตั้งค่ารูปแบบบทภาพยนตร์ ====== */
+.k-spfmt-tbl { width:100%; border-collapse:collapse; font-size:calc(12px * var(--ui-scale, 1)); }
+.k-spfmt-tbl th, .k-spfmt-tbl td { padding:3px 4px; border-bottom:1px solid var(--border); text-align:center; }
+.k-spfmt-tbl th { color:var(--dim); font-weight:600; white-space:nowrap; }
+.k-spfmt-tbl td:first-child, .k-spfmt-tbl th:first-child { text-align:left; white-space:nowrap; }
+.k-spfmt-tbl input[type=number] { width:62px; background:var(--bg); color:var(--fg);
+  border:1px solid var(--border); border-radius:4px; padding:2px 4px; text-align:right; }
+.k-spfmt-tbl input[type=checkbox] { margin:0; cursor:pointer; }
+.k-spfmt-scroll { max-height:46vh; overflow:auto; }
+.k-set-grid2 { display:grid; grid-template-columns:1fr 1fr; gap:0 18px; }
+.k-set-sub { color:var(--accent-hi); font-weight:600; margin:14px 0 6px;
+  font-size:calc(12.5px * var(--ui-scale, 1)); }
+.k-set-page .k-row input[type=number].k-narrow { width:90px; }
+
+/* บั๊ก #3: เขตที่อนุญาตให้ "รวมเป็นแท็บ" (ชื่อแผง + ~20% ฝั่งขวาของหัวแผง) — ให้เห็นตอนชี้เมาส์ */
+.k-panel-head.k-can-group { position:relative; }
+.k-panel-head.k-can-group::after { content:''; position:absolute; right:0; top:0; bottom:0;
+  width:20%; pointer-events:none; opacity:0; transition:opacity .12s;
+  background:linear-gradient(90deg, transparent, rgba(217,119,87,.22)); }
+.k-panel-head.k-can-group:hover::after { opacity:1; }
+.k-panel-head .k-panel-head-title { cursor:grab; }
+/* บั๊ก #9: แผงลอยดูดชิดขอบแผงลอยอื่น/ขอบจอ */
+.k-float-panel.k-float-snapped { outline:2px solid var(--accent-hi); outline-offset:-2px; }
+/* บั๊ก #12: การ์ดสูงคงที่ → เนื้อในต้องไม่ดันการ์ดยืด */
+.home-card-body { flex:1; min-height:0; overflow:hidden; }
+.home-card-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.home-grid.list .home-card-body { overflow:hidden; }

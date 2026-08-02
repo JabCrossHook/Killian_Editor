@@ -123,8 +123,22 @@ function renderOpts() {
 }
 
 /** วาดใหม่ทั้งต้นไม้ (ข้ามถ้าเลย์เอาต์ไม่เปลี่ยน — กัน ProseMirror ถูกถอด-ใส่โดยไม่จำเป็น) */
+// แผงเอกสารต้อง "เห็นเสมอ" — ถ้ามันไปอยู่ในกลุ่มแท็บแล้วไม่ใช่แท็บที่ active
+// พื้นที่เขียนทั้งหมด (#tabs/#panes) จะถูกซ่อน ดูเหมือนโปรแกรมพัง (เจอตอน e2e alpha.56)
+let _fixingDocs = false;
+function ensureDocsVisible() {
+  if (_fixingDocs || !pm || !pm.store.root) return;
+  const grp = PL.tabGroupOf(pm.store.root, 'docs');
+  if (!grp) return;
+  const i = grp.children.findIndex((c) => c.id === 'docs');
+  if (i < 0 || grp.active === i) return;
+  _fixingDocs = true;
+  try { pm.store.update(PL.activatePanel(pm.store.root, 'docs')); } finally { _fixingDocs = false; }
+}
+
 export function renderPanels(force) {
   if (!pm) return;
+  ensureDocsVisible();
   const sig = JSON.stringify({ r: pm.store.root, f: pm.store.floats });
   if (!force && sig === lastSig) return;
   lastSig = sig;
@@ -197,6 +211,7 @@ export function initPanelSystem() {
   started = true;
   registerPanels();
   srcHolder();
+  loadHomes();                                  // บั๊ก #4: ตำแหน่งเดิมของแผงที่ปิดไว้ (ข้ามการเปิด-ปิดโปรแกรม)
   m.load();                                     // กู้เลย์เอาต์ + ตัดแผงที่ไม่รู้จักทิ้ง
   // บั๊ก #19: เดิม "ไม่มี docs" → ล้างทั้งต้นไม้เป็นค่าตั้งต้น = แผงที่ผู้ใช้ปิดไว้โผล่กลับมาทั้งชุด
   // ตอนนี้เสียบแผงเอกสารคืนเข้าเลย์เอาต์เดิมแทน · รีเซ็ตจริงเฉพาะตอนไม่มีเลย์เอาต์เลย (เปิดครั้งแรก)
@@ -219,34 +234,96 @@ export function isPanelOpen(id) { return !!pm && pm.isOpen(panelId(id)); }
 let onShowHook = null;
 export function setPanelShowHook(fn) { onShowHook = fn; }
 
+// บั๊ก #4: ปิดแผงแล้วเปิดกลับต้องได้ "ที่เดิม" — จำบริบทตอนปิด (ผนึกข้างไหนของแผงไหน / ลอยอยู่ที่พิกัดใด)
+// เก็บลง localStorage ด้วย เพื่อให้ข้ามการเปิด-ปิดโปรแกรมได้เหมือน layout tree
+const HOME_KEY = 'k2-panel-home';
+const homes = new Map();                       // id → {side,targetId} | {float:{x,y,w,h}}
+function loadHomes() {
+  try {
+    const o = JSON.parse(localStorage.getItem(HOME_KEY) || '{}');
+    for (const k of Object.keys(o)) homes.set(k, o[k]);
+  } catch {}
+}
+function saveHomes() {
+  try { localStorage.setItem(HOME_KEY, JSON.stringify(Object.fromEntries(homes))); } catch {}
+}
+/** จดตำแหน่งปัจจุบันของแผงไว้ก่อนปิด */
+function rememberHome(pid) {
+  const m = getPanelManager();
+  const f = (m.floats || []).find((x) => x.panel.id === pid);
+  if (f) { homes.set(pid, { float: { x: f.x, y: f.y, w: f.w, h: f.h } }); saveHomes(); return; }
+  if (!m.isDocked(pid)) return;
+  // อยู่ในกลุ่มแท็บ → จำว่า "เป็นแท็บร่วมกับใคร" เพื่อกลับเข้ากลุ่มเดิม ไม่ใช่แยกออกมาเป็นช่องใหม่
+  const grp = PL.tabGroupOf(m.root, pid);
+  if (grp && (grp.children || []).length > 1) {
+    const other = grp.children.find((c) => c.id !== pid);
+    if (other) { homes.set(pid, { targetId: other.id, side: 'center' }); saveHomes(); return; }
+  }
+  // แถบเครื่องมือ/แถบสถานะกินเต็มความกว้าง → ใช้เป็นจุดอ้างอิงไม่ได้ (ตัดออกก่อน)
+  const sib = PL.panelIds(m.root).filter((x) => x !== pid && !(meta.get(x) || {}).fixed);
+  const node = document.querySelector(`#${HOST_ID} .k-panel[data-panel-id="${pid}"]`);
+  const r = node && node.getBoundingClientRect();
+  // เพื่อนบ้านที่ใกล้ที่สุด = จุดยึดตอนเรียกกลับ
+  let best = null;
+  if (r && r.width) {
+    for (const s of sib) {
+      const n2 = document.querySelector(`#${HOST_ID} .k-panel[data-panel-id="${s}"]`);
+      const r2 = n2 && n2.getBoundingClientRect();
+      if (!r2 || !r2.width) continue;
+      const d = Math.hypot(r2.left - r.left, r2.top - r.top);
+      if (!best || d < best.d) best = { d, id: s, side: r2.left < r.left ? 'right' : 'left' };
+    }
+  }
+  homes.set(pid, { targetId: best ? best.id : 'docs', side: best ? best.side : sideOf({ id: pid }) });
+  saveHomes();
+}
+
 export function showPanel(id, opts = {}) {
   const m = getPanelManager();
   const pid = panelId(id);
+  const def = m.registry.get(pid) || {};
   let ok;
   if (m.isDocked(pid) && !m.isCollapsed(pid)) { m.activatePanel(pid); ok = true; }
+  else if (m.isCollapsed(pid)) { m.collapsePanel(pid, false); ok = true; }
   else {
-    // เป้าหมายผนึกเริ่มต้น = แผงเอกสาร (ไม่งั้น _target() หยิบ panel ตัวแรก = แถบเครื่องมือ)
-    const o = { ...opts };
-    if (!o.targetId && m.isDocked('docs') && pid !== 'docs') o.targetId = 'docs';
-    ok = m.showPanel(pid, o);
+    const home = homes.get(pid);
+    // แผงที่เคยลอยอยู่ → กลับไปลอยที่เดิม (บั๊ก #4)
+    if (!opts.side && !opts.targetId && home && home.float) {
+      ok = m.floatPanel(pid, home.float);
+    } else {
+      // เป้าหมายผนึกเริ่มต้น = ที่เดิมที่จดไว้ · ไม่มีก็ยึดแผงเอกสาร
+      // (ไม่งั้น _target() หยิบ panel ตัวแรก = แถบเครื่องมือ)
+      const o = { ...opts };
+      if (!o.targetId) o.targetId = (home && home.targetId) || 'docs';
+      if (!o.side && home && home.side) o.side = home.side;
+      if (!m.isDocked(o.targetId)) o.targetId = m.isDocked('docs') ? 'docs' : undefined;
+      // ห้ามรวมแผงอื่นเป็นแท็บเดียวกับ "แผงเอกสาร" — จะบังพื้นที่เขียนทั้งหมด
+      if (o.side === 'center' && o.targetId === 'docs') o.side = def.defaultSide || 'right';
+      // ผนึกซ้าย/ขวาเทียบแผงที่อยู่ในกลุ่มแท็บ = ยัด dock ซ้อนในกลุ่มแท็บ (โครงเพี้ยน) → ยึดแผงเอกสารแทน
+      if (o.side !== 'center' && PL.tabGroupOf(m.root, o.targetId) && m.isDocked('docs')) o.targetId = 'docs';
+      ok = m.showPanel(pid, o);
+    }
   }
   if (ok && onShowHook) { try { onShowHook(pid); } catch {} }
   return ok;
 }
-export function hidePanel(id) { return getPanelManager().hidePanel(panelId(id)); }
+export function hidePanel(id) {
+  const pid = panelId(id);
+  rememberHome(pid);
+  return getPanelManager().hidePanel(pid);
+}
+// บั๊ก #2 + #10: ปุ่มสวิตช์บนแถบเครื่องมือต้อง "ปิดแผง" ไม่ใช่ "พับ/ย่อ"
+// (เดิม togglePanel เรียก collapsePanel → กด Kanban ซ้ำแล้วเหลือแถบหัวแผงเปล่า ๆ ดูเหมือนปิดไม่ได้)
+// การพับยังใช้ได้ที่ปุ่ม ▾ บนหัวแผงเหมือนเดิม
 export function togglePanel(id, opts) {
   const m = getPanelManager();
   const pid = panelId(id);
-  if (m.isOpen(pid) && !m.isCollapsed(pid)) {
-    return m.collapsePanel(pid, true);
-  }
-  if (m.isCollapsed(pid)) {
-    return m.collapsePanel(pid, false);
-  }
+  if (m.isOpen(pid)) return hidePanel(pid);
   return showPanel(pid, opts);
 }
 export function resetPanels() {
   const m = getPanelManager();
+  resetPanelHomes();                    // รีเซ็ตทั้งหมด = ลืม "ที่เดิม" ของแผงที่เคยปิดด้วย
   m.store.reset();
   m.store.update(defaultLayout());
   renderPanels(true);
@@ -308,4 +385,9 @@ export async function togglePanelDialog() {
 }
 
 // ───────── cleanup (เปลี่ยนโปรเจกต์) ─────────
-export function resetPanelSystem() { lastSig = ''; }
+export function resetPanelSystem() { lastSig = ''; resetPanelHomes(); }
+/** ลืมตำแหน่งเดิมของแผงที่ถูกปิดไว้ (ทั้งในหน่วยความจำและใน localStorage) */
+export function resetPanelHomes() {
+  homes.clear();
+  try { localStorage.removeItem(HOME_KEY); } catch {}
+}

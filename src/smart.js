@@ -111,11 +111,15 @@ export class SmartType {
   }
 
   // คืน true = กิน key แล้ว
+  // บั๊ก #1: เดิม Enter ก็ยืนยันคำเดา → ในบล็อก "ตัวละคร" ของบทหนัง พิมพ์อะไรก็ตามแล้ว SmartType เด้ง
+  //   กด Enter จึงกลายเป็นเติมคำแทนขึ้นบรรทัดใหม่ → วนไม่จบ
+  //   กติกาใหม่: **ยืนยันด้วย Tab อย่างเดียว** · Enter = ปิด popup แล้วขึ้นบรรทัดใหม่ตามปกติ
   onKey(ev) {
     if (!this.visible) return false;
     if (ev.key === 'ArrowDown') { this.sel = (this.sel + 1) % this.items.length; this.render(); return true; }
     if (ev.key === 'ArrowUp') { this.sel = (this.sel - 1 + this.items.length) % this.items.length; this.render(); return true; }
-    if (ev.key === 'Enter' || ev.key === 'Tab') { this._accept(); return true; }
+    if (ev.key === 'Tab') { this._accept(); return true; }
+    if (ev.key === 'Enter') { this.hide(); return false; }   // ปล่อยให้ตัวแก้ไขขึ้นบรรทัดใหม่
     if (ev.key === 'Escape') { this.hide(); return true; }
     return false;
   }

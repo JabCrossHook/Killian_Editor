@@ -19,7 +19,11 @@ import { STEP_DEFS, PRESETS, stepDef, mkStep, newWorkflow, cloneWorkflow, runWor
 import { TIMELINE_VERSION, mergeTimeline, groupByTrack, trackNames, newEvent, findClashes, sortEvents, ganttData, ganttBar, ganttTicks, normalizeRefs } from './timeline.js';
 import { MAPS_VERSION, PIN_COLORS, PIN_KIND, newMap, newPin, clamp, findMap, sortMaps, breadcrumb, rootMaps, pinStats, deleteMap } from './maps.js';
 import { $, el, state, smart, LOG_BUF, log, setStatus,
-         DEFAULT_SETTINGS, DEFAULT_GOALS, DEFAULT_SP_CYCLE, BASE_ED_FS, BASE_SP_FS,
+         DEFAULT_SETTINGS, DEFAULT_GOALS, DEFAULT_SP_CYCLE, DEFAULT_SP_CYCLE_KEYS,
+         BASE_ED_FS, BASE_SP_FS, PT_PX, ptToPx, DEFAULT_SCRIPT_FONT,
+         spCycleKeys, spKeyLabel,
+         PAPER_SIZES, MARGIN_DEFAULTS, SP_ELEMENT_KEYS, mergeSpFormat, pageCssVars, spCss,
+         linesPerPage, paginate, pageCount, newRoster, normalizeRoster, rosterToText,
          SCALE_MIN, SCALE_MAX, UI_SCALE_MIN, UI_SCALE_MAX,
          SCENE_STATUSES, SCENE_COLORS, STATUS_COLORS, BUILTIN_CATS, CAT_ICON,
          REL_TYPES, REL_COLOR, REL_LABEL, categorizeRole, categorizeWith,
@@ -36,7 +40,7 @@ import { settingsDialog, versionDialog, showChangelog } from './dialogs.js';
 import { openBookManager, renderBookManager } from './books.js';
 import { restoreFromTrash, deleteToTrash, purgeRecycle } from './recycle.js';
 import { openDashboard, renderDashboard } from './dashboard.js';
-import { openHome, renderHome } from './home-ui.js';
+import { openHome, renderHome, showHomeDialog } from './home-ui.js';
 import { openTagPane, renderTagList, filterByTag } from './tag-pane.js';
 import { openGlobalSearch, bindGlobalSearchShortcut, renderSearchPanel } from './global-search.js';
 import { openSceneTable } from './scene-table.js';
@@ -67,6 +71,7 @@ import { openCentralizeUI, markCentralizeStale, onCentralizeShown, resetCentrali
 // ---- Part 1+2 integrations ----
 import { openKanban, resetKanban, renderKanbanPanel } from './kanban/kanban-ui.js';
 import * as PL from './panels/panel-layout.js';
+import { inGroupHandle, snapToEdges } from './panels/panel-drag.js';
 import { initPanelSystem, getPanelManager, togglePanelDialog, showPanel, hidePanel, togglePanel,
          resetPanels, panelMenuItems, panelToggleState, addPanelButton, renderPanels,
          isPanelOpen, resetPanelSystem, PANEL_DEFS, panelId, setPanelShowHook,
@@ -82,6 +87,9 @@ import { showThesaurusPopup, initThesaurus } from './tools/thesaurus-ui.js';
 import { importScrivenerDialog } from './import/import-ui.js';
 import { resetAI, getAIClient, ragContext } from './ai/ai-bridge.js';
 import { icon, initIcons, iconHtml, iconLabel, hasIcon } from './icons.js';
+// [97] หน้ารายชื่อตัวละคร (Cast of Characters) — หน้าเดี่ยวประจำเล่ม
+import { openRosterFlow, openRoster, renderRoster, saveRosterTab, isRosterTab,
+         loadRoster, saveRoster, rosterTextFor } from './roster-ui.js';
 
 // นามแฝงของ t() — ใช้ในฟังก์ชันที่มีตัวแปรท้องถิ่นชื่อ t (ex. runTest: const t = state.active)
 const tr = t;
@@ -103,19 +111,22 @@ export function applySettings() {
   const off = parseInt(state.settings.uiFontSize, 10) || 0;
   applyZoomVars(off);
   applyUIScale();
+  applyPageVars();                                   // [85] ขนาดกระดาษ + ระยะขอบ + รูปแบบ element บทหนัง
+  document.documentElement.style.setProperty('--home-thumb',
+    Math.max(120, Math.min(400, parseInt(state.settings.homeThumb, 10) || 190)) + 'px');
   document.body.classList.toggle('k-ln', !!state.settings.lineNumbers);
   document.body.classList.toggle('paper-mode', state.settings.paperMode !== false);
-  // fontFamily
+  // fontFamily — ว่าง = Courier Final Draft 12pt (มาตรฐานต้นฉบับ ใช้ได้ทุกภาษา)
   if (state.settings.fontFamily) {
     document.documentElement.style.setProperty('--ed-font', state.settings.fontFamily);
   } else {
-    document.documentElement.style.removeProperty('--ed-font');
+    document.documentElement.style.setProperty('--ed-font', DEFAULT_SCRIPT_FONT);
   }
-  // ฟอนต์บทหนังแยกจากนิยาย (บั๊ก #2) — ว่าง = ปล่อยให้ CSS fallback เป็น Courier New
+  // ฟอนต์บทหนังแยกจากนิยาย (บั๊ก #2) — ว่าง = Courier Final Draft เช่นกัน
   if (state.settings.spFontFamily) {
     document.documentElement.style.setProperty('--sp-font', state.settings.spFontFamily);
   } else {
-    document.documentElement.style.removeProperty('--sp-font');
+    document.documentElement.style.setProperty('--sp-font', DEFAULT_SCRIPT_FONT);
   }
   applySpellcheck();
   refreshAllSpell();
@@ -129,26 +140,84 @@ export function applySettings() {
 export function applyZoomVars(off) {
   if (off === undefined) off = parseInt(state.settings.uiFontSize, 10) || 0;
   const R = document.documentElement.style;
-  const edfs = +(BASE_ED_FS + off).toFixed(2);
-  const spfs = Math.max(9, +(BASE_SP_FS + off).toFixed(2));
+  // ขนาดฐาน = พอยต์ที่ผู้ใช้กรอกใน "ตั้งค่า → การเขียน" (ค่าเริ่มต้น 12pt ทั้งนิยายและบทหนัง)
+  const edBase = ptToPx(state.settings.edFontPt ?? 12);
+  const spBase = ptToPx(state.settings.spFontPt ?? 12);
+  const edfs = +(edBase + off).toFixed(2);
+  const spfs = Math.max(9, +(spBase + off).toFixed(2));
   R.setProperty('--ed-fs', edfs + 'px');
   R.setProperty('--sp-fs', spfs + 'px');
   R.setProperty('--page-scale', pageScale.toFixed(3));
-  document.querySelectorAll('.pane > .workspace').forEach(ws => {
+  document.querySelectorAll('.pane > .workspace, .roster-wrap > .workspace').forEach(ws => {
     ws.style.minWidth = (pageScale * 100) + '%';
   });
   const slider = $('#zoom-slider'); if (slider) slider.value = String(Math.round(pageScale * 100));
   const lbl = $('#zoom-label'); if (lbl) lbl.textContent = Math.round(pageScale * 100) + '%';
 }
 
+// ---------------- [85] หน้ากระดาษ: ขนาด + ระยะขอบ + รูปแบบ element บทหนัง ----------------
+/** ค่าตั้งรูปแบบบทหนังที่ผู้ใช้กำหนดไว้ (ดิบ — ยังไม่ merge) */
+export function spFormatSettings() {
+  const s = state.settings || {};
+  return { paperSize: s.paperSize, paper: s.customPaper, margins: s.pageMargins,
+           elements: s.spElements, styles: s.spStyles, rules: s.spPageRules, strings: s.spStrings };
+}
+/** รูปแบบบทหนังที่ใช้จริง (merge กับค่ามาตรฐานแล้ว) — โมดูลอื่นเรียกตัวนี้ */
+export function spFormat() { return mergeSpFormat(spFormatSettings()); }
+
+/** ตั้งตัวแปร CSS ของหน้ากระดาษ + สร้าง CSS ต่อ element ของบทหนังใหม่ (ข้อ 81–85) */
+export function applyPageVars() {
+  const fmt = spFormat();
+  const R = document.documentElement.style;
+  const vars = pageCssVars(fmt);
+  for (const k of Object.keys(vars)) R.setProperty(k, vars[k]);
+  let st = document.getElementById('k-sp-format');
+  if (!st) { st = document.createElement('style'); st.id = 'k-sp-format'; document.head.appendChild(st); }
+  st.textContent = spCss(fmt);
+  return fmt;
+}
+
 // ปรับซูมทีละขั้น (Ctrl+ล้อ / Ctrl+±) — step เป็นสัดส่วน
 function bumpPageScale(dir) { setPageScale(pageScale + (dir > 0 ? 0.1 : -0.1)); }
+// บั๊ก #5: ซูมต้อง "ยึดจุดกึ่งกลางหน้าจอ" ไม่ใช่มุมซ้ายบน
+// เก็บสัดส่วนจุดกึ่งกลางของพื้นที่เลื่อนก่อนซูม แล้วคืนตำแหน่งให้ตรงจุดเดิมหลังซูม
+function scrollHosts() {
+  return [...document.querySelectorAll('.pane.on, .k-split-pane > .pane, .roster-wrap > .workspace')]
+    .filter((e) => e && e.scrollWidth);
+}
+function keepZoomCenter(fn) {
+  const hosts = scrollHosts();
+  const before = hosts.map((h) => ({
+    h,
+    cx: (h.scrollLeft + h.clientWidth / 2) / Math.max(1, h.scrollWidth),
+    cy: (h.scrollTop + h.clientHeight / 2) / Math.max(1, h.scrollHeight),
+  }));
+  fn();
+  requestAnimationFrame(() => {
+    for (const b of before) {
+      b.h.scrollLeft = Math.max(0, b.cx * b.h.scrollWidth - b.h.clientWidth / 2);
+      b.h.scrollTop = Math.max(0, b.cy * b.h.scrollHeight - b.h.clientHeight / 2);
+    }
+  });
+}
 function setPageScale(z) {
-  pageScale = Math.max(SCALE_MIN, Math.min(SCALE_MAX, Math.round(z * 100) / 100));
-  applyZoomVars();
+  keepZoomCenter(() => {
+    pageScale = Math.max(SCALE_MIN, Math.min(SCALE_MAX, Math.round(z * 100) / 100));
+    applyZoomVars();
+  });
   setStatus(t('status.zoom') + ': ' + Math.round(pageScale * 100) + '%' + ' (Ctrl+Shift+0 = ' + t('status.zoomReset') + ')');
 }
-function resetPageScale() { if (pageScale !== 1) { pageScale = 1; applyZoomVars(); setStatus(t('status.zoomReset')); } }
+function resetPageScale() {
+  if (pageScale === 1) return;
+  keepZoomCenter(() => { pageScale = 1; applyZoomVars(); });
+  setStatus(t('status.zoomReset'));
+}
+/** เลื่อนหน้ากระดาษให้อยู่กึ่งกลางแนวนอน (บั๊ก #7 — มุมมองเริ่มต้นตอนเปิด/สร้างฉาก) */
+export function centerPage(pane) {
+  const p = pane || (state.active && state.active.pane);
+  if (!p || !p.scrollWidth) return;
+  p.scrollLeft = Math.max(0, (p.scrollWidth - p.clientWidth) / 2);
+}
 
 // ---------------- ขนาด UI (บั๊ก #9) ----------------
 // --ui-scale คูณเข้ากับฟอนต์ body + ขนาดโครงสร้างของ UI ทุกชิ้นใน style.css (calc(px * var(--ui-scale)))
@@ -360,6 +429,26 @@ function renderScopeChip() {
 }
 
 // กรองต้นไม้ตามคำค้น (ชื่อฉาก/แท็ก/สถานะ/ชื่อ entity) — ซ่อนแถวที่ไม่ตรง + บท/หมวดที่ว่าง
+// บั๊ก #13: รวมทุกข้อความในไฟล์เอนทิตี้เป็นสตริงเดียวสำหรับค้นหา (ชื่อ · ชื่อเล่น · แท็ก ·
+// ทุกฟิลด์ที่เป็นข้อความ · ชื่อคนที่มีความสัมพันธ์ด้วย) — ตัดความยาวกันข้อมูลบวมเกินจำเป็น
+export function entitySearchBlob(name, ent, cat, secName) {
+  const parts = [name, cat || '', secName || ''];
+  const push = (v, depth = 0) => {
+    if (v == null || depth > 3) return;
+    if (typeof v === 'string') { parts.push(v); return; }
+    if (typeof v === 'number' || typeof v === 'boolean') { parts.push(String(v)); return; }
+    if (Array.isArray(v)) { for (const x of v) push(x, depth + 1); return; }
+    if (typeof v === 'object') { for (const k of Object.keys(v)) { parts.push(k); push(v[k], depth + 1); } }
+  };
+  if (ent && typeof ent === 'object') {
+    for (const k of Object.keys(ent)) {
+      if (k === 'images' || k === 'cover' || k === 'guid' || k === 'id') continue;   // ไม่ใช่ข้อความให้ค้น
+      push(ent[k]);
+    }
+  }
+  return parts.join(' ').replace(/\s+/g, ' ').toLowerCase().slice(0, 4000);
+}
+
 function filterTree(q) {
   const raw = (q || '').trim();
   const ql = raw.toLowerCase();
@@ -920,10 +1009,14 @@ async function _buildTreeInner() {
       for (const f of await kapi.listFiles(catDir, '.json')) {
         const p = await kapi.join(catDir, f);
         let name = f.replace(/\.json$/, '');
-        try { name = (await kapi.readJson(p)).name || name; } catch {}
-        const it = el('div', 'scene');
+        let ent = null;
+        try { ent = await kapi.readJson(p); name = ent.name || name; } catch {}
+        const it = el('div', 'scene wiki-ent');
         it.innerHTML = catIconHtml(cat) + ' ' + name;
-        it.dataset.search = name.toLowerCase();
+        // บั๊ก #13: ค้นเอนทิตี้ต้องค้น "เนื้อในไฟล์บนดิสก์" ด้วย ไม่ใช่แค่ชื่อที่โชว์
+        // (ชื่อเล่น/แท็ก/บทบาท/คำบรรยาย/ฟิลด์เทมเพลตทุกช่อง) — อ่าน .json อยู่แล้วจึงไม่มีค่าใช้จ่ายเพิ่ม
+        it.dataset.search = entitySearchBlob(name, ent, cat, scopeLabel);
+        it.title = name + (ent && ent.summary ? ' — ' + String(ent.summary).slice(0, 120) : '');
         it.dataset.path = p;
         it.onclick = () => openEntity(p);
         it.draggable = true;                              // ลากย้ายข้ามหมวดได้
@@ -2968,6 +3061,11 @@ function mountEditor(tab, dir, body) {
   }
   pane.classList.toggle('pane-locked', !!tab.locked);
   pane.classList.toggle('sp-pane', !!tab.sp);            // หน้ากระดาษบทหนัง (Final Draft)
+  // บั๊ก #6: workspace ต้องกว้างอย่างน้อยเท่าพื้นที่ของแผง ณ ระดับซูมปัจจุบัน
+  // บั๊ก #7: แล้วเลื่อนหน้ากระดาษมากึ่งกลางเป็นมุมมองเริ่มต้น
+  const ws = pane.querySelector('.workspace');
+  if (ws) ws.style.minWidth = (pageScale * 100) + '%';
+  requestAnimationFrame(() => centerPage(pane));
 }
 
 // สลับเอกสารระหว่างโหมดนิยาย ↔ บทหนัง (แบบ Fade In) — เนื้อหาเป็น .md ตัวเดียวกัน ต่างแค่ตีความ
@@ -3126,6 +3224,9 @@ export function activate(file) {
   syncActiveSplit(file);
   setElementBadge(state.active?.sp ? state.active.sp.curElement() : null);
   smart.hide();
+  // บั๊ก #7: มุมมองเริ่มต้นของทุกแท็บ = หน้ากระดาษอยู่กึ่งกลางแนวนอน เริ่มที่บนสุด
+  // (หน้ากระดาษกว้างคงที่ตามขนาดกระดาษ → ถ้าไม่จัดกลาง จะไปติดมุมซ้ายทันทีที่แผงแคบกว่ากระดาษ)
+  if (state.active) requestAnimationFrame(() => centerPage(state.active && state.active.pane));
   refreshToolbar(); refreshModeBtn(); scheduleCount(); scheduleOutline();
   updateDirtyBadge();
   refreshStatusBar();
@@ -3161,6 +3262,7 @@ function updateDirtyBadge() {
 
 export async function saveTab(tab) {
   if (!tab) return;
+  if (isRosterTab(tab)) { await saveRosterTab(tab); return; }   // [97] หน้ารายชื่อตัวละคร
   if (tab.planner) {
     await tab.planner.save();
     tab.dirty = false;
@@ -3621,6 +3723,14 @@ function updateToolbarTitles() {
 // re-export ให้ core.js เรียกหลังเปลี่ยนภาษา
 export { updateToolbarTitles };
 
+// บั๊ก #11: ปุ่มที่ทำงานระดับโปรเจกต์/หน้าต่าง — ไม่ต้องมีฉากเปิดอยู่ก็ใช้ได้
+const ALWAYS_ON_TB = new Set([
+  'tb-close', 'tb-close-all', 'tb-focus', 'tb-typewriter', 'tb-linenum', 'tb-quickopen',
+  'tb-gallery', 'tb-sp-elem',
+  'tb-tree-panel', 'tb-outline-panel', 'tb-props-panel', 'tb-search-panel',
+  'tb-note', 'tb-panels', 'tb-kanban', 'tb-gsearch', 'tb-read', 'tb-ai', 'tb-ai-chat', 'tb-plug',
+]);
+
 function refreshToolbar() {
   const ed = state.active?.editor;
   const sp = state.active?.sp;
@@ -3650,13 +3760,10 @@ function refreshToolbar() {
     // บั๊ก #1: ปุ่มแยกหน้าจอเคยถูกปิดไปด้วยตอนแท็บที่เปิดอยู่ไม่ใช่เอดิเตอร์ (แดชบอร์ด/ผัง/คลังรูป)
     // ทั้งที่แยกจอใช้กับแท็บพวกนั้นได้ → ใช้ได้ตราบใดที่มีแท็บเปิดอยู่อย่างน้อยหนึ่ง
     if (b.id === 'tb-split') { b.classList.toggle('dis', state.tabs.size === 0); return; }
-    // ปิด/ปิดทุกแท็บ / โฟกัส / typewriter / เลขบรรทัด / quick-open / sp-elem → ใช้ได้เสมอ ไม่ขึ้นกับ canEdit
-    if (b.id === 'tb-close' || b.id === 'tb-close-all' || b.id === 'tb-focus' ||
-        b.id === 'tb-typewriter' || b.id === 'tb-linenum' || b.id === 'tb-quickopen' ||
-        b.id === 'tb-gallery' || b.id === 'tb-sp-elem') return;
-    // ปุ่ม toggle แผง — ใช้ได้เสมอ ไม่ขึ้นกับ canEdit
-    if (b.id === 'tb-tree-panel' || b.id === 'tb-outline-panel' ||
-        b.id === 'tb-props-panel' || b.id === 'tb-search-panel') return;
+    // บั๊ก #11: เครื่องมือระดับ "โปรเจกต์" ต้องใช้ได้แม้ยังไม่ได้เปิดฉาก
+    //   (โน้ตด่วน · จัดการแผง · Kanban · ค้นทั้งโปรเจกต์ · เปิดไฟล์ด่วน · คลังรูป · โหมดต่าง ๆ)
+    // เดิมโดน `dis` เพราะไม่มี editor → ผู้ใช้กดอะไรไม่ได้เลยตอนเพิ่งเปิดโปรแกรม
+    if (ALWAYS_ON_TB.has(b.id)) { b.classList.remove('dis'); return; }
     b.classList.toggle('dis', !canEdit);
   });
   $('#tb-paper').classList.toggle('on', state.settings.paperMode !== false);
@@ -3670,6 +3777,7 @@ function refreshToolbar() {
   $('#tb-outline-panel')?.classList.toggle('on', isPanelOpen('outline'));
   $('#tb-props-panel')?.classList.toggle('on', isPanelOpen('props'));
   $('#tb-search-panel')?.classList.toggle('on', isPanelOpen('search'));
+  $('#tb-kanban')?.classList.toggle('on', isPanelOpen('kanban'));   // บั๊ก #10: ปุ่ม Kanban เป็นสวิตช์จริง
   syncFloatBarVisible();
   syncMenuToggles();          // เมนู native ติ๊กถูกตามสถานะจริง (ส่งเฉพาะตอนค่าเปลี่ยน)
 }
@@ -3682,7 +3790,16 @@ function scheduleCount() {
     if (!t || t.wiki || t.gal || t.isJson || t.net || t.dash || t.planner || (!t.editor && !t.sp && !t.plain)) { $('#wc').textContent = ''; return; }
     const body = t.editor ? t.editor.getMarkdown()
       : t.sp ? t.sp.getMarkdown() : t.plain.value;
-    $('#wc').textContent = `คำ ${countWords(body).toLocaleString()} · อักขระ ${body.length.toLocaleString()}`;
+    let txt = `คำ ${countWords(body).toLocaleString()} · อักขระ ${body.length.toLocaleString()}`;
+    // [84][85] บทภาพยนตร์: บอกจำนวนหน้าจริงตามขนาดกระดาษ/ระยะขอบ/กฎตัดหน้าที่ตั้งไว้
+    if (t.sp) {
+      try {
+        const fmt = spFormat();
+        const n = pageCount(parseScript(body), { fmt, lines: linesPerPage(fmt.paper, fmt.margins) });
+        txt += ` · ${n} หน้า`;
+      } catch (e) { log('warn', 'นับหน้าบทไม่สำเร็จ', e); }
+    }
+    $('#wc').textContent = txt;
     updateProgressBar();
   }, 300);
 }
@@ -4031,6 +4148,12 @@ async function handleCommand(ch, ...a) {
     case 'revert': if (t) await revertTab(t.file); break;
     case 'remove-elements': removeElementsDialog(); break;
     case 'char-map': showCharMap(); break;
+    // [97] หน้ารายชื่อตัวละคร (Cast of Characters) ประจำเล่ม
+    case 'roster': await openRosterFlow(); break;
+    // [98] ข้อมูลโปรเจกต์เพิ่มเติม (ผู้เขียน/ตัวแทน/ลิขสิทธิ์) — เปิดตั้งค่าที่แท็บนั้น
+    case 'project-setup': settingsDialog('setup'); break;
+    // [81-85][92] หน้ากระดาษ · ระยะขอบ · รูปแบบ element · กฎตัดหน้า · ข้อความมาตรฐาน
+    case 'page-setup': settingsDialog('page'); break;
     // ---- Part 1+2: ฟีเจอร์ใหม่ (Kanban, Panel, Split, AI, Thesaurus, Auto-sync) ----
     case 'kanban': togglePanel('kanban'); break;
     case 'split-view': toggleSplit(state.active?.file || '', a[0] || undefined); break;
@@ -4457,7 +4580,7 @@ window.addEventListener('DOMContentLoaded', () => {
   $('#tb-note').onclick = async () => { const c = await sceneCtx(); quickNote(c?.row?.id, c?.row?.title); };
   $('#tb-note').oncontextmenu = (e) => { e.preventDefault(); showAllNotes(); };
   // ---- ปุ่ม Kanban + AI ----
-  $('#tb-kanban').onclick = () => togglePanel('kanban');
+  $('#tb-kanban').onclick = () => { togglePanel('kanban'); refreshToolbar(); };
   $('#tb-ai').onclick = () => openAIAssistant();
   $('#tb-ai-chat').onclick = () => openAIChat();
   $('#tb-tree-panel').onclick = () => { togglePanel('tree'); refreshToolbar(); };
@@ -5132,7 +5255,14 @@ async function runTest(projectPath) {
     if (!cond) throw new Error(name);
   };
   try {
+    // e2e ต้อง idempotent — localStorage คงค้างข้ามรอบ (บทเรียนข้อ 4)
+    // k2-panel-home (alpha.56) จำ "ที่เดิม" ของแผงที่ถูกปิด → รอบก่อนที่ตายกลางคันทำให้เลย์เอาต์เพี้ยน
+    for (const k of ['k2-ui-layout', 'k2-panel-layout', 'k2-panel-home', 'k2-split-layout', 'k2-home-view'])
+      localStorage.removeItem(k);
+    resetPanelSystem();
     if (projectPath) await loadProject(projectPath);
+    resetPanels();
+    await new Promise((r) => setTimeout(r, 60));
     check('tree มีฉาก', document.querySelectorAll('.scene').length >= 2);
     document.querySelector('.scene').click();
     await new Promise((r) => setTimeout(r, 800));
@@ -6950,7 +7080,9 @@ async function runTest(projectPath) {
     toggleFocus(true);
     check('โหมดโฟกัสซ่อน UI เหลือหน้ากระดาษ',
           document.body.classList.contains('focus-mode') &&
-          $('#tree-panel').offsetParent === null && $('#panes').offsetParent !== null);
+          $('#tree-panel').offsetParent === null && $('#panes').offsetParent !== null,
+          'docsChain=' + (document.querySelector('#app-root .k-panel[data-panel-id="docs"]')?.className || 'ไม่มีแผงเอกสาร') +
+          ' panesDisplay=' + ($('#panes') ? getComputedStyle($('#panes')).display : '-'));
     toggleFocus(false);
 
     // ---- คุณสมบัติฉาก ----
@@ -7341,8 +7473,8 @@ async function runTest(projectPath) {
     [...document.querySelectorAll('.k-set-tab')].find((t) => t.dataset.p === 'write').click();
     const fontInp = document.querySelector('#st-font');
     fontInp.value = '4'; fontInp.dispatchEvent(new Event('input'));
-    check('พรีวิวฟอนต์ทันที (--ed-fs = 19.5px)',
-          getComputedStyle(document.documentElement).getPropertyValue('--ed-fs').trim() === '19.5px',
+    check('พรีวิวฟอนต์ทันที (--ed-fs = ฐาน+4px)',
+          getComputedStyle(document.documentElement).getPropertyValue('--ed-fs').trim() === (BASE_ED_FS + 4) + 'px',
           getComputedStyle(document.documentElement).getPropertyValue('--ed-fs'));
     // ขนาด UI (บั๊ก #9) — slider ในแท็บ "การเขียน" เห็นผลทันที
     const uiSl = document.querySelector('#st-uiscale');
@@ -7371,8 +7503,8 @@ async function runTest(projectPath) {
           JSON.stringify(pj.goals));
     check('เขียนชื่อ/ผู้เขียนลงไฟล์', pj.title === 'ชื่อใหม่ทดสอบ' && pj.author === 'ผู้เขียนทดสอบ');
     check('ชื่อโปรเจกต์บนจอเปลี่ยนตาม', $('#projname').textContent === 'ชื่อใหม่ทดสอบ');
-    check('ฟอนต์ตัวแก้ไขถูกนำไปใช้จริง (19.5px)',
-          getComputedStyle(document.documentElement).getPropertyValue('--ed-fs').trim() === '19.5px');
+    check('ฟอนต์ตัวแก้ไขถูกนำไปใช้จริง (ฐาน+4px)',
+          getComputedStyle(document.documentElement).getPropertyValue('--ed-fs').trim() === (BASE_ED_FS + 4) + 'px');
     check('autosave นาทีถูกปรับใน state', state.settings.autoSaveMinutes === 2);
     // เป้าหมายโผล่ในแดชบอร์ด
     openDashboard();
@@ -7386,8 +7518,8 @@ async function runTest(projectPath) {
     fontInp2.value = '10'; fontInp2.dispatchEvent(new Event('input'));
     document.querySelector('.k-settings .k-cancel').click();
     await new Promise((r) => setTimeout(r, 20));
-    check('กด "ยกเลิก" คืนขนาดฟอนต์เดิม (19.5px)',
-          getComputedStyle(document.documentElement).getPropertyValue('--ed-fs').trim() === '19.5px',
+    check('กด "ยกเลิก" คืนขนาดฟอนต์เดิม (ฐาน+4px)',
+          getComputedStyle(document.documentElement).getPropertyValue('--ed-fs').trim() === (BASE_ED_FS + 4) + 'px',
           getComputedStyle(document.documentElement).getPropertyValue('--ed-fs'));
 
     // ---- คีย์ลัดฝั่ง renderer (จับ e.code — ไม่พึ่ง accelerator เมนู) ----
@@ -8987,9 +9119,11 @@ async function runTest(projectPath) {
                 String(document.querySelectorAll('.k-split-body > .pane.compare-on').length));
           // .47+ : .workspace คือชั้นที่รับ CSS zoom คั่นระหว่าง .pane กับ .ProseMirror (style.css:926)
           const paneOn = document.querySelector('#split-root .k-split-body > .pane > .workspace > .ProseMirror');
-          check('โหมดแยกจอ: หน้ากระดาษหดตามช่องที่แคบลง (sync กับมุมมองกระดาษ)',
-                !!paneOn && getComputedStyle(paneOn).maxWidth.includes('px'),
-                paneOn && getComputedStyle(paneOn).maxWidth);
+          // บั๊ก #6 (alpha.56): หน้ากระดาษ "ไม่หด" ตามช่องอีกต่อไป — ขนาดกระดาษคงที่เสมอ
+          check('โหมดแยกจอ: หน้ากระดาษกว้างคงที่ตามขนาดกระดาษ ไม่หดตามช่อง',
+                !!paneOn && getComputedStyle(paneOn).width.includes('px') &&
+                getComputedStyle(paneOn).maxWidth === 'none',
+                paneOn && getComputedStyle(paneOn).width + ' / ' + getComputedStyle(paneOn).maxWidth);
           clearCompare();
           check('ปิดเทียบ → ออกจากโหมดแยกจอครบ',
                 !$('#panes').classList.contains('split') &&
@@ -9364,11 +9498,12 @@ async function runTest(projectPath) {
     {
       check('#2 DEFAULT_SETTINGS มี spFontFamily', 'spFontFamily' in DEFAULT_SETTINGS);
       const origSp = state.settings.spFontFamily || '';
-      // ค่าว่าง = ไม่ตั้ง var → CSS fallback เป็น Courier New
+      // alpha.56: ค่าว่าง = ใช้ฟอนต์มาตรฐาน Courier Final Draft (เดิมปล่อยให้ CSS fallback เอง)
       state.settings.spFontFamily = '';
       applySettings();
-      check('#2 ไม่ตั้งฟอนต์บทหนัง → ไม่มี --sp-font (ใช้ Courier New ตามค่าเริ่มต้น)',
-            !document.documentElement.style.getPropertyValue('--sp-font'));
+      check('#2 ไม่ตั้งฟอนต์บทหนัง → ใช้ Courier Final Draft เป็นค่าเริ่มต้น',
+            document.documentElement.style.getPropertyValue('--sp-font').includes('Courier Final Draft'),
+            document.documentElement.style.getPropertyValue('--sp-font'));
       state.settings.spFontFamily = '"TH Sarabun New", sans-serif';
       applySettings();
       check('#2 ตั้งฟอนต์บทหนัง → --sp-font ถูกเซ็ต',
@@ -9451,6 +9586,505 @@ async function runTest(projectPath) {
       check('#18 clearFeaturePanels ล้างเนื้อแผงทั้งหมด',
             FEAT.every(([, sel]) => !$(sel) || $(sel).children.length === 0));
       renderPanels(true);
+    }
+
+    // ══════════ alpha.56 — บทภาพยนตร์ระดับใช้งานจริง (81-85, 92, 97, 98) + บั๊ก 13 ข้อ ══════════
+    {
+      resetPanels(); await new Promise((r) => setTimeout(r, 40));
+      resetPageScale();
+      const S = state.settings;
+      const CS = (sel) => getComputedStyle(document.querySelector(sel));
+      const rootVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+      // ---- [85] ขนาดกระดาษ + ระยะขอบ (ค่าเริ่มต้นมาตรฐานบทภาพยนตร์) ----
+      check('[85] ค่าเริ่มต้นระยะขอบ บน1 ล่าง1 ซ้าย1.5 ขวา1 นิ้ว',
+            S.pageMargins.top === 1 && S.pageMargins.bottom === 1 &&
+            S.pageMargins.left === 1.5 && S.pageMargins.right === 1,
+            JSON.stringify(S.pageMargins));
+      check('[85] ค่าเริ่มต้นกระดาษเป็น Letter', S.paperSize === 'letter');
+      check('[85] --page-w / --mg-left ถูกตั้งบน :root',
+            rootVar('--page-w') === '8.5in' && rootVar('--mg-left') === '1.5in',
+            rootVar('--page-w') + ' | ' + rootVar('--mg-left'));
+      check('[85] Letter + ขอบมาตรฐาน = 54 บรรทัด/หน้า',
+            linesPerPage(spFormat().paper, spFormat().margins) === 54,
+            String(linesPerPage(spFormat().paper, spFormat().margins)));
+      // เปลี่ยนเป็น A4 แล้วต้องมีผลทันที
+      S.paperSize = 'a4'; applyPageVars();
+      check('[85] เปลี่ยนขนาดกระดาษเป็น A4 → --page-w เปลี่ยนตาม', rootVar('--page-w') === '8.27in', rootVar('--page-w'));
+      S.paperSize = 'letter';
+      S.pageMargins = { top: 1, bottom: 1, left: 2, right: 1 }; applyPageVars();
+      check('[85] เปลี่ยนขอบซ้ายเป็น 2 นิ้ว → --mg-left ตาม', rootVar('--mg-left') === '2in', rootVar('--mg-left'));
+      S.pageMargins = { top: 1, bottom: 1, left: 1.5, right: 1 }; applyPageVars();
+
+      // ---- สำคัญข้อ 2: ฟอนต์มาตรฐาน Courier Final Draft 12pt ทุกภาษา ----
+      check('[ฟอนต์] ค่าเริ่มต้นเป็น Courier Final Draft',
+            rootVar('--ed-font').includes('Courier Final Draft') &&
+            rootVar('--sp-font').includes('Courier Final Draft'),
+            rootVar('--ed-font'));
+      check('[ฟอนต์] ขนาดฐาน 12pt = 16px ทั้งนิยายและบทหนัง',
+            S.edFontPt === 12 && S.spFontPt === 12 && BASE_ED_FS === 16 && BASE_SP_FS === 16);
+      const fsOff = parseInt(S.uiFontSize, 10) || 0;
+      applyZoomVars();
+      const edFsBefore = rootVar('--ed-fs');
+      S.spFontPt = 14; applyZoomVars();
+      check('[ฟอนต์] กรอกขนาดบทหนัง 14pt → --sp-fs ตามค่าที่กรอก',
+            Math.abs(parseFloat(rootVar('--sp-fs')) - (14 * 4 / 3 + fsOff)) < 0.05, rootVar('--sp-fs'));
+      check('[ฟอนต์] ขนาดนิยายไม่ถูกกระทบ', rootVar('--ed-fs') === edFsBefore,
+            edFsBefore + ' → ' + rootVar('--ed-fs'));
+      S.spFontPt = 12; applyZoomVars();
+
+      // ---- [81][82][83] รูปแบบต่อ element (CSS ที่สร้างจาก sp-format.js) ----
+      const spStyleEl = document.getElementById('k-sp-format');
+      check('[81] มี <style id="k-sp-format"> ที่สร้างจากค่าตั้ง', !!spStyleEl && spStyleEl.textContent.includes('.sp.sp-character{'));
+      check('[83] CSS มีบล็อกสไตล์ตอนพิมพ์แยกจากบนจอ', spStyleEl.textContent.includes('@media print{'));
+      check('[85] CSS มี @page ตามขนาดกระดาษ/ระยะขอบ',
+            spStyleEl.textContent.includes('@page{size:8.5in 11in') &&
+            spStyleEl.textContent.includes('margin:1in 1in 1in 1.5in'));
+      // วัดของจริงบนหน้าจอบทหนัง
+      const spScene2 = [...document.querySelectorAll('.scene')].find((x) => x.textContent.includes('บทหนังทดสอบ'));
+      if (spScene2) {
+        spScene2.click();
+        await new Promise((r) => setTimeout(r, 350));
+        const spT = state.active;
+        check('[81] แท็บบทหนังเปิดได้สำหรับทดสอบรูปแบบ', !!spT.sp);
+        const chEl = spT.pane.querySelector('.sp-character') || spT.pane.querySelector('.sp');
+        check('[81] มีบล็อกตัวละครบนหน้ากระดาษ', !!spT.pane.querySelector('.sp-character'));
+        const cs = getComputedStyle(spT.pane.querySelector('.sp-character'));
+        // เยื้อง 3.7" จากขอบกระดาษ − ขอบซ้าย 1.5" = 2.2" = 211.2px
+        check('[81] ตัวละครเยื้อง 2.2 นิ้วจากขอบพื้นที่พิมพ์ (3.7-1.5)',
+              Math.abs(parseFloat(cs.marginLeft) - 2.2 * 96) < 2, cs.marginLeft);
+        check('[81] ตัวละครกว้าง 3.8 นิ้ว', Math.abs(parseFloat(cs.width) - 3.8 * 96) < 2, cs.width);
+        check('[83] ตัวละครเป็นตัวพิมพ์ใหญ่บนจอ', cs.textTransform === 'uppercase', cs.textTransform);
+        const dl = spT.pane.querySelector('.sp-dialogue');
+        if (dl) {
+          const ds = getComputedStyle(dl);
+          check('[81] บทพูดเยื้อง 1.0 นิ้ว (2.5-1.5)', Math.abs(parseFloat(ds.marginLeft) - 1.0 * 96) < 2, ds.marginLeft);
+          check('[82] บทพูดไม่เว้นบรรทัดก่อน (linesBefore 0)', parseFloat(ds.marginTop) === 0, ds.marginTop);
+        }
+        const scEl = spT.pane.querySelector('.sp-scene');
+        check('[82] หัวฉากเว้น 2 บรรทัดก่อน (margin-top = 2em)',
+              !!scEl && Math.abs(parseFloat(getComputedStyle(scEl).marginTop) - 2 * parseFloat(getComputedStyle(scEl).fontSize)) < 2,
+              scEl && getComputedStyle(scEl).marginTop);
+        // ปรับค่าแล้วต้องเปลี่ยนจริง
+        S.spElements = { character: { indent: 4.5, width: 3.0, linesBefore: 30, linesBetween: 10 } };
+        applyPageVars();
+        const cs2 = getComputedStyle(spT.pane.querySelector('.sp-character'));
+        check('[81] แก้ระยะเยื้องตัวละครใน settings → มีผลทันที (4.5-1.5=3in)',
+              Math.abs(parseFloat(cs2.marginLeft) - 3 * 96) < 2, cs2.marginLeft);
+        check('[82] แก้ระยะเว้นบรรทัดก่อน (30 = 3 บรรทัด) → มีผลทันที',
+              Math.abs(parseFloat(cs2.marginTop) - 3 * parseFloat(cs2.fontSize)) < 2, cs2.marginTop);
+        S.spStyles = { character: { screen: { caps: false, bold: true, italic: false, underline: false },
+                                    print: { caps: true, bold: false, italic: false, underline: true } } };
+        applyPageVars();
+        const cs3 = getComputedStyle(spT.pane.querySelector('.sp-character'));
+        check('[83] ปิดตัวพิมพ์ใหญ่บนจอ → text-transform none', cs3.textTransform === 'none', cs3.textTransform);
+        check('[83] เปิดตัวหนาบนจอ → font-weight 700', cs3.fontWeight === '700', cs3.fontWeight);
+        check('[83] สไตล์ตอนพิมพ์แยกจากบนจอ (ขีดเส้นใต้เฉพาะตอนพิมพ์)',
+              /@media print\{[\s\S]*\.sp\.sp-character\{[^}]*text-decoration:underline/.test(document.getElementById('k-sp-format').textContent));
+        S.spElements = null; S.spStyles = null; applyPageVars();
+
+        // ---- [84] กฎการตัดหน้า + จำนวนหน้าในแถบสถานะ ----
+        const blocks = parseScript(spT.sp.getMarkdown());
+        const pgInfo = paginate(blocks, { fmt: spFormat() });
+        check('[84] คำนวณจำนวนหน้าของบทได้', pgInfo.count >= 1, String(pgInfo.count));
+        scheduleCount();
+        await new Promise((r) => setTimeout(r, 400));
+        check('[84] แถบสถานะบอกจำนวนหน้าของบทหนัง', /\d+ หน้า/.test($('#wc').textContent), $('#wc').textContent);
+        // กฎที่ตั้งเองมีผลกับการแบ่งบทพูด
+        const longBlocks = [{ el: 'action', text: 'x '.repeat(30) }, { el: 'character', text: 'ทอร่า' },
+                            { el: 'dialogue', text: 'พูดยาวมาก '.repeat(40) }];
+        const split1 = paginate(longBlocks, { lines: 14, fmt: spFormat() });
+        S.spPageRules = { minDialogueLinesAtBottom: 99 };
+        const split2 = paginate(longBlocks, { lines: 14, fmt: spFormat() });
+        check('[84] ปรับกฎ minDialogueLinesAtBottom → การแบ่งหน้าเปลี่ยนจริง',
+              split1.pages.flatMap((p) => p.blocks).some((b) => b.split === 'head') &&
+              !split2.pages.flatMap((p) => p.blocks).some((b) => b.split === 'head'));
+        S.spPageRules = null;
+        // ---- [92] ข้อความมาตรฐานที่แก้ได้ ----
+        S.spStrings = { dialogueMore: '(ยังไม่จบ)' };
+        const pgTh = paginate(longBlocks, { lines: 14, fmt: spFormat() });
+        check('[92] แก้ข้อความ (MORE) แล้วใช้ค่าใหม่จริง',
+              pgTh.pages.flatMap((p) => p.blocks).some((b) => b.el === 'more' && b.text === '(ยังไม่จบ)'));
+        S.spStrings = null;
+
+        // ---- บั๊ก #1: SmartType ยืนยันด้วย Tab อย่างเดียว ห้าม Enter ----
+        spT.sp.setElement('character');
+        smart.items = ['ทดสอบชื่อยาว']; smart.sel = 0; smart.prefixLen = 2;
+        smart.box.style.display = 'block';
+        const entHandled = smart.onKey({ key: 'Enter' });
+        check('#1 SmartType: Enter ไม่ยืนยันคำเดา (คืน false → ขึ้นบรรทัดใหม่)', entHandled === false);
+        check('#1 SmartType: Enter ปิด popup ทิ้ง', !smart.visible);
+        smart.items = ['ทดสอบชื่อยาว']; smart.sel = 0; smart.prefixLen = 0;
+        smart.box.style.display = 'block';
+        check('#1 SmartType: Tab ยังยืนยันคำเดาได้', smart.onKey({ key: 'Tab' }) === true);
+        smart.hide();
+        // กด Enter ในบล็อกตัวละครจริง → ต้องได้บล็อกใหม่ ไม่ใช่วนเติมคำ
+        const nBefore = spT.sp.view.state.doc.childCount;
+        spT.sp.setElement('character');
+        spT.sp.enter();
+        check('#1 กด Enter ในบล็อกตัวละคร → เพิ่มบรรทัดใหม่จริง',
+              spT.sp.view.state.doc.childCount === nBefore + 1);
+
+        // ---- แก้ไข feature 1: ปุ่ม Tab/Enter/Shift+Tab ตั้งเองได้ + ปิดได้ ----
+        check('[ปุ่มบทหนัง] ค่าเริ่มต้นคือ Tab / Shift+Tab / Enter',
+              spCycleKeys(S).tab.code === 'Tab' && spCycleKeys(S).shiftTab.shift === true &&
+              spCycleKeys(S).enter.code === 'Enter');
+        S.spCycleKeys = { tab: { code: 'BracketRight', shift: false, ctrl: false, alt: false } };
+        check('[ปุ่มบทหนัง] ตั้งปุ่มเองแล้วค่าที่ใช้เปลี่ยนตาม', spCycleKeys(S).tab.code === 'BracketRight');
+        check('[ปุ่มบทหนัง] ปุ่มที่ไม่ได้ตั้งยังเป็นค่าเริ่มต้น', spCycleKeys(S).enter.code === 'Enter');
+        check('[ปุ่มบทหนัง] ป้ายชื่อปุ่มอ่านออก', spKeyLabel({ code: 'Tab', shift: true }) === 'Shift+Tab',
+              spKeyLabel({ code: 'Tab', shift: true }));
+        S.spCycleKeys = null;
+        // สวิตช์ปิด → Enter ขึ้นบรรทัดใหม่ชนิดเดิม
+        S.spCycleEnabled = false;
+        spT.sp.setElement('character');
+        spT.sp.enter(true);
+        check('[ปุ่มบทหนัง] ปิดระบบ → Enter ได้บล็อกชนิดเดิม (ตัวละคร)', spT.sp.curElement() === 'character');
+        S.spCycleEnabled = true;
+        spT.sp.setElement('character');
+        spT.sp.enter();
+        check('[ปุ่มบทหนัง] เปิดระบบ → Enter หลังตัวละครได้บทพูด', spT.sp.curElement() === 'dialogue');
+
+        // ---- บั๊ก #6: ขนาดของแผงต้องไม่มีผลกับหน้ากระดาษ ----
+        const pmSp = spT.pane.querySelector('.ProseMirror');
+        const wWide = pmSp.getBoundingClientRect().width;
+        const docsPanel = document.querySelector('#app-root .k-panel[data-panel-id="docs"]');
+        const oldFlex = docsPanel.style.flexGrow;
+        docsPanel.style.flexGrow = '0.15';                 // บีบแผงเอกสารให้แคบมาก
+        await new Promise((r) => setTimeout(r, 60));
+        const wNarrow = pmSp.getBoundingClientRect().width;
+        check('#6 แผงแคบลงแล้วหน้ากระดาษกว้างเท่าเดิม (ไม่ตัดคำ)',
+              Math.abs(wNarrow - wWide) < 2, `${Math.round(wWide)} → ${Math.round(wNarrow)}`);
+        check('#6 แผงแคบ → มีแถบเลื่อนแนวนอนแทนการบีบหน้ากระดาษ',
+              spT.pane.scrollWidth > spT.pane.clientWidth + 2,
+              `${spT.pane.scrollWidth} > ${spT.pane.clientWidth}`);
+        docsPanel.style.flexGrow = oldFlex;
+        await new Promise((r) => setTimeout(r, 60));
+
+        // ---- บั๊ก #7: มุมมองเริ่มต้น = หน้ากระดาษอยู่กึ่งกลาง ----
+        spT.pane.scrollLeft = 0;
+        centerPage(spT.pane);
+        const wantMid = Math.max(0, (spT.pane.scrollWidth - spT.pane.clientWidth) / 2);
+        check('#7 เปิดฉากแล้วหน้ากระดาษถูกจัดกึ่งกลาง ไม่ติดมุมซ้าย',
+              Math.abs(spT.pane.scrollLeft - wantMid) < 2, `${spT.pane.scrollLeft} ≈ ${wantMid}`);
+
+        // ---- บั๊ก #5: ซูมยึดจุดกึ่งกลาง ----
+        resetPageScale();
+        await new Promise((r) => setTimeout(r, 40));
+        centerPage(spT.pane);
+        const midRatio0 = (spT.pane.scrollLeft + spT.pane.clientWidth / 2) / Math.max(1, spT.pane.scrollWidth);
+        bumpPageScale(1);
+        await new Promise((r) => setTimeout(r, 120));
+        bumpPageScale(1);
+        await new Promise((r) => setTimeout(r, 120));
+        const midRatio1 = (spT.pane.scrollLeft + spT.pane.clientWidth / 2) / Math.max(1, spT.pane.scrollWidth);
+        check('#5 ซูมแล้วจุดกึ่งกลางหน้าจออยู่ที่เดิม (ไม่กระโดดไปมุมซ้าย)',
+              Math.abs(midRatio1 - midRatio0) < 0.06, `${midRatio0.toFixed(3)} → ${midRatio1.toFixed(3)}`);
+        resetPageScale();
+        await new Promise((r) => setTimeout(r, 60));
+      }
+
+      // ---- บั๊ก #2 + #10: ปุ่มสวิตช์บนแถบเครื่องมือ = ปิดแผง ไม่ใช่พับ ----
+      showPanel('kanban'); await new Promise((r) => setTimeout(r, 60));
+      check('#10 เปิดแผง Kanban ได้', isPanelOpen('kanban'));
+      refreshToolbar();
+      check('#10 ปุ่ม Kanban เป็นสวิตช์ (มีคลาส tb-toggle + ติด .on)',
+            $('#tb-kanban').classList.contains('tb-toggle') && $('#tb-kanban').classList.contains('on'));
+      togglePanel('kanban'); await new Promise((r) => setTimeout(r, 60));
+      check('#2 กดสวิตช์ซ้ำ = "ปิดแผง" ไม่ใช่พับ',
+            !isPanelOpen('kanban') && !getPanelManager().isCollapsed('kanban'));
+      check('#2 ปิดแล้วไม่มี element ของแผงค้างอยู่ใน #app-root',
+            !document.querySelector('#app-root .k-panel[data-panel-id="kanban"]'));
+      refreshToolbar();
+      check('#10 ปิดแล้วปุ่ม Kanban ไม่ติด .on', !$('#tb-kanban').classList.contains('on'));
+
+      // ---- บั๊ก #4: ปิดแผงแล้วเปิดกลับต้องได้ที่เดิม ----
+      resetPanels(); await new Promise((r) => setTimeout(r, 40));
+      const grpBefore = PL.tabGroupOf(getPanelManager().root, 'outline');
+      check('#4 ก่อนปิด: Navigation อยู่กลุ่มแท็บเดียวกับโปรเจกต์',
+            !!grpBefore && grpBefore.children.some((c) => c.id === 'tree'));
+      hidePanel('outline'); await new Promise((r) => setTimeout(r, 40));
+      check('#4 จำตำแหน่งเดิมลง localStorage (k2-panel-home)',
+            (localStorage.getItem('k2-panel-home') || '').includes('outline'));
+      showPanel('outline'); await new Promise((r) => setTimeout(r, 60));
+      const grpAfter = PL.tabGroupOf(getPanelManager().root, 'outline');
+      check('#4 เปิดกลับแล้วกลับเข้ากลุ่มแท็บเดิม ไม่แยกไปช่องใหม่',
+            !!grpAfter && grpAfter.children.some((c) => c.id === 'tree'),
+            JSON.stringify(getPanelManager().root && PL.panelIds(getPanelManager().root)));
+      // แผงลอย: ปิดแล้วเปิดกลับต้องลอยที่เดิม
+      getPanelManager().floatPanel('props', { x: 220, y: 160, w: 300, h: 240 });
+      await new Promise((r) => setTimeout(r, 60));
+      hidePanel('props'); await new Promise((r) => setTimeout(r, 40));
+      showPanel('props'); await new Promise((r) => setTimeout(r, 60));
+      const flProps = getPanelManager().floats.find((f) => f.panel.id === 'props');
+      check('#4 แผงที่เคยลอย → เปิดกลับมาลอยที่พิกัดเดิม',
+            !!flProps && flProps.x === 220 && flProps.y === 160,
+            JSON.stringify(flProps && { x: flProps.x, y: flProps.y }));
+      resetPanels(); await new Promise((r) => setTimeout(r, 40));
+
+      // ---- บั๊ก #3: จับกลุ่มแท็บได้เฉพาะที่ชื่อแผง / ~20% ฝั่งขวาของหัวแผง ----
+      {
+        const head = document.querySelector('#app-root .k-panel[data-panel-id="docs"] > .k-panel-head')
+                  || document.querySelector('#app-root .k-panel-head');
+        check('#3 หัวแผงติดคลาสบอกเขตจับกลุ่ม (k-can-group)',
+              !!document.querySelector('#app-root .k-panel-head.k-can-group'));
+        const h2 = document.querySelector('#app-root .k-panel-head.k-can-group');
+        const hr = h2.getBoundingClientRect();
+        check('#3 จับฝั่งขวา ~20% = อนุญาตให้รวมเป็นแท็บ',
+              inGroupHandle(h2, hr.right - hr.width * 0.05) === true);
+        check('#3 จับตรงกลาง/ซ้ายของหัวแผง = ไม่อนุญาต (กันเผลอรวมแท็บ)',
+              inGroupHandle(h2, hr.left + hr.width * 0.5) === false);
+      }
+
+      // ---- บั๊ก #9: แผงลอยชนขอบแล้ว snap ----
+      {
+        const edges = { xs: [0, 500, 900], ys: [0, 300, 700] };
+        const s1 = snapToEdges(496, 20, 200, 150, edges);
+        check('#9 ลากแผงลอยเข้าใกล้ขอบ → ดูดชิดพอดี', s1.x === 500 && s1.snapped === true, JSON.stringify(s1));
+        const s2 = snapToEdges(300, 150, 120, 90, edges);   // ไม่มีขอบไหนใกล้ทั้งซ้าย/ขวา/บน/ล่าง
+        check('#9 อยู่ไกลขอบ → ไม่ถูกดูด', s2.x === 300 && s2.snapped === false, JSON.stringify(s2));
+        const s3 = snapToEdges(296, 20, 200, 150, edges);
+        check('#9 ขอบขวาของแผงชนขอบก็ดูดเหมือนกัน', s3.x === 300, JSON.stringify(s3));
+      }
+
+      // ---- บั๊ก #8: โหมดอ่าน/โฟกัส ต้องไม่เหลือแผงว่างฝั่งขวา ----
+      {
+        showPanel('props'); await new Promise((r) => setTimeout(r, 60));
+        toggleReading(true); await new Promise((r) => setTimeout(r, 120));
+        const propsEl = document.querySelector('#app-root .k-panel[data-panel-id="props"]');
+        check('#8 โหมดอ่าน: แผงคุณสมบัติถูกซ่อนจริง (ไม่เหลือกล่องเปล่า)',
+              !propsEl || getComputedStyle(propsEl).display === 'none',
+              propsEl && getComputedStyle(propsEl).display);
+        check('#8 โหมดอ่าน: ทุกแผงที่ไม่ได้ถือเอกสารถูกซ่อนหมด',
+              [...document.querySelectorAll('#app-root .k-panel')]
+                .every((e) => e.classList.contains('k-holds-docs') || getComputedStyle(e).display === 'none'));
+        toggleReading(false); await new Promise((r) => setTimeout(r, 120));
+        toggleFocus(true); await new Promise((r) => setTimeout(r, 120));
+        check('#8 โหมดโฟกัส: ทุกแผงที่ไม่ได้ถือเอกสารถูกซ่อนหมด',
+              [...document.querySelectorAll('#app-root .k-panel')]
+                .every((e) => e.classList.contains('k-holds-docs') || getComputedStyle(e).display === 'none'));
+        toggleFocus(false); await new Promise((r) => setTimeout(r, 120));
+        resetPanels(); await new Promise((r) => setTimeout(r, 40));
+      }
+
+      // ---- บั๊ก #11: เครื่องมือระดับโปรเจกต์ใช้ได้แม้ไม่มีแท็บฉาก ----
+      {
+        const keepTabs = [...state.tabs.keys()];
+        closeAllTabs(); await new Promise((r) => setTimeout(r, 200));
+        refreshToolbar();
+        for (const id of ['tb-note', 'tb-panels', 'tb-kanban', 'tb-gsearch', 'tb-quickopen']) {
+          check('#11 ไม่มีแท็บฉากแต่ปุ่ม ' + id + ' ยังใช้ได้',
+                !$('#' + id).classList.contains('dis'), $('#' + id).className);
+        }
+        check('#11 ปุ่มที่ต้องมีตัวแก้ไขจริง ๆ ยังถูกปิดตามเดิม', $('#tb-bold').classList.contains('dis'));
+        // เปิดฉากกลับมาให้เทสถัด ๆ ไปใช้
+        const anyScene = document.querySelector('#tree .scene:not(.add-row)');
+        if (anyScene) { anyScene.click(); await new Promise((r) => setTimeout(r, 350)); }
+      }
+
+      // ---- บั๊ก #12: หน้าแรก 4 คอลัมน์ ขนาดนิ่ง + ตั้งขนาดการ์ดได้ ----
+      {
+        S.homeThumb = 220; applySettings();
+        check('#12 ตั้งขนาดการ์ดหน้าแรกใน settings ได้ (--home-thumb)',
+              rootVar('--home-thumb') === '220px', rootVar('--home-thumb'));
+        const ovHome = await showHomeDialog();
+        await new Promise((r) => setTimeout(r, 250));
+        const grid = ovHome.querySelector('.home-grid');
+        check('#12 หน้าแรกแสดงกริด', !!grid);
+        const cols = getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length;
+        check('#12 หน้าแรกเป็น 4 คอลัมน์', cols === 4, String(cols));
+        const card1 = grid.querySelector('.home-card');
+        if (card1) {
+          const h1 = card1.getBoundingClientRect().height;
+          grid.classList.add('list');
+          await new Promise((r) => setTimeout(r, 60));
+          const hList = card1.getBoundingClientRect().height;
+          grid.classList.remove('list');
+          await new Promise((r) => setTimeout(r, 60));
+          const h2c = card1.getBoundingClientRect().height;
+          check('#12 สลับรายการ ↔ การ์ด แล้วขนาดการ์ดกลับมาเท่าเดิม (fixed)',
+                Math.abs(h1 - h2c) < 1 && hList !== h1, `${h1} / ${hList} / ${h2c}`);
+        }
+        ovHome.remove();
+        S.homeThumb = 190; applySettings();
+      }
+
+      // ---- บั๊ก #13: ค้นหาเอนทิตี้ต้องค้นเนื้อในไฟล์บนดิสก์ ----
+      {
+        const blob = entitySearchBlob('ทอร่า', { name: 'ทอร่า', aliases: ['Tora'], tags: ['หลัก'],
+                                                  fields: { บทบาท: 'เจ้าของร้านเบเกอรี่' } }, 'characters', '');
+        check('#13 blob ค้นหารวมชื่อเล่น', blob.includes('tora'));
+        check('#13 blob ค้นหารวมแท็ก', blob.includes('หลัก'));
+        check('#13 blob ค้นหารวมค่าในฟิลด์เทมเพลต', blob.includes('เบเกอรี่'));
+        check('#13 blob ไม่เอาข้อมูลรูป/guid มาปน',
+              !entitySearchBlob('x', { guid: 'k2-zzz', images: ['a.png'] }, 'c', '').includes('k2-zzz'));
+        const entEls = [...document.querySelectorAll('#tree .wiki-ent')];
+        check('#13 รายการเอนทิตี้ใน Explorer มี dataset.search ที่มาจากไฟล์จริง',
+              entEls.length > 0 && entEls.some((e) => (e.dataset.search || '').length > (e.textContent || '').length),
+              String(entEls.length));
+      }
+
+      // ---- [97] หน้ารายชื่อตัวละคร (Cast of Characters) ----
+      {
+        const secs = await listSections();
+        check('[97] มีเล่มให้ผูกหน้ารายชื่อตัวละคร', secs.length > 0);
+        const secPath = secs[0].secPath;
+        await openRoster(secPath, secs[0].title);
+        await new Promise((r) => setTimeout(r, 200));
+        const rTab = state.active;
+        check('[97] เปิดหน้ารายชื่อตัวละครเป็นแท็บของตัวเอง',
+              !!rTab && String(rTab.file).startsWith('::roster::'), rTab && rTab.file);
+        check('[97] หน้ารายชื่อใช้กรอบหน้ากระดาษเดียวกับบทหนัง',
+              !!rTab.pane.querySelector('.roster-page'));
+        const rp = rTab.pane.querySelector('.roster-page');
+        const rpCS = getComputedStyle(rp);
+        check('[97] ระยะขอบหน้ารายชื่อ = ซ้าย 1.5 นิ้ว / บน 1 นิ้ว',
+              Math.abs(parseFloat(rpCS.paddingLeft) - 1.5 * 96) < 2 &&
+              Math.abs(parseFloat(rpCS.paddingTop) - 1 * 96) < 2,
+              rpCS.paddingLeft + ' / ' + rpCS.paddingTop);
+        // getComputedStyle().width คืน "content box" เสมอ → ต้องวัด border-box ด้วย rect
+        check('[97] ความกว้างหน้ารายชื่อ = ความกว้างกระดาษ',
+              Math.abs(rp.getBoundingClientRect().width - 8.5 * 96) < 3,
+              String(rp.getBoundingClientRect().width));
+        const ttl = rp.querySelector('.roster-title');
+        const ttlCS = getComputedStyle(ttl);
+        check('[97] "Cast of Characters" เป็นบรรทัดแรก อยู่กลางหน้า ขีดเส้นใต้',
+              ttl.textContent === 'Cast of Characters' && ttlCS.textAlign === 'center' &&
+              ttlCS.textDecorationLine.includes('underline'),
+              ttl.textContent + ' | ' + ttlCS.textAlign + ' | ' + ttlCS.textDecorationLine);
+        check('[97] หน้ารายชื่อไม่มีเลขหน้า', !rp.querySelector('.page-number, .k-page-no'));
+        // เพิ่มตัวละคร → บันทึก → อ่านกลับ
+        [...rTab.pane.querySelectorAll('.roster-bar button')].find((b) => b.textContent.includes('เพิ่มตัวละคร')).click();
+        await new Promise((r) => setTimeout(r, 60));
+        const nameEl = rp.querySelector('.roster-name');
+        const detEl = rp.querySelector('.roster-detail');
+        check('[97] เพิ่มแถวตัวละครได้ (ชื่อ + รายละเอียด)', !!nameEl && !!detEl);
+        const nameCS = getComputedStyle(nameEl);
+        check('[97] ชื่อตัวละครขีดเส้นใต้เสมอ', nameCS.textDecorationLine.includes('underline'), nameCS.textDecorationLine);
+        check('[97] มี ":" ต่อท้ายชื่อ', !!rp.querySelector('.roster-colon'));
+        const rowCS = getComputedStyle(rp.querySelector('.roster-row'));
+        check('[97] ขึ้นบรรทัดใหม่ชิดคอลัมน์รายละเอียด (hanging indent)',
+              parseFloat(rowCS.paddingLeft) > 100 && parseFloat(rowCS.textIndent) < -100,
+              rowCS.paddingLeft + ' / ' + rowCS.textIndent);
+        check('[97] ตัวละครถัดไปเว้น 1 บรรทัด (margin-bottom ≈ 1.5em)',
+              parseFloat(rowCS.marginBottom) > parseFloat(rowCS.fontSize), rowCS.marginBottom);
+        nameEl.textContent = 'Donald Bradleyson'; nameEl.dispatchEvent(new Event('input'));
+        detEl.textContent = 'นักสืบวัย 40'; detEl.dispatchEvent(new Event('input'));
+        const sceneBody = rp.querySelector('.roster-sec[data-k="scene"] .roster-sec-body');
+        check('[97] มีหัวข้อ Scene + Time (ผู้ใช้เลือกเอา/ไม่เอาได้)',
+              !!rp.querySelector('.roster-sec[data-k="scene"]') && !!rp.querySelector('.roster-sec[data-k="time"]'));
+        const secHeadCS = getComputedStyle(rp.querySelector('.roster-sec-head'));
+        check('[97] หัวข้อ Scene อยู่กลางหน้า ขีดเส้นใต้',
+              secHeadCS.textAlign === 'center' && secHeadCS.textDecorationLine.includes('underline'));
+        check('[97] คำอธิบายใต้หัวข้อชิดซ้าย', getComputedStyle(sceneBody).textAlign === 'left');
+        sceneBody.textContent = 'กรุงเทพฯ 2025'; sceneBody.dispatchEvent(new Event('input'));
+        await saveTab(rTab);
+        const rFile = await kapi.join(secPath, 'roster.json');
+        check('[97] บันทึกลง <เล่ม>/roster.json (อยู่ในเล่ม ไม่อยู่ในฉาก)', await kapi.exists(rFile));
+        const rJson = JSON.parse(await kapi.readFile(rFile));
+        check('[97] ไฟล์เก็บชื่อ+รายละเอียดตัวละคร',
+              rJson.characters[0].name === 'Donald Bradleyson' && rJson.characters[0].detail === 'นักสืบวัย 40',
+              JSON.stringify(rJson.characters));
+        check('[97] ไฟล์เก็บ Scene ที่กรอก', rJson.scene === 'กรุงเทพฯ 2025');
+        check('[97] มีสวิตช์ "ใส่ตอนพิมพ์/ส่งออก"', rJson.includeInExport === true);
+        // ปิดหัวข้อ Scene แล้วต้องหายจากหน้า
+        const chkScene = [...rTab.pane.querySelectorAll('.roster-chk')]
+          .find((l) => l.textContent.includes('Scene')).querySelector('input');
+        chkScene.click();
+        await new Promise((r) => setTimeout(r, 60));
+        check('[97] ปิดหัวข้อ Scene → หายจากหน้ารายชื่อ',
+              !rTab.pane.querySelector('.roster-sec[data-k="scene"]'));
+        chkScene.click(); await new Promise((r) => setTimeout(r, 60));
+        // ข้อความล้วน (ใช้ตอนพิมพ์/ส่งออก)
+        const rTxt = rosterToText(rTab.roster, spFormat());
+        check('[97] แปลงเป็นข้อความ: ชื่อตามด้วย ":" แล้ว tab',
+              rTxt.includes('Donald Bradleyson:\tนักสืบวัย 40'), rTxt.slice(0, 160));
+        check('[97] แปลงเป็นข้อความ: หัวเรื่องจัดกลาง', rTxt.split('\n')[0].startsWith(' '));
+        // ดึงจาก Wiki
+        [...rTab.pane.querySelectorAll('.roster-bar button')].find((b) => b.textContent.includes('Wiki')).click();
+        await new Promise((r) => setTimeout(r, 250));
+        check('[97] ดึงรายชื่อจาก Wiki เข้ามาได้', rTab.roster.characters.length >= 1,
+              String(rTab.roster.characters.length));
+        closeTab(rTab.file);
+      }
+
+      // ---- [98] ข้อมูลผลงานใน project setup ----
+      {
+        settingsDialog('setup');
+        await new Promise((r) => setTimeout(r, 60));
+        const need = ['#st-email', '#st-contact', '#st-spby', '#st-basedon', '#st-revby', '#st-phone',
+                      '#st-agname', '#st-agaddr', '#st-agphone', '#st-agemail', '#st-copyright'];
+        check('[98] แท็บ "ข้อมูลผลงาน" เปิดตรงจากเมนูได้',
+              document.querySelector('.k-set-page[data-p="setup"]').classList.contains('on'));
+        check('[98] มีครบทั้ง 11 ช่อง', need.every((s) => !!document.querySelector('.k-settings ' + s)),
+              need.filter((s) => !document.querySelector('.k-settings ' + s)).join(','));
+        const vals = { '#st-email': 'top@example.com', '#st-contact': 'กรุงเทพฯ', '#st-spby': 'Top',
+                       '#st-basedon': 'เรื่องจริง', '#st-revby': 'บก.', '#st-phone': '02-000-0000',
+                       '#st-agname': 'เอเจนต์ ก', '#st-agaddr': 'ถนนสุขุมวิท', '#st-agphone': '02-111-1111',
+                       '#st-agemail': 'agent@example.com', '#st-copyright': '2026 Top' };
+        for (const k of Object.keys(vals)) document.querySelector('.k-settings ' + k).value = vals[k];
+        document.querySelector('.k-settings .k-ok').click();
+        await new Promise((r) => setTimeout(r, 200));
+        const pjm = JSON.parse(await kapi.readFile(await kapi.join(state.root, 'project.khn.json')));
+        check('[98] บันทึกอีเมล/ติดต่อ/โทรศัพท์ลง project.khn.json',
+              pjm.authorEmail === 'top@example.com' && pjm.contact === 'กรุงเทพฯ' && pjm.phone === '02-000-0000',
+              JSON.stringify({ e: pjm.authorEmail, c: pjm.contact, p: pjm.phone }));
+        check('[98] บันทึกเครดิตบท (Screenplay By / Based On / Revisions by)',
+              pjm.screenplayBy === 'Top' && pjm.basedOn === 'เรื่องจริง' && pjm.revisionsBy === 'บก.');
+        check('[98] บันทึกข้อมูลตัวแทน 4 ช่อง',
+              pjm.agentName === 'เอเจนต์ ก' && pjm.agentAddress === 'ถนนสุขุมวิท' &&
+              pjm.agentPhone === '02-111-1111' && pjm.agentEmail === 'agent@example.com');
+        check('[98] บันทึกลิขสิทธิ์', pjm.copyright === '2026 Top');
+      }
+
+      // ---- ตั้งค่า: แท็บหน้ากระดาษ + รูปแบบบท มีจริงและบันทึกได้ ----
+      {
+        settingsDialog('page');
+        await new Promise((r) => setTimeout(r, 60));
+        check('[85] ตั้งค่ามีแท็บ "หน้ากระดาษ" พร้อมช่องขนาด/ระยะขอบ',
+              !!document.querySelector('.k-settings #st-paper') &&
+              !!document.querySelector('.k-settings #st-mg-left'));
+        check('[84] ตั้งค่ามีช่องกฎการตัดหน้าครบ',
+              ['#st-pb-ab', '#st-pb-at', '#st-pb-db', '#st-pb-dt', '#st-pb-hy', '#st-pb-ks']
+                .every((s) => !!document.querySelector('.k-settings ' + s)));
+        check('[92] ตั้งค่ามีช่องข้อความมาตรฐานครบ',
+              ['#st-str-cb', '#st-str-ct', '#st-str-more', '#st-str-contd']
+                .every((s) => !!document.querySelector('.k-settings ' + s)));
+        const mgLeft = document.querySelector('.k-settings #st-mg-left');
+        mgLeft.value = '1.25'; mgLeft.dispatchEvent(new Event('input'));
+        await new Promise((r) => setTimeout(r, 40));
+        check('[85] แก้ระยะขอบในกล่องตั้งค่า → เห็นผลทันที (พรีวิว)',
+              rootVar('--mg-left') === '1.25in', rootVar('--mg-left'));
+        const moreIn = document.querySelector('.k-settings #st-str-more');
+        moreIn.value = '(ยังพูดต่อ)'; moreIn.dispatchEvent(new Event('input'));
+        // แท็บรูปแบบบท
+        [...document.querySelectorAll('.k-set-tab')].find((x) => x.dataset.p === 'spfmt').click();
+        const rows = document.querySelectorAll('.k-settings #st-spfmt tbody tr');
+        check('[81] ตั้งค่ามีตารางรูปแบบครบทุก element', rows.length === SP_ELEMENT_KEYS.length,
+              `${rows.length}/${SP_ELEMENT_KEYS.length}`);
+        check('[83] แต่ละแถวมีติ๊ก ใหญ่/หนา/เอียง/ขีด ทั้งจอและตอนพิมพ์ (8 ช่อง)',
+              rows[0].querySelectorAll('input[type=checkbox]').length === 8,
+              String(rows[0].querySelectorAll('input[type=checkbox]').length));
+        check('[81][82] แต่ละแถวมีช่องตัวเลข 4 ช่อง (เยื้อง/กว้าง/เว้นก่อน/ระยะบรรทัด)',
+              rows[0].querySelectorAll('input[type=number]').length === 4);
+        // แท็บปุ่มบทหนัง
+        [...document.querySelectorAll('.k-set-tab')].find((x) => x.dataset.p === 'sp').click();
+        check('[ปุ่มบทหนัง] มีสวิตช์เปิด/ปิดระบบปุ่ม', !!document.querySelector('.k-settings #st-spcycle-on'));
+        check('[ปุ่มบทหนัง] มีที่ตั้งปุ่มเองครบ 3 ปุ่ม',
+              document.querySelectorAll('.k-settings #st-spkeys .k-key-row').length === 3);
+        document.querySelector('.k-settings .k-ok').click();
+        await new Promise((r) => setTimeout(r, 200));
+        check('[85] บันทึกระยะขอบลง settings', state.settings.pageMargins.left === 1.25,
+              JSON.stringify(state.settings.pageMargins));
+        check('[92] บันทึกข้อความ (MORE) ที่แก้เอง', state.settings.spStrings.dialogueMore === '(ยังพูดต่อ)');
+        const pjm2 = JSON.parse(await kapi.readFile(await kapi.join(state.root, 'project.khn.json')));
+        check('[85] ระยะขอบถูกเขียนลง project.khn.json', pjm2.settings.pageMargins.left === 1.25);
+        // คืนค่าเริ่มต้นให้เทสถัดไป
+        state.settings.pageMargins = { top: 1, bottom: 1, left: 1.5, right: 1 };
+        state.settings.spStrings = null;
+        applySettings();
+        check('[85] คืนระยะขอบมาตรฐานแล้ว', rootVar('--mg-left') === '1.5in');
+      }
     }
 
     out.push('ALL OK');

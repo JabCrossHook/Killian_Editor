@@ -6,6 +6,11 @@ import * as PL from './panel-layout.js';
 // px ที่ต้องขยับก่อนถือว่า "ลาก" (ไม่งั้นนับเป็นคลิก)
 // บั๊ก #19: 4px น้อยเกินไป — คลิกหัวแผงแล้วมือขยับนิดเดียวก็กลายเป็นลาก → แผงเด้งไป dock/ลอยเอง
 const DRAG_MIN = 8;
+// บั๊ก #3: "รวมเป็นแท็บ" (โซนกลาง) อนุญาตเฉพาะเมื่อจับที่ชื่อแผง หรือ ~20% ฝั่งขวาของหัวแผง
+// จับที่อื่นบนหัวแผง = ลากไปผนึกขอบ (แยกช่อง) ได้อย่างเดียว → เลิกเผลอรวมแท็บโดยไม่ตั้งใจ
+export const GROUP_ZONE = 0.2;
+// บั๊ก #9: แผงลอยชนขอบแผงลอยอื่น/ขอบหน้าต่าง แล้ว "ดูด" ให้ชิดพอดี
+const SNAP_PX = 10;
 
 // ───────── overlay บอกโซนที่จะปล่อย ─────────
 let _ov = null;
@@ -58,8 +63,10 @@ export function detectSnapTarget(mx, my, host, excludeId) {
     const r = e.getBoundingClientRect();
     if (!r.width || !r.height) continue;
     const rect = { x: r.left, y: r.top, w: r.width, h: r.height };
-    const zone = PL.snapZone(mx, my, rect);
+    let zone = PL.snapZone(mx, my, rect);
     if (!zone) continue;
+    // ห้ามรวมเป็นแท็บกับ "แผงเอกสาร" — จะบังพื้นที่เขียนทั้งหมด (ปล่อยกลางแผงเอกสาร = ไม่ทำอะไร)
+    if (zone === 'center' && e.dataset.panelId === 'docs') continue;
     const area = r.width * r.height;
     if (!best || area < best.area) best = { targetId: e.dataset.panelId, zone, rect, area };
   }
@@ -89,6 +96,8 @@ function startPanelDrag(e, panelId, pm, ctx = {}) {
     if (ghost) { ghost.style.left = (ev.clientX + 12) + 'px'; ghost.style.top = (ev.clientY + 14) + 'px'; }
     if (!ctx.floatOnly) {
       hit = detectSnapTarget(ev.clientX, ev.clientY, host, panelId);
+      // บั๊ก #3: โซนกลาง (= รวมเป็นแท็บ) ต้องได้รับอนุญาตก่อน
+      if (hit && hit.zone === 'center' && !ctx.allowGroup) hit = null;
       if (hit) ov.show(zoneRect(hit.rect, hit.zone), hit.zone);
       else ov.hide();
     }
@@ -121,13 +130,23 @@ function startPanelDrag(e, panelId, pm, ctx = {}) {
   e.preventDefault();
 }
 
-/** ลากด้วยหัวแผงที่ผนึกอยู่ → ผนึกที่อื่น / รวมเป็นแท็บ / ลอยออกมา */
+/** จุดที่จับอยู่ในเขตที่อนุญาตให้ "รวมเป็นแท็บ" ไหม (ชื่อแผง หรือ ~20% ฝั่งขวาของหัวแผง) */
+export function inGroupHandle(header, clientX) {
+  const r = header.getBoundingClientRect();
+  if (!r.width) return false;
+  return clientX >= r.right - r.width * GROUP_ZONE;
+}
+
+/** ลากด้วยหัวแผงที่ผนึกอยู่ → ผนึกขอบ (แยกช่อง) / รวมเป็นแท็บ / ลอยออกมา
+ *  บั๊ก #3: รวมเป็นแท็บได้ก็ต่อเมื่อจับที่ "ชื่อแผง" หรือ "~20% ฝั่งขวาของหัวแผง" */
 export function makePanelDraggable(header, panelId, pm, ctx = {}) {
   header.addEventListener('mousedown', (e) => {
     if (e.target.closest('.k-panel-btn') || e.target.closest('.k-panel-ctrls')) return;
     const onTitle = !!e.target.closest('.k-panel-head-title');
-    startPanelDrag(e, panelId, pm, { ...ctx, floatOnly: onTitle });
+    const allowGroup = onTitle || inGroupHandle(header, e.clientX);
+    startPanelDrag(e, panelId, pm, { ...ctx, allowGroup });
   });
+  header.classList.add('k-can-group');
 }
 
 /** ลากแท็บ → จัดลำดับในกลุ่มเดิม · ลากออก = แยก/ผนึกที่อื่น/ลอย */
@@ -137,6 +156,7 @@ export function makeTabDraggable(tab, panelId, tabsId, index, pm, ctx = {}) {
     const bar = tab.parentNode;
     startPanelDrag(e, panelId, pm, {
       ...ctx,
+      allowGroup: true,                                 // ลากหัวแท็บ = ตั้งใจจัดกลุ่มอยู่แล้ว
       ghostLabel: ctx.ghostLabel || tab.textContent.trim(),
       onReorder: (mx, my) => {
         if (!bar) return false;
@@ -157,30 +177,62 @@ export function makeTabDraggable(tab, panelId, tabsId, index, pm, ctx = {}) {
   });
 }
 
-/** ลากหัวแผงลอย = ย้ายตำแหน่ง · ลากเข้าแผงที่ผนึกอยู่ = ผนึกกลับ */
+/** ขอบที่แผงลอยตัวอื่น (และขอบหน้าต่าง) มีอยู่ — ใช้ "ดูด" ให้ชิดพอดี (บั๊ก #9) */
+function snapEdges(selfEl) {
+  const xs = [0, window.innerWidth], ys = [0, window.innerHeight];
+  for (const p of document.querySelectorAll('.k-float-panel')) {
+    if (p === selfEl) continue;
+    const r = p.getBoundingClientRect();
+    xs.push(r.left, r.right); ys.push(r.top, r.bottom);
+  }
+  return { xs, ys };
+}
+/** ดูดตำแหน่ง (x,y) ให้ชิดขอบที่ใกล้ที่สุดภายใน SNAP_PX — คืน {x,y,snapped} */
+export function snapToEdges(x, y, w, h, edges, tol = SNAP_PX) {
+  let sx = x, sy = y, snapped = false;
+  for (const e of edges.xs) {
+    if (Math.abs(x - e) <= tol) { sx = e; snapped = true; break; }
+    if (Math.abs(x + w - e) <= tol) { sx = e - w; snapped = true; break; }
+  }
+  for (const e of edges.ys) {
+    if (Math.abs(y - e) <= tol) { sy = e; snapped = true; break; }
+    if (Math.abs(y + h - e) <= tol) { sy = e - h; snapped = true; break; }
+  }
+  return { x: sx, y: sy, snapped };
+}
+
+/** ลากหัวแผงลอย
+ *  · จับที่ "ชื่อแผง" = ผนึกกลับได้ทุกโซน (ขอบ = แยกช่อง · กลาง = รวมเป็นแท็บ)
+ *  · จับที่อื่นบนหัว = ย้ายตำแหน่งอย่างเดียว + ชนขอบแผงลอยอื่น/ขอบจอแล้ว snap (บั๊ก #9)
+ */
 export function makeFloatDraggable(header, popup, panelId, pm, ctx = {}) {
   header.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
     if (e.target.closest('.k-panel-btn')) return;
     const host = ctx.host || document.getElementById('app-root') || document.body;
+    const canDock = !!e.target.closest('.k-panel-head-title') || inGroupHandle(header, e.clientX);
     const sx = e.clientX, sy = e.clientY;
     const x0 = popup.offsetLeft, y0 = popup.offsetTop;
     const ov = createDropOverlay();
+    const edges = snapEdges(popup);
     let hit = null, moved = false;
     const move = (ev) => {
       if (!moved && Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < DRAG_MIN) return;
       moved = true;
-      popup.style.left = (x0 + ev.clientX - sx) + 'px';
-      popup.style.top = (y0 + ev.clientY - sy) + 'px';
-      hit = detectSnapTarget(ev.clientX, ev.clientY, host, panelId);
-      // float panels only snap to center zone (tab) — not edges (split)
-      if (hit && hit.zone === 'center') ov.show(zoneRect(hit.rect, hit.zone), hit.zone);
-      else { hit = null; ov.hide(); }
+      const w = popup.offsetWidth, h = popup.offsetHeight;
+      const s = snapToEdges(x0 + ev.clientX - sx, y0 + ev.clientY - sy, w, h, edges);
+      popup.style.left = s.x + 'px';
+      popup.style.top = s.y + 'px';
+      popup.classList.toggle('k-float-snapped', s.snapped);
+      hit = canDock ? detectSnapTarget(ev.clientX, ev.clientY, host, panelId) : null;
+      if (hit) ov.show(zoneRect(hit.rect, hit.zone), hit.zone);
+      else ov.hide();
     };
     const up = () => {
       document.removeEventListener('mousemove', move);
       document.removeEventListener('mouseup', up);
       ov.hide();
+      popup.classList.remove('k-float-snapped');
       if (!moved) return;
       if (hit) { pm.dockPanel(panelId, hit.zone, hit.targetId); return; }
       pm.moveFloat(panelId, { x: popup.offsetLeft, y: popup.offsetTop });

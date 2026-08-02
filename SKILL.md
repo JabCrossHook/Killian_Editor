@@ -66,6 +66,15 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
   - **`layout/split-layout.js`** (alpha.39, บริสุทธิ์) — recursive split tree: `splitPane`(ลากขอบ→row/col),`resizeSplit`(+snap 50%),`removeLeaf`(+collapse), `leaf.tabId` เชื่อมกับ Panel System · store: `serializeSplit`/`SplitStore`. UI = `split-ui.js` (`renderSplitTree`/`initSplitSystem` + โหมดเทียบ 2 ช่องแบบเดิม)
   - `compile.js` — **เอนจินเวิร์กโฟลว์ส่งออก** (บริสุทธิ์ ไม่แตะ DOM/fs): `STEP_DEFS` 3 stage (model/render/text), `PRESETS`×7, `runWorkflow(model,wf)`, `mdToHtml`, strip helpers — มี unit test แยก
   - `timeline.js` — **เอนจินเส้นเวลา + Gantt** (บริสุทธิ์): `extractNum` (ถอดเลขจากข้อความไทย "ปีที่ 1,024"→1024), `sortEvents`, `mergeTimeline(events,sceneEvents)` (**ต้อง copy ทุก field ที่ UI ใช้ รวม whenEnd**), `groupByTrack`, `findClashes`, `ganttData/ganttBar/ganttTicks`, `newEvent`
+  - **`sp-format.js`** (alpha.56, บริสุทธิ์ · **ข้อ 81–85, 92, 97**) — รูปแบบบทภาพยนตร์ระดับใช้งานจริง
+    `PAPER_SIZES`(letter/a4/legal/custom)/`MARGIN_DEFAULTS`(T1 B1 L1.5 R1)/`linesPerPage`(Letter=54)/`textWidth` ·
+    `SP_ELEMENT_CONFIG` **หน่วยนิ้ว วัดจากขอบกระดาษแบบ Final Draft** (character 3.7"/3.8" · dialogue 2.5"/3.5") ·
+    `SP_ELEMENT_STYLES` screen vs print · `PAGE_BREAK_RULES` · `SP_STRINGS` · `mergeSpFormat(user)` ·
+    `pageCssVars()` → `--page-w/--mg-*/--text-w` · `spCss()` **สร้าง CSS + `@page` เป็นข้อความ**
+    (`@page` ใช้ CSS var ไม่ได้ · `max-width:calc(100%-x)` ก็ใช้ไม่ได้เพราะ 100% รวมเส้นขอบ 2px → หนีบใน JS แทน) ·
+    `paginate()` (MORE/cont'd/CONTINUED · ไม่ทิ้งชื่อตัวละครท้ายหน้า) · `rosterToText()` · **unit test 74 ข้อ**
+  - **`roster-ui.js`** (alpha.56, ข้อ 97) — หน้ารายชื่อตัวละคร: หน้าเดี่ยว**ประจำเล่ม** เก็บ `<Section>/roster.json`
+    (ไม่อยู่ในฉากเลย) · แท็บ `::roster::<secPath>` · `saveTab()` แยกทางไป `saveRosterTab()` · ไม่มีเลขหน้า
   - `maps.js` — **เอนจินแผนที่** (บริสุทธิ์): `newMap/newPin`, `breadcrumb` (ลำดับชั้น world→city→room ตาม portal), `rootMaps`, `pinStats`, `deleteMap` (ล้าง portal ค้าง), `PIN_COLORS/PIN_KIND`
 - **build**: `node build.js` (esbuild bundle src/app.js) — dict แยกไฟล์ไม่ฝัง bundle
 
@@ -77,7 +86,7 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
 
 ## E2E test workflow (สำคัญ — ทำทุกครั้งก่อนเชื่อว่าแก้สำเร็จ)
 
-Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **893 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
+Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **1,012 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
 
 **Unit test โมดูลบริสุทธิ์ (alpha.39, รันเร็ว ไม่ต้องเปิด electron):**
 ```bash
@@ -191,6 +200,19 @@ grep -E "FAIL|STOP" /tmp/k2result.txt | head -3
 31. **`document.querySelector('.k-menu')` ไม่ได้คืนเมนูที่เพิ่งเปิด** — `#k-fab-menu` เป็น `.k-menu` ถาวรใน index.html
    และอยู่ก่อนใน document order → เทสเมนูป๊อปอัปผ่านทั้งที่เช็คผิดตัว. ใช้ `.k-menu:not(#k-fab-menu)` เสมอ
 
+32. **`max-width:calc(100% - Xin)` บนหน้ากระดาษเพี้ยน 2px** — `* { box-sizing:border-box }` + เส้นขอบกระดาษ 1px×2
+   ทำให้ 100% = ความกว้างเนื้อใน **ลบเส้นขอบไปแล้ว** → element ที่ควรกว้าง 3.8in ได้ 362.8px แทน 364.8px
+   **แก้: หนีบความกว้างเป็น "นิ้ว" ตอนสร้าง CSS ใน JS** (`Math.min(width, textWidth - indent)`) ไม่ใช้ calc(%)
+33. **`addAsTab` ตั้ง active = แท็บใหม่เสมอ** — ถ้ามีอะไรถูก dock แบบ `center` ลงบน **แผงเอกสาร (docs)**
+   docs จะกลายเป็น `k-tabbed k-tab-hidden` → `#tabs`/`#panes` หายทั้งก้อน ดูเหมือนโปรแกรมพัง
+   **แก้ 3 ชั้น**: `showPanel` แปลง center+docs → defaultSide · `detectSnapTarget` ข้ามโซนกลางของ docs ·
+   `ensureDocsVisible()` ใน `renderPanels` บังคับ docs เป็นแท็บ active เสมอ (มีธงกัน re-entrant)
+34. **e2e ต้องล้าง localStorage ทุกคีย์ที่จำเลย์เอาต์** — เพิ่ม `k2-panel-home` (alpha.56) เข้าไปด้วย
+   ไม่งั้นรอบที่ตายกลางคันทิ้ง "ที่เดิมของแผง" ไว้ แล้วรอบถัดไปเปิดแผงกลับไปตำแหน่งแปลก ๆ = FAIL คนละที่ทุกครั้ง
+   (ตอนนี้ `runTest` ล้าง `k2-ui-layout` `k2-panel-layout` `k2-panel-home` `k2-split-layout` `k2-home-view` + `resetPanels()`)
+35. **ซูมยึดกึ่งกลาง** — เก็บ *สัดส่วน* ของจุดกึ่งกลาง (ไม่ใช่พิกเซล) ก่อนซูม แล้วคืนใน `requestAnimationFrame`
+   เรียกซูมสองครั้งติดกันจะได้ค่ากลางทาง → เทสต้อง `await` ระหว่างการกดซูมแต่ละครั้ง
+
 ---
 
 ## Build recipes (app ไม่ต้องมี node_modules ตอน runtime — main/preload ใช้แค่ electron+fs/path/url, bundle.js มี prosemirror ครบ)
@@ -265,7 +287,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ---
 
-## เวอร์ชัน (ล่าสุด alpha.55 · e2e 893 + unit 731)
+## เวอร์ชัน (ล่าสุด alpha.56 · e2e 1,012 + unit 805)
 
 .13–.22 (v1→v2 พื้นฐาน): snapshot, line numbers, spellcheck ไทย+Chromium, ปุ่มลัดตั้งเอง, mac build, บทหนัง Ctrl+arrow, relationship sync, floating format bar, sidebar resize, SmartType Final Draft, wiki gallery/lightbox, explorer search+tags, panel docking, tree float+snap
 .24 batch 8 (drag-move explorer, panel snap, split compare, version tracking, scene lock, screenplay Final Draft look, screenplay images, wiki links) · .25–.27 **Planner board** (fabric.js) · .28 **floating windows** · .29 memo-in-chapter + scoped search
@@ -360,6 +382,29 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 .50 **Workspace Canvas Model** — แก้ซูมตัดบรรทัด: แทรก `.workspace {zoom; flow-root}` กั้นกลาง `.pane` กับ `.ProseMirror` → zoom แล้วได้ scrollbar แนวนอนแทนคำถูกตัด · **Home Page** ใช้ `createProjectCard()` (การ์ดสวย) แทน list เปล่า · **FloatBar ใน Wiki** (`syncFloatBarVisible` เช็ค `secEditors`) · **Panel Drag** กลับ logic: ลาก title=float เท่านั้น, ลาก head padding/icon=snap ได้
 .51 **Sweep UX 12 ข้อ** — makeFloatDraggable title-vs-bar (ลาก title=ทุก zone, bar=ย้ายอย่างเดียว) · zoom width:fit-content + min-width · pane.on/k-tab.active full-frame box-shadow · reading-mode !important · reading cleanup ครบทุก element · Home → overlay dialog (ออกจาก PANEL_DEFS) · togglePanel → collapsePanel (คงตำแหน่ง) · Kanban empty state · refreshToolbar หลัง focus/typewriter/line-numbers
 .52 **Sweep 4 บั๊ก** — zoom `min-width` dynamic ตาม scale (JS: `pageScale*100%` → overflow จริง) · togglePanel กลับเป็น hidePanel/showPanel + จำ `lastSide` · Kanban toggle (`isPanelOpen` check) · Home wider (1100px) + settings 680px · grid 4 คอลัมน์ (`minmax(190px,1fr)`) · ปุ่ม 📱/📋 list view toggle + CSS
+
+.53–.54 ฟีเจอร์บทหนัง (element 15 ชนิด · auto-capitalize · parenthetical auto-wrap · เลือกทั้งฉาก · nbsp)
+.55 กู้คืนสาย .49–.52 กลับมารวมกับ .53/.54 + แก้บั๊กที่โผล่ตอนรวม
+.56 **บทภาพยนตร์ระดับใช้งานจริง (81-85, 92, 97, 98) + แก้บั๊กจาก human test 13 ข้อ**
+  ใหม่: `sp-format.js` (บริสุทธิ์ · unit 74) + `roster-ui.js`
+  **[85]** ขนาดกระดาษ (Letter/A4/Legal/เอง) + ระยะขอบ **บน1 ล่าง1 ซ้าย1.5 ขวา1 นิ้ว** เป็น CSS var
+    (`--page-w/--mg-*`) **ใช้ร่วมกันทั้งโหมดนิยายและบทหนัง** · `@page` ตอนพิมพ์สร้างจากค่าเดียวกัน
+  **[81][82]** ระยะเยื้อง/ความกว้าง/ระยะเว้นบรรทัด ต่อ element เป็น **นิ้ววัดจากขอบกระดาษ** (เลิกใช้ % ที่เพี้ยน)
+  **[83]** สไตล์ caps/bold/italic/underline **แยก "บนจอ" กับ "ตอนพิมพ์"** (ตารางติ๊ก 8 ช่อง/แถวในตั้งค่า)
+  **[84]** `paginate()` จริง — แบ่งบทพูดข้ามหน้าพร้อม (MORE)/ทวนชื่อ+(cont'd) · แถบสถานะบอก "N หน้า"
+  **[92]** (CONTINUED)/CONTINUED:/(MORE)/(cont'd)/Scene/Time แก้ได้
+  **[97]** หน้ารายชื่อตัวละคร — หน้าเดี่ยว**ประจำเล่ม** `<Section>/roster.json` · hanging indent ที่คอลัมน์รายละเอียด
+    · Scene/Time เลือกเอา/ไม่เอาได้ · สวิตช์ใส่ตอนส่งออก · **ไม่มีเลขหน้า**
+  **[98]** 11 ช่องใน project.khn.json (อีเมล/ติดต่อ/Screenplay By/Based On/Revisions by/โทร/ตัวแทน 4 ช่อง/Copyright)
+  **ฟอนต์มาตรฐานใหม่: Courier Final Draft 12pt ทุกภาษา ทั้ง 2 โหมด** (`DEFAULT_SCRIPT_FONT`, `edFontPt/spFontPt`)
+    → **`BASE_ED_FS`/`BASE_SP_FS` เปลี่ยนเป็น 16px (=12pt)** จาก 15.5/14.5 — เทสที่ hard-code ต้องอัปเดต
+  **ปุ่ม Tab/Enter/Shift+Tab ตั้งเองได้ + ปิดได้** (`spCycleKeys`/`spCycleEnabled` · ย้ายจาก keymap → handleKeyDown)
+  บั๊ก: SmartType ยืนยันด้วย **Tab อย่างเดียว** (Enter เคยวน) · togglePanel = **ปิด** ไม่ใช่พับ ·
+    จับกลุ่มแท็บได้เฉพาะชื่อแผง/20% ขวาของหัวแผง (`inGroupHandle`) · แผงจำที่เดิม (`k2-panel-home`) ·
+    ซูมยึดกึ่งกลาง (`keepZoomCenter`) · หน้ากระดาษกว้างคงที่ ไม่หดตามแผง (`width:var(--page-w)`) ·
+    `centerPage()` เป็นมุมมองเริ่มต้น · โหมดอ่าน/โฟกัสซ่อน **ทุกโหนดที่ไม่อยู่ในสาย docs** ·
+    แผงลอย snap ขอบ (`snapToEdges`) · Kanban เป็น toggle · `ALWAYS_ON_TB` · หน้าแรก 4 คอลัมน์ขนาดนิ่ง ·
+    `entitySearchBlob()` ค้นถึงเนื้อในไฟล์เอนทิตี้
 
 **ยังเหลือ**: `search-engine.js` ยังเป็น orphan — Global Search (`global-search.js`) ยังสแกนไฟล์ตรง ๆ ไม่ได้ใช้ inverted index (ควรสลับมาใช้เพื่อความเร็ว) · multiple-drafts-per-book UI (โครงรองรับแล้ว), screenplay align persistence, Campaign/D&D mode, electron-builder + code signing, .icns/.ico icon, native arm64 build. Top เคยบอก paper/indent "อาจต้องปรับปรุง ไว้ก่อน"
 

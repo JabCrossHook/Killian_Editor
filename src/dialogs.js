@@ -1,6 +1,9 @@
 // dialogs.js — กล่องโต้ตอบ: ตั้งค่าโปรเจกต์ · ประวัติเวอร์ชัน · changelog · ตัวดู log
-import { applySettings, applySpellcheck, applyUIScale, applyZoomVars, closeTab, fmtTs, listSnapshots, openScene, openSnapshotRight, refreshAllMentions, refreshAllSpell, saveProjectMeta, snapshotFile, tb } from './app.js';
-import { $, BASE_ED_FS, LOG_BUF, el, log, setStatus, state, i18n, loadLanguage, t, SHORTCUTS, SHORTCUT_LABELS, accelText, shortcutId, DEFAULT_SP_CYCLE } from './core.js';
+import { applySettings, applySpellcheck, applyUIScale, applyZoomVars, applyPageVars, closeTab, fmtTs, listSnapshots, openScene, openSnapshotRight, refreshAllMentions, refreshAllSpell, saveProjectMeta, snapshotFile, tb } from './app.js';
+import { $, BASE_ED_FS, LOG_BUF, el, log, setStatus, state, i18n, loadLanguage, t, SHORTCUTS, SHORTCUT_LABELS, accelText, shortcutId, DEFAULT_SP_CYCLE,
+         DEFAULT_SP_CYCLE_KEYS, spCycleKeys, spKeyLabel, DEFAULT_SCRIPT_FONT,
+         PAPER_SIZES, MARGIN_DEFAULTS, SP_ELEMENT_KEYS, SP_ELEMENT_CONFIG, SP_ELEMENT_STYLES,
+         PAGE_BREAK_RULES, SP_STRINGS, mergeSpFormat, linesPerPage } from './core.js';
 import { SP_ELEMS } from './fountain.js';
 import { refreshDashboardIfOpen } from './dashboard.js';
 // refreshDashboardIfOpen — ใช้ต่อเมื่อ dashboard.js export ฟังก์ชันนี้
@@ -11,12 +14,24 @@ import { setAutoSync, isAutoSyncOn } from './auto-task/event-ui.js';
 import { applyFocusDim } from './focus-mode.js';
 import { iconHtml } from './icons.js';
 
-export function settingsDialog() {
+export function settingsDialog(openTab) {
   if (!state.root) { alert(t('errors.openProjectFirst')); return; }
   const s = state.settings, g = state.goals, m = state.meta;
   const origFont = parseInt(s.uiFontSize, 10) || 0;
   const origFontFamily = s.fontFamily || '';
   const origSpFontFamily = s.spFontFamily || '';
+  // ---- [81-85][92] สำเนาทำงานของรูปแบบหน้ากระดาษ/บทภาพยนตร์ (ยังไม่แตะของจริงจนกดบันทึก) ----
+  const W = {
+    paperSize: PAPER_SIZES[s.paperSize] ? s.paperSize : 'letter',
+    customPaper: { width: 8.5, height: 11, ...(s.customPaper || {}) },
+    margins: { ...MARGIN_DEFAULTS, ...(s.pageMargins || {}) },
+    elements: JSON.parse(JSON.stringify(mergeSpFormat({ elements: s.spElements }).elements)),
+    styles: JSON.parse(JSON.stringify(mergeSpFormat({ styles: s.spStyles }).styles)),
+    rules: { ...PAGE_BREAK_RULES, ...(s.spPageRules || {}) },
+    strings: { ...SP_STRINGS, ...(s.spStrings || {}) },
+    keys: spCycleKeys(s),
+    cycleOn: s.spCycleEnabled !== false,
+  };
 
   const ov = el('div', 'k-overlay');
   const box = el('div', 'k-dialog k-settings');
@@ -26,7 +41,10 @@ export function settingsDialog() {
       <div class="k-set-tab on" data-p="gen">${t('settings.general')}</div>
       <div class="k-set-tab" data-p="write">${t('settings.writing')}</div>
       <div class="k-set-tab" data-p="auto">${t('settings.automation')}</div>
-      <div class="k-set-tab" data-p="sp">🎬 บทหนัง</div>
+      <div class="k-set-tab" data-p="setup">🎞 ข้อมูลผลงาน</div>
+      <div class="k-set-tab" data-p="page">📐 หน้ากระดาษ</div>
+      <div class="k-set-tab" data-p="spfmt">🎬 รูปแบบบท</div>
+      <div class="k-set-tab" data-p="sp">⌨ ปุ่มบทหนัง</div>
       <div class="k-set-tab" data-p="lang">${t('settings.language')}</div>
       <div class="k-set-tab" data-p="keys">${t('settings.shortcuts')}</div>
     </div>
@@ -42,7 +60,10 @@ export function settingsDialog() {
     <div class="k-set-page" data-p="write">
       <div class="k-row"><label>${t('settings.fontFamily')}<span class="k-hint">${t('settings.fontFamilyHint')}</span></label><select id="st-fontfamily" class="k-dlg-select" style="width:100%"></select></div>
       <div class="k-row"><label>${t('settings.spFontFamily')}<span class="k-hint">${t('settings.spFontFamilyHint')}</span></label><select id="st-spfontfamily" class="k-dlg-select" style="width:100%"></select></div>
+      <div class="k-row"><label>ขนาดฟอนต์นิยาย (pt)<span class="k-hint">มาตรฐานต้นฉบับ = 12pt (Courier Final Draft)</span></label><input type="number" id="st-edpt" class="k-narrow" min="6" max="48" step="0.5"></div>
+      <div class="k-row"><label>ขนาดฟอนต์บทภาพยนตร์ (pt)<span class="k-hint">มาตรฐานบท = 12pt ทุกภาษา</span></label><input type="number" id="st-sppt" class="k-narrow" min="6" max="48" step="0.5"></div>
       <div class="k-row"><label>${t('settings.fontSize')}<span class="k-hint">${t('settings.fontSizeHint')} (${BASE_ED_FS}px)</span></label><input type="number" id="st-font" min="-6" max="16" step="1"></div>
+      <div class="k-row"><label>ขนาดการ์ดหน้าแรก (px)<span class="k-hint">ความกว้างการ์ด 4 คอลัมน์บนหน้าแรก</span></label><input type="number" id="st-homethumb" class="k-narrow" min="120" max="400" step="10"></div>
       <div class="k-row"><label>${t('settings.lineNumbers')}<span class="k-hint">${t('settings.lineNumbersHint')}</span></label><input type="checkbox" id="st-ln"></div>
       <div class="k-row"><label>${t('settings.spellCheck')}<span class="k-hint">${t('settings.spellCheckHint')}</span></label><input type="checkbox" id="st-spell"></div>
       <div class="k-row"><label>${t('settings.spellCheckDict')}<span class="k-hint">${t('settings.spellCheckDictHint')}</span></label><input type="checkbox" id="st-spelldict"></div>
@@ -54,9 +75,78 @@ export function settingsDialog() {
     <div class="k-set-page" data-p="auto">
       <div class="k-row"><label>${iconHtml('cloud-lightning', 14)} ${t('settings.autoSync')}<span class="k-hint">${t('settings.autoSyncHint')}</span></label><input type="checkbox" id="st-autosync"></div>
     </div>
+    <div class="k-set-page" data-p="setup">
+      <div class="k-hint" style="margin-bottom:10px">[98] ข้อมูลบนหน้าปกบท/ต้นฉบับ — ใช้ตอนพิมพ์และส่งออก</div>
+      <div class="k-set-sub">ผู้เขียน</div>
+      <div class="k-row"><label>อีเมลผู้เขียน</label><input type="text" id="st-email"></div>
+      <div class="k-row"><label>ข้อมูลติดต่อ (Contact information)</label><input type="text" id="st-contact"></div>
+      <div class="k-row"><label>โทรศัพท์ (Phone)</label><input type="text" id="st-phone"></div>
+      <div class="k-set-sub">เครดิตบท</div>
+      <div class="k-row"><label>Screenplay By</label><input type="text" id="st-spby"></div>
+      <div class="k-row"><label>Based On</label><input type="text" id="st-basedon"></div>
+      <div class="k-row"><label>Revisions by</label><input type="text" id="st-revby"></div>
+      <div class="k-set-sub">ตัวแทน (Agent)</div>
+      <div class="k-row"><label>Agent's Name</label><input type="text" id="st-agname"></div>
+      <div class="k-row"><label>Agent's Address</label><input type="text" id="st-agaddr"></div>
+      <div class="k-row"><label>Agent's Phone</label><input type="text" id="st-agphone"></div>
+      <div class="k-row"><label>Agent's Email</label><input type="text" id="st-agemail"></div>
+      <div class="k-set-sub">ลิขสิทธิ์</div>
+      <div class="k-row"><label>Copyright by</label><input type="text" id="st-copyright"></div>
+    </div>
+    <div class="k-set-page" data-p="page">
+      <div class="k-hint" style="margin-bottom:10px">[85] ขนาดกระดาษและระยะขอบ — ใช้ร่วมกันทั้งโหมดนิยายและโหมดบทภาพยนตร์</div>
+      <div class="k-row"><label>ขนาดกระดาษ</label><select id="st-paper" class="k-dlg-select"></select></div>
+      <div class="k-row" id="st-paper-custom"><label>กว้าง × สูง (นิ้ว)</label>
+        <span><input type="number" id="st-paper-w" class="k-narrow" min="3" max="30" step="0.01">
+        × <input type="number" id="st-paper-h" class="k-narrow" min="3" max="40" step="0.01"></span></div>
+      <div class="k-set-sub">ระยะขอบ (นิ้ว)</div>
+      <div class="k-set-grid2">
+        <div class="k-row"><label>บน (Top)</label><input type="number" id="st-mg-top" class="k-narrow" min="0" max="5" step="0.05"></div>
+        <div class="k-row"><label>ล่าง (Bottom)</label><input type="number" id="st-mg-bottom" class="k-narrow" min="0" max="5" step="0.05"></div>
+        <div class="k-row"><label>ซ้าย (Left)</label><input type="number" id="st-mg-left" class="k-narrow" min="0" max="5" step="0.05"></div>
+        <div class="k-row"><label>ขวา (Right)</label><input type="number" id="st-mg-right" class="k-narrow" min="0" max="5" step="0.05"></div>
+      </div>
+      <div class="k-hint" id="st-page-info" style="margin-top:8px"></div>
+      <div class="k-set-sub">[84] กฎการตัดหน้า (widow / orphan)</div>
+      <div class="k-set-grid2">
+        <div class="k-row"><label>บรรยาย: เหลือท้ายหน้าอย่างน้อย</label><input type="number" id="st-pb-ab" class="k-narrow" min="0" max="20"></div>
+        <div class="k-row"><label>บรรยาย: ยกไปหน้าใหม่อย่างน้อย</label><input type="number" id="st-pb-at" class="k-narrow" min="0" max="20"></div>
+        <div class="k-row"><label>บทพูด: เหลือท้ายหน้าอย่างน้อย</label><input type="number" id="st-pb-db" class="k-narrow" min="0" max="20"></div>
+        <div class="k-row"><label>บทพูด: ยกไปหน้าใหม่อย่างน้อย</label><input type="number" id="st-pb-dt" class="k-narrow" min="0" max="20"></div>
+        <div class="k-row"><label>ขีดท้ายบรรทัดติดกันไม่เกิน</label><input type="number" id="st-pb-hy" class="k-narrow" min="0" max="10"></div>
+        <div class="k-row"><label>หัวฉากท้ายหน้าต้องมีเนื้อตาม</label><input type="number" id="st-pb-ks" class="k-narrow" min="0" max="20"></div>
+      </div>
+      <div class="k-set-sub">[92] ข้อความมาตรฐาน</div>
+      <div class="k-row"><label>ท้ายหน้าเมื่อฉากต่อเนื่อง</label><input type="text" id="st-str-cb"></div>
+      <div class="k-row"><label>ต้นหน้าเมื่อฉากต่อเนื่อง</label><input type="text" id="st-str-ct"></div>
+      <div class="k-row"><label>บทพูดยังไม่จบ (MORE)</label><input type="text" id="st-str-more"></div>
+      <div class="k-row"><label>ทวนชื่อตัวละคร (cont'd)</label><input type="text" id="st-str-contd"></div>
+      <div class="k-row"><label>หัวข้อ Scene / Time (หน้ารายชื่อ)</label>
+        <span><input type="text" id="st-str-scene" style="width:46%"> <input type="text" id="st-str-time" style="width:46%"></span></div>
+      <div style="margin-top:12px; text-align:right"><button id="st-page-reset" class="k-reset-btn">↺ คืนค่าเริ่มต้น</button></div>
+    </div>
+    <div class="k-set-page" data-p="spfmt">
+      <div class="k-hint" style="margin-bottom:10px">[81][82][83] ระยะเยื้อง (วัดจากขอบกระดาษ) · ความกว้าง · ระยะเว้นบรรทัด (10 = 1 บรรทัด) · ตัวอักษรบนจอ / ตอนพิมพ์</div>
+      <div class="k-spfmt-scroll">
+        <table class="k-spfmt-tbl" id="st-spfmt">
+          <thead><tr>
+            <th rowspan="2">Element</th><th rowspan="2">เยื้อง"</th><th rowspan="2">กว้าง"</th>
+            <th rowspan="2">เว้นก่อน</th><th rowspan="2">ระยะบรรทัด</th>
+            <th colspan="4">บนจอ</th><th colspan="4">ตอนพิมพ์</th>
+          </tr><tr>
+            <th>ใหญ่</th><th>หนา</th><th>เอียง</th><th>ขีด</th>
+            <th>ใหญ่</th><th>หนา</th><th>เอียง</th><th>ขีด</th>
+          </tr></thead><tbody></tbody>
+        </table>
+      </div>
+      <div style="margin-top:12px; text-align:right"><button id="st-spfmt-reset" class="k-reset-btn">↺ คืนค่าเริ่มต้น</button></div>
+    </div>
     <div class="k-set-page" data-p="sp">
-      <div class="k-hint" style="margin-bottom:12px">ควบคุมปุ่ม Tab/Enter/Shift+Tab ในบทหนัง — เลือกว่าต้องการสร้างหรือสลับเป็น element ใดเมื่อกดแต่ละปุ่ม</div>
-      <table class="k-sp-cycle-tbl" id="st-spcycle"><thead><tr><th>Element</th><th>Enter →</th><th>Tab →</th><th>Shift+Tab →</th></tr></thead><tbody></tbody></table>
+      <div class="k-row"><label>เปิดระบบปุ่มสลับ element<span class="k-hint">ปิด = Enter ขึ้นบรรทัดใหม่ชนิดเดิม · ปุ่มอื่นไม่ทำงาน</span></label><input type="checkbox" id="st-spcycle-on"></div>
+      <div class="k-set-sub">ปุ่มที่ใช้ (กด "เปลี่ยน" แล้วกดปุ่มใหม่)</div>
+      <div id="st-spkeys"></div>
+      <div class="k-hint" style="margin:12px 0">ควบคุมว่าปุ่มแต่ละตัวจะสร้างหรือสลับเป็น element ใด</div>
+      <table class="k-sp-cycle-tbl" id="st-spcycle"><thead><tr><th>Element</th><th id="st-hd-enter">Enter →</th><th id="st-hd-tab">Tab →</th><th id="st-hd-stab">Shift+Tab →</th></tr></thead><tbody></tbody></table>
       <div style="margin-top:12px; text-align:right"><button id="st-spcycle-reset" class="k-reset-btn">↺ คืนค่าเริ่มต้น</button></div>
     </div>
     <div class="k-set-page" data-p="lang">
@@ -156,6 +246,165 @@ export function settingsDialog() {
   q('#st-uiscale-lbl').textContent = Math.round(origUiScale * 100) + '%';
   q('#st-uiscale').oninput = () => applyUIScale(parseFloat(q('#st-uiscale').value) || 1);
   q('#st-autosync').checked = isAutoSyncOn() || !!s.autoSync;
+  q('#st-edpt').value = s.edFontPt ?? 12;
+  q('#st-sppt').value = s.spFontPt ?? 12;
+  q('#st-homethumb').value = s.homeThumb ?? 190;
+  // พรีวิวขนาดฟอนต์ทันที (ยกเลิก = คืนค่าเดิม)
+  const origEdPt = s.edFontPt ?? 12, origSpPt = s.spFontPt ?? 12;
+  const previewPt = () => {
+    s.edFontPt = parseFloat(q('#st-edpt').value) || 12;
+    s.spFontPt = parseFloat(q('#st-sppt').value) || 12;
+    applyZoomVars(parseInt(q('#st-font').value, 10) || 0);
+  };
+  q('#st-edpt').oninput = previewPt;
+  q('#st-sppt').oninput = previewPt;
+
+  // ---- [98] ข้อมูลผลงาน (project setup) ----
+  const SETUP_FIELDS = [
+    ['#st-email', 'authorEmail'], ['#st-contact', 'contact'], ['#st-phone', 'phone'],
+    ['#st-spby', 'screenplayBy'], ['#st-basedon', 'basedOn'], ['#st-revby', 'revisionsBy'],
+    ['#st-agname', 'agentName'], ['#st-agaddr', 'agentAddress'],
+    ['#st-agphone', 'agentPhone'], ['#st-agemail', 'agentEmail'],
+    ['#st-copyright', 'copyright'],
+  ];
+  for (const [sel, key] of SETUP_FIELDS) q(sel).value = m[key] || '';
+
+  // ---- [85] หน้ากระดาษ + [84] กฎตัดหน้า + [92] ข้อความมาตรฐาน ----
+  const paperSel = q('#st-paper');
+  for (const key of Object.keys(PAPER_SIZES)) {
+    const o = el('option'); o.value = key; o.textContent = PAPER_SIZES[key].name;
+    if (key === W.paperSize) o.selected = true;
+    paperSel.append(o);
+  }
+  const pageInfo = () => {
+    const fmt = mergeSpFormat({ paperSize: W.paperSize, paper: W.customPaper, margins: W.margins });
+    q('#st-paper-custom').style.display = W.paperSize === 'custom' ? '' : 'none';
+    q('#st-page-info').textContent =
+      `พื้นที่พิมพ์ ${(fmt.paper.width - W.margins.left - W.margins.right).toFixed(2)} × ` +
+      `${(fmt.paper.height - W.margins.top - W.margins.bottom).toFixed(2)} นิ้ว · ` +
+      `${linesPerPage(fmt.paper, fmt.margins)} บรรทัด/หน้า`;
+  };
+  paperSel.onchange = () => { W.paperSize = paperSel.value; pageInfo(); previewPage(); };
+  const numIn = (sel, get, set, step) => {
+    const inp = q(sel); inp.value = get();
+    inp.oninput = () => { const v = parseFloat(inp.value); if (Number.isFinite(v)) { set(v); pageInfo(); previewPage(); } };
+    return inp;
+  };
+  numIn('#st-paper-w', () => W.customPaper.width, (v) => { W.customPaper.width = v; });
+  numIn('#st-paper-h', () => W.customPaper.height, (v) => { W.customPaper.height = v; });
+  for (const side of ['top', 'bottom', 'left', 'right'])
+    numIn('#st-mg-' + side, () => W.margins[side], (v) => { W.margins[side] = v; });
+  const RULE_MAP = { '#st-pb-ab': 'minActionLinesAtBottom', '#st-pb-at': 'minActionLinesAtTop',
+    '#st-pb-db': 'minDialogueLinesAtBottom', '#st-pb-dt': 'minDialogueLinesAtTop',
+    '#st-pb-hy': 'maxConsecutiveHyphens', '#st-pb-ks': 'keepSceneWithNext' };
+  for (const sel of Object.keys(RULE_MAP)) {
+    const k = RULE_MAP[sel];
+    numIn(sel, () => W.rules[k], (v) => { W.rules[k] = Math.max(0, Math.round(v)); });
+  }
+  const STR_MAP = { '#st-str-cb': 'continuedBottom', '#st-str-ct': 'continuedTop',
+    '#st-str-more': 'dialogueMore', '#st-str-contd': 'dialogueContd',
+    '#st-str-scene': 'sceneTitle', '#st-str-time': 'timeTitle' };
+  for (const sel of Object.keys(STR_MAP)) {
+    const k = STR_MAP[sel];
+    const inp = q(sel); inp.value = W.strings[k];
+    inp.oninput = () => { W.strings[k] = inp.value; };
+  }
+  pageInfo();
+
+  // พรีวิวรูปแบบหน้ากระดาษ/บทสด ๆ ระหว่างตั้งค่า (ยกเลิก = คืนค่าเดิมด้วย applyPageVars อีกครั้ง)
+  function previewPage() {
+    const keep = { paperSize: s.paperSize, customPaper: s.customPaper, pageMargins: s.pageMargins,
+                   spElements: s.spElements, spStyles: s.spStyles };
+    Object.assign(s, { paperSize: W.paperSize, customPaper: W.customPaper, pageMargins: W.margins,
+                       spElements: W.elements, spStyles: W.styles });
+    applyPageVars();
+    Object.assign(s, keep);   // ค่าจริงยังไม่เปลี่ยนจนกว่าจะกดบันทึก
+  }
+
+  // ---- [81][82][83] ตารางรูปแบบต่อ element ----
+  const fmtBody = q('#st-spfmt tbody');
+  function renderSpFmt() {
+    fmtBody.innerHTML = '';
+    for (const k of SP_ELEMENT_KEYS) {
+      const row = el('tr');
+      row.append(el('td', '', (SP_ELEMS[k] && SP_ELEMS[k].th) || k));
+      const numCell = (field, step, min, max) => {
+        const td = el('td');
+        const i = el('input'); i.type = 'number'; i.step = String(step);
+        i.min = String(min); i.max = String(max); i.value = String(W.elements[k][field]);
+        i.oninput = () => { const v = parseFloat(i.value); if (Number.isFinite(v)) { W.elements[k][field] = v; previewPage(); } };
+        td.append(i); return td;
+      };
+      row.append(numCell('indent', 0.1, 0, 12), numCell('width', 0.1, 0.3, 12),
+                 numCell('linesBefore', 5, 0, 100), numCell('linesBetween', 5, 0, 100));
+      for (const mode of ['screen', 'print']) {
+        for (const prop of ['caps', 'bold', 'italic', 'underline']) {
+          const td = el('td');
+          const c = el('input'); c.type = 'checkbox'; c.checked = !!W.styles[k][mode][prop];
+          c.onchange = () => { W.styles[k][mode][prop] = c.checked; previewPage(); };
+          td.append(c); row.append(td);
+        }
+      }
+      fmtBody.append(row);
+    }
+  }
+  renderSpFmt();
+  q('#st-spfmt-reset').onclick = () => {
+    W.elements = JSON.parse(JSON.stringify(SP_ELEMENT_CONFIG));
+    W.styles = JSON.parse(JSON.stringify(SP_ELEMENT_STYLES));
+    renderSpFmt(); previewPage();
+  };
+  q('#st-page-reset').onclick = () => {
+    W.paperSize = 'letter'; W.customPaper = { width: 8.5, height: 11 };
+    W.margins = { ...MARGIN_DEFAULTS };
+    W.rules = { ...PAGE_BREAK_RULES }; W.strings = { ...SP_STRINGS };
+    paperSel.value = 'letter';
+    for (const side of ['top', 'bottom', 'left', 'right']) q('#st-mg-' + side).value = W.margins[side];
+    q('#st-paper-w').value = W.customPaper.width; q('#st-paper-h').value = W.customPaper.height;
+    for (const sel of Object.keys(RULE_MAP)) q(sel).value = W.rules[RULE_MAP[sel]];
+    for (const sel of Object.keys(STR_MAP)) q(sel).value = W.strings[STR_MAP[sel]];
+    pageInfo(); previewPage();
+  };
+
+  // ---- [แก้ไข feature 1] ปุ่มสลับ element ตั้งเองได้ + สวิตช์เปิด/ปิด ----
+  q('#st-spcycle-on').checked = W.cycleOn;
+  q('#st-spcycle-on').onchange = () => { W.cycleOn = q('#st-spcycle-on').checked; };
+  const KEY_LABELS = { enter: 'ไป element ถัดไป (เดิม Enter)',
+                       tab: 'สลับไปข้างหน้า (เดิม Tab)',
+                       shiftTab: 'สลับย้อนกลับ (เดิม Shift+Tab)' };
+  function renderSpKeys() {
+    const host = q('#st-spkeys'); host.innerHTML = '';
+    for (const dir of ['enter', 'tab', 'shiftTab']) {
+      const row = el('div', 'k-key-row');
+      row.append(el('span', 'k-key-label', KEY_LABELS[dir]));
+      const accel = el('span', 'k-key-accel', spKeyLabel(W.keys[dir]));
+      row.append(accel);
+      const edit = el('button', 'k-key-btn', 'เปลี่ยน');
+      const reset = el('button', 'k-key-btn', '↺');
+      reset.title = 'คืนค่าเริ่มต้น';
+      edit.onclick = () => {
+        accel.textContent = 'กดปุ่มที่ต้องการ…'; accel.classList.add('rec');
+        const grab = (e) => {
+          e.preventDefault(); e.stopPropagation();
+          if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
+          window.removeEventListener('keydown', grab, true);
+          W.keys[dir] = { code: e.code, shift: e.shiftKey,
+                          ctrl: e.ctrlKey || e.metaKey, alt: e.altKey };
+          renderSpKeys(); syncCycleHeads();
+        };
+        window.addEventListener('keydown', grab, true);
+      };
+      reset.onclick = () => { W.keys[dir] = { ...DEFAULT_SP_CYCLE_KEYS[dir] }; renderSpKeys(); syncCycleHeads(); };
+      row.append(edit, reset); host.append(row);
+    }
+  }
+  function syncCycleHeads() {
+    q('#st-hd-enter').textContent = spKeyLabel(W.keys.enter) + ' →';
+    q('#st-hd-tab').textContent = spKeyLabel(W.keys.tab) + ' →';
+    q('#st-hd-stab').textContent = spKeyLabel(W.keys.shiftTab) + ' →';
+  }
+  renderSpKeys(); syncCycleHeads();
+
   // ---- spCycle ตารางควบคุม Tab/Enter ในบทหนัง ----
   const cycleKeys = ['scene', 'action', 'character', 'parenthetical', 'dialogue', 'transition', 'shot', 'act-break', 'note'];
   const cycleOpts = ['scene', 'action', 'character', 'parenthetical', 'dialogue', 'transition', 'shot', 'act-break',
@@ -249,16 +498,19 @@ export function settingsDialog() {
   }
   renderShortcuts();
 
-  box.querySelectorAll('.k-set-tab').forEach((t) => t.onclick = () => {
-    box.querySelectorAll('.k-set-tab').forEach((x) => x.classList.toggle('on', x === t));
-    box.querySelectorAll('.k-set-page').forEach((p) =>
-      p.classList.toggle('on', p.dataset.p === t.dataset.p));
-  });
+  const gotoTab = (name) => {
+    box.querySelectorAll('.k-set-tab').forEach((x) => x.classList.toggle('on', x.dataset.p === name));
+    box.querySelectorAll('.k-set-page').forEach((p) => p.classList.toggle('on', p.dataset.p === name));
+  };
+  box.querySelectorAll('.k-set-tab').forEach((tabEl) => tabEl.onclick = () => gotoTab(tabEl.dataset.p));
+  if (openTab) gotoTab(openTab);      // เปิดตรงแท็บที่ผู้เรียกระบุ (ex. เมนู "ข้อมูลผลงาน")
   q('#st-font').oninput = () => applyZoomVars(parseInt(q('#st-font').value, 10) || 0);
 
   const close = () => ov.remove();
   const cancel = () => {
+    s.edFontPt = origEdPt; s.spFontPt = origSpPt;
     applyZoomVars(origFont);
+    applyPageVars();                       // คืนรูปแบบหน้ากระดาษ/บทตามค่าที่บันทึกไว้จริง
     applyUIScale(origUiScale);
     s.spFontFamily = origSpFontFamily; applySpFont(origSpFontFamily);
     s.focusDim = origDim; applyFocusDim();
@@ -293,8 +545,24 @@ export function settingsDialog() {
     // Auto-sync (เก็บลง settings ด้วย — ไม่งั้นเปิดโปรแกรมใหม่แล้วกลับไปปิด)
     s.autoSync = q('#st-autosync').checked;
     setAutoSync(s.autoSync);
-    // บันทึก spCycle
+    // บันทึก spCycle + ปุ่มที่ผูกไว้ + สวิตช์เปิด/ปิด (แก้ไข feature 1)
     s.spCycle = JSON.parse(JSON.stringify(workSpCycle));
+    s.spCycleKeys = JSON.parse(JSON.stringify(W.keys));
+    s.spCycleEnabled = W.cycleOn;
+    // ขนาดฟอนต์เป็นพอยต์ + ขนาดการ์ดหน้าแรก
+    s.edFontPt = Math.min(48, Math.max(6, parseFloat(q('#st-edpt').value) || 12));
+    s.spFontPt = Math.min(48, Math.max(6, parseFloat(q('#st-sppt').value) || 12));
+    s.homeThumb = Math.min(400, Math.max(120, parseInt(q('#st-homethumb').value, 10) || 190));
+    // [85] หน้ากระดาษ + [84] กฎตัดหน้า + [92] ข้อความ + [81-83] รูปแบบ element
+    s.paperSize = W.paperSize;
+    s.customPaper = { ...W.customPaper };
+    s.pageMargins = { ...W.margins };
+    s.spElements = JSON.parse(JSON.stringify(W.elements));
+    s.spStyles = JSON.parse(JSON.stringify(W.styles));
+    s.spPageRules = { ...W.rules };
+    s.spStrings = { ...W.strings };
+    // [98] ข้อมูลผลงาน
+    for (const [sel, key] of SETUP_FIELDS) m[key] = q(sel).value.trim();
     g.dailyWords = num('#st-daily', 500);
     g.projectWords = num('#st-proj', 50000);
     try {

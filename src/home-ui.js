@@ -252,9 +252,16 @@ export async function showHomeDialog() {
   };
   document.addEventListener('keydown', function esc(e) { if (e.key === 'Escape') { ov.remove(); document.removeEventListener('keydown', esc); } });
 
+  // บั๊ก #12: ขนาดต้อง "นิ่ง" — จำมุมมองที่เลือกไว้ และตั้ง --home-thumb จากตั้งค่าโปรเจกต์
+  const thumb = Math.max(120, Math.min(400, parseInt(state.settings?.homeThumb, 10) || 190));
+  box.style.setProperty('--home-thumb', thumb + 'px');
+  const listOn = localStorage.getItem('k2-home-view') === 'list';
+  grid.classList.toggle('list', listOn);
+  viewBtn.textContent = listOn ? '📱' : '📋';
   viewBtn.onclick = () => {
-    grid.classList.toggle('list');
-    viewBtn.textContent = grid.classList.contains('list') ? '📱' : '📋';
+    const on = grid.classList.toggle('list');
+    localStorage.setItem('k2-home-view', on ? 'list' : 'card');
+    viewBtn.textContent = on ? '📱' : '📋';
   };
   await loadPanelProjects(grid, () => ov.remove());   // เปิดโปรเจกต์แล้วต้องปิดกล่อง ไม่งั้นค้างทับหน้าจอ
   return ov;

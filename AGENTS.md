@@ -20,7 +20,7 @@ export KILLIAN_TEST=1 KILLIAN_TEST_PROJECT=/tmp/k2proj
 xvfb-run -a --server-args="-screen 0 1500x950x24" ./node_modules/.bin/electron . --no-sandbox --disable-gpu
 # ผลอยู่ /tmp/k2result.txt — บรรทัดสุดท้ายต้องเป็น "ALL OK"
 ```
-ปัจจุบัน **893 checks · ALL OK** — ห้ามทำให้จำนวนลดลง
+ปัจจุบัน **1,012 checks · ALL OK** — ห้ามทำให้จำนวนลดลง
 (บน Windows: `node test/fixture.js C:\tmp\k2proj` แล้วตั้ง `KILLIAN_TEST_PROJECT=C:\tmp\k2proj`
  ผลออกที่ `C:\tmp\k2result.txt` · unit test `.cjs` ใช้ `os.tmpdir()` แล้วรันได้ทั้งสองระบบ)
 
@@ -34,6 +34,12 @@ xvfb-run -a --server-args="-screen 0 1500x950x24" ./node_modules/.bin/electron .
 
 ### engine (pure logic — มีอยู่เดิม)
 editor.js · screenplay.js · md.js (⚠️ CommonJS) · smart.js · spell.js · wiki.js · gallery.js · network.js · planner.js · timeline.js · maps.js · compile.js · fountain.js · sceneFilter.js · search.js · ui.js · nav.js
+- **sp-format.js** (alpha.56, บริสุทธิ์) — รูปแบบบทภาพยนตร์ระดับใช้งานจริง (ข้อ 81–85, 92, 97):
+  `PAPER_SIZES`/`MARGIN_DEFAULTS`/`linesPerPage`/`textWidth` · `SP_ELEMENT_CONFIG` (เยื้อง/กว้าง/เว้นบรรทัด
+  ต่อ element · หน่วยนิ้ว วัดจากขอบกระดาษ) · `SP_ELEMENT_STYLES` (screen vs print) · `PAGE_BREAK_RULES` ·
+  `SP_STRINGS` · `mergeSpFormat(user)` · `pageCssVars()` · `spCss()` (สร้าง CSS + `@page` เป็นข้อความ) ·
+  `paginate()`/`pageCount()`/`wrapLines()`/`splitText()` · `newRoster`/`normalizeRoster`/`rosterToText`
+  → re-export ผ่าน core.js · **unit test 74 ข้อ** (`node test/sp-format.test.cjs`)
 
 ### Core Infrastructure (pure logic — **ยังไม่มี UI · รอต่อ**) — spec อยู่ใน `docs/`
 - **panels/panel-layout.js + panel-store.js** (ข้อ 8) — dock/snap/tab group/float/collapse + `PanelManager` (registerPanel/showPanel/dockPanel/floatPanel/groupPanels) → [docs/08-panel-system.md](docs/08-panel-system.md)
@@ -59,7 +65,7 @@ editor.js · screenplay.js · md.js (⚠️ CommonJS) · smart.js · spell.js ·
 **กฎของโมดูล AI**: ไม่ยิงเน็ตเอง (รับ `client`/`http` เข้ามา) · ไม่ throw (คืน `{ok:false,error,code}` ภาษาไทย) ·
 `buildXPrompt`/`parseX` เป็น pure เสมอ · คีย์อยู่ `ai-key.json` เท่านั้น · ฟีเจอร์ตรวจสอบมีชั้นออฟไลน์ก่อน
 
-ทุกตัวไม่แตะ DOM/fs (ต่อไฟล์ผ่าน `io` adapter = `kapi`) · `npm run test:unit` = **731 checks**
+ทุกตัวไม่แตะ DOM/fs (ต่อไฟล์ผ่าน `io` adapter = `kapi`) · `npm run test:unit` = **805 checks**
 UI ที่ต้องทำต่อ: `panels/panel-ui.js` · `layout/split-ui.js` · `kanban/kanban-ui.js` · แผง "ฉากที่กล่าวถึง" ในหน้า Wiki ·
 แผง AI (ผู้ช่วยเขียน/ตรวจปม/บทสนทนา/สร้างโลก/แชท) · หน้านำเข้า Scrivener · แถบคอมเมนต์ข้างฉาก
 แล้วค่อยต่อ entry point ตามกฎข้อ 7 (เมนู main.js + `case` ใน `handleCommand`)
@@ -74,6 +80,7 @@ UI ที่ต้องทำต่อ: `panels/panel-ui.js` · `layout/split-u
 - **scene-props.js** — แผงคุณสมบัติฉาก
 - **dialogs.js** — ตั้งค่า/ประวัติเวอร์ชัน/changelog/log viewer
 - **recycle.js** — ถังขยะ
+- **roster-ui.js** (alpha.56) — หน้ารายชื่อตัวละคร (Cast of Characters) ประจำเล่ม → `<เล่ม>/roster.json`
 
 **feature ใหม่ที่เป็นไฟล์ของตัวเอง** (home page, kanban, mood board, scene table ฯลฯ) → สร้างไฟล์ใหม่ใน src/ import จาก core.js + engine ที่เกี่ยว แล้วให้ app.js `import { openX } from './x.js'` + เพิ่ม entry point (เมนู/ปุ่ม/command)
 
