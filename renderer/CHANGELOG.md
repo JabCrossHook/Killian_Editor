@@ -1,3 +1,49 @@
+v2.0.0-alpha.60
+---------------
+**นำเข้า + เปรียบเทียบ + แยกการตั้งค่า (62–66, 74, 94, 96)**
+โมดูลใหม่ 2 ตัว (`import-sp` · `sp-compare`) · e2e เพิ่ม checks
+
+### [62–66] นำเข้าบทภาพยนตร์จาก 5 รูปแบบ (Import Formats)
+- `src/import-sp.js` — unified import engine: FDX, Celtx, Adobe Story, Fade In Pro, Fountain
+- เมนู **ไฟล์** → "นำเข้าบทภาพยนตร์…"
+- เลือกไฟล์แล้ว auto-detect format · แสดงสรุป (N ฉาก, N ตัวละคร, N คำ)
+- FDX: parse XML `<Paragraph Type="..."><Text>...</Text></Paragraph>` → K2 elements
+- Celtx: JSZip → extract `script/index.html` → parse HTML class → K2 elements  
+- Adobe Story (.astx): parse XML → K2 elements (รองรับ nested structure)
+- Fade In Pro (.fadein): parse JSON → walk recursive children → K2 elements
+- Fountain: ใช้ `parseScript` ที่มีอยู่แล้ว → round-trip รับประกัน
+- Inject เข้าแท็บบทที่เปิดอยู่ · สร้างฉากใหม่ถ้ายังไม่มีแท็บบท
+- **ตัวอย่างไฟล์ทดสอบ** 5 ฟอร์แมตยืนยัน round-trip
+
+### [74] เปรียบเทียบบท/สคริปต์ (Script Comparison)
+- `src/sp-compare.js` — **LCS diff** ระหว่าง 2 บท → color-coded HTML
+- **สี**: ลบ=แดง · เพิ่ม=เขียว · เปลี่ยน=เหลือง · เท่ากัน=ขาว
+- เมนู **เครื่องมือ** → "เปรียบเทียบบท / สคริปต์…"
+- เลือก 2 แท็บ → แสดงผล side-by-side ใน dialog
+- สถิติ: เท่ากัน / +เพิ่ม / -ลบ / ~เปลี่ยน
+- ใช้ได้ทั้งบทภาพยนตร์และนิยาย (ผ่าน parseScript / getMarkdown)
+
+### [94] การตั้งค่า 2 ระดับ (4-Level Settings → 2-Level Implemented)
+- **Global (ผู้ใช้)**: 🌐 — เก็บใน `%APPDATA%/Killian2/settings.json` · ใช้ร่วมกันทุกโปรเจกต์
+  · ฟอนต์, เช็คคำผิด, ขนาด UI, โหมด, เสียง, ภาษา, ปุ่มลัด, หน่วยความจำ
+- **Project (โปรเจกต์)**: 📁 — เก็บใน `project.khn.json` · เฉพาะโปรเจกต์นี้
+  · หน้ากระดาษ, ระยะขอบ, รูปแบบบท, รูปแบบนิยาย, ฟอนต์ตามภาษา, ปุ่มบทหนัง
+- แท็บตั้งค่าแสดงสัญลักษณ์ 🌐/📁 บอกระดับ
+- เพิ่ม IPC `kapi.readGlobalSettings/writeGlobalSettings` → เขียนแยกไฟล์
+
+### [96] ปรับหน้าใหม่อัตโนมัติ (Auto-Pagination Interval)
+- ตั้งค่า → อัตโนมัติ: `spAutoPaginate` (เปิด/ปิด) + `spPaginateInterval` (1–60 วินาที)
+- เมื่อเปิด: หน่วงการคำนวณหน้าใหม่ตามเวลาที่ตั้ง
+- เมื่อปิด: คำนวณตัวอักษร/ตรวจผิดปกติ แต่ข้ามการจัดหน้า (ลด CPU)
+- `scheduleRepaginate()` ใน `src/app.js` — debounce แยกจากนับคำ
+
+### แก้ไขอื่น ๆ
+- เพิ่ม SAVE_FILTERS: fountain, celtx, astx, fadein
+- เพิ่ม IPC `dialog:openScreenplay` — เปิด file dialog พร้อมฟิลเตอร์ทุกฟอร์แมต
+- เมนู "เครื่องมือ" (Tools) ใหม่: เปรียบเทียบ, ตรวจคำซ้ำ
+- DEFAULTS แยกเป็น `GLOBAL_DEFAULTS` + `PROJECT_DEFAULTS` (ส่งออกจาก `core.js`)
+- `loadSettings` เป็น async — รอโหลด global settings ก่อน merge
+
 v2.0.0-alpha.59
 ---------------
 **ชุด PDF ครบวง (69 · 87 · 88 · 89 · 90 · 91)** — เลิกพึ่ง print-to-PDF ของ Chromium อย่างเดียว

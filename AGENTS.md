@@ -71,6 +71,10 @@ editor.js · screenplay.js · md.js (⚠️ CommonJS) · smart.js · spell.js ·
   · เก็บที่ `settings.spHeaders` · **หัวกระดาษกินบรรทัดจริง** ต้องส่ง `lines:` เข้า `paginate()`
 - **pdf-ui.js** (alpha.59) — `openTitlePageDialog`/`openHeaderDialog`/`pdfExportDialog` ·
   **`buildScriptPdf()` = จุดเดียวที่ทุกทางเรียก** · `writeCompiledPdf` · `pdfFontBytes` (แคช)
+- **import-sp.js** (alpha.60 · ข้อ 62–66) — นำเข้าบทภาพยนตร์ 5 รูปแบบ: `SP_IMPORTERS` (FDX/Celtx/Adobe Story/Fade In Pro/Fountain) ·
+  `importScreenplayDialog(injectFn)` · `detectFormat` · `elementsToMarkdown` · `importSummary` · ใช้ JSZip สำหรับ Celtx
+- **sp-compare.js** (alpha.60 · ข้อ 74) — เปรียบเทียบบท 2 ฉบับ: `compareScripts` (LCS diff) · `showComparisonDialog` (color-coded HTML) ·
+  `diffStats` (equal/inserted/deleted/changed)
 
 ### Core Infrastructure (pure logic — **ยังไม่มี UI · รอต่อ**) — spec อยู่ใน `docs/`
 - **panels/panel-layout.js + panel-store.js** (ข้อ 8) — dock/snap/tab group/float/collapse + `PanelManager` (registerPanel/showPanel/dockPanel/floatPanel/groupPanels) → [docs/08-panel-system.md](docs/08-panel-system.md)

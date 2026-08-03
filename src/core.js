@@ -51,56 +51,42 @@ window.addEventListener('unhandledrejection', (e) => {
 export function setStatus(s) { $('#status').textContent = s; }
 
 // ---- ค่าตั้งต้น settings/goals (โครงเดียวกับ v1 — เก็บครบใน project.khn.json) ----
-export const DEFAULT_SETTINGS = {
+// [alpha.60 ข้อ 94] แยกเป็น 2 ระดับ:
+//   global (user) — เก็บใน %APPDATA%/Killian2/settings.json · ใช้ร่วมกันทุกโปรเจกต์
+//   project      — เก็บใน project.khn.json · ต่อโปรเจกต์
+export const GLOBAL_DEFAULTS = {
   autoSaveMinutes: 5, maxBackups: 10, autoBackup: true, lineNumbers: false,
   uiFontSize: 0, uiScale: 1, spellCheck: true, spellCheckDict: true, autoMention: true, recycleDays: 30,
-  paperMode: true, shortcuts: {}, fontFamily: '', language: 'th',   // ไทยเป็นค่าเริ่มต้น (ไทย 100%)
-  spFontFamily: '',                // ฟอนต์บทหนัง (บั๊ก #2) — ว่าง = Courier Final Draft ตามมาตรฐานบท
-  // ขนาดฟอนต์เนื้อเรื่องเป็น "พอยต์" (มาตรฐานบท/ต้นฉบับ = 12pt ทุกภาษา) — ผู้ใช้กรอกเลขเองได้
-  edFontPt: 12, spFontPt: 12,
-  autoSync: false,                 // auto-task: อัปเดตชื่อเอนทิตี้ทุกไฟล์อัตโนมัติ (ข้อ 88)
-  // ค้นคำพ้องอังกฤษผ่าน datamuse.com — ปิดไว้ก่อน (ส่งคำที่เลือกออกอินเทอร์เน็ต)
-  thesaurus: false,
-  focusDim: 0.3,                   // ความจางของบรรทัดอื่นในโหมดโฟกัส (0.05–0.8)
-  spCycle: null,                   // ตารางควบคุม Tab/Enter/Shift+Tab ในบทหนัง (null=ใช้ค่าเริ่มต้น)
-  spCycleKeys: null,               // [แก้ไข feature 1] ปุ่มที่ใช้แทน Tab/Enter/Shift+Tab (null=ค่าเริ่มต้น)
-  spCycleEnabled: true,            // [แก้ไข feature 1] สวิตช์เปิด/ปิดระบบสลับ element ด้วยปุ่ม
-  spAutoCapitalize: true,          // [93] ขึ้นต้นประโยคด้วยตัวใหญ่ในบทหนังอัตโนมัติ
-  spAutoCorrectI: true,            // [93] แก้ i เป็น I เมื่ออยู่เดี่ยว ๆ
-  // ---- [85] หน้ากระดาษ: ใช้ร่วมกันทั้งโหมดนิยายและโหมดบทภาพยนตร์ ----
-  paperSize: 'letter',             // letter | a4 | legal | custom
-  customPaper: { width: 8.5, height: 11 },
-  pageMargins: { top: 1, bottom: 1, left: 1.5, right: 1 },   // นิ้ว
-  // ---- [81][82][83] รูปแบบต่อ element (null = ใช้ค่ามาตรฐานทั้งหมด) ----
-  spElements: null,                // { character:{indent,width,linesBefore,linesBetween}, ... }
-  spStyles: null,                  // { character:{screen:{caps,bold,italic,underline}, print:{...}}, ... }
-  spPageRules: null,               // [84] กฎ widow/orphan
-  spStrings: null,                 // [92] (CONTINUED) / (MORE) / (cont'd) …
-  homeThumb: 190,                  // [บั๊ก 12] ความกว้างการ์ดหน้าแรก (px) — ตั้งได้ในตั้งค่า
-  // ---- alpha.57 ----
-  spShowFormat: false,             // [61] แสดงเส้นขอบ element + เครื่องหมายจบบรรทัด
-  spCheckBeforeExport: true,       // [54] ตรวจหาข้อผิดพลาดก่อนพิมพ์/ส่งออก
-  spLineLimits: null,              // [54] ความยาวสูงสุดต่อ element (null = ค่ามาตรฐาน)
-  // ---- alpha.57a ----
-  typeSound: false,                // [1] เสียงเครื่องพิมพ์ดีดขณะพิมพ์
-  typeSoundVolume: 0.5,            // [1] ระดับเสียง 0–1
-  typeSoundAlways: false,          // [1] เล่นแม้ไม่ได้เปิดโหมดเครื่องพิมพ์ดีด
-  spSceneNumbers: null,            // [2] เลขฉาก { show, left, right, suffix } (null = ค่ามาตรฐาน = ปิด)
-  spPageNumbers: null,             // [2] เลขหน้า { show, right, top, suffix, firstPage }
-  langFonts: null,                 // [5] ฟอนต์ตามภาษา [{id,label,range,builtin,file,family,enabled}]
-  // ---- alpha.58 ----
-  spContinued: null,               // [55][56] { enabled, scene, dialogue, number, indent } (null = เปิดตามมาตรฐาน)
-  spLineHeight: 1,                 // [บั๊ก 3] ช่วงบรรทัดบทภาพยนตร์ — 1 = 6 บรรทัด/นิ้วตามมาตรฐาน
-  spPageGap: 28,                   // [58] ความสูงช่องว่างระหว่างหน้าในโหมดจัดหน้า (px)
-  smartLearnMin: 2,                // [บั๊ก 1] SmartType จำคำจากบทเมื่อเจอซ้ำกี่บล็อก (1–5)
-  heavyDocBlocks: 400,             // [บั๊ก 4] เกินกี่บล็อกถือว่า "เอกสารหนัก" แล้วหน่วงงานหนักให้ห่างขึ้น
-  // ---- alpha.58r ----
-  // [16–24] รูปแบบนิยายทั้งชุด (ฟอนต์/ช่วงบรรทัด/ย่อหน้า/หัวข้อ/ยกคำพูด/เลขหน้า)
-  // null = ใช้ค่ามาตรฐานของ prose-format.js ทั้งหมด (ดู PROSE_DEFAULTS)
-  prose: null,
-  // [25] เก็บ "จัดหน้า" ของย่อหน้าไว้ที่ไหน — 'frontmatter' = .md สะอาด · 'comment' = แบบเดิม (v1)
-  mdAlignStyle: 'frontmatter',
+  paperMode: true, fontFamily: '', language: 'th', spFontFamily: '',
+  autoSync: false, thesaurus: false, focusDim: 0.3,
+  typeSound: false, typeSoundVolume: 0.5, typeSoundAlways: false,
+  homeThumb: 190, smartLearnMin: 2, heavyDocBlocks: 400, mdAlignStyle: 'frontmatter',
+  // ปุ่มลัดตั้งเอง — อยู่กับผู้ใช้
+  shortcuts: {},
 };
+export const PROJECT_DEFAULTS = {
+  // หน้ากระดาษ
+  paperSize: 'letter', customPaper: { width: 8.5, height: 11 },
+  pageMargins: { top: 1, bottom: 1, left: 1.5, right: 1 },
+  // ขนาดฟอนต์เอกสาร (pt)
+  edFontPt: 12, spFontPt: 12,
+  // รูปแบบบทภาพยนตร์
+  spElements: null, spStyles: null, spPageRules: null, spStrings: null,
+  spCycle: null, spCycleKeys: null, spCycleEnabled: true,
+  spAutoCapitalize: true, spAutoCorrectI: true,
+  spShowFormat: false, spCheckBeforeExport: true, spLineLimits: null,
+  spSceneNumbers: null, spPageNumbers: null,
+  spContinued: null, spLineHeight: 1, spPageGap: 28,
+  // รูปแบบนิยาย (prose)
+  prose: null,
+  // ฟอนต์ตามภาษา
+  langFonts: null,
+  // [alpha.60 ข้อ 96] ปรับหน้าใหม่อัตโนมัติ (debounce)
+  spAutoPaginate: false,
+  spPaginateInterval: 30,   // วินาที (1-60)
+};
+// รวมเป็น DEFAULT_SETTINGS — ให้โค้ดที่ใช้อยู่ไม่พัง (ยังอ้าง key ชื่อเดิมทุกตัว)
+export const DEFAULT_SETTINGS = { ...GLOBAL_DEFAULTS, ...PROJECT_DEFAULTS };
 export const DEFAULT_GOALS = { dailyWords: 500, projectWords: 50000 };
 // ตารางควบคุม Tab/Enter/Shift+Tab ในบทหนัง — ผู้ใช้ปรับได้ในตั้งค่า
 export const DEFAULT_SP_CYCLE = {

@@ -101,6 +101,10 @@ import { setAutoSync, isAutoSyncOn, renderAutoSyncSection, resetTaskEngine } fro
 import { openAIAssistant, openPlotHoleDetector, openDialogueGenerator, openConsistencyCheck, openWorldGenerator, openAIChat } from './ai/ai-ui.js';
 import { showThesaurusPopup, initThesaurus } from './tools/thesaurus-ui.js';
 import { importScrivenerDialog } from './import/import-ui.js';
+// [alpha.60 ข้อ 62-66] นำเข้าบทภาพยนตร์จาก 5 รูปแบบ
+import { importScreenplayDialog, elementsToMarkdown, importSummary, detectFormat } from './import-sp.js';
+// [alpha.60 ข้อ 74] เปรียบเทียบบทภาพยนตร์
+import { compareScripts, renderComparisonHtml, showComparisonDialog } from './sp-compare.js';
 import { resetAI, getAIClient, ragContext } from './ai/ai-bridge.js';
 import { icon, initIcons, iconHtml, iconLabel, hasIcon } from './icons.js';
 // [97] หน้ารายชื่อตัวละคร (Cast of Characters) — หน้าเดี่ยวประจำเล่ม
@@ -149,9 +153,14 @@ let pageScale = 1;       // อัตราซูมหน้ากระดา�
 let autosaveTimer = null;
 
 // ใส่ค่า settings/goals ลง state (เติม default ที่ขาด) แล้วนำไปใช้จริง
-function loadSettings(meta) {
+// [alpha.60 ข้อ 94] 2 ระดับ: global (อ่านจาก userData/settings.json) + project (จาก project.khn.json)
+async function loadSettings(meta) {
   state.meta = meta;
-  state.settings = { ...DEFAULT_SETTINGS, ...(meta.settings || {}) };
+  // โหลด global settings (ถ้ามี)
+  let globalSettings = {};
+  try { globalSettings = await kapi.readGlobalSettings(); } catch {}
+  // project settings ชนะ global (project overrides global for overlapping keys)
+  state.settings = { ...DEFAULT_SETTINGS, ...globalSettings, ...(meta.settings || {}) };
   state.goals = { ...DEFAULT_GOALS, ...(meta.goals || {}) };
   applySettings();
 }
@@ -4085,7 +4094,7 @@ function mountEditor(tab, dir, body) {
     tab.sp = new SPEditor(mount, {
       markdown: body,
       onChange: () => { markDirty(tab); scheduleCount(); scheduleOutline();
-                        scheduleSpSmart(tab); },
+                        scheduleSpSmart(tab); scheduleRepaginate(); },
       onKeyDown: (ev) => smart.onKey(ev),
       onElement: (elName) => setElementBadge(elName),
       getChecker: spellChecker,
@@ -5097,6 +5106,19 @@ function heavyDelay(tab) {
 }
 
 let countJob = null;
+// [alpha.60 ข้อ 96] ปรับหน้าใหม่อัตโนมัติ — debounce ตามช่วงเวลาที่ตั้ง
+let repaginateJob = null;
+function scheduleRepaginate() {
+  const s = state.settings;
+  if (!s.spAutoPaginate) return;
+  clearTimeout(repaginateJob);
+  const ms = Math.min(60000, Math.max(1000, (+s.spPaginateInterval || 30) * 1000));
+  repaginateJob = setTimeout(() => {
+    const t = state.active;
+    if (!t || !t.sp) return;
+    scheduleCount(); // คำนวณหน้าใหม่ผ่านเส้นทางเดียวกับ scheduleCount
+  }, ms);
+}
 function scheduleCount() {
   clearTimeout(countJob);
   const t0 = state.active;
@@ -5111,6 +5133,9 @@ function scheduleCount() {
     let txt = `คำ ${countWords(body).toLocaleString()} · อักขระ ${body.length.toLocaleString()}`;
     // [84][85] บทภาพยนตร์: บอกจำนวนหน้าจริงตามขนาดกระดาษ/ระยะขอบ/กฎตัดหน้าที่ตั้งไว้
     if (t.sp) {
+      // [alpha.60 ข้อ 96] ปรับหน้าใหม่ตามช่วงเวลาที่ตั้ง — scheduleRepaginate จัดการ debounce แยก
+      // scheduleCount ยังทำงานต่อสำหรับนับคำ/ตรวจผิด (ไม่หน่วง)
+      if (state.settings.spAutoPaginate !== false) {
       try {
         const fmt = spFormat();
         // นับจากบล็อกในเอกสารจริง (ไม่ใช่ md) เพื่อให้ตำแหน่งเส้นคั่นหน้าตรงกับจอ (ข้อ 57)
@@ -5131,6 +5156,7 @@ function scheduleCount() {
         if (changed || cChanged) t.sp.refreshGuides();
         refreshSpView();                       // มุมมองเรียงหน้า/ภาพรวมตามเนื้อหาล่าสุด
       } catch (e) { log('warn', 'นับหน้าบทไม่สำเร็จ', e); }
+      } // [alpha.60 ข้อ 96] จบ gate spAutoPaginate
       // [54] ตรวจข้อผิดพลาดพร้อมกัน (debounce เดียวกับการนับคำ)
       try { checkScreenplay(t); } catch (e) { log('warn', 'ตรวจบทไม่สำเร็จ', e); }
     } else {
@@ -5628,6 +5654,64 @@ async function handleCommand(ch, ...a) {
     case 'backup-now': autoBackupNow(); break;
     case 'new-from-template': newProjectFromTemplate(); break;
     case 'import-scrivener': importScrivenerDialog((p) => loadProject(p)); break;
+    // [alpha.60 ข้อ 62-66] นำเข้าบทภาพยนตร์จาก 5 รูปแบบ (Fountain · FDX · Celtx · Fade In · Adobe Story)
+    case 'import-script': {
+      const result = await importScreenplayDialog(async (markdown, format, summary) => {
+        const t = state.active;
+        if (t && t.sp) {
+          // มีแท็บบทเปิดอยู่ → inject เข้า tab ปัจจุบัน
+          t.sp.setMarkdown(markdown);
+          if (t.editor) t.editor.setMarkdown(markdown);
+          markDirty(t);
+          setStatus('นำเข้าบทภาพยนตร์ (' + format + ') เสร็จ: ' + summary.scenes + ' ฉาก, ' + summary.characters + ' ตัวละคร');
+        } else {
+          // ยังไม่มีแท็บบท → สร้างแท็บฉากใหม่ในบทปัจจุบัน
+          // ใช้ createNewScene ถ้ามี
+          const sec = state.active?.meta;
+          const dPath = sec ? kapi.join(state.root, sec.section, 'Draft', sec.draft) : null;
+          if (dPath) {
+            const file = await createNewScene(dPath, 'นำเข้า-' + format + '-' + Date.now().toString(36));
+            const tab = await activate(file);
+            if (tab?.sp) {
+              tab.sp.setMarkdown(markdown);
+              if (tab.editor) tab.editor.setMarkdown(markdown);
+              markDirty(tab);
+              setStatus('นำเข้าบทภาพยนตร์ (' + format + ') — สร้างฉากใหม่: ' + summary.scenes + ' ฉาก, ' + summary.characters + ' ตัวละคร');
+            }
+          } else {
+            alert('นำเข้าไม่สำเร็จ: ยังไม่มีเล่ม/ฉบับร่างที่ใช้งานอยู่');
+          }
+        }
+      });
+      break;
+    }
+    // [alpha.60 ข้อ 74] เปรียบเทียบบท/สคริปต์
+    case 'sp-compare': {
+      const tabs = [...state.tabs.entries()];
+      const spTabs = tabs.filter(([, t]) => t.sp || t.editor);
+      if (spTabs.length < 2) {
+        alert('ต้องเปิดแท็บบทภาพยนตร์หรือเอกสารอย่างน้อย 2 แท็บจึงจะเปรียบเทียบได้');
+        break;
+      }
+      // แสดงรายการให้เลือก 2 แท็บ
+      const names = spTabs.map(([f]) => f.split(/[/\\]/).pop().replace(/\.md$/i, ''));
+      const oldIdx = parseInt(prompt('เลือก "ฉบับเก่า" (หมายเลข 1–' + spTabs.length + '):\n' +
+        names.map((n, i) => (i + 1) + '. ' + n).join('\n')), 10);
+      if (!oldIdx || oldIdx < 1 || oldIdx > spTabs.length) break;
+      const newIdx = parseInt(prompt('เลือก "ฉบับใหม่" (หมายเลข 1–' + spTabs.length + '):\n' +
+        names.map((n, i) => (i + 1) + '. ' + n).join('\n')), 10);
+      if (!newIdx || newIdx < 1 || newIdx > spTabs.length || newIdx === oldIdx) break;
+
+      const oldTab = spTabs[oldIdx - 1][1];
+      const newTab = spTabs[newIdx - 1][1];
+      const oldText = oldTab.sp ? oldTab.sp.getMarkdown() : (oldTab.editor ? oldTab.editor.getMarkdown() : oldTab.body);
+      const newText = newTab.sp ? newTab.sp.getMarkdown() : (newTab.editor ? newTab.editor.getMarkdown() : newTab.body);
+      const oldLabel = spTabs[oldIdx - 1][0].split(/[/\\]/).pop().replace(/\.md$/i, '');
+      const newLabel = spTabs[newIdx - 1][0].split(/[/\\]/).pop().replace(/\.md$/i, '');
+
+      showComparisonDialog(oldText, newText, { old: oldLabel, new: newLabel });
+      break;
+    }
     case 'ai-settings': showAISettingsDialog(); break;
     case 'ai-summary': showAISummary(); break;
     case 'ai-title': showAITitleSuggestions(state.title || '', async (title) => {

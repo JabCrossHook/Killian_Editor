@@ -52,19 +52,19 @@ export function settingsDialog(openTab) {
   const ov = el('div', 'k-overlay');
   const box = el('div', 'k-dialog k-settings');
   box.innerHTML = `
-    <div class="k-dlg-title">${t('settings.title')}</div>
+    <div class="k-dlg-title">${t('settings.title')} <span style="font-weight:normal;font-size:0.7em;color:#666">// [alpha.60 ข้อ 94] 🌐 = ระดับผู้ใช้ (ใช้ร่วมทุกโปรเจกต์) · 📁 = ระดับโปรเจกต์ (เฉพาะโปรเจกต์นี้)</span></div>
     <div class="k-set-tabs">
-      <div class="k-set-tab on" data-p="gen">${t('settings.general')}</div>
-      <div class="k-set-tab" data-p="write">${t('settings.writing')}</div>
-      <div class="k-set-tab" data-p="auto">${t('settings.automation')}</div>
-      <div class="k-set-tab" data-p="setup">🎞 ข้อมูลผลงาน</div>
-      <div class="k-set-tab" data-p="page">📐 หน้ากระดาษ</div>
-      <div class="k-set-tab" data-p="prose">📖 รูปแบบนิยาย</div>
-      <div class="k-set-tab" data-p="spfmt">🎬 รูปแบบบท</div>
-      <div class="k-set-tab" data-p="sp">⌨ ปุ่มบทหนัง</div>
-      <div class="k-set-tab" data-p="fonts">🔤 ฟอนต์ตามภาษา</div>
-      <div class="k-set-tab" data-p="lang">${t('settings.language')}</div>
-      <div class="k-set-tab" data-p="keys">${t('settings.shortcuts')}</div>
+      <div class="k-set-tab on" data-p="gen">🌐 ${t('settings.general')}</div>
+      <div class="k-set-tab" data-p="write">🌐 ${t('settings.writing')}</div>
+      <div class="k-set-tab" data-p="auto">🌐 ${t('settings.automation')}</div>
+      <div class="k-set-tab" data-p="setup">📁 ข้อมูลผลงาน</div>
+      <div class="k-set-tab" data-p="page">📁 หน้ากระดาษ</div>
+      <div class="k-set-tab" data-p="prose">📁 รูปแบบนิยาย</div>
+      <div class="k-set-tab" data-p="spfmt">📁 รูปแบบบท</div>
+      <div class="k-set-tab" data-p="sp">📁 ปุ่มบทหนัง</div>
+      <div class="k-set-tab" data-p="fonts">📁 ฟอนต์ตามภาษา</div>
+      <div class="k-set-tab" data-p="lang">🌐 ${t('settings.language')}</div>
+      <div class="k-set-tab" data-p="keys">🌐 ${t('settings.shortcuts')}</div>
     </div>
     <div class="k-set-page k-set-2col on" data-p="gen">
       <div class="k-row"><label>${t('settings.projectName')}</label><input type="text" id="st-title"></div>
@@ -97,6 +97,9 @@ export function settingsDialog(openTab) {
     </div>
     <div class="k-set-page" data-p="auto">
       <div class="k-row"><label>${iconHtml('cloud-lightning', 14)} ${t('settings.autoSync')}<span class="k-hint">${t('settings.autoSyncHint')}</span></label><input type="checkbox" id="st-autosync"></div>
+      <div class="k-set-sub k-full">// [alpha.60 ข้อ 96] ปรับหน้าใหม่อัตโนมัติสำหรับบทภาพยนตร์</div>
+      <div class="k-row"><label>คำนวณจำนวนหน้าใหม่หลังหยุดพิมพ์<span class="k-hint">ทำงานหลังจากหยุดพักตามช่วงเวลาที่ตั้ง · ใช้กับบทภาพยนตร์เท่านั้น</span></label><input type="checkbox" id="st-autopag"></div>
+      <div class="k-row"><label>รอหลังหยุดพิมพ์ (วินาที)<span class="k-hint">1–60 วินาที ก่อนคำนวณหน้าใหม่ · ยิ่งสั้นยิ่งใช้ CPU มาก</span></label><input type="number" id="st-pagintv" min="1" max="60" step="1" class="k-narrow"></div>
     </div>
     <div class="k-set-page k-set-2col" data-p="setup">
       <div class="k-hint" style="margin-bottom:10px">[98] ข้อมูลบนหน้าปกบท/ต้นฉบับ — ใช้ตอนพิมพ์และส่งออก</div>
@@ -335,6 +338,11 @@ export function settingsDialog(openTab) {
   q('#st-uiscale-lbl').textContent = Math.round(origUiScale * 100) + '%';
   q('#st-uiscale').oninput = () => applyUIScale(parseFloat(q('#st-uiscale').value) || 1);
   q('#st-autosync').checked = isAutoSyncOn() || !!s.autoSync;
+  // [alpha.60 ข้อ 96] ปรับหน้าใหม่อัตโนมัติ
+  const autoPag = q('#st-autopag');
+  const autoPagIntv = q('#st-pagintv');
+  if (autoPag) autoPag.checked = !!s.spAutoPaginate;
+  if (autoPagIntv) autoPagIntv.value = Math.min(60, Math.max(1, parseInt(s.spPaginateInterval, 10) || 30));
   q('#st-edpt').value = s.edFontPt ?? 12;
   q('#st-sppt').value = s.spFontPt ?? 12;
   q('#st-homethumb').value = s.homeThumb ?? 190;
@@ -938,6 +946,9 @@ export function settingsDialog(openTab) {
     // Auto-sync (เก็บลง settings ด้วย — ไม่งั้นเปิดโปรแกรมใหม่แล้วกลับไปปิด)
     s.autoSync = q('#st-autosync').checked;
     setAutoSync(s.autoSync);
+    // [alpha.60 ข้อ 96] ปรับหน้าใหม่อัตโนมัติ
+    s.spAutoPaginate = q('#st-autopag')?.checked || false;
+    s.spPaginateInterval = Math.min(60, Math.max(1, num('#st-pagintv', 30)));
     // บันทึก spCycle + ปุ่มที่ผูกไว้ + สวิตช์เปิด/ปิด (แก้ไข feature 1)
     s.spCycle = JSON.parse(JSON.stringify(workSpCycle));
     s.spCycleKeys = JSON.parse(JSON.stringify(W.keys));
@@ -972,6 +983,16 @@ export function settingsDialog(openTab) {
     try {
       await preloadLangFontUrls();         // ฟอนต์ที่เพิ่งนำเข้าต้องมี URL ก่อน applySettings สร้าง CSS
       await saveProjectMeta();
+      // [alpha.60 ข้อ 94] บันทึก global settings ลง userData/settings.json
+      try {
+        const globalKeys = ['autoSaveMinutes','maxBackups','autoBackup','lineNumbers','uiFontSize','uiScale',
+          'spellCheck','spellCheckDict','autoMention','recycleDays','paperMode','fontFamily','spFontFamily',
+          'language','autoSync','thesaurus','focusDim','typeSound','typeSoundVolume','typeSoundAlways',
+          'homeThumb','smartLearnMin','heavyDocBlocks','mdAlignStyle','shortcuts'];
+        const globals = {};
+        for (const k of globalKeys) { if (k in s) globals[k] = s[k]; }
+        await kapi.writeGlobalSettings(globals);
+      } catch (e) { log('warn', 'บันทึก global settings ไม่สำเร็จ', e); }
       applySettings();
       try { updatePageNumberHint(); refreshSpView(); } catch {}
       state.title = m.title;

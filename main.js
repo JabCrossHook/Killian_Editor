@@ -75,6 +75,7 @@ function buildMenu() {
       { type: 'separator' },
       { label: 'สร้างโปรเจกต์จากเทมเพลต…', click: () => send('new-from-template') },
       { label: 'นำเข้าจาก Scrivener (.scriv)…', click: () => send('import-scrivener') },
+      { label: 'นำเข้าบทภาพยนตร์… (Fountain · FDX · Celtx · Fade In · Adobe Story)', click: () => send('import-script') }, // [alpha.60 ข้อ 62-66]
       { label: 'สำรองโปรเจกต์เดี๋ยวนี้', click: () => send('backup-now') },
       { type: 'separator' },
       { label: `ตั้งค่าโปรเจกต์… (${C}+,)`, click: () => send('settings') },
@@ -226,6 +227,11 @@ function buildMenu() {
       { label: '🧾 ส่งออก PDF (สารบัญ · หน้าปก · เปิดที่หน้าเดิม)…',
         click: () => send('export-pdf-builtin') },
       { label: '💧 ส่งออก PDF ลายน้ำรายคน…', click: () => send('export-watermark') },
+    ] },
+    // [alpha.60 ข้อ 74] เมนู "เครื่องมือ"
+    { id: 'Tools', label: 'เครื่องมือ', submenu: [
+      { label: '📊 เปรียบเทียบบท / สคริปต์…', click: () => send('sp-compare') },
+      { label: 'ตรวจหาคำซ้ำ · สถิติการใช้คำ (Word History)…', click: () => send('word-history') },
     ] },
     { id: 'View', label: 'มุมมอง', submenu: [
       { label: 'แดชบอร์ด', click: () => send('dashboard') },
@@ -503,6 +509,11 @@ const SAVE_FILTERS = {
   rtf: { name: 'Rich Text', extensions: ['rtf'] },
   // alpha.57a — นำเข้าไฟล์ฟอนต์เข้าโปรเจกต์ (ฟอนต์ตามภาษา)
   font: { name: 'ฟอนต์', extensions: ['ttf', 'otf', 'woff', 'woff2', 'ttc'] },
+  // [alpha.60 ข้อ 62-66] นำเข้าบทภาพยนตร์จาก 5 รูปแบบ
+  fountain: { name: 'Fountain', extensions: ['fountain', 'txt'] },
+  celtx: { name: 'Celtx', extensions: ['celtx'] },
+  astx: { name: 'Adobe Story', extensions: ['astx'] },
+  fadein: { name: 'Fade In Pro', extensions: ['fadein'] },
 };
 H('dialog:saveAs', async (defName, kind) => {
   const ext = String(defName || '').split('.').pop().toLowerCase();
@@ -516,6 +527,35 @@ H('dialog:openFile', async (kind) => {
   const r = await dialog.showOpenDialog(win, { properties: ['openFile'],
     filters: [f, { name: 'ทุกไฟล์', extensions: ['*'] }] });
   return r.canceled ? null : r.filePaths[0];
+});
+// [alpha.60 ข้อ 62-66] เปิดไฟล์บทภาพยนตร์ — แสดงทุกรูปแบบพร้อมกัน
+H('dialog:openScreenplay', async () => {
+  const r = await dialog.showOpenDialog(win, { properties: ['openFile'],
+    filters: [
+      { name: 'บทภาพยนตร์ทุกฟอร์แมต (Fountain, FDX, Celtx, Adobe Story, Fade In Pro)',
+        extensions: ['fountain', 'fdx', 'celtx', 'astx', 'fadein', 'txt'] },
+      { name: 'ทุกไฟล์', extensions: ['*'] },
+    ] });
+  return r.canceled ? null : r.filePaths[0];
+});
+// [alpha.60 ข้อ 94] Global settings — เก็บใน userData/settings.json (ใช้ร่วมกันทุุกโปรเจกต์)
+function globalSettingsPath() {
+  return path.join(app.getPath('userData'), 'settings.json');
+}
+H('settings:readGlobal', () => {
+  try {
+    const p = globalSettingsPath();
+    if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf-8'));
+    return {};
+  } catch { return {}; }
+});
+H('settings:writeGlobal', (obj) => {
+  try {
+    const p = globalSettingsPath();
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify(obj, null, 2), 'utf-8');
+    return true;
+  } catch { return false; }
 });
 H('dialog:savePdf', async (defName) => {
   const r = await dialog.showSaveDialog(win, { defaultPath: defName,

@@ -539,7 +539,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ---
 
-## เวอร์ชัน (ล่าสุด alpha.59 · e2e 1,432 + unit 832)
+## เวอร์ชัน (ล่าสุด alpha.60 · e2e 1,432 + unit 832)
 
 .13–.22 (v1→v2 พื้นฐาน): snapshot, line numbers, spellcheck ไทย+Chromium, ปุ่มลัดตั้งเอง, mac build, บทหนัง Ctrl+arrow, relationship sync, floating format bar, sidebar resize, SmartType Final Draft, wiki gallery/lightbox, explorer search+tags, panel docking, tree float+snap
 .24 batch 8 (drag-move explorer, panel snap, split compare, version tracking, scene lock, screenplay Final Draft look, screenplay images, wiki links) · .25–.27 **Planner board** (fabric.js) · .28 **floating windows** · .29 memo-in-chapter + scoped search
@@ -746,6 +746,21 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
     · พรีเซ็ตใหม่ `screenplay-pdf` (ext `pdf` → `writeCompiledPdf`)
   **บั๊กฟอนต์ที่เจอตอนเรนเดอร์ดูด้วยตา** → บทเรียน 63 (Courier Prime ไม่มีไทย · ฟอนต์ไทยชี้ `·©—…` ผิด)
   **บั๊กที่เจอตอนเขียนเทส** → บทเรียน 62b (บล็อกเทสถูก `if` ครอบแล้วข้ามเงียบ) · 64 · 65
+
+.60 **นำเข้า/เปรียบเทียบ/แยกตั้งค่า (62–66, 74, 94, 96)**
+  โมดูลใหม่ 2 ตัว (`import-sp` · `sp-compare`)
+  **[62–66] Import Formats**: `SP_IMPORTERS` 5 รูปแบบ (FDX XML · Celtx ZIP+HTML · Adobe Story XML · Fade In Pro JSON · Fountain)
+    · `importScreenplayDialog(injectFn)` → auto-detect → summary → inject เข้า SPEditor
+    · FDX: `<Paragraph Type="..."><Text>...</Text></Paragraph>` · Celtx: JSZip → script/index.html
+    · **ไฟล์→นำเข้าบทภาพยนตร์…** (ใช้ IPC `dialog:openScreenplay`)
+  **[74] Script Comparison**: `compareScripts` (LCS diff) · `showComparisonDialog` (สี: ลบ=แดง เพิ่ม=เขียว เปลี่ยน=เหลือง)
+    · `diffStats` · เมนู **เครื่องมือ→เปรียบเทียบบท**
+  **[94] 4-Level Settings → 2 levels practical**: `GLOBAL_DEFAULTS` + `PROJECT_DEFAULTS` ส่งออกจาก core.js
+    · 🌐 = ระดับผู้ใช้ (userData/settings.json) · 📁 = ระดับโปรเจกต์ (project.khn.json)
+    · `kapi.readGlobalSettings/writeGlobalSettings` (IPC ใหม่)
+    · `loadSettings` เป็น async โหลด global ก่อน merge project
+  **[96] Auto-Pagination**: `spAutoPaginate` + `spPaginateInterval` (1–60s) · `scheduleRepaginate()` debounce
+    · gate ใน scheduleCount — ปิดแล้วข้ามการจัดหน้าแต่ยังนับคำ/ตรวจผิดปกติ
 
 **ยังเหลือ**: `search-engine.js` ยังเป็น orphan — Global Search (`global-search.js`) ยังสแกนไฟล์ตรง ๆ ไม่ได้ใช้ inverted index (ควรสลับมาใช้เพื่อความเร็ว) · multiple-drafts-per-book UI (โครงรองรับแล้ว), screenplay align persistence, Campaign/D&D mode, electron-builder + code signing, .icns/.ico icon, native arm64 build. Top เคยบอก paper/indent "อาจต้องปรับปรุง ไว้ก่อน"
 

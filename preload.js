@@ -18,6 +18,9 @@ contextBridge.exposeInMainWorld('kapi', {
   saveAsDialog: call('dialog:saveAs'), savePdfDialog: call('dialog:savePdf'),
   openFileDialog: call('dialog:openFile'),   // เลือกไฟล์เดียว (นำเข้าสถานะฉาก ฯลฯ)
   openDirDialog: call('dialog:openDir'),     // [70] เลือกโฟลเดอร์ปลายทางของ PDF ลายน้ำ
+  openScreenplayFile: call('dialog:openScreenplay'), // [alpha.60 ข้อ 62-66] เลือกไฟล์บททุกฟอร์แมต
+  readGlobalSettings: call('settings:readGlobal'),    // [alpha.60 ข้อ 94] อ่าน global settings จาก userData
+  writeGlobalSettings: call('settings:writeGlobal'),  // [alpha.60 ข้อ 94] เขียน global settings ไป userData
   print: call('win:print'), printToPdf: call('win:printToPdf'),
   pdfFromHtml: call('pdf:fromHtml'),         // [70] สร้าง PDF จาก HTML (หน้าต่างซ่อน)
   pushRecent: call('recent:push'), listRecent: call('recent:list'),
