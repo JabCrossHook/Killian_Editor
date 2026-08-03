@@ -110,6 +110,8 @@
   <button id="tb-linenum" class="tb tb-toggle" title="แสดงเลขบรรทัด" data-icon="list-ol"></button>
   <button id="tb-quickopen" class="tb" title="ค้นหาไฟล์ด่วน (Ctrl+Shift+O)" data-icon="search"></button>
   <button id="tb-kanban" class="tb tb-toggle" title="Kanban ตามสถานะ (กดซ้ำ = ปิดแผง)" data-icon="grid"></button>
+  <!-- [alpha.60r ข้อ 4] ปุ่มแดชบอร์ด — toggle แผง dashboard -->
+  <button id="tb-dashboard" class="tb tb-toggle" title="แดชบอร์ด (Dashboard — สถิติ · ความคืบหน้า)" data-icon="chart"></button>
   <button id="tb-ai" class="tb" title="AI ผู้ช่วยเขียน" data-icon="bot"></button>
   <button id="tb-ai-chat" class="tb" title="แชทกับเรื่องของคุณ" data-icon="chat"></button>
   <button id="tb-plug" class="tb" title="คำสั่งจากปลั๊กอิน" style="display:none" data-icon="extension"></button>
@@ -204,5 +206,11 @@
   <div class="k-menu-item" data-action="memo"><span data-icon="clipboard" data-icon-size="16"></span> <span data-i18n="panel.fabMemo">สร้าง Memo</span></div>
 </div>
 <script src="bundle.js"></script>
+<!-- [alpha.60r ข้อ 8] หน้าจอรอโหลด — แสดงตอนเปิดโปรเจกต์ -->
+<div id="k-loader" style="display:none">
+  <div class="k-loader-spin"></div>
+  <div class="k-loader-text">กำลังโหลด…</div>
+  <div id="k-loader-prog"></div>
+</div>
 </body>
 </html>

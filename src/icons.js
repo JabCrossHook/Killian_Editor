@@ -61,14 +61,92 @@ const ICO = {
   // ---- alternatives (ไม่มีใน Boxicons) ----
   'extension':    '<path fill="currentColor" d="M19 10V7c0-1.103-.897-2-2-2h-3c0-1.654-1.346-3-3-3S8 3.346 8 5H5c-1.103 0-2 .897-2 2v4h1a2 2 0 0 1 0 4H3v4c0 1.103.897 2 2 2h4v-1a2 2 0 0 1 4 0v1h4c1.103 0 2-.897 2-2v-3c1.654 0 3-1.346 3-3s-1.346-3-3-3"/>', // bxs:extension ใช้แทน puzzle
   'maximize':     '<path fill="currentColor" d="M5 5h5V3H3v7h2zm5 14H5v-5H3v7h7zm11-5h-2v5h-5v2h7zm-2-4h2V3h-7v2h5z"/>', // bx:fullscreen ใช้แทน maximize เต็มจอ
+  // [alpha.60r ข้อ 4] ไอคอนแดชบอร์ด
+  'chart':        '<path fill="currentColor" d="M19 3H5c-1.103 0-2 .897-2 2v14c0 1.103.897 2 2 2h14c1.103 0 2-.897 2-2V5c0-1.103-.897-2-2-2M9 17H7v-7h2zm4 0h-2V7h2zm4 0h-2v-4h2z"/>', // bxs:bar-chart-square
 };
 
 // มีไอคอนชื่อนี้จริงไหม — ใช้กรองค่าเก่าที่เก็บเป็นอีโมจิ (ไม่งั้นได้ svg ว่าง)
 export function hasIcon(name) { return !!(name && ICO[name]); }
 
+// [alpha.60r ข้อ 6] NerdFonts character mapping — ใช้เมื่อมีฟอนต์ NerdFont ติดตั้งในระบบ
+// รหัส Unicode ของ NerdFonts v3: https://www.nerdfonts.com/cheat-sheet
+const NF = {
+  'bold':         '\uf032', // nf-fa-bold
+  'italic':       '\uf033', // nf-fa-italic
+  'underline':    '\uf0cd', // nf-fa-underline
+  'strikethrough':'\uf0cc', // nf-fa-strikethrough
+  'align-left':   '\uf036', // nf-fa-align_left
+  'align-center': '\uf037', // nf-fa-align_center
+  'align-right':  '\uf038', // nf-fa-align_right
+  'align-justify':'\uf039', // nf-fa-align_justify
+  'list-ul':      '\uf0ca', // nf-fa-list_ul
+  'list-ol':      '\uf0cb', // nf-fa-list_ol
+  'quote-left':   '\uf10d', // nf-fa-quote_left
+  'code-alt':     '\uf121', // nf-fa-code
+  'bot':          '\uebe1', // nf-md-robot
+  'search':       '\uf002', // nf-fa-search
+  'home':         '\uf015', // nf-fa-home
+  'cog':          '\uf013', // nf-fa-cog
+  'minus':        '\uf056', // nf-fa-minus_circle
+  'plus':         '\uf055', // nf-fa-plus_circle
+  'x':            '\uf057', // nf-fa-times_circle
+  'reset':        '\uf057', // same as x
+  'save':         '\uf0c7', // nf-fa-floppy_o
+  'file':         '\uf016', // nf-fa-file_o
+  'book':         '\uf02d', // nf-fa-book
+  'book-open':    '\uf518', // nf-fa-book_open
+  'note':         '\uf249', // nf-md-note
+  'layout':       '\uf0db', // nf-fa-columns
+  'dock-right':   '\uf0db', // same
+  'grid':         '\uf00a', // nf-fa-th
+  'chat':         '\uf086', // nf-fa-comments
+  'image':        '\uf03e', // nf-fa-picture_o
+  'image-add':    '\uf055', // plus
+  'archive':      '\uf187', // nf-fa-archive
+  'book-content': '\uf02d', // same
+  'folder':       '\uf07b', // nf-fa-folder
+  'user':         '\uf007', // nf-fa-user
+  'map':          '\uf279', // nf-fa-map
+  'briefcase':    '\uf0b1', // nf-fa-briefcase
+  'bookmark':     '\uf02e', // nf-fa-bookmark
+  'clipboard':    '\uf0f6', // nf-fa-clipboard
+  'camera':       '\uf030', // nf-fa-camera
+  'brain':        '\ueb61', // nf-md-brain
+  'star':         '\uf005', // nf-fa-star
+  'error':        '\uf071', // nf-fa-exclamation_triangle
+  'check':        '\uf058', // nf-fa-check_circle
+  'edit':         '\uf304', // nf-fa-pencil_square
+  'trash':        '\uf1f8', // nf-fa-trash
+  'chevron-down': '\uf078', // nf-fa-chevron_down
+  'chevron-right':'\uf054', // nf-fa-chevron_right
+  'film':         '\uf008', // nf-fa-film
+  'expand':       '\uf065', // nf-fa-expand
+  'fullscreen':   '\uf065', // same
+  'history':      '\uf1da', // nf-fa-history
+  'link':         '\uf0c1', // nf-fa-link
+  'cloud-lightning':'\ue7ef', // nf-md-weather_lightning
+  'extension':    '\uf12e', // nf-fa-puzzle_piece
+  'maximize':     '\uf065', // same as expand
+  'chart':        '\uf080', // nf-fa-bar_chart
+};
+// NerdFonts CSS — inject สร้าง @font-face ถ้าผู้ใช้มีฟอนต์
+export function nfCss() {
+  return `[data-nf]{font-family:'CaskaydiaCove NF','FiraCode Nerd Font','MesloLGS NF','JetBrainsMono NF',monospace;font-size:.95em;line-height:1}`;
+}
+export function hasNf(name) { return !!(name && NF[name]); }
+
+// icon: SVG เป็นหลัก → fallback NerdFont ถ้า SVG ไม่มีข้อมูล
 export function icon(name, size) {
   const sz = size || 18;
   const p = ICO[name] || '';
+  // [alpha.60r ข้อ 6] fallback NerdFont ถ้า SVG ไม่มีข้อมูล
+  if (!p && NF[name]) {
+    const span = document.createElement('span');
+    span.setAttribute('data-nf', '1');
+    span.style.cssText = `vertical-align:middle;flex-shrink:0;pointer-events:none;font-size:${sz-2}px`;
+    span.textContent = NF[name];
+    return span;
+  }
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('width', String(sz));
   svg.setAttribute('height', String(sz));

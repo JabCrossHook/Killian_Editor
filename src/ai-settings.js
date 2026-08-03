@@ -50,13 +50,19 @@ export async function callAI(prompt, system = '') {
     setStatus('❌ ยังไม่ได้ตั้งค่า AI — ไฟล์ → ตั้งค่า AI');
     return null;
   }
-  const model = ai.model || (provider === 'claude' ? 'claude-sonnet-4-5' : provider === 'ollama' ? 'llama3' : 'gpt-4o-mini');
+  const model = ai.model || (ai.provider === 'claude' ? 'claude-sonnet-4-5'
+    : ai.provider === 'deepseek' ? 'deepseek-chat'
+    : ai.provider === 'grok' ? 'grok-2' : ai.provider === 'ollama' ? 'llama3' : 'gpt-4o-mini');
   const temperature = ai.temperature ?? 0.7;
   const maxTokens = ai.maxTokens || 500;
 
   let url, headers, body;
-  if (provider === 'openai') {
-    url = 'https://api.openai.com/v1/chat/completions';
+  if (provider === 'openai' || provider === 'deepseek' || provider === 'grok' || provider === 'custom') {
+    // [alpha.60r ข้อ 3] OpenAI-compatible API (DeepSeek, Grok, Custom ใช้รูปแบบเดียวกับ OpenAI)
+    url = provider === 'openai' ? 'https://api.openai.com/v1/chat/completions'
+        : ai.customUrl || ai.ollamaUrl || (provider === 'deepseek' ? 'https://api.deepseek.com/chat/completions'
+        : provider === 'grok' ? 'https://api.x.ai/v1/chat/completions' : '');
+    if (!url.endsWith('/chat/completions') && !url.endsWith('/v1')) url += '/v1/chat/completions';
     headers = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey };
     body = { model, messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }], temperature, max_tokens: maxTokens };
   } else if (provider === 'claude') {
@@ -78,7 +84,7 @@ export async function callAI(prompt, system = '') {
     }
     const data = JSON.parse(res.body);
     let text = '';
-    if (provider === 'openai') text = data.choices?.[0]?.message?.content || '';
+    if (provider === 'openai' || provider === 'deepseek' || provider === 'grok' || provider === 'custom') text = data.choices?.[0]?.message?.content || '';
     else if (provider === 'claude') text = data.content?.[0]?.text || '';
     else text = data.response || '';
     recordUsage(data.usage?.total_tokens || Math.round(text.length / 4), provider, model);
@@ -120,7 +126,16 @@ export async function showAISettingsDialog() {
 
   const provRow = mkRow('ผู้ให้บริการ');
   const provSel = el('select', 'wiki-input k-dlg-select');
-  for (const [v, t] of [['openai', 'OpenAI'], ['claude', 'Claude (Anthropic)'], ['ollama', 'Ollama (เครื่องตัวเอง)']]) {
+  // [alpha.60r ข้อ 3] เพิ่ม DeepSeek, Grok, และกำหนดเอง
+  const providers = [
+    ['openai', 'OpenAI — ChatGPT / GPT-4o / o3'],
+    ['deepseek', 'DeepSeek — V3 / R1'],
+    ['grok', 'Grok (xAI)'],
+    ['claude', 'Claude (Anthropic)'],
+    ['ollama', 'Ollama (เครื่องตัวเอง)'],
+    ['custom', 'กำหนดเอง (Custom LLM)'],
+  ];
+  for (const [v, t] of providers) {
     const o = el('option', null, t); o.value = v; provSel.append(o);
   }
   provSel.value = ai.provider || 'openai';
@@ -149,13 +164,21 @@ export async function showAISettingsDialog() {
   tokInp.min = '50'; tokInp.max = '8192';
   tokRow.append(tokInp);
 
-  // แถว Ollama URL — แสดง/ซ่อนตามผู้ให้บริการที่เลือก (เดิมสร้างแล้วไม่เคยอ่านค่ากลับ)
-  const urlRow = mkRow('Ollama URL');
-  const urlInp = el('input', 'wiki-input'); urlInp.value = ai.ollamaUrl || 'http://localhost:11434';
+  // แถว Ollama URL / Custom URL — แสดง/ซ่อนตามผู้ให้บริการที่เลือก
+  const urlRow = mkRow('Ollama / Custom URL');
+  const urlInp = el('input', 'wiki-input');
+  urlInp.value = ai.customUrl || ai.ollamaUrl || (ai.provider === 'deepseek' ? 'https://api.deepseek.com' :
+                   ai.provider === 'grok' ? 'https://api.x.ai/v1' : 'http://localhost:11434');
+  urlInp.placeholder = 'https://api.example.com/v1/chat/completions';
   urlRow.append(urlInp);
   const syncProv = () => {
-    urlRow.style.display = provSel.value === 'ollama' ? '' : 'none';
+    const show = ['ollama', 'custom', 'deepseek', 'grok'].includes(provSel.value);
+    urlRow.style.display = show ? '' : 'none';
     keyRow.style.display = provSel.value === 'ollama' ? 'none' : '';
+    // [alpha.60r ข้อ 3] อัปเดต placeholder model ตาม provider ที่เลือก
+    const defs = { openai: 'gpt-4o-mini', deepseek: 'deepseek-chat', grok: 'grok-2',
+                   claude: 'claude-sonnet-4-5', ollama: 'llama3', custom: 'gpt-4o-mini' };
+    modelInp.placeholder = defs[provSel.value] || 'gpt-4o-mini';
   };
   provSel.onchange = syncProv;
   syncProv();
@@ -174,6 +197,7 @@ export async function showAISettingsDialog() {
     provider: provSel.value, model: modelInp.value.trim(),
     temperature: parseFloat(tempRng.value), maxTokens: parseInt(tokInp.value, 10) || 500,
     ollamaUrl: urlInp.value.trim() || 'http://localhost:11434',
+    customUrl: urlInp.value.trim() || '',
   });
 
   const btns = el('div', 'k-dlg-btns');

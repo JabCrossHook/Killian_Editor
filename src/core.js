@@ -63,6 +63,8 @@ export const GLOBAL_DEFAULTS = {
   homeThumb: 190, smartLearnMin: 2, heavyDocBlocks: 400, mdAlignStyle: 'frontmatter',
   // ปุ่มลัดตั้งเอง — อยู่กับผู้ใช้
   shortcuts: {},
+  // [alpha.60r ข้อ 1] แสดงหน้าแรกเมื่อเปิดโปรเจกต์ — ปิดแล้วเปิดโปรเจกต์ล่าสุดทันที
+  showHomeOnStartup: true,
 };
 export const PROJECT_DEFAULTS = {
   // หน้ากระดาษ
@@ -84,6 +86,8 @@ export const PROJECT_DEFAULTS = {
   // [alpha.60 ข้อ 96] ปรับหน้าใหม่อัตโนมัติ (debounce)
   spAutoPaginate: false,
   spPaginateInterval: 30,   // วินาที (1-60)
+  // [alpha.60r ข้อ 2] จำแท็บที่เปิดค้างไว้ — restore ตอนเปิดโปรเจกต์ครั้งต่อไป
+  openTabs: null,           // [filePath, ...] — null = ยังไม่เคยบันทึก
 };
 // รวมเป็น DEFAULT_SETTINGS — ให้โค้ดที่ใช้อยู่ไม่พัง (ยังอ้าง key ชื่อเดิมทุกตัว)
 export const DEFAULT_SETTINGS = { ...GLOBAL_DEFAULTS, ...PROJECT_DEFAULTS };

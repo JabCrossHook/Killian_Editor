@@ -1,3 +1,52 @@
+v2.0.0-alpha.60r
+-----------------
+**แก้ไขเล็กน้อย 8 ข้อ — UX + session + AI providers**
+
+### ข้อ 1 — หน้าแรกตอนเปิดโปรเจกต์ + toggle
+- `showHomeOnStartup: true` ใน GLOBAL_DEFAULTS — แสดง home dialog เมื่อเปิดโปรเจกต์
+- ตั้งค่า → ทั่วไป → "แสดงหน้าแรกเมื่อเปิดโปรเจกต์" (ติ๊ก/ไม่ติ๊ก)
+- ปิด = เปิดโปรเจกต์ล่าสุดโดยไม่ถาม
+- เทส: ไม่รบกวนตอน selftest (`k2test` query param)
+
+### ข้อ 2 — Session restore (จำแท็บ+แผงที่เปิดค้างไว้)
+- `openTabs` ใน PROJECT_DEFAULTS — เก็บรายการแท็บที่เปิดอยู่
+- `saveOpenTabs()` → บันทึกลง `project.khn.json` ตอนปิดโปรเจกต์
+- `restoreOpenTabs()` → เปิดแท็บทั้งหมดกลับคืนตอน `loadProject`
+- แผง (Panel System) ใช้ localStorage อยู่แล้ว → restore อัตโนมัติ
+
+### ข้อ 3 — เพิ่มผู้ให้บริการ AI + กำหนดเอง
+- DeepSeek: `https://api.deepseek.com/chat/completions` (โมเดล: deepseek-chat)
+- Grok (xAI): `https://api.x.ai/v1/chat/completions` (โมเดล: grok-2)
+- กำหนดเอง (Custom LLM): กรอก URL เอง → OpenAI-compatible API
+- URL field เปลี่ยนจาก "Ollama URL" เป็น "Ollama / Custom URL"
+- placeholder model เปลี่ยนตาม provider ที่เลือก
+- `callAI()` รองรับทั้ง 6 providers (openai, deepseek, grok, claude, ollama, custom)
+
+### ข้อ 4 — ปุ่มแดชบอร์ดบน toolbar
+- `#tb-dashboard` ใน toolbar → toggle แผง dashboard
+- อยู่ใน `ALWAYS_ON_TB` — ใช้ได้ตลอดแม้ไม่มี editor
+- สถานะ `.on` สะท้อน `isPanelOpen('dashboard')` จริง
+
+### ข้อ 5 — ปุ่มปิดหน้า Home
+- `✕` มุมขวาบนของกล่องหน้าแรก → ปิด overlay
+
+### ข้อ 6 — NerdFonts icons
+- `NF` mapping ใน icons.js — รหัส Unicode ของ NerdFonts v3 ทุกตัว
+- `icon()`: SVG primary → fallback NerdFont span ถ้า SVG ไม่มี path
+- รองรับฟอนต์: CaskaydiaCove NF, FiraCode Nerd Font, MesloLGS NF, JetBrainsMono NF
+- CSS rule `[data-nf]` สำหรับ NerdFont span
+
+### ข้อ 7 — Tooltips บนปุ่มที่ disabled
+- `.tb.dis` มี `pointer-events:none` → เมาส์ไม่ถึง tooltip
+- แก้ใน `setupHoverTips()`: `document.elementsFromPoint()`
+  → หา element `[title]` ที่อยู่ใต้เมาส์แม้ pointer-events:none
+
+### ข้อ 8 — หน้าจอรอโหลด
+- `#k-loader` overlay ใน index.html — spinner + ข้อความ
+- `showLoader(msg)` / `hideLoader()` ใน app.js
+- `loadProject`: แสดง loader ระหว่างเปิดไฟล์ → โหลดภาษา → ตรวจสอบ → สร้างโครงสร้าง
+- CSS: `k-loader-spin` (animation), `k-loader-text`, `k-loader-prog`
+
 v2.0.0-alpha.60
 ---------------
 **นำเข้า + เปรียบเทียบ + แยกการตั้งค่า (62–66, 74, 94, 96)**

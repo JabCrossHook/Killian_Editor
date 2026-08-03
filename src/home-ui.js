@@ -232,6 +232,11 @@ export async function showHomeDialog() {
   // (เดิมกล่องหดตามเนื้อใน → สลับมุมมองทีกล่องกระตุกทั้งใบ · แบบ DaVinci Resolve คือกรอบนิ่ง เนื้อในเลื่อน)
   const box = el('div', 'k-dialog k-home-dlg');
   const head = el('div', 'home-head');
+  // [alpha.60r ข้อ 5] ปุ่มปิดกล่องหน้าแรก — overlay dialog
+  const closeBtn = el('span', 'home-close-btn', '✕');
+  closeBtn.title = 'ปิด';
+  closeBtn.onclick = () => ov.remove();
+  head.append(closeBtn);
   head.append(el('h2', 'home-title', 'Killian 2'));
   const actions = el('div', 'home-actions');
   const newBtn = el('button', 'k-ok', '+ สร้างโปรเจกต์ใหม่');

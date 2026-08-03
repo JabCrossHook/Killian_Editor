@@ -1114,6 +1114,8 @@ export async function saveProjectMeta() {
 // ---------------- โครงโปรเจกต์ (อ่านโครงเดียวกับ Killian v1) ----------------
 async function closeProjectIfAny() {
   if (!state.root) return true;
+  // [alpha.60r ข้อ 2] บันทึกรายการแท็บที่เปิดอยู่ก่อนปิด — จะกู้คืนเมื่อเปิดโปรเจกต์ครั้งต่อไป
+  await saveOpenTabs();
   const dirty = [...state.tabs.values()].filter((t) => t.dirty);
   if (dirty.length) {
     const v = await choose(`โปรเจกต์เดิมมี ${dirty.length} แท็บยังไม่ได้บันทึก`, [
@@ -1143,10 +1145,13 @@ async function closeProjectIfAny() {
 }
 
 export async function loadProject(root) {
+  // [alpha.60r ข้อ 8] แสดงหน้าจอรอโหลด
+  showLoader('กำลังเปิดโปรเจกต์…');
   if (!(await kapi.exists(await kapi.join(root, 'project.khn.json')))) {
-    alert('โฟลเดอร์นี้ไม่ใช่โปรเจกต์ Killian (ไม่พบ project.khn.json)'); return;
+    alert('โฟลเดอร์นี้ไม่ใช่โปรเจกต์ Killian (ไม่พบ project.khn.json)');
+    hideLoader(); return;
   }
-  if (!(await closeProjectIfAny())) return;
+  if (!(await closeProjectIfAny())) { hideLoader(); return; }
   const meta = await kapi.readJson(await kapi.join(root, 'project.khn.json'));
   state.root = root; state.title = meta.title || 'โปรเจกต์';
   loadSettings(meta);
@@ -1158,12 +1163,15 @@ export async function loadProject(root) {
   // ---- โหลดภาษาของโปรเจกต์ (ถ้าเลือกไว้) ----
   const projLang = state.settings.language || 'en';
   if (projLang !== i18n.lang) {
+    showLoader('กำลังโหลดภาษา…');
     await loadLanguage(projLang, root);
   }
   applyDataI18n();
   initIcons();
   applyToolbarShortcutTitles();
+  showLoader('กำลังตรวจสอบไฟล์…');
   await purgeRecycle(root);                          // ล้างถังขยะเก่าก่อนสร้างต้นไม้
+  showLoader('กำลังสร้างโครงสร้างโปรเจกต์…');
   await buildTree();
   buildFilterBar().catch(() => {});             // แถบกรอง
   updateSummaryBar().catch(() => {});            // สรุปด่วนเหนือ tree
@@ -1184,11 +1192,46 @@ export async function loadProject(root) {
   onPanelLayoutChange(refreshToolbar);               // sync toolbar toggle .on states
   // แผงฟีเจอร์ (บั๊ก #18) ต้องเรียกหลัง initPanelSystem ไม่งั้น showPanel ยังไม่รู้จักแผง
   await renderOpenFeaturePanels();                   // เลย์เอาต์ที่กู้มาอาจมีแผงเปิดค้าง = กล่องเปล่า
+  // [alpha.60r ข้อ 2] กู้คืนแท็บที่เปิดค้างจากเซสชันก่อน
+  await restoreOpenTabs();
   if (!state.tabs.size) openDashboard();
   initThesaurus().catch(() => {});                   // Thesaurus engine
   ensureAutoLink().catch(() => {});                  // Backlinks index
   if (state.settings.autoSync) setAutoSync(true);    // auto-task: คืนสถานะที่ผู้ใช้เปิดไว้
+  // [alpha.60r ข้อ 1] แสดงหน้าแรกถ้าผู้ใช้เปิดไว้ (แต่ไม่รบกวนตอนเทส)
+  if (state.settings.showHomeOnStartup !== false && !location.search.includes('k2test')) {
+    try { const { showHomeDialog } = await import('./home-ui.js'); await showHomeDialog(); } catch {}
+  }
+  // [alpha.60r ข้อ 8] ปิดหน้าจอรอโหลด
+  hideLoader();
   setStatus('เปิดโปรเจกต์: ' + state.title);
+}
+
+// [alpha.60r ข้อ 2] บันทึกรายการแท็บที่เปิดอยู่ → project.khn.json → restore ตอนเปิดครั้งต่อไป
+async function saveOpenTabs() {
+  if (!state.root || !state.meta) return;
+  const tabs = [...state.tabs.keys()].filter(f => !f.startsWith('::') && !f.endsWith('.json'));
+  state.meta.openTabs = tabs.length ? tabs : null;
+  try {
+    await kapi.writeFile(await kapi.join(state.root, 'project.khn.json'),
+      JSON.stringify(state.meta, null, 2));
+  } catch (e) { log('warn', 'บันทึก openTabs ไม่สำเร็จ', e); }
+}
+// [alpha.60r ข้อ 2] กู้คืนแท็บที่เคยเปิดค้างไว้
+async function restoreOpenTabs() {
+  const files = state.meta?.openTabs || state.settings?.openTabs;
+  if (!files || !files.length) return;
+  const restored = [];
+  for (const f of files) {
+    try {
+      const full = f.startsWith(state.root) ? f : await kapi.join(state.root, f);
+      if (await kapi.exists(full)) {
+        const tab = await activate(full);
+        if (tab) restored.push(full);
+      }
+    } catch {}
+  }
+  if (restored.length) log('info', `กู้คืน ${restored.length} แท็บ`);
 }
 
 // ขอบเขตการค้น: จำกัดผลการกรองไว้เฉพาะบทที่เลือก (คลิกขวาที่หัวบท → ค้นเฉพาะในบทนี้)
@@ -5012,7 +5055,7 @@ const ALWAYS_ON_TB = new Set([
   'tb-close', 'tb-close-all', 'tb-focus', 'tb-typewriter', 'tb-linenum', 'tb-quickopen',
   'tb-gallery', 'tb-sp-elem',
   'tb-tree-panel', 'tb-outline-panel', 'tb-props-panel', 'tb-search-panel',
-  'tb-note', 'tb-panels', 'tb-kanban', 'tb-gsearch', 'tb-read', 'tb-ai', 'tb-ai-chat', 'tb-plug',
+  'tb-note', 'tb-panels', 'tb-kanban', 'tb-dashboard', 'tb-gsearch', 'tb-read', 'tb-ai', 'tb-ai-chat', 'tb-plug',
 ]);
 
 function refreshToolbar() {
@@ -5080,6 +5123,8 @@ function refreshToolbar() {
   $('#tb-props-panel')?.classList.toggle('on', isPanelOpen('props'));
   $('#tb-search-panel')?.classList.toggle('on', isPanelOpen('search'));
   $('#tb-kanban')?.classList.toggle('on', isPanelOpen('kanban'));   // บั๊ก #10: ปุ่ม Kanban เป็นสวิตช์จริง
+  // [alpha.60r ข้อ 4] ปุ่มแดชบอร์ด — สะท้อนสถานะแผงจริง
+  $('#tb-dashboard')?.classList.toggle('on', isPanelOpen('dashboard'));
   syncFloatBarVisible();
   syncMenuToggles();          // เมนู native ติ๊กถูกตามสถานะจริง (ส่งเฉพาะตอนค่าเปลี่ยน)
 }
@@ -6058,6 +6103,18 @@ function syncFloatBarVisible() {
 
 
 // ---------------- Tooltip ระบบเดียว KTooltip (ข้อ 16) ----------------
+// [alpha.60r ข้อ 8] หน้าจอรอโหลด
+export function showLoader(msg) {
+  const el = document.getElementById('k-loader');
+  if (!el) return;
+  el.style.display = 'flex';
+  const prog = document.getElementById('k-loader-prog');
+  if (prog && msg) prog.textContent = msg;
+}
+export function hideLoader() {
+  const el = document.getElementById('k-loader');
+  if (el) el.style.display = 'none';
+}
 // วาง tooltip "เหนือ" ตัว trigger เสมอ (ใช้ getBoundingClientRect + flip)
 // ไม่หน่วงเวลา — แสดงทันที · รองรับข้อความยาว · ธีมตาม CSS
 const TIP_GAP = 6;
@@ -6118,7 +6175,16 @@ export function KTooltip(trigger, text, opts = {}) {
 }
 function setupHoverTips() {
   document.addEventListener('mouseover', (e) => {
-    const host = e.target instanceof Element ? e.target.closest('[title]') : null;
+    let host = e.target instanceof Element ? e.target.closest('[title]') : null;
+    // [alpha.60r ข้อ 7] ทำงานกับปุ่มที่ disabled (pointer-events:none) — elementFromPoint ยังหาสิ่งที่อยู่ใต้เมาส์ได้
+    if (!host && e.target instanceof Element) {
+      const els = document.elementsFromPoint(e.clientX, e.clientY);
+      for (const el of els) {
+        if (el === _tipEl) continue;
+        const tt = el.closest?.('[title]');
+        if (tt) { host = tt; break; }
+      }
+    }
     if (!host || host === _tipHost) return;
     const text = host.getAttribute('title');
     if (!text) return;
@@ -6244,6 +6310,9 @@ window.addEventListener('DOMContentLoaded', () => {
   $('#tb-note').oncontextmenu = (e) => { e.preventDefault(); showAllNotes(); };
   // ---- ปุ่ม Kanban + AI ----
   $('#tb-kanban').onclick = () => { togglePanel('kanban'); refreshToolbar(); };
+  // [alpha.60r ข้อ 4] ปุ่มแดชบอร์ดบน toolbar
+  const dbBtn = $('#tb-dashboard');
+  if (dbBtn) dbBtn.onclick = () => { togglePanel('dashboard'); refreshToolbar(); };
   $('#tb-ai').onclick = () => openAIAssistant();
   $('#tb-ai-chat').onclick = () => openAIChat();
   $('#tb-tree-panel').onclick = () => { togglePanel('tree'); refreshToolbar(); };

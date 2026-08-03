@@ -74,6 +74,8 @@ export function settingsDialog(openTab) {
       <div class="k-row"><label>${t('settings.maxBackups')}<span class="k-hint">${t('settings.maxBackupsHint')}</span></label><input type="number" id="st-maxbak" min="1" max="200"></div>
       <div class="k-row"><label>${t('settings.dailyGoal')}</label><input type="number" id="st-daily" min="0"></div>
       <div class="k-row"><label>${t('settings.projectGoal')}</label><input type="number" id="st-proj" min="0"></div>
+      <div class="k-set-sub k-full">// [alpha.60r ข้อ 1] พฤติกรรมตอนเปิดโปรเจกต์</div>
+      <div class="k-row"><label>แสดงหน้าแรกเมื่อเปิดโปรเจกต์<span class="k-hint">ปิด = เปิดโปรเจกต์ล่าสุดโดยไม่ถาม</span></label><input type="checkbox" id="st-showhome"></div>
     </div>
     <div class="k-set-page k-set-2col" data-p="write">
       <div class="k-row"><label>${t('settings.fontFamily')}<span class="k-hint">${t('settings.fontFamilyHint')}</span></label><select id="st-fontfamily" class="k-dlg-select" style="width:100%"></select></div>
@@ -313,6 +315,9 @@ export function settingsDialog(openTab) {
   q('#st-title').value = m.title || '';
   q('#st-author').value = m.author || '';
   q('#st-auto').value = s.autoSaveMinutes ?? 5;
+  // [alpha.60r ข้อ 1] แสดงหน้าแรกเมื่อเปิดโปรเจกต์
+  const showHome = q('#st-showhome');
+  if (showHome) showHome.checked = s.showHomeOnStartup !== false;
   q('#st-backup').checked = s.autoBackup !== false;
   q('#st-maxbak').value = s.maxBackups ?? 10;
   q('#st-daily').value = g.dailyWords ?? 500;
@@ -929,6 +934,9 @@ export function settingsDialog(openTab) {
     m.title = q('#st-title').value.trim() || m.title;
     m.author = q('#st-author').value.trim();
     s.autoSaveMinutes = num('#st-auto', 5);
+    // [alpha.60r ข้อ 1] แสดงหน้าแรกเมื่อเปิดโปรเจกต์
+    const showHomeEl = q('#st-showhome');
+    if (showHomeEl) s.showHomeOnStartup = showHomeEl.checked;
     s.autoBackup = q('#st-backup').checked;
     s.maxBackups = Math.max(1, num('#st-maxbak', 10));
     s.uiFontSize = Math.max(-6, Math.min(16, parseInt(q('#st-font').value, 10) || 0));
@@ -988,7 +996,7 @@ export function settingsDialog(openTab) {
         const globalKeys = ['autoSaveMinutes','maxBackups','autoBackup','lineNumbers','uiFontSize','uiScale',
           'spellCheck','spellCheckDict','autoMention','recycleDays','paperMode','fontFamily','spFontFamily',
           'language','autoSync','thesaurus','focusDim','typeSound','typeSoundVolume','typeSoundAlways',
-          'homeThumb','smartLearnMin','heavyDocBlocks','mdAlignStyle','shortcuts'];
+          'homeThumb','smartLearnMin','heavyDocBlocks','mdAlignStyle','shortcuts','showHomeOnStartup'];
         const globals = {};
         for (const k of globalKeys) { if (k in s) globals[k] = s[k]; }
         await kapi.writeGlobalSettings(globals);
