@@ -118,6 +118,32 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
     ใช้ **คลาส pane ชุดเดียวกับบท** (`sp-view-layout/draft/side/overview*`) เพื่อไม่ต้องซ้ำ CSS ·
     `prosePageBreakPlugin()`+`setProsePageBreaks()` (คีย์แยกจาก sp — เปิดพร้อมกันคนละแท็บได้) ·
     `renderProsePageView` (บล็อก `.ed-page` + `[data-pos]` คลิกกระโดดได้)
+  - **`pdf-generator.js`** (alpha.59, **ข้อ 69/87/89** · ใช้ pdf-lib + @pdf-lib/fontkit) —
+    เขียน PDF เองแทนที่จะพึ่ง `printToPDF` ของ Chromium (สองทางอยู่ร่วมกัน):
+    `generatePdf({blocks,fmt,titlePages,headers,fonts,meta,opts})` → `{bytes,pageCount,titleCount,scriptPages,bookmarks}` ·
+    `PDF_DEFAULTS`/`mergePdfOptions`/`OMITTABLE_ELEMENTS` · `addOutline` (**[87]** ประกอบ `/Outlines` เอง —
+    pdf-lib 1.x ไม่มี API ระดับสูง · `PDFHexString.fromText` ให้ชื่อฉากไทยเป็น UTF-16) ·
+    `setOpenPage` (**[89]** `/OpenAction`) · `wrapTextLines` (**มิเรอร์ `wrapLines()` เป๊ะทุกกรณี**) ·
+    `layoutPageLines` · `embedFonts` · `needsLatinFont`/`splitFontRuns` · **unit test 87 ข้อ**
+    · **`useObjectStreams:false`** — ค่าเริ่มต้นของ pdf-lib ยัด dict ลง object stream ที่บีบอัด
+      ทำให้โปรแกรมอ่าน PDF รุ่นเก่าหา `/Outlines` `/OpenAction` ไม่เจอ
+    · **`PDF_FONT_FILES` = สองวงศ์** `main` (CourierThaiMono — มีไทย) + `latin` (CourierPrime) ดูบทเรียน 63
+  - **`sp-title-pages.js`** (alpha.59, บริสุทธิ์ · **ข้อ 90**) — หน้าปกหลายหน้า:
+    `TitlePageEditor` (addPage/deletePage/movePage/addString/updateString/deleteString/moveString/filled/toJSON) ·
+    `normalizeTitlePages`/`newTitleString`/`newTitlePage` · `defaultTitlePages(meta,fmt)` (สร้างจากข้อมูลผลงาน) ·
+    `titlePageInnerHtml`/`titlePagesHtml`/`titlePagesCss`/`titlePagesText`/`cssFamily` · **unit test 62 ข้อ**
+    · **x/y เป็น "นิ้วจากขอบกระดาษ"** (Trelby ใช้ point — K2 วัดเป็นนิ้วทั้งระบบ ห้ามปนหน่วย)
+    · เก็บที่ `project.khn.json → titlePages` (ระดับโปรเจกต์ ไม่ใช่รายเล่มแบบ roster.json)
+  - **`sp-headers.js`** (alpha.59, บริสุทธิ์ · **ข้อ 91**) — หัวกระดาษซ้ำทุกหน้า:
+    `HEADER_DEFAULTS`(ปิดไว้)/`HEADER_VARS`/`mergeHeaders`/`newHeaderString` ·
+    `resolveHeaderVars` (`${PAGE}`/`${หน้า}` · ตัวแปรที่ไม่รู้จัก → ว่าง ไม่ทิ้ง `${…}` บนกระดาษ) ·
+    `headerStringsFor(index,hdr,ctx)` · `headerLineCount` · **`linesForBody(fmt,hdr)`** ·
+    `headerHtml`/`headerCss`/`headerPlainLine` · **unit test 48 ข้อ**
+    · **หัวกระดาษกินบรรทัดจริง** → ต้องส่ง `lines: linesForBody(...)` เข้า `paginate()` ไม่งั้นหน้าไม่ตรง
+  - **`pdf-ui.js`** (alpha.59) — UI ของชุด PDF: `openTitlePageDialog()` (3 คอลัมน์) ·
+    `openHeaderDialog()` · `pdfExportDialog()` · **`buildScriptPdf()` = จุดเดียวที่ทุกทางเรียก** ·
+    `writeCompiledPdf()` (เวิร์กโฟลว์ ext=`pdf`) · `pdfFontBytes()` (แคช · โหลดสองวงศ์) ·
+    `currentScriptPage()` · `projectTitlePages`/`saveTitlePages`/`projectHeaders`/`saveHeaders`
   - **`smart-terms.js`** (alpha.58, บริสุทธิ์ · **บั๊ก SmartType**) — "จำคำไหนดี":
     `looksLikeTerm` (ตัวกรองระดับตัวอักษร) · `countTerms` · **`learnedTerms(counts,{min,pinned,ignored,known})`** ·
     `pendingTerms` · `learnMin` (1–5 · ค่าเริ่มต้น 2) · **unit test 55 ข้อ**
@@ -163,8 +189,17 @@ node test/sp-reports.test.cjs      # 54 checks — parseHeading/สถานท�
 node test/smart-terms.test.cjs     # 55 checks — looksLikeTerm/เกณฑ์เจอซ้ำ/pin/ignore (alpha.58)
 node test/prose-format.test.cjs    # 84 checks — รูปแบบ + จัดหน้านิยาย (alpha.58r)
 node test/alpha58r.test.cjs        # 57 checks — lineHeight/spCss/pin/preset/mdToHtml/align/hr+code
+node test/sp-headers.test.cjs      # 48 checks — หัวกระดาษ/ตัวแปร/linesForBody (alpha.59 · 91)
+node test/sp-title-pages.test.cjs  # 62 checks — TitlePageEditor/หน้าปกมาตรฐาน/HTML (alpha.59 · 90)
+node test/pdf-generator.test.cjs   # 87 checks — สร้าง PDF จริง/Outlines/OpenAction/ฟอนต์ (alpha.59 · 69/87/89)
+node test/compile-omit.test.cjs    # 32 checks — ตัด element ตอนส่งออก (alpha.59 · 88)
 ```
-`npm run test:unit` รันชุดบริสุทธิ์ทั้งหมดรวดเดียว
+`npm run test:unit` รันชุดบริสุทธิ์ทั้งหมดรวดเดียว (**832 checks**)
+· **ตรวจ PDF ที่สร้างขึ้นในเทส**: pdf-lib **บีบอัด content stream (FlateDecode)** และเขียนข้อความเป็น
+**hex string** (`<48656C…> Tj`) ทั้งฟอนต์มาตรฐานและฟอนต์ที่ฝัง → ค้นข้อความจากไบต์ดิบไม่เจอเลย
+ต้อง `zlib.inflateSync` ก่อน **แล้วถอด hex** (ดู `streamsText`/`drawnText` ใน `pdf-generator.test.cjs`)
+· และต้อง **กรองเอาแค่ content stream** (`printable > 0.95` + มี `BT`/`ET`) เพราะไบนารีฟอนต์ที่ฝังไว้
+ก็ถูกบีบอัดเหมือนกัน และมีไบต์ที่อ่านเป็น `Tj` ได้โดยบังเอิญ → นับคำสั่งวาดเพี้ยนทุกครั้ง
 
 **รัน e2e บน Windows ได้ด้วย** (ไม่ต้องมี xvfb — มี electron ใน node_modules อยู่แล้ว):
 ```powershell
@@ -391,6 +426,31 @@ grep -E "FAIL|STOP" /tmp/k2result.txt | head -3
 62. **แท็บที่เทสก่อนหน้าอ้างถึงอาจถูกปิดไปแล้ว** — บล็อกเทสท้าย ๆ ที่ `activate(t.file)` แล้ว
    `document.querySelector('.pane.on …')` ได้ null → `getComputedStyle(null)` throw ทั้งชุด
    **แก้: เช็ค `state.tabs.has(file)` ก่อน ถ้าไม่มีให้คลิก `.scene` เปิดใหม่ แล้วอ้างจาก `state.active.pane` (`:scope >`)**
+62b. **`if (spTab) { …เทสทั้งก้อน… }` ที่หา tab ไม่เจอ = เทสถูกข้ามเงียบ ๆ ไม่มีใครรู้** (alpha.59)
+   เขียน `const spT = [...state.tabs.values()].find(x => x.sp); if (spT) {…}` แล้วบล็อกทั้งก้อนไม่รัน
+   — ผลยัง `ALL OK` จำนวน check เพิ่มขึ้นบ้าง จึงดูเหมือนผ่าน (จับได้เพราะไปนับ `grep -c "PASS \[69\]"` เอง)
+   **แก้: ถ้าไม่มีให้เปิดใหม่เอง (`คลิก .scene`) แล้ว `check()` ว่าเปิดได้จริง — ห้ามใช้ `if` ครอบเงียบ ๆ**
+   · เช็คเร็วหลัง e2e: `grep -cE '^PASS \[(เลขฟีเจอร์)\]'` ต้องได้เท่าจำนวน check ที่เขียนไว้
+
+63. **ฟอนต์ที่ฝังลง PDF: pdf-lib ไม่มีลูกโซ่สำรองแบบ CSS `font-family`** (alpha.59 — เจอตอนเปิดไฟล์ดูด้วยตา)
+   หนึ่ง `drawText` = หนึ่งฟอนต์ ตกไม่ได้ → ต้องเลือกฟอนต์ต่อ "ช่วงอักขระ" เอง (`splitFontRuns`)
+   (ก) **Courier Prime ไม่มีอักษรไทยเลยแม้แต่ตัวเดียว** — ใช้เป็นฟอนต์หลักแล้วไทยหายทั้งไฟล์ (.notdef)
+   (ข) **CourierThaiMono (ฟอนต์ไทยปี 1998) เอา cmap ของ Latin-1/General Punctuation ไปชี้ทับด้วย glyph ไทย**
+       `·`→"ท" · `©`→"ฃ" · `—` `–` `…` `“ ”` → วรรณยุกต์ลอย
+       **fontkit หา glyph เจอ (id ≠ 0) จึงไม่มีใคร throw หรือฟ้องอะไรเลย** ได้ไฟล์ที่ "อ่านออกแต่ผิด"
+       → **จับได้แค่ตอนเรนเดอร์ออกมาดู** (แม่แบบลายน้ำมาตรฐานคือ `{ชื่อ} · {วันที่}` — โดนเต็ม ๆ)
+   **แก้: ไทย+ASCII+PUA F700–F71F → วงศ์ไทย · ที่เหลือ → CourierPrime** (กว้าง 1229 vs 1228/2048 em
+   จึงยังเรียงคอลัมน์เท่ากัน) · ฟอนต์ไทยมีน้ำหนักเดียว → **ตัวหนาปลอมด้วยการวาดซ้ำเยื้อง 0.035em**
+   · วิธีตรวจก่อนเชื่อ: `fontkit.create(bytes).layout('กิน').glyphs` ต้องไม่มี `id === 0`
+     และวรรณยุกต์ต้อง `advanceWidth === 0` (ไม่งั้นกินคอลัมน์ของ monospace)
+64. **เครื่องหมายที่ paginate() ไม่ได้กันบรรทัดไว้ ต้องวาดใน "ระยะขอบ"** (alpha.59)
+   บนจอ CONTINUED/(CONTINUED) เป็น decoration ที่ไม่กินที่ในเอกสาร → ตอนสร้าง PDF ถ้าไปเบียดบรรทัด
+   ให้มันจะทำให้จำนวนหน้าไม่ตรงกับบนจอ **แก้: วาดที่ `baseline(-1)` และ `baseline(bodyLines)`**
+   (ระยะขอบ 1 นิ้ว = 6 บรรทัด มีที่เหลือแน่นอน) — หลักเดียวกับเลขหน้าที่อยู่นอกพื้นที่พิมพ์
+65. **`+x || d` กับค่าที่ 0 มีความหมาย = บั๊กเงียบ** (ซ้ำรอยบทเรียน 5 อีกครั้งใน alpha.59)
+   `Math.round((+c.linesBefore || 10) / 10)` — `dialogue`/`parenthetical` มี `linesBefore: 0`
+   ซึ่ง falsy → กลายเป็น 10 (เว้น 1 บรรทัด) → **บทพูดหลุดจากชื่อตัวละครทุกบล็อกใน PDF**
+   **ใช้ `num(v, d)` ที่เช็ค `Number.isFinite` เสมอ** ในโมดูลที่อ่านค่าจาก config
 
 49. **`refreshToolbar()` มีลูป `.tb` ที่ตั้ง `dis` จาก `canEdit` อย่างเดียว** → ปุ่มที่ต้องการเงื่อนไขของตัวเอง
    (เช่น "ใช้ได้เฉพาะบรรทัดตัวละคร") ต้องตั้งคลาส **หลังลูปนั้น** ไม่งั้นถูกลบทิ้งเงียบ ๆ
@@ -430,6 +490,10 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ## ระบบสำคัญ + จุดต่อ
 
+- **ชุด PDF (alpha.59)**: `pdf-ui.js` — เมนู **ไฟล์** และ **บท** มี 3 รายการ
+  (`export-pdf-builtin` · `title-pages` · `page-headers`) · **`buildScriptPdf()` เป็นจุดเดียว**
+  ที่ทั้งกล่องส่งออก เวิร์กโฟลว์ (`ext: 'pdf'`) และ e2e เรียก — เพิ่มฟีเจอร์ PDF ให้ต่อที่นี่
+  · ไบต์ PDF ต้องเขียนด้วย `kapi.writeBytes(dest, Array.from(bytes))` (กฎ 10 — `writeFile` ทำไบนารีบวม)
 - **ตั้งค่า**: `settingsDialog(tab?)` แท็บ ทั่วไป/การเขียน/อัตโนมัติ/ข้อมูลผลงาน/**หน้ากระดาษ**/**📖 รูปแบบนิยาย**/🎬 รูปแบบบท/ปุ่มบทหนัง/ฟอนต์ตามภาษา/ภาษา/ปุ่มลัด → `project.khn.json` ผ่าน `saveProjectMeta()`
   · **`uiFontSize` = ขนาดตัวอักษรของเปลือก UI เท่านั้น** (`--ui-fs`) — ห้ามเอาไปบวกกับ `--ed-fs/--sp-fs` อีก (บั๊ก 14)
   · รูปแบบนิยายเก็บก้อนเดียวที่ `settings.prose` (ดู `prose-format.js`) · `settings.mdAlignStyle` = `'frontmatter'` (ค่าเริ่มต้น) | `'comment'` (แบบ v1)
@@ -475,7 +539,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ---
 
-## เวอร์ชัน (ล่าสุด alpha.58r · e2e 1,380 + unit ครบทุกชุด)
+## เวอร์ชัน (ล่าสุด alpha.59 · e2e 1,432 + unit 832)
 
 .13–.22 (v1→v2 พื้นฐาน): snapshot, line numbers, spellcheck ไทย+Chromium, ปุ่มลัดตั้งเอง, mac build, บทหนัง Ctrl+arrow, relationship sync, floating format bar, sidebar resize, SmartType Final Draft, wiki gallery/lightbox, explorer search+tags, panel docking, tree float+snap
 .24 batch 8 (drag-move explorer, panel snap, split compare, version tracking, scene lock, screenplay Final Draft look, screenplay images, wiki links) · .25–.27 **Planner board** (fabric.js) · .28 **floating windows** · .29 memo-in-chapter + scoped search
@@ -667,6 +731,21 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
   **คอนโซลนักพัฒนา** — เมนู ช่วยเหลือ (ที่เดียวกับ "เกี่ยวกับ") + **Ctrl+Shift+`** ·
     `openDevConsole()` รัน JS ด้วยตัวแปร `k2` (`k2.state/tab()/blocks()/cssVar()/cmd()`) ·
     ดัก `console.*` · ประวัติคำสั่ง · `aboutDialog()` แทน `alert()`
+
+.59 **ชุด PDF ครบวง (69 · 87 · 88 · 89 · 90 · 91)** — เลิกพึ่ง print-to-PDF ของ Chromium อย่างเดียว
+  โมดูลบริสุทธิ์ใหม่ 3 ตัว (`pdf-generator` · `sp-title-pages` · `sp-headers`) + UI `pdf-ui`
+  **unit test เพิ่ม 229 ข้อ (832 รวม) · e2e 1,380 → 1,432** · เพิ่ม dep `pdf-lib` + `@pdf-lib/fontkit`
+  **[69]** `generatePdf()` เขียน PDF เอง — ฝังฟอนต์ไทย · ตัดบรรทัดด้วยกติกาเดียวกับ `wrapLines()` เป๊ะ
+    · `useObjectStreams:false` · **ทางเดิม (`export-pdf` = Chromium) ยังอยู่ครบ**
+  **[87]** สารบัญ = `/Outlines` ที่ประกอบ dict เอง (pdf-lib 1.x ไม่มี API) + `/PageMode /UseOutlines`
+  **[89]** `/OpenAction` เปิดไฟล์แล้วไปหน้าที่เคอร์เซอร์อยู่ (`currentScriptPage()`)
+  **[90]** หน้าปกหลายหน้า + กล่อง 3 คอลัมน์ (พรีวิวกระดาษจริง คลิกข้อความเพื่อแก้) → `meta.titlePages`
+  **[91]** หัวกระดาษซ้ำทุกหน้า + ตัวแปร `${PAGE}` ฯลฯ (ไทยได้) → `settings.spHeaders`
+    · **กินบรรทัดจริง** ผ่าน `linesForBody()` จำนวนหน้าจึงตรง
+  **[88]** ขั้นตอน `omit-elements` (ช่วง model) + สวิตช์ในกล่อง PDF · กล่องเวิร์กโฟลว์รองรับ `type:'check'`
+    · พรีเซ็ตใหม่ `screenplay-pdf` (ext `pdf` → `writeCompiledPdf`)
+  **บั๊กฟอนต์ที่เจอตอนเรนเดอร์ดูด้วยตา** → บทเรียน 63 (Courier Prime ไม่มีไทย · ฟอนต์ไทยชี้ `·©—…` ผิด)
+  **บั๊กที่เจอตอนเขียนเทส** → บทเรียน 62b (บล็อกเทสถูก `if` ครอบแล้วข้ามเงียบ) · 64 · 65
 
 **ยังเหลือ**: `search-engine.js` ยังเป็น orphan — Global Search (`global-search.js`) ยังสแกนไฟล์ตรง ๆ ไม่ได้ใช้ inverted index (ควรสลับมาใช้เพื่อความเร็ว) · multiple-drafts-per-book UI (โครงรองรับแล้ว), screenplay align persistence, Campaign/D&D mode, electron-builder + code signing, .icns/.ico icon, native arm64 build. Top เคยบอก paper/indent "อาจต้องปรับปรุง ไว้ก่อน"
 

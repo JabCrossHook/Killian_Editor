@@ -20,7 +20,7 @@ export KILLIAN_TEST=1 KILLIAN_TEST_PROJECT=/tmp/k2proj
 xvfb-run -a --server-args="-screen 0 1500x950x24" ./node_modules/.bin/electron . --no-sandbox --disable-gpu
 # ผลอยู่ /tmp/k2result.txt — บรรทัดสุดท้ายต้องเป็น "ALL OK"
 ```
-ปัจจุบัน **1,380 checks · ALL OK** — ห้ามทำให้จำนวนลดลง
+ปัจจุบัน **1,432 checks · ALL OK** — ห้ามทำให้จำนวนลดลง (unit `npm run test:unit` = **832 checks**)
 (บน Windows: `node test/fixture.js C:\tmp\k2proj` แล้วตั้ง `KILLIAN_TEST_PROJECT=C:\tmp\k2proj`
  ผลออกที่ `C:\tmp\k2result.txt` · unit test `.cjs` ใช้ `os.tmpdir()` แล้วรันได้ทั้งสองระบบ)
 
@@ -58,6 +58,19 @@ editor.js · screenplay.js · md.js (⚠️ CommonJS) · smart.js · spell.js ·
 - **export-fdx.js / export-rtf.js / export-watermark.js** (alpha.57, บริสุทธิ์ · ข้อ 67/68/70) —
   `generateFdx` · `generateRtf` (**ไทยต้องเป็น `\uNNNN?`** ไม่งั้น Word ได้ตัวขยะ) ·
   `buildWatermarkHtml`/`generateWatermarkedPDFs(api,…)`/`parseRecipients` · **unit test 72 ข้อ**
+- **pdf-generator.js** (alpha.59 · ข้อ 69/87/89 · ใช้ `pdf-lib` + `@pdf-lib/fontkit`) —
+  `generatePdf({blocks,fmt,titlePages,headers,fonts,meta,opts})` · `addOutline` (สารบัญ) ·
+  `setOpenPage` (เปิดที่หน้าเดิม) · `wrapTextLines` (**มิเรอร์ `wrapLines()` เป๊ะ**) ·
+  `layoutPageLines` · `needsLatinFont`/`splitFontRuns` · **unit test 87 ข้อ**
+  ⚠️ ต้องส่งฟอนต์ **สองวงศ์** (`{regular, latin:{…}}`) — ดูกฎข้อ 19
+- **sp-title-pages.js** (alpha.59, บริสุทธิ์ · ข้อ 90) — `TitlePageEditor` · `normalizeTitlePages` ·
+  `defaultTitlePages(meta,fmt)` · `titlePageInnerHtml`/`titlePagesHtml`/`titlePagesText` · **62 ข้อ**
+  · x/y เป็น **นิ้วจากขอบกระดาษ** (อย่าปนหน่วย point) · เก็บที่ `project.khn.json → titlePages`
+- **sp-headers.js** (alpha.59, บริสุทธิ์ · ข้อ 91) — `mergeHeaders`/`resolveHeaderVars`/
+  `headerStringsFor`/`headerLineCount`/**`linesForBody(fmt,hdr)`** · **48 ข้อ**
+  · เก็บที่ `settings.spHeaders` · **หัวกระดาษกินบรรทัดจริง** ต้องส่ง `lines:` เข้า `paginate()`
+- **pdf-ui.js** (alpha.59) — `openTitlePageDialog`/`openHeaderDialog`/`pdfExportDialog` ·
+  **`buildScriptPdf()` = จุดเดียวที่ทุกทางเรียก** · `writeCompiledPdf` · `pdfFontBytes` (แคช)
 
 ### Core Infrastructure (pure logic — **ยังไม่มี UI · รอต่อ**) — spec อยู่ใน `docs/`
 - **panels/panel-layout.js + panel-store.js** (ข้อ 8) — dock/snap/tab group/float/collapse + `PanelManager` (registerPanel/showPanel/dockPanel/floatPanel/groupPanels) → [docs/08-panel-system.md](docs/08-panel-system.md)
@@ -160,6 +173,24 @@ UI ที่ต้องทำต่อ: `panels/panel-ui.js` · `layout/split-u
     — fountain round-trip ไม่ปิดวง (บทพูดกำพร้าสร้างไม่ได้)
 18. **e2e ที่รอ async I/O ต้อง poll จนกว่าเงื่อนไขจะจริง** ไม่ใช่ `setTimeout` ค่าคงที่
     และบล็อกท้าย ๆ ต้องเช็คว่าแท็บยังเปิดอยู่ไหมก่อนใช้ (`state.tabs.has(file)`)
+
+---
+
+## 🚧 กฎเพิ่มหลังรอบ alpha.59 (ชุด PDF)
+
+19. **PDF ต้องส่งฟอนต์สองวงศ์** — pdf-lib ไม่มีลูกโซ่สำรองแบบ CSS `font-family`
+    (ก) `CourierPrime` **ไม่มีอักษรไทยเลย** → ใช้เป็นวงศ์หลักแล้วไทยหายทั้งไฟล์
+    (ข) `CourierThaiMono` (ปี 1998) เอา cmap ของ `·` `©` `—` `…` `“ ”` **ไปชี้ทับด้วย glyph ไทย**
+        และ fontkit หา glyph เจอ (id ≠ 0) จึง **ไม่ throw ไม่ฟ้อง** → ได้ไฟล์ "อ่านออกแต่ผิด"
+    **ต้องส่ง `{regular: ไทย, latin: {…CourierPrime}}` ให้ `generatePdf` เสมอ** (ใช้ `pdfFontBytes()`)
+20. **โมดูลที่อ่านค่าจาก config ห้ามใช้ `+x || d`** — `linesBefore: 0` ของบทพูดเป็น falsy
+    จะกลายเป็นค่าเริ่มต้น 10 → บทพูดหลุดจากชื่อตัวละคร **ใช้ `num(v,d)` ที่เช็ค `Number.isFinite`**
+21. **อย่าครอบบล็อกเทสด้วย `if (tab)` เฉย ๆ** — หา tab ไม่เจอแล้วเทสถูกข้ามเงียบ ผลยัง `ALL OK`
+    ให้เปิดแท็บใหม่เองแล้ว `check()` ว่าเปิดได้ · ตรวจซ้ำหลัง e2e ด้วย `grep -cE '^PASS \[ข้อ\]'`
+22. **ตรวจไฟล์ PDF ในเทส**: pdf-lib **บีบอัด content stream** และเขียนข้อความเป็น **hex string**
+    → `zlib.inflateSync` ก่อน แล้วถอด hex · และกรองเอาแค่ content stream (ไบนารีฟอนต์ที่ฝังไว้
+    มีไบต์ที่อ่านเป็น `Tj` ได้โดยบังเอิญ ทำให้นับคำสั่งวาดเพี้ยน)
+23. **ไบต์ PDF เขียนด้วย `kapi.writeBytes(dest, Array.from(bytes))`** ไม่ใช่ `writeFile` (กฎ 10)
 
 ---
 

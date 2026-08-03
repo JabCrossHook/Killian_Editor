@@ -11,7 +11,8 @@
 
 import { resolveVars } from './template-vars.js';
 // [alpha.58 · 55–56] ส่งออกบทภาพยนตร์พร้อมข้อความต่อเนื่อง — ใช้เอนจินจัดหน้าตัวเดียวกับบนจอ
-import { parseScript, lineFor } from './fountain.js';
+// [alpha.59 · 88] classify — ใช้ระบุประเภท element ของแต่ละบรรทัดตอน "ตัดออกตอนส่งออก"
+import { parseScript, lineFor, classify } from './fountain.js';
 import { paginate, mergeSpFormat } from './sp-format.js';
 import { pagesWithContinueds } from './sp-continued.js';
 // [alpha.58r บั๊ก 19] WYSIWYG — HTML ที่ส่งออกต้องใช้ฟอนต์/ช่วงบรรทัด/ย่อหน้า ชุดเดียวกับบนจอ
@@ -46,9 +47,53 @@ export function insertContinueds(text, fmt) {
   return out.join('\n');
 }
 
+/**
+ * [alpha.59 · 88] ตัด element ของบทภาพยนตร์ออกจากข้อความตอนส่งออก
+ * ("PDF per-element omit" ของ Trelby — โน้ต/สรุป/โครง ไว้ดูเองตอนเขียน ไม่ต้องติดไปกับบท)
+ *
+ * ทำที่ระดับ "บรรทัด" ด้วย classify() ตัวเดียวกับตัวแก้ไข → ไม่ต้องแปลงเป็นบล็อกแล้วประกอบใหม่
+ * (การประกอบใหม่ไม่ใช่ round-trip ที่ปิดวง — บทเรียน 43/60)
+ *
+ * บรรทัดที่ถูกตัดจะ **ไม่อัปเดตบริบท** (prevBlank/prevType) เพราะข้อความผลลัพธ์ไม่มีบรรทัดนั้น
+ * แล้ว → บรรทัดถัดไปต้องถูกจัดประเภทเหมือนไม่เคยมีโน้ตคั่นอยู่
+ *
+ * @param {string} text  ข้อความบทแบบ fountain
+ * @param {string|string[]} types  ประเภทที่ตัด เช่น 'note,summary' หรือ ['note']
+ */
+export function omitElements(text, types) {
+  const drop = new Set((Array.isArray(types) ? types : String(types ?? '').split(','))
+    .map((s) => String(s).trim()).filter(Boolean));
+  const s = String(text ?? '');
+  if (!drop.size || !s) return s;
+  const out = [];
+  let prevBlank = true, prevType = 'action';
+  for (const line of s.split('\n')) {
+    const [el] = classify(line, prevBlank, prevType);
+    if (el === 'blank') { out.push(''); prevBlank = true; continue; }
+    if (drop.has(el)) continue;
+    out.push(line);
+    prevBlank = false; prevType = el;
+  }
+  // ตัดโน้ตที่มีบรรทัดว่างขนาบทั้งสองข้าง เหลือช่องว่างซ้อน → ยุบให้เหลือบรรทัดว่างเดียว
+  return out.join('\n').replace(/\n{3,}/g, '\n\n');
+}
+
+/** ประเภทที่ให้เลือกตัดได้ (ข้อ 88) — เนื้อบทหลัก (หัวฉาก/บรรยาย/บทพูด) ไม่อยู่ในรายการ */
+export const OMIT_CHOICES = ['note', 'summary', 'outline1', 'outline2', 'outline3', 'image'];
+
 export const STEP_DEFS = [
   // ---- ช่วงเนื้อหา ----
   { key: 'skip-memo', stage: 'model', label: 'ตัดโน้ต (memo) ออก' },
+  // [alpha.59 · 88] ตัด element ทีละประเภท — ค่าเริ่มต้นตัดแค่ ((โน้ต)) เพราะ # ## ###
+  // ในโหมดนิยายคือ "หัวข้อ" ไม่ใช่ "โครง" (เปิดตัดโครงกับไฟล์นิยายจะกินหัวข้อไปด้วย)
+  { key: 'omit-elements', stage: 'model', label: 'บทภาพยนตร์: ไม่รวม element ตามประเภท',
+    opts: { types: 'note', drawRectAroundNotes: false },
+    fields: [
+      { k: 'types', label: 'ประเภทที่ตัดออก (คั่นด้วยจุลภาค: ' + OMIT_CHOICES.join(', ') + ')',
+        type: 'text' },
+      { k: 'drawRectAroundNotes', label: 'วาดกรอบรอบโน้ตที่ยังเหลือ (ใช้กับตัวสร้าง PDF ในโปรแกรม)',
+        type: 'check' },
+    ] },
   { key: 'filter-status', stage: 'model', label: 'เอาเฉพาะฉากที่สถานะ…',
     opts: { status: 'เขียนเสร็จ, ตรวจแล้ว' },
     fields: [{ k: 'status', label: 'สถานะ (คั่นด้วยจุลภาค)', type: 'text' }] },
@@ -117,8 +162,13 @@ export const PRESETS = [
      ['cover', 'skip-memo', 'chapter-heading', 'page-break', 'scene-separator', 'to-html']),
   // [alpha.58r บั๊ก 13] พรีเซ็ตของ "บทภาพยนตร์" — เดิมไม่มีพรีเซ็ตไหนเปิด sp-continued เลย
   // ผู้ใช้จึงต้องไปเปิดเองทุกครั้ง (และส่วนใหญ่ไม่รู้ว่ามีฟีเจอร์นี้)
+  // [alpha.59 · 88] ตัด ((โน้ต)) ออกด้วย — โน้ตของนักเขียนไม่ควรติดไปกับบทที่ส่งให้คนอื่นอ่าน
   wf('screenplay', '🎬 บทภาพยนตร์ (CONTINUED · MORE)', 'txt',
-     ['skip-memo', 'strip-comments', 'sp-continued']),
+     ['skip-memo', 'strip-comments', ['omit-elements', { types: 'note' }], 'sp-continued']),
+  // [alpha.59 · 69] ปลายทางเป็น PDF ที่ตัวสร้างในโปรแกรมเขียนให้ (สารบัญ + หน้าปก + หัวกระดาษ)
+  // ไม่เปิด sp-continued เพราะตัวสร้าง PDF จัดหน้าเองแล้วใส่ CONTINUED ให้ตอนวาด
+  wf('screenplay-pdf', '🎬 บทภาพยนตร์ → PDF (สารบัญ · หน้าปก)', 'pdf',
+     ['skip-memo', 'strip-comments', ['omit-elements', { types: 'note' }]]),
 ];
 
 export function newWorkflow(name) {
@@ -248,6 +298,13 @@ export function runWorkflow(model0, workflow,
       case 'skip-memo':
         for (const c of model.chapters) c.scenes = c.scenes.filter((s) => s.type !== 'memo');
         break;
+      // [alpha.59 · 88] ตัด element ตามประเภทออกจากทุกฉาก
+      case 'omit-elements': {
+        const types = o.types === undefined ? 'note' : o.types;
+        for (const c of model.chapters) for (const s of c.scenes)
+          s.body = omitElements(s.body || '', types);
+        break;
+      }
       case 'filter-status': {
         const want = String(o.status || '').split(',').map((x) => x.trim()).filter(Boolean);
         if (want.length) for (const c of model.chapters)

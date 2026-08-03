@@ -67,6 +67,11 @@ function buildMenu() {
       { label: '🎬 ส่งออกบทเป็น Final Draft (.fdx)…', click: () => send('export-fdx') },
       { label: '🎬 ส่งออกบทเป็น Rich Text (.rtf)…', click: () => send('export-rtf') },
       { label: '💧 ส่งออก PDF ลายน้ำรายคน…', click: () => send('export-watermark') },
+      // alpha.59 [69][87][89] — ตัวสร้าง PDF ในโปรแกรม (สารบัญ / เปิดที่หน้าเดิม / ฝังฟอนต์ไทย)
+      { label: '🧾 ส่งออก PDF (ตัวสร้างในโปรแกรม — สารบัญ · หน้าปก)…',
+        click: () => send('export-pdf-builtin') },
+      { label: '📄 หน้าปก (Title Pages)…', click: () => send('title-pages') },
+      { label: '📑 หัวกระดาษทุกหน้า (Page Headers)…', click: () => send('page-headers') },
       { type: 'separator' },
       { label: 'สร้างโปรเจกต์จากเทมเพลต…', click: () => send('new-from-template') },
       { label: 'นำเข้าจาก Scrivener (.scriv)…', click: () => send('import-scrivener') },
@@ -210,10 +215,16 @@ function buildMenu() {
       chk('ตรวจก่อนพิมพ์/ส่งออก', toggles.checkBeforeExport, () => send('sp-check-toggle')),
       { type: 'separator' },
       { label: '🎭 หน้ารายชื่อตัวละคร (Cast of Characters)…', click: () => send('roster') },
+      // alpha.59 [90][91] — หน้าปกหลายหน้า + หัวกระดาษที่ซ้ำทุกหน้า
+      { label: '📄 หน้าปก (Title Pages)…', click: () => send('title-pages') },
+      { label: '📑 หัวกระดาษทุกหน้า (Page Headers)…', click: () => send('page-headers') },
       { label: '📐 หน้ากระดาษ · ระยะขอบ · รูปแบบบท…', click: () => send('page-setup') },
       { type: 'separator' },
       { label: '🎬 ส่งออกเป็น Final Draft (.fdx)…', click: () => send('export-fdx') },
       { label: '🎬 ส่งออกเป็น Rich Text (.rtf)…', click: () => send('export-rtf') },
+      // alpha.59 [69][87][88][89] — PDF ที่เขียนเองด้วย pdf-lib
+      { label: '🧾 ส่งออก PDF (สารบัญ · หน้าปก · เปิดที่หน้าเดิม)…',
+        click: () => send('export-pdf-builtin') },
       { label: '💧 ส่งออก PDF ลายน้ำรายคน…', click: () => send('export-watermark') },
     ] },
     { id: 'View', label: 'มุมมอง', submenu: [

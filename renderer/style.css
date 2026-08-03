@@ -2458,3 +2458,46 @@ body.paper-mode .sp-cont-mark { color:#6b6552; }
 #st-pr-heads input[type=number] { width:70px; }
 #st-pr-heads select { max-width:130px; }
 #st-pr-heads td { padding:3px 6px; }
+
+/* ═══ alpha.59 · [90] กล่องหน้าปก · [91] หัวกระดาษ · [69] ส่งออก PDF ═══ */
+.k-dialog.k-tp-dlg { width:calc(1000px * var(--uis, 1)); max-width:96vw; }
+.k-tp-body { display:grid; grid-template-columns:170px 1fr 300px; gap:12px;
+  margin-top:10px; align-items:start; }
+@media (max-width:900px){ .k-tp-body { grid-template-columns:1fr; } }
+.k-tp-pages, .k-tp-props { max-height:62vh; overflow:auto; }
+.k-tp-page-row { display:flex; justify-content:space-between; gap:6px; align-items:center;
+  padding:5px 8px; border:1px solid var(--border); border-radius:6px; margin-bottom:4px;
+  cursor:pointer; }
+.k-tp-page-row.on { border-color:var(--accent); background:var(--bar); }
+.k-tp-page-no { font-weight:600; }
+.k-tp-page-btns { display:flex; flex-wrap:wrap; gap:4px; margin:8px 0; }
+/* พรีวิว: กระดาษจริงย่อด้วย `zoom` (ไม่ใช้ transform:scale — พิกัดคลิกจะเพี้ยน) */
+.k-tp-preview { display:flex; flex-direction:column; align-items:center; gap:6px; }
+.k-tp-paper { position:relative; flex:0 0 auto; background:#fff; color:#111;
+  border:1px solid var(--paper-edge); box-shadow:0 2px 14px rgba(0,0,0,.30);
+  font-family:var(--sp-font, "Courier Prime", "Courier New", monospace); overflow:hidden; }
+.k-tp-guide { position:absolute; border:1px dashed rgba(0,0,0,.25); pointer-events:none; }
+.k-tp-paper .sp-tp-str { cursor:pointer; outline:1px solid transparent; }
+.k-tp-paper .sp-tp-str:hover { outline-color:var(--accent-hi); }
+.k-tp-paper .sp-tp-str.on { outline:2px solid var(--accent); background:rgba(217,119,87,.12); }
+.k-tp-str-list { border:1px solid var(--border); border-radius:6px; margin-bottom:6px;
+  max-height:22vh; overflow:auto; }
+.k-tp-str-row { padding:4px 8px; cursor:pointer; border-bottom:1px solid var(--border);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.k-tp-str-row:last-child { border-bottom:0; }
+.k-tp-str-row.on { background:var(--bar); color:var(--bright); }
+.k-tp-props textarea.k-dlg-input { width:100%; }
+
+.k-dialog.k-hdr-dlg { width:calc(760px * var(--uis, 1)); max-width:94vw; }
+.k-hdr-list { border:1px solid var(--border); border-radius:6px; padding:6px; }
+.k-hdr-row { display:flex; align-items:center; gap:6px; padding:4px 0; flex-wrap:wrap; }
+.k-hdr-text { flex:1 1 200px; min-width:140px; }
+.k-hdr-row .k-narrow { width:70px; }
+.k-hdr-marks { display:flex; gap:6px; }
+.k-hdr-mark { display:flex; align-items:center; gap:2px; }
+.k-hdr-info { min-height:1.4em; margin-top:8px; }
+
+.k-dialog.k-pdf-dlg { width:calc(680px * var(--uis, 1)); max-width:94vw; }
+.k-pdf-omit { display:flex; flex-wrap:wrap; gap:10px; margin:4px 0 8px; }
+.k-pdf-omit-item { display:flex; align-items:center; gap:4px; }
+.k-pdf-prog { min-height:1.4em; margin-top:8px; }

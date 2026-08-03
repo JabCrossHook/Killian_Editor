@@ -35,7 +35,7 @@ import { $, el, state, smart, LOG_BUF, log, setStatus,
          BASE_ED_FS, BASE_SP_FS, PT_PX, ptToPx, DEFAULT_SCRIPT_FONT,
          spCycleKeys, spKeyLabel,
          PAPER_SIZES, MARGIN_DEFAULTS, SP_ELEMENT_KEYS, mergeSpFormat, pageCssVars, spCss,
-         linesPerPage, formatLines, lineHeightIn, paginate, pageCount,
+         linesPerPage, formatLines, lineHeightIn, paginate, pageCount, wrapLines,
          newRoster, normalizeRoster, rosterToText, textWidth,
          SCENE_NUMBER_DEFAULTS, PAGE_NUMBER_DEFAULTS, pageNumberLabel,
          LANG_FAMILY, SCRIPT_PRESETS, BUILTIN_FONT_FILES, defaultLangFonts, normalizeLangFonts,
@@ -129,6 +129,17 @@ import { generateFdx } from './export-fdx.js';
 import { generateRtf } from './export-rtf.js';
 import { buildWatermarkHtml, generateWatermarkedPDFs, parseRecipients, safeFileName,
          watermarkText, DEFAULT_WM } from './export-watermark.js';
+// ---- alpha.59: ชุด PDF — ตัวสร้างในโปรแกรม (69) · สารบัญ (87) · ตัด element (88) ·
+//      เปิดที่หน้าเดิม (89) · หน้าปก (90) · หัวกระดาษ (91) ----
+import { openTitlePageDialog, openHeaderDialog, pdfExportDialog, buildScriptPdf,
+         writeCompiledPdf, projectTitlePages, projectHeaders, pdfFontBytes,
+         currentScriptPage, savedPdfOptions } from './pdf-ui.js';
+import { PDF_DEFAULTS, OMITTABLE_ELEMENTS, PDF_FONT_FILES, wrapTextLines,
+         layoutPageLines } from './pdf-generator.js';
+import { TitlePageEditor, defaultTitlePages, normalizeTitlePages,
+         titlePagesText } from './sp-title-pages.js';
+import { HEADER_DEFAULTS, HEADER_VARS, mergeHeaders, headerStringsFor, headerLineCount,
+         resolveHeaderVars, linesForBody } from './sp-headers.js';
 
 // นามแฝงของ t() — ใช้ในฟังก์ชันที่มีตัวแปรท้องถิ่นชื่อ t (ex. runTest: const t = state.active)
 const tr = t;
@@ -3156,6 +3167,15 @@ export async function openCompileDialog() {
       for (const f of d.fields || []) {
         const fr = el('div', 'cmp-field');
         fr.append(el('label', null, f.label));
+        // [alpha.59 · 88] ช่องแบบสวิตช์ — ก่อนหน้านี้รองรับแค่ text/code จึงเก็บ boolean ไม่ได้
+        if (f.type === 'check') {
+          const cb2 = el('input'); cb2.type = 'checkbox';
+          cb2.checked = (st.opts || {})[f.k] === true;
+          cb2.disabled = !!w.builtIn;
+          cb2.onchange = async () => { st.opts = st.opts || {};
+                                       st.opts[f.k] = cb2.checked; await saveProjectMeta(); };
+          fr.append(cb2); list.append(fr); continue;
+        }
         const inp = el(f.type === 'code' ? 'textarea' : 'input', 'k-dlg-input');
         inp.value = (st.opts || {})[f.k] ?? '';
         inp.disabled = !!w.builtIn;
@@ -3192,8 +3212,16 @@ export async function openCompileDialog() {
   const bGo = el('button', 'k-ok', 'ส่งออก…');
   bGo.onclick = async () => {
     const r = await doRun();
-    const dest = await kapi.saveAsDialog(safeName(state.title) + '.' + r.ext, r.ext);
+    const dest = r.ext === 'pdf'
+      ? await kapi.savePdfDialog(safeName(state.title) + '.pdf')
+      : await kapi.saveAsDialog(safeName(state.title) + '.' + r.ext, r.ext);
     if (!dest) return;
+    // [alpha.59 · 69] ปลายทาง .pdf → ตัวสร้าง PDF ในโปรแกรม (ไบนารี ต้องผ่าน writeBytes — กฎ 10)
+    if (r.ext === 'pdf') {
+      const made = await writeCompiledPdf(dest, r, state.title);
+      ov.remove(); setStatus(`ส่งออก PDF แล้ว (${made.pageCount} หน้า): ` + dest);
+      return;
+    }
     await kapi.writeFile(dest, finalizeCompiled(r));
     ov.remove(); setStatus('ส่งออกแล้ว: ' + dest);
   };
@@ -3248,7 +3276,7 @@ export function scriptMeta(title) {
  *       ใช้ blocksFromDoc ถูกต้องมานานแล้ว มีแต่ทางส่งออกที่ยังเดินทางเก่า
  * @returns {Promise<{md:string, blocks:Array, title:string}|null>}
  */
-async function currentScriptSource() {
+export async function currentScriptSource() {
   const t2 = state.active;
   if (t2 && t2.sp) {
     return { md: t2.sp.getMarkdown(),
@@ -5705,6 +5733,10 @@ async function handleCommand(ch, ...a) {
     case 'sp-extension': extensionMenu(); break;
     case 'smart-manage': smartTypeDialog(); break;
     case 'lang-fonts': settingsDialog('fonts'); break;
+    // ---- alpha.59: ชุด PDF (69/87/88/89/90/91) ----
+    case 'title-pages': await openTitlePageDialog(); break;
+    case 'page-headers': await openHeaderDialog(); break;
+    case 'export-pdf-builtin': await pdfExportDialog(); break;
   }
 }
 kapi.onMenu(handleCommand);
@@ -11678,7 +11710,9 @@ async function runTest(projectPath) {
             return true;
           })());
           for (const ch of ['sp-view', 'sp-show-format', 'goto', 'sp-find-error', 'sp-check-all',
-                            'sp-check-toggle', 'export-fdx', 'export-rtf', 'export-watermark']) {
+                            'sp-check-toggle', 'export-fdx', 'export-rtf', 'export-watermark',
+                            // alpha.59 [69][90][91]
+                            'export-pdf-builtin', 'title-pages', 'page-headers']) {
             // esbuild เขียนสตริงใหม่เป็น double quote → regex ต้องรับได้ทั้งสองแบบ
             check('[57] handleCommand รู้จักคำสั่ง ' + ch,
                   new RegExp("case ['\"]" + ch + "['\"]").test(String(handleCommand)));
@@ -13211,6 +13245,190 @@ async function runTest(projectPath) {
 
       // ---- [7] เมนู toggles มี continueds ----
       check('[7] renderer ส่งสถานะ "ข้อความต่อเนื่อง" ให้เมนูเสมอ', spContinuedOn() === true);
+
+      // ════════════════ alpha.59 · ชุด PDF (69 · 87 · 88 · 89 · 90 · 91) ════════════════
+      {
+        const fmt59 = spFormat();
+
+        // ---- [91] หัวกระดาษ: เอนจิน + กล่อง ----
+        check('[91] ค่าเริ่มต้นของหัวกระดาษคือ "ปิด"', projectHeaders().enabled === false);
+        check('[91] ปิดอยู่ → ไม่กินบรรทัดของเนื้อหน้า',
+              headerLineCount(projectHeaders()) === 0 &&
+              linesForBody(fmt59, projectHeaders()) === formatLines(fmt59));
+        const hdr59 = mergeHeaders({ enabled: true, emptyLinesAfter: 1,
+          strings: [{ text: '${TITLE}', align: 'left' }, { text: '${PAGE}.', align: 'right' }] });
+        check('[91] เปิดแล้วเนื้อหน้าลดลง 2 บรรทัด',
+              linesForBody(fmt59, hdr59) === formatLines(fmt59) - 2,
+              `${linesForBody(fmt59, hdr59)} vs ${formatLines(fmt59)}`);
+        check('[91] ${PAGE} ถูกแทนด้วยเลขหน้าจริง',
+              headerStringsFor(3, hdr59, { TITLE: 'ก' }).some((r) => r.text === '3.'));
+        check('[91] หน้าแรกไม่มีหัวกระดาษตามธรรมเนียมบท',
+              headerStringsFor(1, hdr59, {}).length === 0);
+        check('[91] ตัวแปรที่ไม่รู้จักไม่หลุดเป็น ${…} ลงกระดาษ',
+              resolveHeaderVars('a${ไม่มีจริง}b', {}) === 'ab');
+        check('[91] มีรายการตัวแปรให้ผู้ใช้เห็นในกล่อง (พร้อมคำอธิบายไทย)',
+              HEADER_VARS.length >= 6 && HEADER_VARS.every((v) => v.th && v.label));
+        const hd = await openHeaderDialog();
+        await new Promise((r) => setTimeout(r, 80));
+        check('[91] กล่องหัวกระดาษเปิดได้ + มีแถวข้อความให้แก้',
+              !!document.querySelector('.k-hdr-dlg') &&
+              document.querySelectorAll('.k-hdr-dlg .k-hdr-row').length >= 1);
+        check('[91] กล่องมีปุ่มเพิ่มข้อความ + ตัวอย่างสด',
+              !!document.querySelector('.k-hdr-dlg .k-hdr-info') &&
+              [...document.querySelectorAll('.k-hdr-dlg button')].some((b) => b.textContent.includes('เพิ่ม')));
+        document.querySelector('.k-hdr-dlg .k-cancel').click();
+        check('[91] กดยกเลิกแล้วยังไม่ได้บันทึกลงโปรเจกต์',
+              (state.settings.spHeaders === undefined || projectHeaders().enabled === false));
+        void hd;
+
+        // ---- [90] หน้าปก ----
+        const meta59 = { title: 'ทดสอบหน้าปก', author: 'ผู้เขียน', contact: 'a@b.c',
+                         copyright: '© 2569' };
+        const std = defaultTitlePages(meta59, fmt59);
+        check('[90] สร้างหน้าปกมาตรฐานจากข้อมูลผลงานได้',
+              std.length === 1 && std[0].strings.some((s) => s.text === meta59.title));
+        check('[90] ทุกชิ้นอยู่ในกระดาษ (ไม่ล้นขอบล่าง)',
+              std[0].strings.every((s) => s.y >= 0 && s.y < fmt59.paper.height));
+        const ed59 = new TitlePageEditor(std);
+        ed59.addPage();
+        ed59.addString(1, { text: 'หน้าสอง', y: 2 });
+        check('[90] เพิ่ม/ลบหน้า + เพิ่มข้อความได้',
+              ed59.count === 2 && ed59.strings(1).length === 1 && ed59.deletePage(1) && ed59.count === 1);
+        const tp = await openTitlePageDialog();
+        await new Promise((r) => setTimeout(r, 120));
+        check('[90] กล่องหน้าปกเปิดได้ ครบ 3 คอลัมน์',
+              !!document.querySelector('.k-tp-dlg .k-tp-pages') &&
+              !!document.querySelector('.k-tp-dlg .k-tp-preview') &&
+              !!document.querySelector('.k-tp-dlg .k-tp-props'));
+        check('[90] พรีวิววาดกระดาษขนาดจริง (นิ้ว)',
+              document.querySelector('.k-tp-paper').style.width === fmt59.paper.width + 'in');
+        check('[90] พรีวิววาดข้อความบนกระดาษจริง ไม่ใช่กล่องเปล่า',
+              document.querySelectorAll('.k-tp-paper .sp-tp-str').length >= 1,
+              document.querySelectorAll('.k-tp-paper .sp-tp-str').length);
+        // คลิกข้อความในกระดาษ → แผงคุณสมบัติต้องโผล่ช่องแก้
+        document.querySelector('.k-tp-paper .sp-tp-str').click();
+        await new Promise((r) => setTimeout(r, 60));
+        check('[90] คลิกข้อความในพรีวิว → เปิดช่องแก้คุณสมบัติ',
+              !!document.querySelector('.k-tp-props textarea') &&
+              document.querySelectorAll('.k-tp-props input[type=number]').length >= 3);
+        check('[90] มีชิ้นที่ถูกเลือกไฮไลต์อยู่บนกระดาษ',
+              !!document.querySelector('.k-tp-paper .sp-tp-str.on'));
+        document.querySelector('.k-tp-dlg .k-cancel').click();
+        void tp;
+
+        // ---- [88] ตัด element ตอนส่งออก ----
+        check('[88] มีขั้นตอน omit-elements ในเวิร์กโฟลว์ (ช่วง model)',
+              !!stepDef('omit-elements') && stepDef('omit-elements').stage === 'model');
+        check('[88] ค่าเริ่มต้นตัดแค่โน้ต (# ## ในนิยายคือหัวข้อ)',
+              stepDef('omit-elements').opts.types === 'note');
+        check('[88] พรีเซ็ตบทภาพยนตร์เปิดขั้นตอนนี้ให้เลย',
+              PRESETS.filter((p) => p.id.startsWith('screenplay'))
+                .every((p) => p.steps.some((s2) => s2.key === 'omit-elements' && s2.on !== false)));
+        check('[88] มีพรีเซ็ตที่ส่งออกเป็น .pdf', !!PRESETS.find((p) => p.ext === 'pdf'));
+        check('[88] กล่องเวิร์กโฟลว์รองรับช่องแบบสวิตช์แล้ว',
+              /f\.type === ['"]check['"]/.test(String(openCompileDialog)));
+        check('[88] รายการ element ที่ตัดได้ไม่มีเนื้อบทหลัก',
+              ['scene', 'action', 'character', 'dialogue']
+                .every((k) => !OMITTABLE_ELEMENTS.includes(k)));
+
+        // ---- [69][87][89] สร้าง PDF จริงจากบทที่เปิดอยู่ ----
+        // บทเรียน 62: แท็บบทที่บล็อกก่อน ๆ เปิดไว้อาจถูกปิดแล้ว → เปิดใหม่จาก Explorer เองเสมอ
+        // (เดิมใช้ `[...state.tabs.values()].find(x => x.sp)` แล้วบล็อกนี้ถูกข้ามทั้งก้อนเงียบ ๆ)
+        {
+          let spT59 = [...state.tabs.values()].find((x) => x.sp);
+          if (!spT59) {
+            const spScene59 = [...document.querySelectorAll('.scene')]
+              .find((x) => x.textContent.includes('บทหนังทดสอบ'));
+            check('[69] เปิดฉากบทภาพยนตร์สำหรับเทส PDF ได้', !!spScene59);
+            spScene59.click();
+            await new Promise((r) => setTimeout(r, 400));
+            spT59 = state.active;
+          }
+          check('[69] แท็บที่ใช้เทส PDF เป็นบทภาพยนตร์จริง', !!(spT59 && spT59.sp));
+          activate(spT59.file);
+          await new Promise((r) => setTimeout(r, 180));
+          const blocks59 = blocksFromDoc(spT59.sp.view.state.doc);
+          const fonts59 = await pdfFontBytes();
+          check('[69] หาไฟล์ฟอนต์ที่มีอักษรไทยสำหรับฝังลง PDF ได้',
+                !!fonts59.regular && fonts59.regular.length > 1000, fonts59.file);
+          check('[69] ฟอนต์ที่เลือกเป็นตัวที่มีอักษรไทย (Courier Prime ไม่มีไทยเลย)',
+                /Thai/.test(fonts59.file), fonts59.file);
+          const pdf59 = await buildScriptPdf({ blocks: blocks59, title: 'บททดสอบ', fmt: fmt59,
+            titlePages: std, headers: hdr59,
+            opts: { toc: true, openPage: 1, titlePages: true, headers: true } });
+          check('[69] สร้าง PDF ได้เป็นไบต์จริง', pdf59.bytes instanceof Uint8Array &&
+                pdf59.bytes.length > 2000, pdf59.bytes.length);
+          const head59 = String.fromCharCode(...pdf59.bytes.slice(0, 5));
+          check('[69] ไฟล์เริ่มด้วย %PDF-', head59 === '%PDF-', head59);
+          check('[90] หน้าปกถูกนับรวมในไฟล์', pdf59.titleCount === 1 &&
+                pdf59.pageCount === pdf59.titleCount + pdf59.scriptPages);
+          const txt59 = Array.from(pdf59.bytes.slice(0, 200000))
+            .map((b) => String.fromCharCode(b)).join('');
+          check('[87] ไฟล์มีสารบัญ /Outlines', txt59.includes('/Outlines'));
+          check('[87] ชื่อฉากในสารบัญเป็น UTF-16 (ไทยไม่กลายเป็นขยะ)', txt59.includes('/Title <FEFF'));
+          check('[89] ตั้ง /OpenAction ให้เปิดที่หน้าที่กำลังเขียน', txt59.includes('/OpenAction'));
+          check('[69] ฝังฟอนต์ TrueType ลงไฟล์จริง (/FontFile2)', txt59.includes('/FontFile2'));
+          check('[89] currentScriptPage คืนหน้าที่เคอร์เซอร์อยู่ (≥1)',
+                currentScriptPage(spT59, blocks59, fmt59) >= 1,
+                currentScriptPage(spT59, blocks59, fmt59));
+          // [88] ตัดโน้ตแล้วต้องไม่ทำให้จำนวนหน้าเพิ่ม
+          const pdfOmit = await buildScriptPdf({ blocks: blocks59, title: 'บททดสอบ', fmt: fmt59,
+            titlePages: [], headers: null,
+            opts: { omit: ['note', 'summary'], titlePages: false, headers: false, toc: false } });
+          check('[88] ตัด element ออกแล้วหน้าไม่เพิ่ม',
+                pdfOmit.scriptPages <= pdf59.scriptPages,
+                `${pdfOmit.scriptPages} vs ${pdf59.scriptPages}`);
+          // ปิด toc = ไม่เขียน /Outlines ลงไฟล์ (รายชื่อหัวฉากยังถูกเก็บไว้ให้ผู้เรียกดูได้)
+          check('[87] ปิดสารบัญ → ไม่มี /Outlines ในไฟล์',
+                !Array.from(pdfOmit.bytes).map((b) => String.fromCharCode(b)).join('')
+                  .includes('/Outlines'));
+          // [91] หัวกระดาษกินบรรทัดจริง → หน้าต้องไม่น้อยกว่าเดิม
+          const pdfNoHdr = await buildScriptPdf({ blocks: blocks59, title: 'x', fmt: fmt59,
+            titlePages: [], headers: null, opts: { titlePages: false, headers: false, toc: false } });
+          const pdfHdr = await buildScriptPdf({ blocks: blocks59, title: 'x', fmt: fmt59,
+            titlePages: [], headers: hdr59, opts: { titlePages: false, headers: true, toc: false } });
+          check('[91] เปิดหัวกระดาษแล้วจำนวนหน้าไม่น้อยลง',
+                pdfHdr.scriptPages >= pdfNoHdr.scriptPages,
+                `${pdfHdr.scriptPages} vs ${pdfNoHdr.scriptPages}`);
+          // ตัววาดต้องนับบรรทัดตรงกับตัวจัดหน้า ไม่งั้นข้อความล้นขอบล่าง (บทเรียน 51)
+          check('[69] ตัววาดนับบรรทัดตรงกับ wrapLines ของตัวจัดหน้า',
+                ['สั้น', 'ก'.repeat(150), 'a b c '.repeat(30)]
+                  .every((s2) => wrapTextLines(s2, 3.5).length === wrapLines(s2, 3.5)));
+          const pg59 = pagesOf(blocks59, fmt59);
+          const rows59 = layoutPageLines(pg59.pages[0], fmt59);
+          check('[69] บล็อกแรกของหน้าอยู่บรรทัด 0 และบรรทัดไม่ทับกัน',
+                rows59[0].line === 0 &&
+                rows59.every((r2, i2) => i2 === 0 || r2.line > rows59[i2 - 1].line));
+          check('[69] บรรทัดสุดท้ายไม่เกินจำนวนบรรทัดต่อหน้า',
+                rows59[rows59.length - 1].line < formatLines(fmt59),
+                `${rows59[rows59.length - 1].line} / ${formatLines(fmt59)}`);
+
+          // ---- กล่องส่งออก PDF ----
+          const dlg59 = await pdfExportDialog();
+          await new Promise((r) => setTimeout(r, 120));
+          check('[69] กล่องส่งออก PDF เปิดได้', !!document.querySelector('.k-pdf-dlg'));
+          check('[87][89] กล่องมีสวิตช์สารบัญ + เปิดที่หน้า',
+                document.querySelectorAll('.k-pdf-dlg input[type=checkbox]').length >= 5);
+          check('[88] กล่องมีรายการ element ที่ตัดได้ครบ',
+                document.querySelectorAll('.k-pdf-dlg .k-pdf-omit-item').length ===
+                OMITTABLE_ELEMENTS.length);
+          const got59 = dlg59.collect();
+          check('[69] เก็บค่าจากกล่องได้เป็นตัวเลือกที่ generatePdf ใช้',
+                typeof got59.toc === 'boolean' && Array.isArray(got59.omit) &&
+                Number.isFinite(got59.openPage));
+          check('[89] ค่าเริ่มต้นของ "เปิดที่หน้า" = หน้าที่เคอร์เซอร์อยู่',
+                +document.querySelector('.k-pdf-dlg input[type=number]').value ===
+                currentScriptPage(spT59, blocks59, fmt59));
+          document.querySelector('.k-pdf-dlg .k-cancel').click();
+          check('[69] ค่าเริ่มต้นของตัวเลือก PDF ยังไม่ถูกเขียนลงโปรเจกต์ตอนกดปิด',
+                savedPdfOptions().toc === PDF_DEFAULTS.toc);
+          activate(T.file);
+          await new Promise((r) => setTimeout(r, 150));
+        }
+        document.querySelectorAll('.k-overlay').forEach((o) => o.remove());
+        check('[59] เก็บกวาดกล่องของ alpha.59 หมดแล้ว',
+              document.querySelectorAll('.k-overlay').length === 0);
+      }
     }
 
     out.push('ALL OK');
