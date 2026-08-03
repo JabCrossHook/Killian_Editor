@@ -20,7 +20,7 @@ export KILLIAN_TEST=1 KILLIAN_TEST_PROJECT=/tmp/k2proj
 xvfb-run -a --server-args="-screen 0 1500x950x24" ./node_modules/.bin/electron . --no-sandbox --disable-gpu
 # ผลอยู่ /tmp/k2result.txt — บรรทัดสุดท้ายต้องเป็น "ALL OK"
 ```
-ปัจจุบัน **1,124 checks · ALL OK** — ห้ามทำให้จำนวนลดลง
+ปัจจุบัน **1,380 checks · ALL OK** — ห้ามทำให้จำนวนลดลง
 (บน Windows: `node test/fixture.js C:\tmp\k2proj` แล้วตั้ง `KILLIAN_TEST_PROJECT=C:\tmp\k2proj`
  ผลออกที่ `C:\tmp\k2result.txt` · unit test `.cjs` ใช้ `os.tmpdir()` แล้วรันได้ทั้งสองระบบ)
 
@@ -49,6 +49,12 @@ editor.js · screenplay.js · md.js (⚠️ CommonJS) · smart.js · spell.js ·
   · **unit test 45 ข้อ**
 - **sp-format-guide.js** (alpha.57 · ข้อ 61+57) — PM plugin: `spFormatGuidePlugin()` (เส้นขอบ element + `¶`/`·`)
   · `spPageBreakPlugin()` + `setPageBreaks(list)` (**คืน true เมื่อเปลี่ยนจริง** — dispatch เฉพาะตอนนั้น)
+- **prose-format.js** (alpha.58r, บริสุทธิ์ · บั๊ก 16–24) — รูปแบบ "นิยาย": `PROSE_DEFAULTS`/`HEADING_DEFAULTS`/
+  `QUOTE_DEFAULTS`/`DEFAULT_PROSE_FONT` · `mergeProseFormat`/`proseCssVars`/`proseCss`/**`proseExportCss`** ·
+  `proseLinesPerPage`/`proseMetrics`/`paginateProse`/`proseBlocksFromDoc`/`proseHeadings` · **unit test 84**
+  ⚠️ นิยายกับบทภาพยนตร์ **ใช้ขนาดกระดาษ/ระยะขอบร่วมกัน** (`--page-w`/`--mg-*`) แต่รูปแบบข้อความคนละเอนจิน
+- **prose-view.js** (alpha.58r · บั๊ก 15+20) — มุมมองหน้ากระดาษของนิยาย ใช้คลาส pane ชุดเดียวกับบท
+  (`sp-view-*`) · `prosePageBreakPlugin`/`setProsePageBreaks` (คีย์แยกจาก sp) · `renderProsePageView`
 - **export-fdx.js / export-rtf.js / export-watermark.js** (alpha.57, บริสุทธิ์ · ข้อ 67/68/70) —
   `generateFdx` · `generateRtf` (**ไทยต้องเป็น `\uNNNN?`** ไม่งั้น Word ได้ตัวขยะ) ·
   `buildWatermarkHtml`/`generateWatermarkedPDFs(api,…)`/`parseRecipients` · **unit test 72 ข้อ**
@@ -136,6 +142,24 @@ UI ที่ต้องทำต่อ: `panels/panel-ui.js` · `layout/split-u
 11. **ข้อความจากผู้ใช้ห้ามลง `innerHTML`** — ใช้ `el(tag, cls, text)` (textContent) เสมอ
 12. **เรียก API ภายนอกต้องผ่าน `kapi.httpFetch`** (main process) — `fetch` ใน renderer ติด CORS
     และของลับ (API key) เก็บไฟล์แยก ห้ามลง `project.khn.json`
+
+---
+
+## 🚧 กฎเพิ่มหลังรอบ alpha.58r (บทเรียนจากบั๊ก 27 ข้อ)
+
+13. **ค่าที่ผู้ใช้ปรับได้ ต้องเข้าไปอยู่ใน "object รูปแบบ" ที่โมดูลบริสุทธิ์รับเข้าไป**
+    ไม่ใช่ตั้งเป็น CSS var แล้วจบ — ไม่งั้น `paginate()`/`pageMetrics()` คำนวณจากค่ามาตรฐานตลอด
+    (`spLineHeight` → `mergeSpFormat().lineHeight` → **`formatLines(fmt)` จุดเดียวที่ทุกที่เรียก**)
+14. **"สวิตช์เปลี่ยนสี" ห้ามถือ layout** — `padding`/`margin` ของหน้ากระดาษต้องอยู่ในกฎกลาง
+    ปิด/เปิด `body.paper-mode` แล้ว computed padding ต้องเท่าเดิมเป๊ะ (มี e2e คุมแล้ว)
+15. **UI ที่ "เพิ่มพื้นที่" (เลขบรรทัด ฯลฯ) ต้องวาดแบบ `position:absolute` ในระยะขอบที่ว่างอยู่**
+    ห้ามทับ `padding-left` ของ `.ProseMirror` — บทภาพยนตร์วัดระยะเยื้องจากขอบกระดาษ จะเพี้ยนทั้งไฟล์
+16. **โหมดที่ทับกันได้ต้องแข่ง `!important` กันตรง ๆ** — โหมดอ่านต้องชนะ `sp-view-layout/draft`
+    ที่ใช้ `!important` อยู่แล้ว + ต้องมีกฎ `:not(.paper-mode)` ชัดเจน
+17. **ทางส่งออกต้องอ่านจากเอกสารจริง** (`blocksFromDoc`) ไม่ใช่ `parseScript(getMarkdown())`
+    — fountain round-trip ไม่ปิดวง (บทพูดกำพร้าสร้างไม่ได้)
+18. **e2e ที่รอ async I/O ต้อง poll จนกว่าเงื่อนไขจะจริง** ไม่ใช่ `setTimeout` ค่าคงที่
+    และบล็อกท้าย ๆ ต้องเช็คว่าแท็บยังเปิดอยู่ไหมก่อนใช้ (`state.tabs.has(file)`)
 
 ---
 

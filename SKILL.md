@@ -106,6 +106,18 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
     `sceneBreakdown` (แผนที่ `b.idx → หน้า` จาก paginate) · `generateLocationReport(groups ตั้งเองได้)` ·
     `generateCharacterReport` · `generateDialogueChart` + `CHART_KINDS/LABELS` ·
     `locationReportText/characterReportText/dialogueChartText` · **unit test 54 ข้อ**
+  - **`prose-format.js`** (alpha.58r, บริสุทธิ์ · **บั๊ก 16–24**) — รูปแบบ "นิยาย" ทั้งชุด:
+    `PROSE_DEFAULTS`/`HEADING_DEFAULTS`/`QUOTE_DEFAULTS`/`DEFAULT_PROSE_FONT` (ตัวพิมพ์**สัดส่วน** ไม่ใช่ Courier) ·
+    `mergeProseFormat` · `proseCssVars` (`--ed-lh/--ed-para/--ed-indent`) · `proseCss(fmt, sel)` ·
+    **`proseExportCss`** (WYSIWYG — `mdToHtml` ใช้ตัวนี้) · `proseLinesPerPage/proseCharsPerLine/proseMetrics` ·
+    `paginateProse`/`prosePageCount`/`prosePageLabel` · `proseBlocksFromDoc`/`proseHeadings`/`findProsePageStart`
+    · **unit test 84 ข้อ**
+    · **หลักคิด**: บทภาพยนตร์วัดทุกอย่างเป็น "นิ้วจากขอบกระดาษ" · นิยายวัดเป็น "em/เท่าของขนาดตัวอักษร"
+      → หน้ากระดาษ/ระยะขอบใช้ร่วมกัน (`--page-w/--mg-*`) แต่รูปแบบข้อความแยกคนละเอนจิน
+  - **`prose-view.js`** (alpha.58r · **บั๊ก 15+20**) — มุมมองหน้ากระดาษของนิยาย:
+    ใช้ **คลาส pane ชุดเดียวกับบท** (`sp-view-layout/draft/side/overview*`) เพื่อไม่ต้องซ้ำ CSS ·
+    `prosePageBreakPlugin()`+`setProsePageBreaks()` (คีย์แยกจาก sp — เปิดพร้อมกันคนละแท็บได้) ·
+    `renderProsePageView` (บล็อก `.ed-page` + `[data-pos]` คลิกกระโดดได้)
   - **`smart-terms.js`** (alpha.58, บริสุทธิ์ · **บั๊ก SmartType**) — "จำคำไหนดี":
     `looksLikeTerm` (ตัวกรองระดับตัวอักษร) · `countTerms` · **`learnedTerms(counts,{min,pinned,ignored,known})`** ·
     `pendingTerms` · `learnMin` (1–5 · ค่าเริ่มต้น 2) · **unit test 55 ข้อ**
@@ -136,7 +148,7 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
 
 ## E2E test workflow (สำคัญ — ทำทุกครั้งก่อนเชื่อว่าแก้สำเร็จ)
 
-Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **1,307 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
+Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **1,380 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
 
 **Unit test โมดูลบริสุทธิ์ (alpha.39, รันเร็ว ไม่ต้องเปิด electron):**
 ```bash
@@ -149,6 +161,8 @@ node test/relationship.test.cjs    # 28 checks — REL_TYPES/สี/ไอคอ
 node test/sp-continued.test.cjs    # 45 checks — CONTINUED/MORE/cont'd + side + compile (alpha.58)
 node test/sp-reports.test.cjs      # 54 checks — parseHeading/สถานที่/ตัวละคร/กราฟ (alpha.58)
 node test/smart-terms.test.cjs     # 55 checks — looksLikeTerm/เกณฑ์เจอซ้ำ/pin/ignore (alpha.58)
+node test/prose-format.test.cjs    # 84 checks — รูปแบบ + จัดหน้านิยาย (alpha.58r)
+node test/alpha58r.test.cjs        # 57 checks — lineHeight/spCss/pin/preset/mdToHtml/align/hr+code
 ```
 `npm run test:unit` รันชุดบริสุทธิ์ทั้งหมดรวดเดียว
 
@@ -346,6 +360,38 @@ grep -E "FAIL|STOP" /tmp/k2result.txt | head -3
    · เลขกำกับ `CONTINUED: (2)` ต้อง **รีเซ็ตเมื่อเปลี่ยนฉาก** ไม่งั้นฉากใหม่ที่ข้ามหน้าครั้งแรกได้เลข (2) ทันที
    · เครื่องหมายพวกนี้ **ห้ามเขียนเป็นข้อความจริง** — ต้องเป็น widget decoration ไม่งั้นหลุดลงไฟล์ .md แล้วลบไม่ออก
 
+55. **"โหมด" ที่ทับกันได้ ต้องแข่ง !important กันตรง ๆ** (alpha.58r บั๊ก 3)
+   `sp-view-layout`/`sp-view-draft` ใช้ `!important` เพื่อชนะกฎกระดาษ → พอเปิด **โหมดอ่าน** ทับอีกชั้น
+   กฎโหมดอ่าน (ไม่มี !important) จึงแพ้ ได้พื้นขาวของ layout ปนหมึกของธีม
+   **กฎ: ถ้าโหมด A ใช้ !important แล้ว โหมด B ที่ต้องทับ A ก็ต้องใช้ !important + specificity สูงกว่า**
+   · และต้องมีกฎ `:not(.paper-mode)` ให้ชัด ไม่ใช่หวังว่า "ไม่มีกฎ = ได้ค่าเริ่มต้น"
+56. **อย่าให้ "สวิตช์ที่ควรเปลี่ยนแค่สี" ถือ layout ไว้ด้วย** (alpha.58r บั๊ก 4)
+   `padding`/`margin` ของหน้ากระดาษเคยอยู่ในกฎ `body.paper-mode` เท่านั้น → ปิดโหมดกระดาษแล้ว
+   ระยะขอบหายทั้งหน้า **แก้: ย้าย layout ไปกฎกลาง (`.pane:not(.wiki-pane) > .workspace > .ProseMirror`)
+   แล้วให้โหมดเหลือแค่ background/color/border/box-shadow** — เทสได้ด้วยการเทียบ computed padding ก่อน/หลังสลับ
+57. **UI ที่ "เพิ่มพื้นที่" ห้ามกิน padding ของเนื้อหา** (alpha.58r บั๊ก 2)
+   เลขบรรทัดเคยตั้ง `padding-left:64px` ทับ `--mg-left` (144px) → ข้อความ reflow ทั้งไฟล์
+   ยิ่งบทภาพยนตร์ยิ่งพัง เพราะทุก element วัดระยะเยื้อง **จากขอบกระดาษ**
+   **แก้: วาดในระยะขอบที่ว่างอยู่แล้วด้วย `position:absolute`** (เว้นที่เพิ่มเฉพาะบริบทที่ขอบแคบจริง — โหมดร่าง/ฟิลด์วิกิ)
+58. **สัดส่วนที่ใช้คืนตำแหน่งเลื่อน ต้องเทียบ "ช่วงที่เลื่อนได้" ไม่ใช่ความกว้างเนื้อหา** (alpha.58r บั๊ก 1)
+   `scrollLeft / scrollWidth` เพี้ยนเมื่อ `clientWidth` เปลี่ยนตามระดับซูม (และ `.workspace` มี
+   `min-width:<ซูม×100>%` ที่ JS ตั้งไว้ ทำให้ scrollWidth ไม่เป็นเส้นตรงกับซูม)
+   **ใช้ `scrollLeft / (scrollWidth − clientWidth)`** — ค่านี้ = 0.5 เมื่ออยู่กึ่งกลางเสมอทุกระดับซูม
+59. **ค่าที่ผู้ใช้ปรับได้ ต้องเข้าไปอยู่ใน "object รูปแบบ" ไม่ใช่อ่านจาก state ตอนวาดอย่างเดียว** (alpha.58r บั๊ก 5+9)
+   `spLineHeight` เคยไปแค่ CSS var → `paginate()`/`pageMetrics()` ที่เป็นโมดูลบริสุทธิ์ไม่มีทางรู้
+   คืน 54 บรรทัด/หน้าเสมอ ทั้งที่จอวาด 36 **แก้: ใส่ `lineHeight` เข้า `mergeSpFormat()`
+   แล้วทำ `formatLines(fmt)` เป็นจุดเดียวที่ทุกที่เรียก** (ไล่แทน `linesPerPage(paper,margins)` ให้หมด)
+60. **การส่งออกต้องเดินทางเดียวกับที่ฟีเจอร์อื่นใช้** (alpha.58r บั๊ก 6)
+   ทุกฟีเจอร์บทใช้ `blocksFromDoc(doc)` มานาน แต่ทางส่งออก FDX/RTF/PDF ยังเป็น `parseScript(getMarkdown())`
+   ซึ่ง **ไม่ใช่ round-trip ที่ปิดวง** (บทพูดกำพร้าสร้างไม่ได้ — บทเรียน 43) → เนื้อหาเพี้ยนเฉพาะตอนส่งออก
+   **เช็คเร็ว: ฟีเจอร์ใหม่ที่อ่านเอกสาร ให้ grep ว่ามีใครยังเรียก `parseScript(...getMarkdown())` เหลืออยู่ไหม**
+61. **e2e ที่รอ async I/O ด้วย `setTimeout` คงที่ = flaky** (เผา 2 รอบ e2e ใน alpha.58r)
+   ค้นทั้งโปรเจกต์ / เติมรายการฟอนต์จากโฟลเดอร์ เป็น IPC ทีละไฟล์ — ยิ่งมี Snapshots จากเทสก่อนหน้ายิ่งช้า
+   **แก้: วนรอ "จนกว่าเงื่อนไขจะจริง" (poll ทุก 50–100ms, มีเพดาน) แทนการเดาเวลา**
+62. **แท็บที่เทสก่อนหน้าอ้างถึงอาจถูกปิดไปแล้ว** — บล็อกเทสท้าย ๆ ที่ `activate(t.file)` แล้ว
+   `document.querySelector('.pane.on …')` ได้ null → `getComputedStyle(null)` throw ทั้งชุด
+   **แก้: เช็ค `state.tabs.has(file)` ก่อน ถ้าไม่มีให้คลิก `.scene` เปิดใหม่ แล้วอ้างจาก `state.active.pane` (`:scope >`)**
+
 49. **`refreshToolbar()` มีลูป `.tb` ที่ตั้ง `dis` จาก `canEdit` อย่างเดียว** → ปุ่มที่ต้องการเงื่อนไขของตัวเอง
    (เช่น "ใช้ได้เฉพาะบรรทัดตัวละคร") ต้องตั้งคลาส **หลังลูปนั้น** ไม่งั้นถูกลบทิ้งเงียบ ๆ
 50. **เพิ่มช่องในคุณสมบัติฉาก = แก้ index ใน e2e "สองที่"** — มีทั้ง **กล่อง** (`scene-props.js`) และ
@@ -384,7 +430,11 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ## ระบบสำคัญ + จุดต่อ
 
-- **ตั้งค่า**: `settingsDialog()` แท็บ ทั่วไป/การเขียน/ปุ่มลัด → `project.khn.json` ผ่าน `saveProjectMeta()`. `DEFAULT_SETTINGS` = autoSaveMinutes/maxBackups/autoBackup/lineNumbers/uiFontSize/spellCheck/spellCheckDict/autoMention/recycleDays/shortcuts
+- **ตั้งค่า**: `settingsDialog(tab?)` แท็บ ทั่วไป/การเขียน/อัตโนมัติ/ข้อมูลผลงาน/**หน้ากระดาษ**/**📖 รูปแบบนิยาย**/🎬 รูปแบบบท/ปุ่มบทหนัง/ฟอนต์ตามภาษา/ภาษา/ปุ่มลัด → `project.khn.json` ผ่าน `saveProjectMeta()`
+  · **`uiFontSize` = ขนาดตัวอักษรของเปลือก UI เท่านั้น** (`--ui-fs`) — ห้ามเอาไปบวกกับ `--ed-fs/--sp-fs` อีก (บั๊ก 14)
+  · รูปแบบนิยายเก็บก้อนเดียวที่ `settings.prose` (ดู `prose-format.js`) · `settings.mdAlignStyle` = `'frontmatter'` (ค่าเริ่มต้น) | `'comment'` (แบบ v1)
+- **คอนโซลนักพัฒนา (alpha.58r)**: `openDevConsole()` + `aboutDialog()` ใน app.js — เมนู **ช่วยเหลือ** + **Ctrl+Shift+`**
+  · `devApi()` คือของที่ให้ใช้ผ่านตัวแปร `k2` — เพิ่มฟีเจอร์ใหม่แล้วควรเพิ่ม accessor ที่นี่ด้วย
 - **ปุ่มลัดตั้งเอง**: `onShortcut()` วน `effectiveShortcuts()` = `SHORTCUTS` merge `settings.shortcuts[id]` (id=channel+args). แท็บ "ปุ่มลัด" อัดคีย์ (บังคับ Ctrl/⌘), `accelText` แสดง ⌘⇧ บน mac
 - **ตรวจคำผิด**: 2 ชั้นผสมได้ — `spellCheck` (Chromium อังกฤษ) + `spellCheckDict` (spell.js ไทย+อังกฤษ, decoration `.k-spell-bad`). dict แยกไฟล์ (assets + `Plugins/dictionaries/*.txt` + `dictionary.json`). คลิกขวาคำแดง→เพิ่มคำ
 - **SmartType บทหนัง** (Final Draft): `spSmartCheck` + `screenplayTerms(tab)` สแกน sp doc เก็บ character/location ที่พิมพ์ในบทเอง รวม SCENE_PREFIX/TIMES/TRANSITIONS
@@ -425,7 +475,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ---
 
-## เวอร์ชัน (ล่าสุด alpha.58 · e2e 1,307 + unit ครบทุกชุด)
+## เวอร์ชัน (ล่าสุด alpha.58r · e2e 1,380 + unit ครบทุกชุด)
 
 .13–.22 (v1→v2 พื้นฐาน): snapshot, line numbers, spellcheck ไทย+Chromium, ปุ่มลัดตั้งเอง, mac build, บทหนัง Ctrl+arrow, relationship sync, floating format bar, sidebar resize, SmartType Final Draft, wiki gallery/lightbox, explorer search+tags, panel docking, tree float+snap
 .24 batch 8 (drag-move explorer, panel snap, split compare, version tracking, scene lock, screenplay Final Draft look, screenplay images, wiki links) · .25–.27 **Planner board** (fabric.js) · .28 **floating windows** · .29 memo-in-chapter + scoped search
@@ -600,6 +650,23 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
   **ฟีเจอร์ 1** `confirmQuit()` ใช้ `saveAllDialog` (รายชื่อ + เช็คบ็อกซ์)
   **ฟีเจอร์ 2** `revealFile()` — ปุ่ม "หาในดิสก์" บนหน้า Wiki + คลิกขวาใน Explorer (พร้อมประวัติเวอร์ชัน)
   **ค่าเริ่มต้นใหม่**: `subheader` = "ฉากย่อย" · ฉากย่อย/ช็อต/สลับฉาก วางตัวเท่าหัวฉาก ตัวหนา **แต่ไม่มีเลขฉาก**
+
+.58r **รอบเก็บบั๊ก 27 ข้อ + ยกเครื่องโหมดนิยาย + คอนโซลนักพัฒนา**
+  โมดูลบริสุทธิ์ใหม่ 2 ตัว (`prose-format` · `prose-view`) · **unit test เพิ่ม 141 ข้อ** · e2e 1,307 → **1,380**
+  **หน้ากระดาษ/ซูม/โหมดอ่าน (1–4)** — ดูบทเรียน 55–58 (ทั้ง 4 ข้อเป็นบทเรียนถาวรหมด)
+  **บท (5–13)** — `lineHeight` เข้า fmt + `formatLines()` · `pageMetrics` คูณ `--sp-lh` ·
+    ส่งออกใช้ `blocksFromDoc` · `toggles.continueds` เริ่มต้น true · `applyPageVars` รีเฟรช format guide ·
+    `spCss` สร้าง `.sp-contd` · เมนู goto · pinned ชนะ `looksLikeTerm` · พรีเซ็ตส่งออก "บทภาพยนตร์"
+  **นิยาย (14–24)** — `uiFontSize` → `--ui-fs` เท่านั้น (เลิกบวกเข้าขนาดเอกสาร · **e2e เก่าที่วัด
+    `--ed-fs = ฐาน+4px` ต้องแก้ให้วัด `--ui-fs` แทน**) · หนีบ `edFontPt` 9–96px ·
+    มุมมองหน้ากระดาษ 6 โหมด + จัดหน้า + เลขหน้า + เส้นคั่นหน้า + Ctrl+G ของนิยาย ·
+    ย่อหน้าบรรทัดแรก/ช่วงบรรทัด/ระยะย่อหน้า/หัวข้อ/ยกคำพูด ปรับได้ครบ (แท็บ "📖 รูปแบบนิยาย") ·
+    **ฟอนต์เริ่มต้นนิยาย = ตัวพิมพ์สัดส่วน** (Courier เป็นของบทเท่านั้น) · `mdToHtml` = WYSIWYG
+  **ไฟล์/schema (25, 27)** — align ย้ายไป frontmatter `align: [3:center]` (ไฟล์เก่ายังอ่านได้) ·
+    เพิ่ม `horizontal_rule` + `code_block` เข้า schema/md.js/input rule/เมนู
+  **คอนโซลนักพัฒนา** — เมนู ช่วยเหลือ (ที่เดียวกับ "เกี่ยวกับ") + **Ctrl+Shift+`** ·
+    `openDevConsole()` รัน JS ด้วยตัวแปร `k2` (`k2.state/tab()/blocks()/cssVar()/cmd()`) ·
+    ดัก `console.*` · ประวัติคำสั่ง · `aboutDialog()` แทน `alert()`
 
 **ยังเหลือ**: `search-engine.js` ยังเป็น orphan — Global Search (`global-search.js`) ยังสแกนไฟล์ตรง ๆ ไม่ได้ใช้ inverted index (ควรสลับมาใช้เพื่อความเร็ว) · multiple-drafts-per-book UI (โครงรองรับแล้ว), screenplay align persistence, Campaign/D&D mode, electron-builder + code signing, .icns/.ico icon, native arm64 build. Top เคยบอก paper/indent "อาจต้องปรับปรุง ไว้ก่อน"
 
