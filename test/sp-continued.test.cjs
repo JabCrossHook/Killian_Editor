@@ -144,8 +144,12 @@ check('[compile] หัวฉากยัง round-trip ได้ (ยังข�
   /(^|\n)(\.|INT\.)/.test(withCont));
 check('[compile] มีขั้นตอน sp-continued ให้เลือกในเวิร์กโฟลว์',
   !!CP.stepDef('sp-continued') && CP.stepDef('sp-continued').stage === 'text');
-check('[compile] พรีเซ็ตมาตรฐานไม่เปิดขั้นตอนนี้ (นิยายไม่ต้องใช้)',
-  CP.PRESETS.every((p) => !(p.steps || []).some((s) => s.key === 'sp-continued' && s.on !== false)));
+// [alpha.58r บั๊ก 13] พรีเซ็ตนิยายยังต้องไม่เปิด — แต่ต้องมีพรีเซ็ต "บทภาพยนตร์" ที่เปิดให้
+const spOn = (p) => (p.steps || []).some((s) => s.key === 'sp-continued' && s.on !== false);
+check('[compile] พรีเซ็ตของนิยายไม่เปิดขั้นตอนนี้',
+  CP.PRESETS.filter((p) => p.id !== 'screenplay').every((p) => !spOn(p)));
+check('[compile] มีพรีเซ็ตบทภาพยนตร์ที่เปิด sp-continued ให้เลย (บั๊ก 13)',
+  !!CP.PRESETS.find((p) => p.id === 'screenplay' && spOn(p)));
 check('[compile] ข้อความว่าง → ไม่พัง', typeof CP.insertContinueds('') === 'string');
 
 console.log(`\n${pass} passed, ${fail} failed`);

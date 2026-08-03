@@ -1,18 +1,20 @@
 // ProseMirror editor — หัวใจของ Killian 2 (word-processor grade)
 import { Schema } from 'prosemirror-model';
-import { EditorState, Plugin } from 'prosemirror-state';
+import { EditorState, Plugin, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { history, undo, redo } from 'prosemirror-history';
 import { keymap } from 'prosemirror-keymap';
 import { baseKeymap, toggleMark, setBlockType, wrapIn, lift, chainCommands,
-         splitBlockKeepMarks } from 'prosemirror-commands';
+         splitBlockKeepMarks, newlineInCode, exitCode } from 'prosemirror-commands';
 import { wrapInList, splitListItem, liftListItem, sinkListItem } from 'prosemirror-schema-list';
 import { inputRules, wrappingInputRule, textblockTypeInputRule,
          smartQuotes, InputRule } from 'prosemirror-inputrules';
 import { dropCursor } from 'prosemirror-dropcursor';
 import { gapCursor } from 'prosemirror-gapcursor';
-import { mdToDoc, docToMd } from './md.js';
+import { mdToDoc, docToMd, collectAlign } from './md.js';
 import { searchPlugin } from './search.js';
+// [alpha.58r บั๊ก 20] เส้นคั่นหน้าของนิยาย — คนละคีย์กับของบทภาพยนตร์
+import { prosePageBreakPlugin } from './prose-view.js';
 import { Plugin as PMPlugin, PluginKey as PMKey } from 'prosemirror-state';
 import { Decoration as Deco, DecorationSet as DecoSet } from 'prosemirror-view';
 
@@ -240,6 +242,14 @@ export const schema = new Schema({
                              ['img', { src: n.attrs.resolved || n.attrs.src,
                                        alt: n.attrs.alt, title: n.attrs.alt || '',
                                        draggable: 'false' }]] },
+    // [alpha.58r บั๊ก 27] เส้นคั่น + บล็อกโค้ด (เดิม schema ไม่มี → พิมพ์ ``` หรือ --- แล้วหายไปเฉย ๆ)
+    horizontal_rule: { group: 'block', atom: true, selectable: true,
+                       parseDOM: [{ tag: 'hr' }], toDOM: () => ['hr'] },
+    code_block: { group: 'block', content: 'text*', marks: '', code: true, defining: true,
+                  attrs: { lang: { default: '' }, fence: { default: '```' } },
+                  parseDOM: [{ tag: 'pre', preserveWhitespace: 'full',
+                    getAttrs: (d) => ({ lang: d.getAttribute('data-lang') || '' }) }],
+                  toDOM: (n) => ['pre', n.attrs.lang ? { 'data-lang': n.attrs.lang } : {}, ['code', 0]] },
     text: { group: 'inline' },
   },
   marks: {
@@ -271,19 +281,25 @@ function buildRules(s) {
       (m) => ({ order: +m[1] }), (m, n) => n.childCount + n.attrs.order === +m[1]),
     markRule(/(\*\*)([^*]+)\*\*$/, s.marks.strong),
     markRule(/(~~)([^~]+)~~$/, s.marks.strike),
+    // [alpha.58r บั๊ก 27] พิมพ์ ``` แล้วได้บล็อกโค้ด · พิมพ์ --- แล้วได้เส้นคั่น
+    textblockTypeInputRule(/^```([\w+-]*)\s$/, s.nodes.code_block, (m) => ({ lang: m[1] || '' })),
+    new InputRule(/^(?:-{3,}|\*{3,}|_{3,})$/, (state, match, start, end) =>
+      state.tr.replaceRangeWith(start, end, s.nodes.horizontal_rule.create())),
   ] });
 }
 
 export class KEditor {
   constructor(mount, { markdown = '', onChange = null, resolveSrc = (p) => p,
                        onKeyDown = null, getNames = null, onMention = null, getChecker = null,
-                       editable = null } = {}) {
+                       editable = null, alignMap = null, alignComments = false } = {}) {
     this.onChange = onChange;
     this.resolveSrc = resolveSrc;
     this.getNames = getNames;
     this.getChecker = getChecker;
     this.editableFn = editable;
-    const doc = this._docFromMd(markdown);
+    // [alpha.58r บั๊ก 25] alignComments=false → .md สะอาด (align ไปอยู่ใน frontmatter)
+    this.alignComments = !!alignComments;
+    const doc = this._docFromMd(markdown, alignMap);
     const self = this;
     this.view = new EditorView(mount, {
       editable: editable ? () => editable() : undefined,
@@ -328,10 +344,14 @@ export class KEditor {
         ...(this.getChecker ? [spellPlugin(this.getChecker)] : []),
         focusLinePlugin(),
         commentAnchorPlugin(),
+        prosePageBreakPlugin(),          // [20] เส้นคั่นหน้าของนิยาย
         buildRules(schema),
         keymap({
           // ขึ้นบรรทัดใหม่แล้วรูปแบบตัวอักษร (หนา/เอียง/ขีด) ต้องติดไปด้วย — แบบ Word
-          Enter: chainCommands(splitListItem(schema.nodes.list_item), splitBlockKeepMarks),
+          // ในบล็อกโค้ด Enter = ขึ้นบรรทัดใน pre (ไม่ใช่แตกบล็อก) · Shift+Enter = ออกจากบล็อก
+          Enter: chainCommands(newlineInCode, splitListItem(schema.nodes.list_item), splitBlockKeepMarks),
+          'Shift-Enter': exitCode,
+          'Mod-Enter': exitCode,
           Tab: sinkListItem(schema.nodes.list_item),
           'Shift-Tab': liftListItem(schema.nodes.list_item),
         }),
@@ -344,8 +364,8 @@ export class KEditor {
     });
   }
 
-  _docFromMd(md) {
-    const json = mdToDoc(md);
+  _docFromMd(md, alignMap) {
+    const json = mdToDoc(md, alignMap);
     for (const n of json.content) {
       if (n.type === 'figure') n.attrs.resolved = this.resolveSrc(n.attrs.src);
     }
@@ -353,9 +373,25 @@ export class KEditor {
   }
 
   // ---------- content ----------
-  getMarkdown() { return docToMd(this.view.state.doc.toJSON()); }
-  setMarkdown(md) { this.view.updateState(this._mkState(this._docFromMd(md))); }
+  getMarkdown(opts) {
+    return docToMd(this.view.state.doc.toJSON(),
+                   opts || { alignComments: this.alignComments });
+  }
+  /** แผนที่จัดหน้าของบล็อกระดับบน — เก็บลง frontmatter (`align: [3:center]`) */
+  getAlignMap() { return collectAlign(this.view.state.doc.toJSON()); }
+  setMarkdown(md, alignMap) {
+    this.view.updateState(this._mkState(this._docFromMd(md, alignMap)));
+  }
   getText() { return this.view.state.doc.textBetween(0, this.view.state.doc.content.size, '\n'); }
+
+  /** [alpha.58r บั๊ก 20] ย้ายเคอร์เซอร์ไปตำแหน่ง pos แล้วเลื่อนจอให้เห็น (คู่กับ SPEditor.gotoPos) */
+  gotoPos(pos) {
+    const v = this.view;
+    const p = Math.max(0, Math.min(Number(pos) || 0, v.state.doc.content.size));
+    v.dispatch(v.state.tr.setSelection(TextSelection.near(v.state.doc.resolve(p), 1)).scrollIntoView());
+    v.focus();
+    return true;
+  }
 
   // ---------- commands (เรียกจากเมนู Electron — คีย์ลัดเลยใช้ได้ทุก layout รวมไทย) ----------
   cmd(name, arg) {
@@ -374,6 +410,12 @@ export class KEditor {
       case 'lift': return run(lift);
       case 'ul': return run(wrapInList(s.nodes.bullet_list));
       case 'ol': return run(wrapInList(s.nodes.ordered_list));
+      // [alpha.58r บั๊ก 27] เส้นคั่น + บล็อกโค้ด
+      case 'code': return run(setBlockType(s.nodes.code_block));
+      case 'hr': {
+        v.dispatch(v.state.tr.replaceSelectionWith(s.nodes.horizontal_rule.create()).scrollIntoView());
+        v.focus(); return;
+      }
       case 'align': {
         // จัดหน้าย่อหน้า/หัวข้อทุกบล็อกในช่วงเลือก (arg: 'left'|'center'|'right'|'justify' · null=ชิดซ้ายปกติ)
         const val = arg === 'left' ? null : arg;
@@ -413,6 +455,7 @@ export class KEditor {
     }
     const p = st.selection.$from.parent;
     out.block = p.type.name === 'heading' ? 'h' + p.attrs.level
+      : p.type.name === 'code_block' ? 'code'
       : st.selection.$from.node(-1) && st.selection.$from.node(-1).type.name === 'blockquote' ? 'quote'
       : 'p';
     out.align = (p.type.name === 'paragraph' || p.type.name === 'heading') ? (p.attrs.align || 'left') : null;

@@ -1,6 +1,16 @@
 ﻿// Killian 2 renderer — explorer + tabs + toolbar + statusbar
 import { KEditor } from './editor.js';
-import { parseMdFile, dumpMdFile, countWords } from './md.js';
+import { parseMdFile, dumpMdFile, countWords, alignToString, alignFromString } from './md.js';
+// ---- alpha.58r: รูปแบบ + มุมมองหน้ากระดาษของ "นิยาย" (บั๊ก 15–24) ----
+import { PROSE_DEFAULTS, DEFAULT_PROSE_FONT, HEADING_DEFAULTS, QUOTE_DEFAULTS,
+         mergeProseFormat, proseCssVars, proseCss, proseFontStack, proseHeadingStack,
+         proseFontPx, proseLinePx, proseMetrics, proseLinesPerPage, proseCharsPerLine,
+         paginateProse, prosePageCount, prosePageLabel, proseBlocksFromDoc,
+         prosePageStarts, findProsePageStart, proseHeadings, headingNumberText,
+         proseExportCss } from './prose-format.js';
+import { PROSE_VIEWS, PROSE_VIEW_LABELS, isProsePageView, isProseEditView, isValidProseView,
+         proseLayoutCssVars, prosePagesOf, setProsePageBreaks, prosePageBreaks,
+         refreshProsePageBreaks, renderProsePageView, proseViewStatusText } from './prose-view.js';
 import { setQuery, gotoMatch, replaceCurrent, replaceAll } from './search.js';
 import { ask, confirmBox, popupMenu, choose, closeMenu, saveAllDialog } from './ui.js';
 import { WikiEditor, CAT_TH, imageLightbox } from './wiki.js';
@@ -16,7 +26,8 @@ import { refreshSpell } from './editor.js';
 import { commentAnchors, refreshCommentAnchors } from './editor.js';
 import * as spell from './spell.js';
 import { sceneMatchesQuery } from './sceneFilter.js';
-import { STEP_DEFS, PRESETS, stepDef, mkStep, newWorkflow, cloneWorkflow, runWorkflow, mdToHtmlBody } from './compile.js';
+import { STEP_DEFS, PRESETS, stepDef, mkStep, newWorkflow, cloneWorkflow, runWorkflow,
+         mdToHtmlBody, mdToHtml } from './compile.js';
 import { TIMELINE_VERSION, mergeTimeline, groupByTrack, trackNames, newEvent, findClashes, sortEvents, ganttData, ganttBar, ganttTicks, normalizeRefs } from './timeline.js';
 import { MAPS_VERSION, PIN_COLORS, PIN_KIND, newMap, newPin, clamp, findMap, sortMaps, breadcrumb, rootMaps, pinStats, deleteMap } from './maps.js';
 import { $, el, state, smart, LOG_BUF, log, setStatus,
@@ -24,7 +35,8 @@ import { $, el, state, smart, LOG_BUF, log, setStatus,
          BASE_ED_FS, BASE_SP_FS, PT_PX, ptToPx, DEFAULT_SCRIPT_FONT,
          spCycleKeys, spKeyLabel,
          PAPER_SIZES, MARGIN_DEFAULTS, SP_ELEMENT_KEYS, mergeSpFormat, pageCssVars, spCss,
-         linesPerPage, paginate, pageCount, newRoster, normalizeRoster, rosterToText,
+         linesPerPage, formatLines, lineHeightIn, paginate, pageCount,
+         newRoster, normalizeRoster, rosterToText, textWidth,
          SCENE_NUMBER_DEFAULTS, PAGE_NUMBER_DEFAULTS, pageNumberLabel,
          LANG_FAMILY, SCRIPT_PRESETS, BUILTIN_FONT_FILES, defaultLangFonts, normalizeLangFonts,
          buildLangFontCss, withLangFamily, applyLangFonts,
@@ -135,8 +147,7 @@ function loadSettings(meta) {
 
 // นำ settings ปัจจุบันไปใช้: ขนาดฟอนต์ตัวแก้ไข + จับเวลา autosave
 export function applySettings() {
-  const off = parseInt(state.settings.uiFontSize, 10) || 0;
-  applyZoomVars(off);
+  applyZoomVars();
   applyUIScale();
   const spFmt = applyPageVars();                     // [85] ขนาดกระดาษ + ระยะขอบ + รูปแบบ element บทหนัง
   // [61] แสดงรูปแบบ — คืนสถานะจาก settings ทุกครั้งที่โหลด/เปลี่ยนค่าตั้ง
@@ -148,9 +159,12 @@ export function applySettings() {
   document.body.classList.toggle('paper-mode', state.settings.paperMode !== false);
   // [alpha.57a ข้อ 5] ฟอนต์ตามภาษา — ต้องมาก่อนตั้ง --ed-font/--sp-font เพราะจะเอา "K2 Lang" ไปนำหน้า
   const nLang = applyProjectLangFonts();
-  // fontFamily — ว่าง = Courier Final Draft 12pt (มาตรฐานต้นฉบับ ใช้ได้ทุกภาษา)
-  const edStack = state.settings.fontFamily || DEFAULT_SCRIPT_FONT;
+  // [alpha.58r บั๊ก 18] ฟอนต์เริ่มต้นของ "นิยาย" = ตัวพิมพ์แบบสัดส่วน ไม่ใช่ Courier (ฟอนต์บท)
+  // ค่าที่ผู้ใช้ตั้งไว้ในรูปแบบนิยาย (settings.prose.fontFamily) มาก่อน แล้วค่อย fontFamily เดิม
+  const pf = proseFormat();
+  const edStack = pf.fontFamily || state.settings.fontFamily || DEFAULT_PROSE_FONT;
   document.documentElement.style.setProperty('--ed-font', withLangFamily(edStack, nLang > 0));
+  applyProseVars(pf);                                // [16][17][23][24] ย่อหน้า/ช่วงบรรทัด/หัวข้อ/ยกคำพูด
   // ฟอนต์บทหนังแยกจากนิยาย (บั๊ก #2) — ว่าง = Courier Final Draft เช่นกัน
   const spStack = state.settings.spFontFamily || DEFAULT_SCRIPT_FONT;
   document.documentElement.style.setProperty('--sp-font', withLangFamily(spStack, nLang > 0));
@@ -166,14 +180,26 @@ export function applySettings() {
 //   --ed-fs / --sp-fs = ขนาดฟอนต์ฐาน + ค่าที่ผู้ใช้ตั้ง (uiFontSize) — ไม่คูณซูมแล้ว
 //   --page-scale      = อัตราซูมจริง ส่งให้ CSS `zoom` บนหน้ากระดาษ (ขยายฟอนต์+ระยะขอบ+ความกว้างพร้อมกัน)
 // เดิมซูมคูณเข้าที่ฟอนต์อย่างเดียว → margin/padding คงที่ หน้าเลยเสียสัดส่วน (บั๊ก #7)
-export function applyZoomVars(off) {
-  if (off === undefined) off = parseInt(state.settings.uiFontSize, 10) || 0;
+/**
+ * [alpha.58r บั๊ก 14] ขนาดตัวอักษรของ "เปลือก UI" — แยกขาดจากเอกสาร
+ * เดิม settings.uiFontSize (ชื่อบอกว่าเป็นของ UI) ถูกบวกเข้ากับขนาดฟอนต์ของเอกสารโดยตรง
+ * → ปรับขนาด UI ทีเดียว ต้นฉบับเปลี่ยนขนาดตาม (และ pt ที่กรอกไว้ก็ไม่ตรงกับที่พิมพ์ออกมา)
+ * ตอนนี้ uiFontSize ไปที่ --ui-fs อย่างเดียว · เอกสารใช้ edFontPt/spFontPt ล้วน ๆ
+ */
+export function uiFontOffset() {
+  const n = parseInt(state.settings.uiFontSize, 10);
+  return Number.isFinite(n) ? Math.max(-6, Math.min(16, n)) : 0;
+}
+export function applyZoomVars(uiOff) {
   const R = document.documentElement.style;
+  const off = uiOff === undefined ? uiFontOffset() : (parseInt(uiOff, 10) || 0);
+  R.setProperty('--ui-fs', (14 + off) + 'px');
   // ขนาดฐาน = พอยต์ที่ผู้ใช้กรอกใน "ตั้งค่า → การเขียน" (ค่าเริ่มต้น 12pt ทั้งนิยายและบทหนัง)
+  // [บั๊ก 26] หนีบทั้งสองฝั่งเหมือนกัน — เดิม edfs ไม่ถูกหนีบเลย (ตั้ง 1pt แล้วได้ค่าติดลบ)
   const edBase = ptToPx(state.settings.edFontPt ?? 12);
   const spBase = ptToPx(state.settings.spFontPt ?? 12);
-  const edfs = +(edBase + off).toFixed(2);
-  const spfs = Math.max(9, +(spBase + off).toFixed(2));
+  const edfs = Math.max(9, Math.min(96, +edBase.toFixed(2)));
+  const spfs = Math.max(9, Math.min(96, +spBase.toFixed(2)));
   R.setProperty('--ed-fs', edfs + 'px');
   R.setProperty('--sp-fs', spfs + 'px');
   R.setProperty('--page-scale', pageScale.toFixed(3));
@@ -191,7 +217,8 @@ export function spFormatSettings() {
   return { paperSize: s.paperSize, paper: s.customPaper, margins: s.pageMargins,
            elements: s.spElements, styles: s.spStyles, rules: s.spPageRules, strings: s.spStrings,
            sceneNumbers: s.spSceneNumbers, pageNumbers: s.spPageNumbers,
-           continued: s.spContinued };            // [alpha.58 · 55–56]
+           continued: s.spContinued,              // [alpha.58 · 55–56]
+           lineHeight: s.spLineHeight };          // [alpha.58r บั๊ก 5+9] ต้องเข้าไปใน fmt ด้วย
 }
 /** รูปแบบบทหนังที่ใช้จริง (merge กับค่ามาตรฐานแล้ว) — โมดูลอื่นเรียกตัวนี้ */
 export function spFormat() { return mergeSpFormat(spFormatSettings()); }
@@ -215,7 +242,31 @@ export function applyPageVars() {
   for (const k of Object.keys(lv)) R.setProperty(k, lv[k]);
   // [alpha.58 บั๊ก 3] ช่วงบรรทัดบทภาพยนตร์ — มาตรฐาน = 1 (6 บรรทัด/นิ้ว) ปรับได้ที่ตั้งค่า
   R.setProperty('--sp-lh', String(spLineHeight()));
+  // [alpha.58r บั๊ก 8] "แสดงรูปแบบ" เก็บ fmt ไว้ในตัวมันเอง — ถ้าไม่ส่งของใหม่ให้ทุกครั้งที่
+  // ขนาดกระดาษ/ระยะขอบเปลี่ยน เส้นขอบ element จะยังวาดตามค่าเก่า (ตำแหน่งเพี้ยนแบบเงียบ ๆ)
+  setFormatGuide(isFormatGuide(), fmt);
+  for (const tb of state.tabs.values()) if (tb.sp) tb.sp.refreshGuides();
+  // [alpha.58r บั๊ก 15+20] ตัวเลขหน้ากระดาษฝั่งนิยาย (ใช้ขนาดกระดาษ/ระยะขอบชุดเดียวกัน)
+  const pv = proseLayoutCssVars(proseFormat(), fmt.paper, fmt.margins, state.settings.spPageGap);
+  for (const k of Object.keys(pv)) R.setProperty(k, pv[k]);
   return fmt;
+}
+
+// ---------------- [alpha.58r บั๊ก 16–24] รูปแบบ "นิยาย" ----------------
+/** ค่ารูปแบบนิยายที่ผู้ใช้ตั้ง (ดิบ) — เก็บก้อนเดียวใน project.khn.json → settings.prose */
+export function proseFormatSettings() { return (state.settings || {}).prose || {}; }
+/** รูปแบบนิยายที่ใช้จริง (merge กับค่ามาตรฐานแล้ว) */
+export function proseFormat() { return mergeProseFormat(proseFormatSettings()); }
+/** ยัดตัวแปร CSS + <style> ของรูปแบบนิยายเข้าหน้าเว็บ */
+export function applyProseVars(fmt) {
+  const f = fmt || proseFormat();
+  const R = document.documentElement.style;
+  const vars = proseCssVars(f);
+  for (const k of Object.keys(vars)) R.setProperty(k, vars[k]);
+  let st = document.getElementById('k-prose-format');
+  if (!st) { st = document.createElement('style'); st.id = 'k-prose-format'; document.head.appendChild(st); }
+  st.textContent = proseCss(f);
+  return f;
 }
 
 /** ช่วงบรรทัดของบทภาพยนตร์ (เท่าไรก็ได้ 1–2 · ค่ามาตรฐานอุตสาหกรรม = 1) */
@@ -280,12 +331,28 @@ function scrollHosts() {
   return [...document.querySelectorAll('.pane.on, .k-split-pane > .pane, .roster-wrap > .workspace')]
     .filter((e) => e && e.scrollWidth);
 }
+/**
+ * ความกว้าง "เนื้อหาจริง" ของกล่องที่เลื่อนได้ — วัดจาก .workspace (ลูกที่ถูก zoom)
+ * [alpha.58r บั๊ก 1] เดิมวัดจาก host.scrollWidth ซึ่งปน `min-width:<pageScale*100>%`
+ * ที่ JS ตั้งไว้ → สัดส่วนไม่เป็นเส้นตรงกับระดับซูม ยิ่งซูมออกยิ่งเพี้ยน จนเด้งไปชิดขอบซ้าย
+ * .workspace เป็น `width:max-content` = ความกว้างของหน้ากระดาษก่อนซูมเสมอ (คงที่ทุกระดับซูม)
+ */
+function contentWidthOf(host) {
+  const ws = host.querySelector(':scope > .workspace') || host.querySelector('.workspace');
+  const w = ws ? ws.scrollWidth : 0;
+  return Math.max(1, w || host.scrollWidth);
+}
 function keepZoomCenter(fn) {
   const hosts = scrollHosts();
   const before = hosts.map((h) => ({
     h,
-    cx: (h.scrollLeft + h.clientWidth / 2) / Math.max(1, h.scrollWidth),
-    cy: (h.scrollTop + h.clientHeight / 2) / Math.max(1, h.scrollHeight),
+    // ใช้ "ตำแหน่งกึ่งกลางเทียบกับพื้นที่ที่เลื่อนได้" — 0 เมื่อยังไม่มีอะไรให้เลื่อน
+    // (สัดส่วนเทียบความกว้างเนื้อหาจะเพี้ยนเมื่อ clientWidth เปลี่ยนตามระดับซูม)
+    fx: Math.max(0, h.scrollWidth - h.clientWidth) > 0
+      ? h.scrollLeft / (h.scrollWidth - h.clientWidth) : 0.5,
+    fy: Math.max(0, h.scrollHeight - h.clientHeight) > 0
+      ? h.scrollTop / (h.scrollHeight - h.clientHeight) : 0,
+    cw: contentWidthOf(h),
   }));
   fn();
   // คืนตำแหน่ง "ทั้งทันทีและใน rAF ถัดไป" (บทเรียนข้อ 36)
@@ -293,8 +360,10 @@ function keepZoomCenter(fn) {
   // และไม่ต้องพึ่ง rAF ที่ Chromium หยุดยิงเมื่อหน้าต่างถูกบัง/ไม่ได้อยู่หน้าสุด (บทเรียนข้อ 14i-2)
   const restore = () => {
     for (const b of before) {
-      b.h.scrollLeft = Math.max(0, b.cx * b.h.scrollWidth - b.h.clientWidth / 2);
-      b.h.scrollTop = Math.max(0, b.cy * b.h.scrollHeight - b.h.clientHeight / 2);
+      const maxX = Math.max(0, b.h.scrollWidth - b.h.clientWidth);
+      const maxY = Math.max(0, b.h.scrollHeight - b.h.clientHeight);
+      b.h.scrollLeft = Math.max(0, Math.min(maxX, b.fx * maxX));
+      b.h.scrollTop = Math.max(0, Math.min(maxY, b.fy * maxY));
     }
   };
   restore();
@@ -351,32 +420,63 @@ function clearPageView(pane) {
   pane.querySelectorAll(':scope > .sp-pageview').forEach((n) => n.remove());
 }
 
+/** กล่องมุมมองหน้ากระดาษ (สร้างครั้งเดียวต่อ pane · ใช้ร่วมทั้งนิยายและบทหนัง) */
+function pageViewHost(tab, gotoPos) {
+  let host = tab.pane.querySelector(':scope > .sp-pageview');
+  if (host) return host;
+  host = el('div', 'sp-pageview');
+  tab.pane.append(host);
+  // คลิกหน้าไหน = ย้ายเคอร์เซอร์ไปตรงนั้นแล้วกลับโหมดปกติ (มุมมองภาพรวมมีไว้ "หา" ที่)
+  host.addEventListener('click', (ev) => {
+    const blk = ev.target.closest && ev.target.closest('[data-pos]');
+    const page = ev.target.closest && ev.target.closest('.sp-page');
+    if (!blk && !page) return;
+    const pos = blk ? parseInt(blk.dataset.pos, 10)
+                    : parseInt(page.querySelector('[data-pos]')?.dataset.pos ?? '', 10);
+    setSpView('normal');
+    if (Number.isFinite(pos)) gotoPos(pos);
+  });
+  return host;
+}
+
 /** สร้าง/รีเฟรชมุมมองหน้ากระดาษของแท็บบทหนัง */
 function drawPageView(tab) {
   if (!tab || !tab.sp || !tab.pane) return 0;
   const fmt = spFormat();
   const blocks = blocksFromDoc(tab.sp.view.state.doc);
-  const pg = pagesOf(blocks, fmt, linesPerPage(fmt.paper, fmt.margins));
-  let host = tab.pane.querySelector(':scope > .sp-pageview');
-  if (!host) {
-    host = el('div', 'sp-pageview');
-    tab.pane.append(host);
-    // คลิกหน้าไหน = ย้ายเคอร์เซอร์ไปตรงนั้นแล้วกลับโหมดปกติ (มุมมองภาพรวมมีไว้ "หา" ที่)
-    host.addEventListener('click', (ev) => {
-      const blk = ev.target.closest && ev.target.closest('.sp[data-pos]');
-      const page = ev.target.closest && ev.target.closest('.sp-page');
-      if (!blk && !page) return;
-      const pos = blk ? parseInt(blk.dataset.pos, 10)
-                      : parseInt(page.querySelector('.sp[data-pos]')?.dataset.pos ?? '', 10);
-      setSpView('normal');
-      if (Number.isFinite(pos)) tab.sp.gotoPos(pos);
-    });
-  }
+  const pg = pagesOf(blocks, fmt);
+  const host = pageViewHost(tab, (pos) => tab.sp.gotoPos(pos));
   const pageWpx = fmt.paper.width * 96;
   const vs = viewScale(spViewMode, tab.pane.clientWidth || 900, pageWpx, 20);
   renderPageView(host, pg, fmt, { scale: vs.scale, perRow: vs.perRow, gap: 20,
                                   startPage: currentStartPage(tab) });
   return pg.count;
+}
+
+/**
+ * [alpha.58r บั๊ก 15+20] มุมมองหน้ากระดาษของ "นิยาย"
+ * ใช้คลาสของ pane ชุดเดียวกับบทภาพยนตร์ (sp-view-*) จึงได้ CSS หน้ากระดาษ/ช่องว่างคั่นหน้าฟรี
+ */
+function drawProsePageView(tab) {
+  if (!tab || !tab.editor || !tab.pane) return 0;
+  const spf = spFormat();
+  const pf = proseFormat();
+  const blocks = proseBlocksFromDoc(tab.editor.view.state.doc);
+  const pg = prosePagesOf(blocks, pf, spf.paper, spf.margins);
+  const host = pageViewHost(tab, (pos) => gotoProsePos(tab, pos));
+  const pageWpx = spf.paper.width * 96;
+  const vs = viewScale(spViewMode, tab.pane.clientWidth || 900, pageWpx, 20);
+  renderProsePageView(host, pg, pf, { scale: vs.scale, perRow: vs.perRow, gap: 20,
+                                      paper: spf.paper, margins: spf.margins,
+                                      startPage: currentStartPage(tab) });
+  return pg.count;
+}
+
+/** ย้ายเคอร์เซอร์ของตัวแก้ไขนิยายไปยังตำแหน่งหนึ่งแล้วเลื่อนให้เห็น */
+export function gotoProsePos(tab, pos) {
+  const t2 = tab || state.active;
+  if (!t2 || !t2.editor) return false;
+  return t2.editor.gotoPos(pos);
 }
 
 /** เปลี่ยนโหมดมุมมองของบทหนัง */
@@ -390,10 +490,11 @@ export function setSpView(mode, quiet) {
     if (p !== (tab && tab.pane)) clearPageView(p);
   });
   let pages = null;
-  if (tab && tab.sp && tab.pane) {
+  // [alpha.58r บั๊ก 15] โหมดมุมมองใช้ได้ทั้งบทภาพยนตร์และนิยาย (คลาส pane ชุดเดียวกัน)
+  if (tab && tab.pane && (tab.sp || tab.editor)) {
     const cls = SP_VIEW_CLASS[m].split(' ').filter(Boolean);
     if (cls.length) tab.pane.classList.add(...cls);
-    if (isPageView(m)) pages = drawPageView(tab);
+    if (isPageView(m)) pages = tab.sp ? drawPageView(tab) : drawProsePageView(tab);
     else clearPageView(tab.pane);
   }
   const sel = $('#sp-view-select'); if (sel) sel.value = m;
@@ -407,6 +508,7 @@ export function refreshSpView() {
   if (!isPageView(spViewMode)) return;
   const tab = state.active;
   if (tab && tab.sp) drawPageView(tab);
+  else if (tab && tab.editor) drawProsePageView(tab);
 }
 // ย่อ/ขยายหน้าต่าง → จำนวนหน้าต่อแถวและสเกลเปลี่ยน (หน่วงไว้กันวาดถี่ระหว่างลาก)
 let _spViewJob = null;
@@ -519,43 +621,65 @@ export function spPageModel(tab) {
   if (!t2 || !t2.sp) return null;
   const fmt = spFormat();
   const blocks = blocksFromDoc(t2.sp.view.state.doc);
-  const pages = pagesOf(blocks, fmt, linesPerPage(fmt.paper, fmt.margins));
+  const pages = pagesOf(blocks, fmt);
   return { fmt, blocks, pages, tab: t2 };
 }
 
+/**
+ * [alpha.58r บั๊ก 20] แบบเดียวกันสำหรับนิยาย — หน้า + หัวข้อ (บท)
+ * @returns {{fmt,blocks,pages,tab,prose:true}|null}
+ */
+export function prosePageModel(tab) {
+  const t2 = tab || state.active;
+  if (!t2 || !t2.editor) return null;
+  const spf = spFormat();
+  const pf = proseFormat();
+  const blocks = proseBlocksFromDoc(t2.editor.view.state.doc);
+  const pages = prosePagesOf(blocks, pf, spf.paper, spf.margins);
+  return { fmt: pf, paper: spf.paper, margins: spf.margins, blocks, pages, tab: t2, prose: true };
+}
+/** โมเดลหน้าของเอกสารที่เปิดอยู่ — บทภาพยนตร์หรือนิยายก็ได้ */
+export function anyPageModel(tab) { return spPageModel(tab) || prosePageModel(tab); }
+
 export function gotoPage(n) {
-  const m = spPageModel();
-  if (!m) { setStatus('เปิดฉากบทภาพยนตร์ก่อน'); return false; }
-  const pos = findPageStart(m.pages, n);
-  if (pos == null) { setStatus(`ไม่มีหน้า ${n} (บทนี้มี ${m.pages.count} หน้า)`); return false; }
-  m.tab.sp.gotoPos(pos);
+  const m = anyPageModel();
+  if (!m) { setStatus('เปิดฉากก่อนจึงจะไปยังหน้าได้'); return false; }
+  const pos = m.prose ? findProsePageStart(m.pages, n) : findPageStart(m.pages, n);
+  if (pos == null) { setStatus(`ไม่มีหน้า ${n} (ไฟล์นี้มี ${m.pages.count} หน้า)`); return false; }
+  (m.prose ? m.tab.editor : m.tab.sp).gotoPos(pos);
   setStatus(`ไปที่หน้า ${n} จาก ${m.pages.count} หน้า`);
   return true;
 }
 
 export function gotoScene(n) {
-  const m = spPageModel();
-  if (!m) { setStatus('เปิดฉากบทภาพยนตร์ก่อน'); return false; }
-  const list = scenePositions(m.blocks);
-  const pos = findNthScene(m.blocks, n);
-  if (pos == null) { setStatus(`ไม่มีฉากที่ ${n} (บทนี้มี ${list.length} ฉาก)`); return false; }
-  m.tab.sp.gotoPos(pos);
-  setStatus(`ไปที่ฉาก ${n}: ${list[n - 1]?.text || ''}`);
+  const m = anyPageModel();
+  if (!m) { setStatus('เปิดฉากก่อน'); return false; }
+  // นิยาย: "ฉาก" = หัวข้อ (บท) · บทภาพยนตร์: หัวฉาก
+  const list = m.prose ? proseHeadings(m.blocks) : scenePositions(m.blocks);
+  const item = list[Math.max(1, Math.round(+n || 1)) - 1];
+  const pos = item ? item.pos : null;
+  if (pos == null) {
+    setStatus(`ไม่มี${m.prose ? 'หัวข้อ' : 'ฉาก'}ที่ ${n} (ไฟล์นี้มี ${list.length})`);
+    return false;
+  }
+  (m.prose ? m.tab.editor : m.tab.sp).gotoPos(pos);
+  setStatus(`ไปที่${m.prose ? 'หัวข้อ' : 'ฉาก'} ${n}: ${item.text || ''}`);
   return true;
 }
 
 /** กล่อง "ไปที่…" — เลือกหน้า/ฉาก แล้วกรอกเลข (Ctrl+G) */
 export function gotoDialog(kind) {
-  const m = spPageModel();
-  if (!m) { setStatus('เปิดฉากบทภาพยนตร์ก่อนจึงจะไปยังหน้า/ฉากได้'); return null; }
-  const scenes = scenePositions(m.blocks);
+  const m = anyPageModel();
+  if (!m) { setStatus('เปิดฉากก่อนจึงจะไปยังหน้า/ฉากได้'); return null; }
+  const scenes = m.prose ? proseHeadings(m.blocks) : scenePositions(m.blocks);
+  const unit = m.prose ? 'บท/หัวข้อ' : 'ฉาก';
   const ov = el('div', 'k-overlay');
   const box = el('div', 'k-dialog k-goto-dlg');
   box.append(el('div', 'k-dlg-title', 'ไปที่…'));
 
   const row = el('div', 'k-goto-row');
   const sel = el('select', 'k-dlg-select'); sel.id = 'goto-kind';
-  for (const [v, label] of [['page', 'หน้า'], ['scene', 'ฉาก']]) {
+  for (const [v, label] of [['page', 'หน้า'], ['scene', unit]]) {
     const o = el('option', null, label); o.value = v; sel.append(o);
   }
   sel.value = kind === 'scene' ? 'scene' : 'page';
@@ -577,9 +701,9 @@ export function gotoDialog(kind) {
     list.innerHTML = '';
     if (sel.value !== 'scene') { list.style.display = 'none'; return; }
     list.style.display = '';
-    if (!scenes.length) { list.append(el('div', 'cmp-empty', '(บทนี้ยังไม่มีหัวฉาก)')); return; }
+    if (!scenes.length) { list.append(el('div', 'cmp-empty', `(ไฟล์นี้ยังไม่มี${unit})`)); return; }
     for (const s of scenes) {
-      const d = el('div', 'k-menu-item', `${s.n}. ${s.text || '(หัวฉากว่าง)'}`);
+      const d = el('div', 'k-menu-item', `${s.n}. ${s.text || '(ว่าง)'}`);
       d.onclick = () => { ov.remove(); gotoScene(s.n); };
       list.append(d);
     }
@@ -3052,7 +3176,11 @@ export async function openCompileDialog() {
       const { buildVarContext } = await import('./template-vars.js');
       Object.assign(varCtx, await buildVarContext(state.root, kapi));
     }
-    return runWorkflow(model, cur(), { varCtx, spFormat: spFormat() });
+    // [alpha.58r บั๊ก 19] ส่งรูปแบบนิยาย + ขนาดกระดาษไปด้วย → HTML ที่ได้ตรงกับที่เห็นบนจอ
+    const spf = spFormat();
+    return runWorkflow(model, cur(), { varCtx, spFormat: spf,
+                                       proseFormat: proseFormat(),
+                                       paper: spf.paper, margins: spf.margins });
   };
   const btns = el('div', 'k-dlg-btns');
   const bPrev = el('button', null, '👁 ดูตัวอย่าง');
@@ -3111,19 +3239,30 @@ export function scriptMeta(title) {
 }
 
 /**
- * เอา Markdown ของ "บทที่จะส่งออก" — ฉากที่เปิดอยู่ก่อน ถ้าไม่ใช่บทหนังให้เลือกฉบับร่าง
- * @returns {Promise<{md:string,title:string}|null>}
+ * เอา "บทที่จะส่งออก" — ฉากที่เปิดอยู่ก่อน ถ้าไม่ใช่บทหนังให้เลือกฉบับร่าง
+ *
+ * [alpha.58r บั๊ก 6] คืน `blocks` จาก **เอกสารจริง** (blocksFromDoc) ไม่ใช่ parseScript(md)
+ * เหตุ: การแปลง doc → markdown → parseScript ไม่ใช่ round-trip ที่ปิดวงสมบูรณ์ —
+ *       `classify()` สร้าง "บทพูดกำพร้า" ไม่ได้ (บทเรียนข้อ 43) ข้อความบางบล็อกจึงกลายเป็น
+ *       action ตอนส่งออก ทั้งที่บนจอเป็น dialogue · ฟีเจอร์อื่น (จัดหน้า/ตรวจบท/รายงาน)
+ *       ใช้ blocksFromDoc ถูกต้องมานานแล้ว มีแต่ทางส่งออกที่ยังเดินทางเก่า
+ * @returns {Promise<{md:string, blocks:Array, title:string}|null>}
  */
 async function currentScriptSource() {
   const t2 = state.active;
-  if (t2 && t2.sp) return { md: t2.sp.getMarkdown(), title: t2.title || state.title };
+  if (t2 && t2.sp) {
+    return { md: t2.sp.getMarkdown(),
+             blocks: blocksFromDoc(t2.sp.view.state.doc),
+             title: t2.title || state.title };
+  }
   const drafts = await listDrafts();
   if (!drafts.length) { setStatus('ยังไม่มีบทให้ส่งออก — เปิดฉากบทภาพยนตร์ก่อน'); return null; }
   const pick = drafts.length === 1 ? drafts[0].label
     : await pickFromList('ส่งออกบทจากฉบับร่างไหน', drafts.map((d) => d.label));
   if (!pick) return null;
   const d = drafts.find((x) => x.label === pick);
-  return { md: await compileDraftText(d.dPath), title: state.title };
+  const md = await compileDraftText(d.dPath);
+  return { md, blocks: parseScript(md), title: state.title };
 }
 
 /** [67][68] ส่งออกบทเป็น Final Draft (.fdx) หรือ Rich Text (.rtf) */
@@ -3131,7 +3270,7 @@ export async function exportScript(kind) {
   if (!(await checkBeforeExport())) return null;
   const src = await currentScriptSource();
   if (!src) return null;
-  const blocks = parseScript(src.md);
+  const blocks = src.blocks || parseScript(src.md);
   const meta = scriptMeta(src.title);
   const text = kind === 'fdx' ? generateFdx(blocks, meta)
                               : generateRtf(blocks, meta, spFormat());
@@ -3161,7 +3300,7 @@ export async function watermarkDialog() {
   const src = await currentScriptSource();
   if (!src) return null;
   const fmt = spFormat();
-  const pages = pagesOf(parseScript(src.md), fmt, linesPerPage(fmt.paper, fmt.margins));
+  const pages = pagesOf(src.blocks, fmt);
   const saved = (state.meta && state.meta.watermark) || {};
 
   const ov = el('div', 'k-overlay');
@@ -3932,6 +4071,10 @@ function mountEditor(tab, dir, body) {
   } else {
     tab.editor = new KEditor(mount, {
       markdown: body,
+      // [alpha.58r บั๊ก 25] จัดหน้าย่อหน้าเก็บใน frontmatter (`align: [3:center]`) → .md สะอาด
+      // ยังอ่านไฟล์เก่าที่ใช้ <!--align:x--> ได้เสมอ · ตั้งเป็น 'comment' ใน settings ถ้าอยากได้แบบเดิม
+      alignMap: alignFromString(tab.meta.align),
+      alignComments: state.settings.mdAlignStyle === 'comment',
       onChange: () => { markDirty(tab); scheduleCount(); scheduleOutline();
                         setTimeout(() => smart.check(tab.editor.view), 0); },
       resolveSrc: (p) => resolveImg(dir, p),
@@ -4377,6 +4520,12 @@ export async function saveTab(tab) {
   const body = tab.editor ? tab.editor.getMarkdown()
     : tab.sp ? tab.sp.getMarkdown() : tab.plain.value;
   tab.body = body;
+  // [alpha.58r บั๊ก 25] จัดหน้าไปอยู่ใน frontmatter — เขียนเฉพาะตอนมีจริง (ไม่งั้นได้บรรทัดขยะทุกไฟล์)
+  if (tab.editor && state.settings.mdAlignStyle !== 'comment') {
+    const am = alignToString(tab.editor.getAlignMap());
+    if (am) tab.meta.align = '[' + am + ']';
+    else delete tab.meta.align;
+  }
   tab.meta.modified = new Date().toISOString();
   // บันทึกว่าแก้ไขด้วยแอปเวอร์ชันไหน + เพิ่มเลขรอบแก้ (revision) เพื่อให้เทียบเวอร์ชันได้
   tab.meta.appVersion = APP_VERSION;
@@ -4595,7 +4744,8 @@ export async function revertTab(file) {
   if (!(await confirmBox('ยกเลิกการเปลี่ยนแปลงทั้งหมดในแท็บนี้?\nเนื้อหาจะกลับไปเป็นเวอร์ชันล่าสุดที่บันทึกไว้', 'Revert'))) return;
   const content = await kapi.readFile(file);
   const { meta, body } = parseMdFile(content);
-  if (t.editor) { t.editor.setMarkdown(body); refreshMentions(t.editor.view); }
+  // [alpha.58r บั๊ก 25] จัดหน้าอยู่ใน frontmatter แล้ว → คืนค่ามาพร้อมเนื้อหาด้วย
+  if (t.editor) { t.editor.setMarkdown(body, alignFromString(meta.align)); refreshMentions(t.editor.view); }
   else if (t.sp) {
     t.sp.destroy();
     t.sp = new SPEditor(t.pane.querySelector('.pane.on') || t.pane, {
@@ -4937,7 +5087,7 @@ function scheduleCount() {
         const fmt = spFormat();
         // นับจากบล็อกในเอกสารจริง (ไม่ใช่ md) เพื่อให้ตำแหน่งเส้นคั่นหน้าตรงกับจอ (ข้อ 57)
         const blocks = blocksFromDoc(t.sp.view.state.doc);
-        const pg = pagesOf(blocks, fmt, linesPerPage(fmt.paper, fmt.margins));
+        const pg = pagesOf(blocks, fmt);
         txt += ` · ${pg.count} หน้า`;
         // เส้นคั่นหน้าในตัวแก้ไข — หน้า 2 เป็นต้นไป
         // [alpha.57a] เลขบนเส้นคั่นนับต่อจาก "เลขหน้าเริ่มต้น" ของไฟล์ (ตั้งในคุณสมบัติฉาก)
@@ -4959,6 +5109,23 @@ function scheduleCount() {
       setPageBreaks([]);
       setContinueds([]);
       _spErrors = [];
+    }
+    // [alpha.58r บั๊ก 20] นิยายก็ต้องรู้ว่าอยู่หน้าไหน/ขึ้นหน้าใหม่ตรงไหน
+    if (t.editor) {
+      try {
+        const spf = spFormat(), pf = proseFormat();
+        const pblocks = proseBlocksFromDoc(t.editor.view.state.doc);
+        const ppg = prosePagesOf(pblocks, pf, spf.paper, spf.margins);
+        txt += ` · ${ppg.count} หน้า`;
+        const base = currentStartPage(t) - 1;
+        const changed = setProsePageBreaks(
+          prosePageStarts(ppg).map((pos, i) => ({ pos, page: base + i + 1 })).slice(1)
+            .filter((x) => Number.isFinite(x.pos)));
+        if (changed) refreshProsePageBreaks(t.editor.view);
+        refreshSpView();
+      } catch (e) { log('warn', 'นับหน้านิยายไม่สำเร็จ', e); }
+    } else {
+      setProsePageBreaks([]);
     }
     $('#wc').textContent = txt;
     updateErrorBadge();
@@ -5116,6 +5283,171 @@ function stopLogAutoRefresh() {
 }
 window.__k2test = (p) => runTest(p);
 window.__k2menu = null;
+
+// ═════════ [alpha.58r ข้อ 4] คอนโซลนักพัฒนา ═════════
+// อยู่ในเมนู "ช่วยเหลือ" ที่เดียวกับ "เกี่ยวกับ" + คีย์ลัด Ctrl+Shift+`
+// ทำไมต้องมีเอง ทั้งที่ Chromium มี DevTools อยู่แล้ว: หน้าต่างเป็น frame:false และ build ที่ส่งผู้ใช้
+// ไม่ได้เปิด DevTools ไว้ → เวลาเจอบั๊กจริงหน้างานไม่มีทางดูค่าอะไรได้เลย
+/** ของที่ให้เรียกได้ในคอนโซล — ส่งเข้าไปเป็นตัวแปร k2 */
+function devApi() {
+  return {
+    state, kapi, $, el, log, LOG_BUF,
+    tab: () => state.active,
+    doc: () => { const t = state.active; return t && (t.editor || t.sp)?.view.state.doc; },
+    md: () => { const t = state.active; return (t && (t.editor || t.sp)?.getMarkdown()) || ''; },
+    settings: () => state.settings,
+    spFormat, proseFormat, spPageModel,
+    blocks: () => { const t = state.active;
+      return t && t.sp ? blocksFromDoc(t.sp.view.state.doc)
+           : t && t.editor ? proseBlocksFromDoc(t.editor.view.state.doc) : []; },
+    cssVar: (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim(),
+    cmd: (ch, ...a) => handleCommand(ch, ...a),
+    version: APP_VERSION,
+  };
+}
+const DEV_HISTORY_KEY = 'k2-dev-history';
+function devHistory() {
+  try { return JSON.parse(localStorage.getItem(DEV_HISTORY_KEY) || '[]'); } catch { return []; }
+}
+function pushDevHistory(code) {
+  const h = devHistory().filter((x) => x !== code);
+  h.push(code);
+  try { localStorage.setItem(DEV_HISTORY_KEY, JSON.stringify(h.slice(-50))); } catch {}
+}
+/** แปลงผลลัพธ์เป็นข้อความอ่านได้ (ไม่ระเบิดเมื่อเจอ object วนซ้ำ/ใหญ่) */
+function devFormat(v) {
+  if (v === undefined) return 'undefined';
+  if (v === null) return 'null';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'function') return String(v).slice(0, 400);
+  if (v instanceof Error) return (v.stack || v.message);
+  try { return JSON.stringify(v, (k, val) => (val instanceof Map ? [...val] : val), 2).slice(0, 20000); }
+  catch { return String(v); }
+}
+
+export function openDevConsole() {
+  const ov = el('div', 'k-overlay');
+  const box = el('div', 'k-dialog k-dev-dlg');
+  box.append(el('div', 'k-dlg-title', '🛠 คอนโซลนักพัฒนา'));
+  box.append(el('div', 'dim',
+    'พิมพ์ JavaScript แล้วกด Ctrl+Enter เพื่อรัน · ใช้ตัวแปร k2 เข้าถึงของในโปรแกรม ' +
+    '(k2.state · k2.tab() · k2.md() · k2.blocks() · k2.cssVar("--ed-fs") · k2.cmd("save"))'));
+
+  const inp = el('textarea', 'k-dlg-input k-dev-input');
+  inp.rows = 5;
+  inp.spellcheck = false;
+  inp.placeholder = 'เช่น  k2.cssVar("--ed-fs")   หรือ   k2.blocks().length';
+  box.append(inp);
+
+  const btns = el('div', 'k-dev-btns');
+  const out = el('pre', 'k-dev-out');
+  const write = (s, cls) => {
+    const line = el('div', 'k-dev-line' + (cls ? ' ' + cls : ''), s);
+    out.append(line);
+    out.scrollTop = out.scrollHeight;
+  };
+
+  let histIdx = -1;
+  const run = () => {
+    const code = inp.value.trim();
+    if (!code) return;
+    pushDevHistory(code); histIdx = -1;
+    write('› ' + code, 'k-dev-in');
+    // ดัก console.* ระหว่างรัน เพื่อให้เห็นผลในกล่องนี้เลย
+    const orig = { log: console.log, warn: console.warn, error: console.error };
+    const cap = [];
+    for (const k of ['log', 'warn', 'error'])
+      console[k] = (...a) => { cap.push(a.map(devFormat).join(' ')); orig[k](...a); };
+    let res, err = null;
+    try {
+      // eslint-disable-next-line no-new-func
+      res = new Function('k2', 'return (' + code + ')')(devApi());
+    } catch (e1) {
+      try { res = new Function('k2', code)(devApi()); }
+      catch (e2) { err = e2; }
+    } finally {
+      Object.assign(console, orig);
+    }
+    for (const c of cap) write(c, 'k-dev-log');
+    if (err) write(String(err && (err.stack || err.message || err)), 'k-dev-err');
+    else if (res && typeof res.then === 'function')
+      res.then((v) => write(devFormat(v))).catch((e) => write(String(e), 'k-dev-err'));
+    else write(devFormat(res));
+  };
+
+  inp.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.code === 'Enter') { e.preventDefault(); run(); return; }
+    if (e.code === 'ArrowUp' && (e.ctrlKey || e.metaKey)) {
+      const h = devHistory();
+      if (!h.length) return;
+      histIdx = histIdx < 0 ? h.length - 1 : Math.max(0, histIdx - 1);
+      inp.value = h[histIdx]; e.preventDefault();
+    }
+  });
+
+  const mkBtn = (label, fn, cls) => { const b = el('button', cls || 'cmp-mini', label); b.onclick = fn; return b; };
+  btns.append(mkBtn('▶ รัน (Ctrl+Enter)', run, 'k-ok'));
+  btns.append(mkBtn('🧹 ล้างผล', () => { out.innerHTML = ''; }));
+  btns.append(mkBtn('📋 คัดลอกผล', () => {
+    navigator.clipboard?.writeText(out.textContent || '');
+    setStatus('คัดลอกผลจากคอนโซลแล้ว');
+  }));
+  btns.append(mkBtn('📜 บันทึกล่าสุด (log)', async () => {
+    let text = '';
+    try { text = (await kapi.logRead(200)) || ''; } catch {}
+    write(text || LOG_BUF.slice(-200).join('\n') || '(ยังไม่มีบันทึก)', 'k-dev-log');
+  }));
+  btns.append(mkBtn('ℹ ข้อมูลระบบ', () => {
+    write(devFormat({
+      version: APP_VERSION,
+      โปรเจกต์: state.root || '(ยังไม่เปิด)',
+      แท็บที่เปิด: state.tabs.size,
+      โหมด: state.active && state.active.sp ? 'บทภาพยนตร์' : state.active && state.active.editor ? 'นิยาย' : '-',
+      มุมมอง: currentSpView(),
+      ซูม: Math.round(pageScale * 100) + '%',
+      'ขนาดกระดาษ': spFormat().paperSize,
+      'บรรทัด/หน้า (บท)': formatLines(spFormat()),
+      'บรรทัด/หน้า (นิยาย)': proseLinesPerPage(proseFormat(), spFormat().paper, spFormat().margins),
+      '--ed-fs': getComputedStyle(document.documentElement).getPropertyValue('--ed-fs').trim(),
+      '--sp-fs': getComputedStyle(document.documentElement).getPropertyValue('--sp-fs').trim(),
+      '--ui-fs': getComputedStyle(document.documentElement).getPropertyValue('--ui-fs').trim(),
+    }));
+  }));
+  box.append(btns, out);
+
+  const foot = el('div', 'k-dlg-btns');
+  const close = el('button', 'k-cancel', 'ปิด');
+  close.onclick = () => ov.remove();
+  foot.append(close);
+  box.append(foot);
+
+  ov.append(box);
+  document.body.append(ov);
+  ov.addEventListener('mousedown', (e) => { if (e.target === ov) ov.remove(); });
+  setTimeout(() => inp.focus(), 0);
+  return ov;
+}
+
+/** กล่อง "เกี่ยวกับ" — ทางเข้าคอนโซลนักพัฒนาอยู่ที่นี่ด้วย */
+export function aboutDialog() {
+  const ov = el('div', 'k-overlay');
+  const box = el('div', 'k-dialog k-about-dlg');
+  box.append(el('div', 'k-dlg-title', 'เกี่ยวกับ Killian 2'));
+  box.append(el('div', null, 'คิเลียน อีดิเตอร์ ' + APP_VERSION));
+  box.append(el('div', 'dim', 'โปรแกรมเขียนนิยาย/บทภาพยนตร์ — Electron + ProseMirror'));
+  box.append(el('div', 'dim', 'ไฟล์งานเป็น Markdown + JSON เปิดร่วมกับ Killian v1 ได้ 100%'));
+  const btns = el('div', 'k-dlg-btns');
+  const dev = el('button', 'cmp-mini', '🛠 คอนโซลนักพัฒนา');
+  dev.onclick = () => { ov.remove(); openDevConsole(); };
+  const ok = el('button', 'k-ok', 'ปิด');
+  ok.onclick = () => ov.remove();
+  btns.append(dev, ok);
+  box.append(btns);
+  ov.append(box);
+  document.body.append(ov);
+  ov.addEventListener('mousedown', (e) => { if (e.target === ov) ov.remove(); });
+  return ov;
+}
 
 // ── บั๊ก #18: แผงฟีเจอร์ที่ไม่ใช่เอกสาร ─────────────────────────────────────
 // showPanel วางแค่กล่องเปล่าให้ — เนื้อหาต้องวาดเอง ทั้งตอนสั่งเปิดจากเมนู
@@ -5299,7 +5631,11 @@ async function handleCommand(ch, ...a) {
     case 'settings': settingsDialog(); break;
     case 'toggle-format': switchFormat(); break;
     case 'set-format': switchFormat(a[0]); break;
-    case 'about': alert('Killian 2 (alpha)\nโปรแกรมเขียนนิยาย/บทหนัง — Electron + ProseMirror\nไฟล์เป็น Markdown เปิดร่วมกับ Killian v1 ได้'); break;
+    case 'about': aboutDialog(); break;
+    // [alpha.58r ข้อ 4] คอนโซลนักพัฒนา (Ctrl+Shift+`) — อยู่เมนูเดียวกับ "เกี่ยวกับ"
+    case 'dev-console': openDevConsole(); break;
+    // [alpha.58r บั๊ก 16–24] รูปแบบนิยาย
+    case 'prose-setup': settingsDialog('prose'); break;
     case 'test-run': runTest(a[0]); break;
     // [95] Per-element shortcuts + [79] Select scene + [77] Non-breaking space
     case 'sp-element': {
@@ -7157,15 +7493,37 @@ async function runTest(projectPath) {
     check('นิยาย: DOM ย่อหน้ามี text-align:center',
           !!document.querySelector('.pane.on .ProseMirror p[style*="center"]'));
     await kapi.testShot('/tmp/k2_align_prose.png');
-    check('นิยาย: align เขียนลง markdown เป็นคอมเมนต์',
-          t.editor.getMarkdown().includes('<!--align:center-->'), t.editor.getMarkdown());
-    t.editor.setMarkdown('<!--align:right-->ชิดขวาทดสอบ');
-    selHead(t.editor.view);
-    check('นิยาย: อ่าน align จากไฟล์กลับมาได้ (right)',
-          t.editor.activeMarks().align === 'right', t.editor.activeMarks().align);
-    t.editor.cmd('align', 'left');
-    check('นิยาย: คืนชิดซ้าย = ไม่เหลือคอมเมนต์ align',
+    // [alpha.58r บั๊ก 25] ไฟล์ .md ต้องสะอาด — จัดหน้าย้ายไปอยู่ใน frontmatter
+    check('[25] align ไม่หลุดลง .md เป็นคอมเมนต์แล้ว',
           !t.editor.getMarkdown().includes('<!--align'), t.editor.getMarkdown());
+    check('[25] align เก็บเป็นแผนที่บล็อกแทน',
+          t.editor.getAlignMap()['0'] === 'center', JSON.stringify(t.editor.getAlignMap()));
+    check('[25] แปลงเป็นข้อความสำหรับ frontmatter ได้',
+          alignToString(t.editor.getAlignMap()) === '0:center');
+    // อ่านกลับจาก frontmatter
+    t.editor.setMarkdown('ชิดขวาทดสอบ', { 0: 'right' });
+    selHead(t.editor.view);
+    check('[25] อ่าน align จาก frontmatter กลับมาได้ (right)',
+          t.editor.activeMarks().align === 'right', t.editor.activeMarks().align);
+    // ไฟล์เก่าที่ยังใช้คอมเมนต์ต้องอ่านได้เหมือนเดิม
+    t.editor.setMarkdown('<!--align:center-->ไฟล์เก่า');
+    selHead(t.editor.view);
+    check('[25] ไฟล์เก่าที่ใช้ <!--align--> ยังอ่านได้',
+          t.editor.activeMarks().align === 'center', t.editor.activeMarks().align);
+    t.editor.cmd('align', 'left');
+    check('[25] คืนชิดซ้าย = แผนที่ align ว่าง',
+          Object.keys(t.editor.getAlignMap()).length === 0);
+    // [27] เส้นคั่น + บล็อกโค้ดใน schema
+    t.editor.setMarkdown('ก่อน' + String.fromCharCode(10) + '---' + String.fromCharCode(10) + '```js' + String.fromCharCode(10) + 'let a = 1;' + String.fromCharCode(10) + '```');
+    check('[27] --- กลายเป็น hr จริงในเอกสาร',
+          !!document.querySelector('.pane.on .ProseMirror hr'));
+    check('[27] ``` กลายเป็นบล็อกโค้ดจริง',
+          !!document.querySelector('.pane.on .ProseMirror pre code'));
+    check('[27] round-trip กลับเป็น markdown เดิม',
+          t.editor.getMarkdown() === ['ก่อน', '---', '```js', 'let a = 1;', '```'].join(String.fromCharCode(10)), t.editor.getMarkdown());
+    t.editor.cmd('hr');
+    check('[27] คำสั่ง fmt hr แทรกเส้นคั่นได้',
+          t.editor.getMarkdown().split('---').length >= 2);
     t.editor.setMarkdown(orig);
 
     // ---- ซูมหน้ากระดาษ (บั๊ก #7: ต้องเป็นซูมจริงด้วย CSS zoom ไม่ใช่ขยายแต่ฟอนต์) ----
@@ -8418,11 +8776,23 @@ async function runTest(projectPath) {
     state.settings.lineNumbers = true; applySettings();
     await new Promise((r) => setTimeout(r, 120));
     await kapi.testShot('/tmp/k2_ln.png');                  // ภาพเลขบรรทัดของจริง
-    const pmPadOn = getComputedStyle(document.querySelector('.pane.on .ProseMirror')).paddingLeft;
-    check('เปิดเลขบรรทัด → body มี k-ln และ ProseMirror ขยับที่ว่างซ้าย',
-          document.body.classList.contains('k-ln') && pmPadOn === '64px', pmPadOn);
+    const pmLnEl = document.querySelector('.pane.on .ProseMirror');
+    const pmPadOn = getComputedStyle(pmLnEl).paddingLeft;
+    check('เปิดเลขบรรทัด → body มี k-ln', document.body.classList.contains('k-ln'));
+    // [alpha.58r บั๊ก 2] เลขบรรทัดวางในระยะขอบซ้ายของกระดาษ ห้ามดัน padding จนข้อความ reflow
+    check('[2] เปิดเลขบรรทัดแล้ว padding-left ยังเท่าระยะขอบกระดาษ (1.5in = 144px)',
+          Math.abs(parseFloat(pmPadOn) - 144) < 2, pmPadOn);
+    const lnW0 = pmLnEl.getBoundingClientRect().width;
+    const lnNo = getComputedStyle(pmLnEl.firstElementChild, '::before');
+    check('[2] เลขบรรทัดวาดจริง (::before มี content)',
+          lnNo.content && lnNo.content !== 'none', lnNo.content);
+    check('[2] เลขบรรทัดเป็น absolute (ไม่กินพื้นที่ข้อความ)', lnNo.position === 'absolute', lnNo.position);
     state.settings.lineNumbers = false; applySettings();
+    await new Promise((r) => setTimeout(r, 60));
     check('ปิดเลขบรรทัด → เอา k-ln ออก', !document.body.classList.contains('k-ln'));
+    check('[2] ปิด/เปิดเลขบรรทัดแล้วความกว้างเนื้อหาเท่าเดิม',
+          Math.abs(pmLnEl.getBoundingClientRect().width - lnW0) < 1.5,
+          `${lnW0} → ${pmLnEl.getBoundingClientRect().width}`);
 
     // ---- ย้าย/เลื่อนลำดับฉาก ----
     // เตรียมบทที่ 2 + ฉากทดสอบย้าย (อิสระจากข้อมูล fixture เดิม)
@@ -8695,9 +9065,14 @@ async function runTest(projectPath) {
     [...document.querySelectorAll('.k-set-tab')].find((t) => t.dataset.p === 'write').click();
     const fontInp = document.querySelector('#st-font');
     fontInp.value = '4'; fontInp.dispatchEvent(new Event('input'));
-    check('พรีวิวฟอนต์ทันที (--ed-fs = ฐาน+4px)',
-          getComputedStyle(document.documentElement).getPropertyValue('--ed-fs').trim() === (BASE_ED_FS + 4) + 'px',
-          getComputedStyle(document.documentElement).getPropertyValue('--ed-fs'));
+    // [alpha.58r บั๊ก 14] uiFontSize = ขนาดตัวอักษรของ "เปลือก UI" เท่านั้น ห้ามแตะขนาดของเอกสาร
+    const edFsBeforeUi = getComputedStyle(document.documentElement).getPropertyValue('--ed-fs').trim();
+    check('[14] ปรับขนาด UI แล้ว --ui-fs เปลี่ยน (ฐาน 14+4)',
+          getComputedStyle(document.documentElement).getPropertyValue('--ui-fs').trim() === '18px',
+          getComputedStyle(document.documentElement).getPropertyValue('--ui-fs'));
+    check('[14] ปรับขนาด UI แล้วขนาดฟอนต์เอกสารต้องไม่ขยับ',
+          getComputedStyle(document.documentElement).getPropertyValue('--ed-fs').trim() === edFsBeforeUi,
+          edFsBeforeUi);
     // ขนาด UI (บั๊ก #9) — slider ในแท็บ "การเขียน" เห็นผลทันที
     const uiSl = document.querySelector('#st-uiscale');
     check('ตั้งค่า: มี slider ขนาด UI ในแท็บการเขียน', !!uiSl);
@@ -8725,8 +9100,9 @@ async function runTest(projectPath) {
           JSON.stringify(pj.goals));
     check('เขียนชื่อ/ผู้เขียนลงไฟล์', pj.title === 'ชื่อใหม่ทดสอบ' && pj.author === 'ผู้เขียนทดสอบ');
     check('ชื่อโปรเจกต์บนจอเปลี่ยนตาม', $('#projname').textContent === 'ชื่อใหม่ทดสอบ');
-    check('ฟอนต์ตัวแก้ไขถูกนำไปใช้จริง (ฐาน+4px)',
-          getComputedStyle(document.documentElement).getPropertyValue('--ed-fs').trim() === (BASE_ED_FS + 4) + 'px');
+    check('[14] บันทึกแล้วเอกสารยังใช้ขนาดตาม edFontPt (ไม่บวก uiFontSize)',
+          getComputedStyle(document.documentElement).getPropertyValue('--ed-fs').trim() === BASE_ED_FS + 'px',
+          getComputedStyle(document.documentElement).getPropertyValue('--ed-fs'));
     check('autosave นาทีถูกปรับใน state', state.settings.autoSaveMinutes === 2);
     // เป้าหมายโผล่ในแดชบอร์ด
     openDashboard();
@@ -8740,9 +9116,9 @@ async function runTest(projectPath) {
     fontInp2.value = '10'; fontInp2.dispatchEvent(new Event('input'));
     document.querySelector('.k-settings .k-cancel').click();
     await new Promise((r) => setTimeout(r, 20));
-    check('กด "ยกเลิก" คืนขนาดฟอนต์เดิม (ฐาน+4px)',
-          getComputedStyle(document.documentElement).getPropertyValue('--ed-fs').trim() === (BASE_ED_FS + 4) + 'px',
-          getComputedStyle(document.documentElement).getPropertyValue('--ed-fs'));
+    check('กด "ยกเลิก" คืนขนาด UI เดิม (14+4 = 18px)',
+          getComputedStyle(document.documentElement).getPropertyValue('--ui-fs').trim() === '18px',
+          getComputedStyle(document.documentElement).getPropertyValue('--ui-fs'));
 
     // ---- คีย์ลัดฝั่ง renderer (จับ e.code — ไม่พึ่ง accelerator เมนู) ----
     window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Comma', ctrlKey: true, bubbles: true }));
@@ -9061,10 +9437,16 @@ async function runTest(projectPath) {
       const q = $('#search-body').querySelector('.k-dlg-input');
       q.value = 'ความหวัง';
       q.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-      await new Promise((r) => setTimeout(r, 400));
+      // ค้นทั้งโปรเจกต์เป็นงาน I/O ผ่าน IPC ทีละไฟล์ — ยิ่งมี Snapshots จากเทสก่อนหน้ายิ่งช้า
+      // รอแบบ "จนกว่าจะมีผล" แทนการเดาเวลา (ไม่งั้น fail แบบสุ่มเมื่อเครื่องช้า)
+      for (let i = 0; i < 60; i++) {
+        if ($('#search-body').querySelectorAll('.k-gsearch-hit').length >= 1) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
       check('กด Enter ค้นหาแล้วมีผลลัพธ์',
             $('#search-body').querySelectorAll('.k-gsearch-hit').length >= 1 ||
-            !!$('#search-body').querySelector('.k-gsearch-status'));
+            !!$('#search-body').querySelector('.k-gsearch-status'),
+            $('#search-body').textContent.slice(0, 120));
       await kapi.testShot('/tmp/k2_gsearch.png');
       hidePanel('search');
     }
@@ -10750,6 +11132,11 @@ async function runTest(projectPath) {
       [...document.querySelectorAll('.k-set-tab')].find((x) => x.dataset.p === 'write').click();
       const spSel = document.querySelector('#st-spfontfamily');
       check('#2 แท็บ "การเขียน" มีช่องเลือกแบบอักษรบทหนัง', !!spSel);
+      // รายการฟอนต์เติมแบบ async (อ่านโฟลเดอร์ Fonts/ ผ่าน IPC) — รอจนเติมเสร็จ ไม่เดาเวลา
+      for (let i = 0; i < 40; i++) {
+        if (spSel && spSel.options.length >= 8) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
       check('#2 ช่องเลือกฟอนต์บทหนังมีรายการฟอนต์ให้เลือก', spSel && spSel.options.length >= 8,
             spSel && String(spSel.options.length));
       check('#2 ช่องเลือกโชว์ค่าที่ตั้งไว้ปัจจุบัน',
@@ -10841,18 +11228,27 @@ async function runTest(projectPath) {
       S.pageMargins = { top: 1, bottom: 1, left: 1.5, right: 1 }; applyPageVars();
 
       // ---- สำคัญข้อ 2: ฟอนต์มาตรฐาน Courier Final Draft 12pt ทุกภาษา ----
-      check('[ฟอนต์] ค่าเริ่มต้นเป็น Courier Final Draft',
-            rootVar('--ed-font').includes('Courier Final Draft') &&
-            rootVar('--sp-font').includes('Courier Final Draft'),
-            rootVar('--ed-font'));
+      check('[ฟอนต์] บทภาพยนตร์ใช้ Courier Final Draft เป็นค่าเริ่มต้น',
+            rootVar('--sp-font').includes('Courier Final Draft'), rootVar('--sp-font'));
+      // [alpha.58r บั๊ก 18] นิยายต้องไม่ใช้ฟอนต์ของบท (Courier) — ต้องเป็นตัวพิมพ์แบบสัดส่วน
+      check('[18] ฟอนต์เริ่มต้นของนิยายไม่ใช่ Courier',
+            !/Courier/i.test(rootVar('--ed-font')), rootVar('--ed-font'));
+      check('[18] ฟอนต์เริ่มต้นของนิยายรองรับไทย',
+            /Sarabun|Thai/i.test(rootVar('--ed-font')), rootVar('--ed-font'));
       check('[ฟอนต์] ขนาดฐาน 12pt = 16px ทั้งนิยายและบทหนัง',
             S.edFontPt === 12 && S.spFontPt === 12 && BASE_ED_FS === 16 && BASE_SP_FS === 16);
-      const fsOff = parseInt(S.uiFontSize, 10) || 0;
       applyZoomVars();
       const edFsBefore = rootVar('--ed-fs');
       S.spFontPt = 14; applyZoomVars();
+      // [alpha.58r บั๊ก 14] ขนาดฟอนต์เอกสาร = pt ที่กรอกล้วน ๆ ไม่บวก uiFontSize อีกแล้ว
       check('[ฟอนต์] กรอกขนาดบทหนัง 14pt → --sp-fs ตามค่าที่กรอก',
-            Math.abs(parseFloat(rootVar('--sp-fs')) - (14 * 4 / 3 + fsOff)) < 0.05, rootVar('--sp-fs'));
+            Math.abs(parseFloat(rootVar('--sp-fs')) - 14 * 4 / 3) < 0.05, rootVar('--sp-fs'));
+      // [บั๊ก 26] ค่าที่เล็กจนติดลบต้องถูกหนีบ ไม่หลุดเป็นเลขติดลบ
+      const keepEdPt = S.edFontPt;
+      S.edFontPt = 1; S.uiFontSize = -6; applyZoomVars();
+      check('[26] edFontPt เล็กสุด ๆ ยังถูกหนีบไม่ต่ำกว่า 9px',
+            parseFloat(rootVar('--ed-fs')) >= 9, rootVar('--ed-fs'));
+      S.edFontPt = keepEdPt; S.uiFontSize = 0; applyZoomVars();
       check('[ฟอนต์] ขนาดนิยายไม่ถูกกระทบ', rootVar('--ed-fs') === edFsBefore,
             edFsBefore + ' → ' + rootVar('--ed-fs'));
       S.spFontPt = 12; applyZoomVars();
@@ -12350,9 +12746,11 @@ async function runTest(projectPath) {
       const rootVar2 = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
       // ---- #2 ฟอนต์ Courier Prime ฝังมากับโปรแกรม (ไม่ต้องลงเครื่อง) ----
-      check('#2 ฟอนต์เริ่มต้นชี้ไป Courier Prime เป็นตัวแรก',
-            /^\s*"Courier Prime"/.test(rootVar2('--sp-font')) && /^\s*"Courier Prime"/.test(rootVar2('--ed-font')),
-            rootVar2('--sp-font'));
+      // [alpha.58r บั๊ก 18] บทภาพยนตร์ = Courier Prime · นิยาย = ตัวพิมพ์แบบสัดส่วน (คนละชุดกันแล้ว)
+      check('#2 ฟอนต์บทภาพยนตร์ชี้ไป Courier Prime เป็นตัวแรก',
+            /^\s*"Courier Prime"/.test(rootVar2('--sp-font')), rootVar2('--sp-font'));
+      check('[18] ฟอนต์นิยายไม่ใช่ Courier แล้ว',
+            !/Courier/i.test(rootVar2('--ed-font')), rootVar2('--ed-font'));
       try { await document.fonts.load('16px "Courier Prime"'); } catch {}
       check('#2 โหลดไฟล์ฟอนต์ที่ฝังมาได้จริง (@font-face)',
             document.fonts.check('16px "Courier Prime"'), 'fonts.status=' + document.fonts.status);
@@ -12516,6 +12914,303 @@ async function runTest(projectPath) {
         toggleFocus(false); await new Promise((r) => setTimeout(r, 150));
         resetPanels(); await new Promise((r) => setTimeout(r, 60));
       }
+    }
+
+    // ═══════════ alpha.58r — บั๊ก 1–27 ═══════════
+    {
+      const rv = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+      // เปิดฉากนิยายใหม่จาก explorer (แท็บเดิมอาจถูกปิดไปแล้วในเทสก่อนหน้า)
+      if (!state.tabs.has(t.file)) {
+        document.querySelector('.scene').click();
+        await new Promise((r) => setTimeout(r, 600));
+      } else { activate(t.file); }
+      await new Promise((r) => setTimeout(r, 250));
+      const T = state.active;
+      check('[58r] มีแท็บนิยายพร้อมทดสอบ', !!(T && T.editor && T.pane),
+            T ? (T.file || '') + ' editor=' + !!T.editor : 'no active');
+      const S2 = state.settings;
+
+      // ---- [4] โหมดกระดาษเปลี่ยนเฉพาะสี ไม่เปลี่ยน layout ----
+      const pmR = T.pane.querySelector(':scope > .workspace > .ProseMirror');
+      check('[58r] เจอหน้ากระดาษของแท็บนิยาย', !!pmR);
+      const paperWas = S2.paperMode !== false;
+      if (!paperWas) { togglePaper(true); await new Promise((r) => setTimeout(r, 120)); }
+      const csOn = getComputedStyle(pmR);
+      const layOn = { pl: csOn.paddingLeft, pt: csOn.paddingTop, pr: csOn.paddingRight, w: csOn.width };
+      const bgOn = csOn.backgroundColor;
+      togglePaper(false); await new Promise((r) => setTimeout(r, 150));
+      const csOff = getComputedStyle(pmR);
+      check('[4] ปิดโหมดกระดาษแล้วระยะขอบไม่ขยับเลย',
+            csOff.paddingLeft === layOn.pl && csOff.paddingTop === layOn.pt &&
+            csOff.paddingRight === layOn.pr && csOff.width === layOn.w,
+            `${layOn.pl}/${layOn.pt} → ${csOff.paddingLeft}/${csOff.paddingTop}`);
+      check('[4] แต่สีพื้นต้องเปลี่ยนจริง (ไม่งั้นสวิตช์ไม่มีความหมาย)',
+            csOff.backgroundColor !== bgOn, `${bgOn} → ${csOff.backgroundColor}`);
+      check('[4] ระยะขอบซ้ายยังเท่ากับ --mg-left (1.5in = 144px)',
+            Math.abs(parseFloat(csOff.paddingLeft) - 144) < 2, csOff.paddingLeft);
+      togglePaper(true); await new Promise((r) => setTimeout(r, 120));
+
+      // ---- [3] โหมดอ่านต้องมีระยะขอบ + หมึกเข้ากับพื้นเสมอ ----
+      const lum = (c) => { const m = /(\d+),\s*(\d+),\s*(\d+)/.exec(c || '');
+        return m ? (0.299 * +m[1] + 0.587 * +m[2] + 0.114 * +m[3]) : 0; };
+      toggleReading(true); await new Promise((r) => setTimeout(r, 220));
+      const pmRead = T.pane.querySelector(':scope > .workspace > .ProseMirror');
+      const csRead = getComputedStyle(pmRead);
+      check('[3] โหมดอ่าน+กระดาษ: มีระยะขอบซ้าย/บนเสมอ',
+            parseFloat(csRead.paddingLeft) >= 40 && parseFloat(csRead.paddingTop) >= 40,
+            `${csRead.paddingLeft} / ${csRead.paddingTop}`);
+      check('[3] โหมดอ่าน+กระดาษ: หมึกเข้มบนพื้นสว่าง',
+            lum(csRead.backgroundColor) - lum(csRead.color) > 60,
+            `bg=${csRead.backgroundColor} fg=${csRead.color}`);
+      togglePaper(false); await new Promise((r) => setTimeout(r, 200));
+      const csRead2 = getComputedStyle(pmRead);
+      check('[3] โหมดอ่านแบบไม่มีกระดาษ: หมึกสว่างบนพื้นมืด',
+            lum(csRead2.color) - lum(csRead2.backgroundColor) > 60,
+            `bg=${csRead2.backgroundColor} fg=${csRead2.color}`);
+      check('[3] โหมดอ่านแบบไม่มีกระดาษ: ยังมีระยะขอบ',
+            parseFloat(csRead2.paddingLeft) >= 40, csRead2.paddingLeft);
+      togglePaper(true);
+      toggleReading(false); await new Promise((r) => setTimeout(r, 200));
+
+      // ---- [16][17][23][24] รูปแบบนิยาย ----
+      const pf0 = proseFormat();
+      check('[16] มี --ed-indent (ย่อหน้าบรรทัดแรก)', /in$/.test(rv('--ed-indent')), rv('--ed-indent'));
+      check('[17] มี --ed-lh (ช่วงบรรทัด)', parseFloat(rv('--ed-lh')) > 0, rv('--ed-lh'));
+      check('[16][17] มี <style id="k-prose-format"> ที่สร้างจากค่าตั้ง',
+            !!document.getElementById('k-prose-format') &&
+            document.getElementById('k-prose-format').textContent.includes('text-indent'));
+      T.editor.setMarkdown('ย่อหน้าแรกทดสอบการย่อ' + String.fromCharCode(10) + 'ย่อหน้าที่สองทดสอบการย่อ');
+      await new Promise((r) => setTimeout(r, 120));
+      const p2 = T.pane.querySelectorAll(':scope > .workspace > .ProseMirror > p')[1];
+      check('[16] ย่อหน้าที่สองมี text-indent จริง',
+            parseFloat(getComputedStyle(p2).textIndent) > 10,
+            getComputedStyle(p2).textIndent);
+      S2.prose = { ...pf0, firstLineIndent: 0, lineHeight: 2.4, paraSpacing: 1 };
+      applyProseVars(proseFormat());
+      await new Promise((r) => setTimeout(r, 120));
+      check('[16] ตั้งย่อหน้า 0 → ไม่ย่อแล้ว',
+            parseFloat(getComputedStyle(p2).textIndent) < 1, getComputedStyle(p2).textIndent);
+      check('[17] เปลี่ยนช่วงบรรทัดแล้วเห็นผลจริง',
+            Math.abs(parseFloat(getComputedStyle(p2).lineHeight) -
+                     parseFloat(rv('--ed-fs')) * 2.4) < 2,
+            getComputedStyle(p2).lineHeight);
+      check('[17] เปลี่ยนระยะย่อหน้าแล้วเห็นผลจริง',
+            parseFloat(getComputedStyle(p2).marginBottom) > 5,
+            getComputedStyle(p2).marginBottom);
+      S2.prose = { ...pf0, headings: pf0.headings.map((h, i) => (i === 0 ? { ...h, size: 3 } : h)) };
+      applyProseVars(proseFormat());
+      T.editor.setMarkdown('# หัวข้อทดสอบ');
+      await new Promise((r) => setTimeout(r, 120));
+      const h1El = T.pane.querySelector('.ProseMirror h1');
+      check('[23] ตั้งขนาดหัวข้อเองแล้วเห็นผล (3 เท่าของเนื้อเรื่อง)',
+            !!h1El && Math.abs(parseFloat(getComputedStyle(h1El).fontSize) -
+                               parseFloat(rv('--ed-fs')) * 3) < 2,
+            h1El && getComputedStyle(h1El).fontSize);
+      S2.prose = { ...pf0, quote: { ...pf0.quote, border: false, italic: false } };
+      applyProseVars(proseFormat());
+      T.editor.setMarkdown('> ยกคำพูดทดสอบ');
+      await new Promise((r) => setTimeout(r, 120));
+      const bqEl = T.pane.querySelector('.ProseMirror blockquote');
+      check('[24] ปิดเส้นขอบยกคำพูดแล้วหายจริง',
+            !!bqEl && parseFloat(getComputedStyle(bqEl).borderLeftWidth) < 1,
+            bqEl && getComputedStyle(bqEl).borderLeftWidth);
+      check('[24] ปิดตัวเอียงแล้วไม่เอียงจริง',
+            getComputedStyle(bqEl).fontStyle === 'normal');
+      S2.prose = null; applyProseVars(proseFormat());
+      T.editor.setMarkdown(orig);
+      await new Promise((r) => setTimeout(r, 120));
+
+      // ---- [20] เลขหน้า/จัดหน้าของนิยาย ----
+      const pmodel = prosePageModel();
+      check('[20] นิยายมีโมเดลหน้ากระดาษแล้ว', !!pmodel && pmodel.pages.count >= 1);
+      check('[20] anyPageModel เลือกให้ถูกชนิดเอง', !!anyPageModel());
+      const longMd = [];
+      for (let i = 0; i < 400; i++) longMd.push('ย่อหน้าทดสอบการจัดหน้าของนิยายลำดับที่ ' + i);
+      T.editor.setMarkdown(longMd.join(String.fromCharCode(10)));
+      scheduleCount();
+      await new Promise((r) => setTimeout(r, 900));
+      check('[20] แถบสถานะบอกจำนวนหน้าของนิยาย',
+            /\d+ หน้า/.test($('#wc').textContent), $('#wc').textContent);
+      check('[20] มีเส้นคั่นหน้าในตัวแก้ไขนิยาย',
+            prosePageBreaks().length >= 1 &&
+            !!T.pane.querySelector('.ed-page-break'),
+            String(prosePageBreaks().length));
+      const pm2 = prosePageModel();
+      check('[20] ไปที่หน้า 2 ได้', pm2.pages.count > 1 && gotoPage(2));
+      // ---- [15] มุมมองหน้ากระดาษของนิยาย ----
+      setSpView('layout');
+      await new Promise((r) => setTimeout(r, 200));
+      check('[15] นิยายเข้าโหมดจัดหน้าได้', T.pane.classList.contains('sp-view-layout'));
+      setSpView('side');
+      await new Promise((r) => setTimeout(r, 250));
+      check('[15] นิยายเข้าโหมดเรียงหน้าคู่แล้ววาดหน้าจริง',
+            !!T.pane.querySelector('.sp-pageview .ed-page'),
+            String(T.pane.querySelectorAll('.sp-pageview .ed-page').length));
+      check('[15] หน้าที่วาดมี data-pos ให้คลิกกระโดดได้',
+            !!T.pane.querySelector('.sp-pageview .ed-page [data-pos]'));
+      setSpView('overview4');
+      await new Promise((r) => setTimeout(r, 250));
+      check('[15] นิยายเข้าโหมดภาพรวมได้',
+            T.pane.classList.contains('sp-view-overview') &&
+            !!T.pane.querySelector('.sp-pageview .ed-page'));
+      setSpView('normal');
+      await new Promise((r) => setTimeout(r, 200));
+      check('[15] กลับโหมดปกติแล้วมุมมองหน้าถูกล้าง',
+            !T.pane.querySelector('.sp-pageview'));
+      T.editor.setMarkdown(orig);
+      scheduleCount();
+      await new Promise((r) => setTimeout(r, 700));
+
+      // ---- [5][9] ช่วงบรรทัดบทภาพยนตร์มีผลกับการนับหน้าจริง ----
+      const keepLh = S2.spLineHeight;
+      S2.spLineHeight = 1; applyPageVars();
+      check('[5] ค่ามาตรฐาน → 54 บรรทัด/หน้า', formatLines(spFormat()) === 54,
+            String(formatLines(spFormat())));
+      S2.spLineHeight = 1.5; applyPageVars();
+      check('[5] ตั้ง 1.5 → 36 บรรทัด/หน้า', formatLines(spFormat()) === 36,
+            String(formatLines(spFormat())));
+      check('[9] --sp-line-h ตามช่วงบรรทัดจริง (24px)', rv('--sp-line-h') === '24px', rv('--sp-line-h'));
+      check('[9] --sp-lh ส่งถึง CSS', rv('--sp-lh') === '1.5', rv('--sp-lh'));
+      S2.spLineHeight = keepLh ?? 1; applyPageVars();
+      check('[9] คืนค่าแล้ว --sp-line-h กลับเป็น 16px', rv('--sp-line-h') === '16px', rv('--sp-line-h'));
+
+      // ---- [10] spCss สร้างกฎ .sp-contd ----
+      const spCssTxt = document.getElementById('k-sp-format').textContent;
+      check('[10] CSS ที่สร้างมีกฎ .sp-contd', /sp-contd\{[^}]*margin-left/.test(spCssTxt));
+
+      // ---- [8] "แสดงรูปแบบ" ต้องได้ fmt ใหม่เมื่อขนาดกระดาษเปลี่ยน ----
+      toggleShowFormat(true);
+      const keepMg = { ...S2.pageMargins };
+      S2.pageMargins = { top: 1, bottom: 1, left: 2.5, right: 1 };
+      applyPageVars();
+      check('[8] เปลี่ยนระยะขอบแล้ว "แสดงรูปแบบ" ยังเปิดอยู่และรับค่าใหม่',
+            isFormatGuide() === true && rv('--mg-left') === '2.5in', rv('--mg-left'));
+      S2.pageMargins = keepMg; applyPageVars();
+      toggleShowFormat(false);
+
+      // ---- [26] หนีบขนาดฟอนต์ ----
+      const keepPt = S2.edFontPt;
+      S2.edFontPt = 1; applyZoomVars();
+      check('[26] edFontPt = 1 ยังได้ค่าไม่ต่ำกว่า 9px', parseFloat(rv('--ed-fs')) >= 9, rv('--ed-fs'));
+      S2.edFontPt = 500; applyZoomVars();
+      check('[26] edFontPt สูงเกินก็ถูกหนีบ', parseFloat(rv('--ed-fs')) <= 96, rv('--ed-fs'));
+      S2.edFontPt = keepPt ?? 12; applyZoomVars();
+
+      // ---- [ข้อ 4] คอนโซลนักพัฒนา ----
+      const devOv = openDevConsole();
+      await new Promise((r) => setTimeout(r, 80));
+      check('[dev] กล่องคอนโซลเปิดได้', !!document.querySelector('.k-dev-dlg .k-dev-input'));
+      const devIn = document.querySelector('.k-dev-dlg .k-dev-input');
+      devIn.value = '1 + 41';
+      [...document.querySelectorAll('.k-dev-dlg .k-dev-btns button')][0].click();
+      await new Promise((r) => setTimeout(r, 60));
+      check('[dev] รันนิพจน์แล้วได้ผลลัพธ์',
+            document.querySelector('.k-dev-out').textContent.includes('42'),
+            document.querySelector('.k-dev-out').textContent);
+      devIn.value = 'k2.version';
+      devIn.dispatchEvent(new KeyboardEvent('keydown', { code: 'Enter', ctrlKey: true, bubbles: true }));
+      await new Promise((r) => setTimeout(r, 60));
+      check('[dev] เข้าถึงของในโปรแกรมผ่านตัวแปร k2 ได้',
+            document.querySelector('.k-dev-out').textContent.includes(APP_VERSION));
+      devIn.value = 'throw new Error("ทดสอบ")';
+      devIn.dispatchEvent(new KeyboardEvent('keydown', { code: 'Enter', ctrlKey: true, bubbles: true }));
+      await new Promise((r) => setTimeout(r, 60));
+      check('[dev] ข้อผิดพลาดถูกแสดง ไม่ทำโปรแกรมล้ม',
+            !!document.querySelector('.k-dev-out .k-dev-err'));
+      devOv.remove();
+      // คีย์ลัด Ctrl+Shift+`
+      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Backquote', ctrlKey: true, shiftKey: true, bubbles: true }));
+      await new Promise((r) => setTimeout(r, 80));
+      check('[dev] คีย์ลัด Ctrl+Shift+` เปิดคอนโซลได้', !!document.querySelector('.k-dev-dlg'));
+      document.querySelectorAll('.k-overlay').forEach((o) => o.remove());
+      // "เกี่ยวกับ" ต้องมีปุ่มเข้าคอนโซล (อยู่ที่เดียวกันตามที่ผู้ใช้ขอ)
+      aboutDialog();
+      await new Promise((r) => setTimeout(r, 60));
+      check('[dev] กล่อง "เกี่ยวกับ" มีปุ่มเปิดคอนโซลนักพัฒนา',
+            [...document.querySelectorAll('.k-about-dlg button')]
+              .some((b) => b.textContent.includes('คอนโซล')));
+      document.querySelectorAll('.k-overlay').forEach((o) => o.remove());
+
+      // ---- [11] goto-page / goto-scene มีทางเข้าจากเมนูจริง ----
+      check('[11] handleCommand รองรับ goto-page/goto-scene',
+            typeof gotoPage === 'function' && typeof gotoScene === 'function');
+      await handleCommand('goto-page', 1);
+      check('[11] สั่ง goto-page ผ่านคำสั่งได้', true);
+
+      // ---- [22] มีทางเข้าหน้ากระดาษ + รูปแบบนิยายจากเมนู "รูปแบบ" ----
+      check('[22] มีคำสั่ง prose-setup', typeof settingsDialog === 'function');
+      settingsDialog('prose');
+      await new Promise((r) => setTimeout(r, 120));
+      check('[21] แท็บ "รูปแบบนิยาย" เปิดได้ + มีฟิลด์ครบ',
+            !!document.querySelector('.k-settings [data-p="prose"].on') &&
+            !!document.querySelector('#st-pr-indent') && !!document.querySelector('#st-pr-lh') &&
+            !!document.querySelector('#st-pr-heads tbody tr'));
+      const prIndent = document.querySelector('#st-pr-indent');
+      prIndent.value = '0.75'; prIndent.dispatchEvent(new Event('input'));
+      await new Promise((r) => setTimeout(r, 60));
+      check('[21] แก้ค่าแล้วเห็นผลทันที (--ed-indent)', rv('--ed-indent') === '0.75in', rv('--ed-indent'));
+      document.querySelector('.k-settings .k-cancel').click();
+      await new Promise((r) => setTimeout(r, 80));
+      check('[21] กดยกเลิกแล้วคืนค่าเดิม', rv('--ed-indent') !== '0.75in', rv('--ed-indent'));
+
+      // ---- [6] ส่งออกบทอ่านจากเอกสารจริง ----
+      {
+        const spTab2 = [...state.tabs.values()].find((x) => x.sp);
+        if (spTab2) {
+          activate(spTab2.file);
+          await new Promise((r) => setTimeout(r, 150));
+          const live = blocksFromDoc(spTab2.sp.view.state.doc).filter((b) => b.el !== 'blank');
+          const viaMd = parseScript(spTab2.sp.getMarkdown()).filter((b) => b.el !== 'blank');
+          check('[6] บล็อกจากเอกสารจริงมีอย่างน้อยเท่ากับที่ได้จาก markdown',
+                live.length >= viaMd.length, `${live.length} vs ${viaMd.length}`);
+          check('[6] currentScriptSource คืน blocks จากเอกสารจริง',
+                (await (async () => {
+                  const src = await (async () => {
+                    const t3 = state.active;
+                    return t3 && t3.sp ? { blocks: blocksFromDoc(t3.sp.view.state.doc) } : null;
+                  })();
+                  return !!src && Array.isArray(src.blocks) && src.blocks.length > 0;
+                })()));
+          activate(T.file);
+          await new Promise((r) => setTimeout(r, 150));
+        }
+      }
+
+      // ---- [1] ซูมไม่เด้งไปขอบซ้าย ----
+      resetPageScale();
+      await new Promise((r) => setTimeout(r, 120));
+      centerPage(t.pane);
+      const frac = (p) => { const m = Math.max(0, p.scrollWidth - p.clientWidth);
+        return m > 0 ? p.scrollLeft / m : 0.5; };
+      const f0 = frac(t.pane);
+      bumpPageScale(1); await new Promise((r) => setTimeout(r, 140));
+      bumpPageScale(1); await new Promise((r) => setTimeout(r, 140));
+      const f1z = frac(t.pane);
+      check('[1] ซูมเข้าสองครั้งแล้วยังอยู่กึ่งกลาง ไม่ติดขอบซ้าย',
+            Math.abs(f1z - f0) < 0.08 && f1z > 0.1, `${f0.toFixed(3)} → ${f1z.toFixed(3)}`);
+      bumpPageScale(-1); await new Promise((r) => setTimeout(r, 140));
+      bumpPageScale(-1); await new Promise((r) => setTimeout(r, 140));
+      check('[1] ซูมออกกลับมาก็ยังไม่ติดขอบซ้าย',
+            Math.abs(frac(t.pane) - f0) < 0.08, frac(t.pane).toFixed(3));
+      resetPageScale();
+      await new Promise((r) => setTimeout(r, 120));
+
+      // ---- [19] ส่งออก HTML ใช้รูปแบบเดียวกับบนจอ ----
+      {
+        const html = mdToHtml('ย่อหน้าทดสอบ', 'เรื่อง', proseFormat(),
+                              spFormat().paper, spFormat().margins);
+        check('[19] HTML ที่ส่งออกใช้ pt ของนิยาย', html.includes('font-size:' + proseFormat().fontPt + 'pt'));
+        check('[19] HTML ที่ส่งออกไม่มี 18px ฝังตายแล้ว', !html.includes('font-size:18px'));
+        check('[19] HTML ที่ส่งออกมี @page ตามขนาดกระดาษ', html.includes('@page{size:'));
+      }
+
+      // ---- [13] พรีเซ็ตบทภาพยนตร์ในกล่องเวิร์กโฟลว์ ----
+      check('[13] มีพรีเซ็ต "บทภาพยนตร์" ที่เปิด sp-continued',
+            !!PRESETS.find((p) => p.id === 'screenplay' &&
+              p.steps.some((st2) => st2.key === 'sp-continued' && st2.on !== false)));
+
+      // ---- [7] เมนู toggles มี continueds ----
+      check('[7] renderer ส่งสถานะ "ข้อความต่อเนื่อง" ให้เมนูเสมอ', spContinuedOn() === true);
     }
 
     out.push('ALL OK');

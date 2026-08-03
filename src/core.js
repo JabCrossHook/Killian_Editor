@@ -94,6 +94,12 @@ export const DEFAULT_SETTINGS = {
   spPageGap: 28,                   // [58] ความสูงช่องว่างระหว่างหน้าในโหมดจัดหน้า (px)
   smartLearnMin: 2,                // [บั๊ก 1] SmartType จำคำจากบทเมื่อเจอซ้ำกี่บล็อก (1–5)
   heavyDocBlocks: 400,             // [บั๊ก 4] เกินกี่บล็อกถือว่า "เอกสารหนัก" แล้วหน่วงงานหนักให้ห่างขึ้น
+  // ---- alpha.58r ----
+  // [16–24] รูปแบบนิยายทั้งชุด (ฟอนต์/ช่วงบรรทัด/ย่อหน้า/หัวข้อ/ยกคำพูด/เลขหน้า)
+  // null = ใช้ค่ามาตรฐานของ prose-format.js ทั้งหมด (ดู PROSE_DEFAULTS)
+  prose: null,
+  // [25] เก็บ "จัดหน้า" ของย่อหน้าไว้ที่ไหน — 'frontmatter' = .md สะอาด · 'comment' = แบบเดิม (v1)
+  mdAlignStyle: 'frontmatter',
 };
 export const DEFAULT_GOALS = { dailyWords: 500, projectWords: 50000 };
 // ตารางควบคุม Tab/Enter/Shift+Tab ในบทหนัง — ผู้ใช้ปรับได้ในตั้งค่า
@@ -183,7 +189,8 @@ export { REL_TYPES, REL_COLOR, REL_ICON, REL_LABEL, categorizeRole, categorizeWi
 // รูปแบบบทภาพยนตร์ระดับใช้งานจริง (ข้อ 81–85, 92, 97) — โมดูลบริสุทธิ์ ส่งต่อจาก sp-format.js
 export { PAPER_SIZES, MARGIN_DEFAULTS, SP_ELEMENT_CONFIG, SP_ELEMENT_STYLES, SP_ELEMENT_KEYS,
          PAGE_BREAK_RULES, SP_STRINGS, DEFAULT_SP_FORMAT, mergeSpFormat, pageCssVars, spCss,
-         linesPerPage, textWidth, wrapLines, paginate, pageCount, splitText,
+         linesPerPage, formatLines, lineHeightIn, clampLineHeight,
+         textWidth, wrapLines, paginate, pageCount, splitText, annotateContinued,
          newRoster, normalizeRoster, rosterToText, ROSTER_VERSION,
          SCENE_NUMBER_DEFAULTS, PAGE_NUMBER_DEFAULTS, sceneNumberOffsets, pageNumberLabel } from './sp-format.js';
 // ฟอนต์ตามภาษา (alpha.57a ข้อ 5) — โมดูลบริสุทธิ์ ส่งต่อจาก lang-fonts.js
@@ -236,7 +243,7 @@ const BUILTIN_EN = {
     },
     "errors": { "noProject": "No project open", "noFile": "File not found", "saveFailed": "Save failed", "loadFailed": "Load failed", "aiNoKey": "Please set AI API key", "aiFailed": "AI request failed", "openProjectFirst": "Open a project first", "notKillianProject": "This folder is not a Killian project", "needScene": "Open a scene first", "moveCrossDraft": "Moving across drafts not supported", "requiresCtrl": "Ctrl/⌘ required", "pressShortcut": "Press shortcut..." },
     "status": { "ready": "Ready", "saving": "Saving...", "saved": "Saved", "loading": "Loading...", "searching": "Searching...", "settingsSaved": "Settings saved", "zoom": "Zoom", "zoomReset": "Zoom reset to 100%", "uiScale": "UI size", "copied": "Markdown copied", "movedScene": "Moved scene to", "typewriterOn": "Typewriter: ON", "typewriterOff": "Typewriter: OFF", "focusOn": "Focus mode: ON", "focusOff": "Focus mode: OFF", "paperOn": "Paper mode: ON", "paperOff": "Paper mode: OFF", "dirtyClose": "tabs with unsaved changes", "saveAllAndClose": "Save all and close", "closeWithoutSaving": "Close without saving" },
-    "shortcuts": { "save": "Save", "saveAll": "Save All", "saveAs": "Save As...", "newProject": "New Project", "openProject": "Open Project", "print": "Print", "closeTab": "Close Tab", "find": "Find", "settings": "Settings", "undo": "Undo", "redo": "Redo", "bold": "Bold", "italic": "Italic", "underline": "Underline", "strikethrough": "Strikethrough", "heading1": "Heading 1", "heading2": "Heading 2", "heading3": "Heading 3", "bodyText": "Body Text", "bulletList": "Bullet List", "numberedList": "Numbered List", "clearFormatting": "Clear Formatting", "alignLeft": "Align Left", "alignCenter": "Align Center", "alignRight": "Align Right", "justify": "Justify", "toggleFormat": "Toggle Mode", "paperMode": "Paper Mode", "globalSearch": "Search Project", "focusMode": "Focus Mode", "quickOpen": "Quick Open", "typewriter": "Typewriter Mode", "compile": "Compile", "splitView": "Split View", "kanban": "Kanban Board", "exportBlog": "Export as Blog HTML", "gallery": "Gallery", "spScene": "SP: Scene", "spAction": "SP: Action", "spCharacter": "SP: Character", "spParenthetical": "SP: Parenthetical", "spDialogue": "SP: Dialogue", "spTransition": "SP: Transition", "spShot": "SP: Shot", "spActBreak": "SP: Act Break", "spNote": "SP: Note", "selectScene": "Select Scene", "nbsp": "Non-Breaking Space", "goto": "Go to Page/Scene", "findError": "Find Next Error" }
+    "shortcuts": { "save": "Save", "saveAll": "Save All", "saveAs": "Save As...", "newProject": "New Project", "openProject": "Open Project", "print": "Print", "closeTab": "Close Tab", "find": "Find", "settings": "Settings", "undo": "Undo", "redo": "Redo", "bold": "Bold", "italic": "Italic", "underline": "Underline", "strikethrough": "Strikethrough", "heading1": "Heading 1", "heading2": "Heading 2", "heading3": "Heading 3", "bodyText": "Body Text", "bulletList": "Bullet List", "numberedList": "Numbered List", "clearFormatting": "Clear Formatting", "alignLeft": "Align Left", "alignCenter": "Align Center", "alignRight": "Align Right", "justify": "Justify", "toggleFormat": "Toggle Mode", "paperMode": "Paper Mode", "globalSearch": "Search Project", "focusMode": "Focus Mode", "quickOpen": "Quick Open", "typewriter": "Typewriter Mode", "compile": "Compile", "splitView": "Split View", "kanban": "Kanban Board", "exportBlog": "Export as Blog HTML", "gallery": "Gallery", "spScene": "SP: Scene", "spAction": "SP: Action", "spCharacter": "SP: Character", "spParenthetical": "SP: Parenthetical", "spDialogue": "SP: Dialogue", "spTransition": "SP: Transition", "spShot": "SP: Shot", "spActBreak": "SP: Act Break", "spNote": "SP: Note", "selectScene": "Select Scene", "nbsp": "Non-Breaking Space", "goto": "Go to Page/Scene", "findError": "Find Next Error", "devConsole": "Developer Console" }
   }
 };
 
@@ -383,6 +390,8 @@ export const SHORTCUTS = [
   // [78] ไปที่หน้า/ฉาก · [54] ตรวจหาข้อผิดพลาดถัดไป (alpha.57)
   ['KeyG', true, false, 'goto'],
   ['KeyU', true, true, 'sp-find-error'],
+  // [alpha.58r ข้อ 4] คอนโซลนักพัฒนา — Ctrl+Shift+` (ไม่ชนกับ DevTools ของ Chromium)
+  ['Backquote', true, true, 'dev-console'],
 ];
 
 export const shortcutId = (s) => s.slice(3).join(':');
@@ -409,6 +418,7 @@ export const SHORTCUT_LABELS = {
   'sp-element:act-break': 'shortcuts.spActBreak', 'sp-element:note': 'shortcuts.spNote',
   'select-scene': 'shortcuts.selectScene', 'nbsp': 'shortcuts.nbsp',
   'goto': 'shortcuts.goto', 'sp-find-error': 'shortcuts.findError',
+  'dev-console': 'shortcuts.devConsole',
 };
 
 const isMac = (() => { try { return navigator.platform.toLowerCase().includes('mac'); } catch { return false; } })();

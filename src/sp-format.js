@@ -24,12 +24,31 @@ export const CHARS_PER_INCH = 10;
 export const LINES_PER_INCH = 6;
 export const LINE_HEIGHT_IN = 1 / LINES_PER_INCH;
 
+/** ช่วงบรรทัดที่ใช้ได้จริง (0.8–2.5 · 1 = มาตรฐาน 6 บรรทัด/นิ้ว) */
+export function clampLineHeight(v) {
+  const n = parseFloat(v);
+  return Number.isFinite(n) && n >= 0.8 && n <= 2.5 ? n : 1;
+}
+/** ความสูงบรรทัดจริงเป็น "นิ้ว" ของรูปแบบหนึ่ง (นับ spLineHeight ที่ผู้ใช้ปรับด้วย) */
+export function lineHeightIn(fmt) {
+  const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+  return LINE_HEIGHT_IN * clampLineHeight(f.lineHeight);
+}
 /** จำนวนบรรทัดที่พิมพ์ได้ต่อหน้า (หลังหักระยะขอบบน/ล่าง) */
-export function linesPerPage(paper, margins, lineHeightIn = LINE_HEIGHT_IN) {
+export function linesPerPage(paper, margins, lh = LINE_HEIGHT_IN) {
   const p = paper || PAPER_SIZES.letter;
   const m = { ...MARGIN_DEFAULTS, ...(margins || {}) };
   const usable = (num(p.height, 11)) - num(m.top, 1) - num(m.bottom, 1);
-  return Math.max(1, Math.floor(usable / (lineHeightIn || LINE_HEIGHT_IN)));
+  return Math.max(1, Math.floor(usable / (lh || LINE_HEIGHT_IN)));
+}
+/**
+ * [alpha.58r บั๊ก 5] บรรทัดต่อหน้า "ของรูปแบบนี้" — จุดเดียวที่ทุกที่ควรเรียก
+ * เดิม paginate/pageMetrics เรียก linesPerPage(paper,margins) ตรง ๆ จึงได้ 54 เสมอ
+ * แม้ผู้ใช้ตั้ง spLineHeight = 1.2 (เส้นคั่นหน้า/CONTINUED เพี้ยนทั้งหมด)
+ */
+export function formatLines(fmt) {
+  const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+  return linesPerPage(f.paper, f.margins, lineHeightIn(f));
 }
 /** ความกว้างพื้นที่พิมพ์ (นิ้ว) */
 export function textWidth(paper, margins) {
@@ -165,6 +184,8 @@ export const DEFAULT_SP_FORMAT = {
   sceneNumbers: SCENE_NUMBER_DEFAULTS,
   pageNumbers: PAGE_NUMBER_DEFAULTS,
   continued: CONTINUED_DEFAULTS,
+  // [alpha.58r บั๊ก 5+9] ช่วงบรรทัดที่ผู้ใช้ปรับได้ — ต้องอยู่ใน fmt เพื่อให้ paginate/pageMetrics เห็น
+  lineHeight: 1,
 };
 
 export const SP_ELEMENT_KEYS = Object.keys(SP_ELEMENT_CONFIG);
@@ -195,6 +216,7 @@ export function mergeSpFormat(user) {
     sceneNumbers: { ...SCENE_NUMBER_DEFAULTS, ...(u.sceneNumbers || {}) },
     pageNumbers: { ...PAGE_NUMBER_DEFAULTS, ...(u.pageNumbers || {}) },
     continued: { ...CONTINUED_DEFAULTS, ...(u.continued || {}) },
+    lineHeight: clampLineHeight(u.lineHeight),
   };
 }
 
@@ -256,6 +278,11 @@ export function spCss(fmt) {
            'margin-top:0;margin-bottom:0;text-transform:none}');
   out.push(`.sp-continued-top,.sp-cont-top{margin-left:0;width:${+tw.toFixed(4)}in;text-align:left}`);
   out.push(`.sp-continued-bottom,.sp-cont-bottom{margin-left:0;width:${+tw.toFixed(4)}in;text-align:right}`);
+  // [alpha.58r บั๊ก 10] ชื่อตัวละคร + (cont'd) ต้นหน้า — วางแนวเดียวกับ element `character` จริง
+  // เดิมไม่มีกฎตรงนี้เลย จึงตกไปใช้ค่าคงที่ใน style.css แล้วไม่ขยับตามที่ผู้ใช้ตั้งระยะเยื้อง
+  const contdML = Math.max(0, +(num(f.elements.character?.indent, 3.7) - left).toFixed(4));
+  out.push(`.sp.sp-contd,.sp-cont-mark.sp-contd{margin-left:${contdML}in;width:auto;max-width:none;` +
+           'margin-top:0;margin-bottom:0}');
   // ขนาดกระดาษ + ระยะขอบตอนพิมพ์ (@page ใช้ CSS variable ไม่ได้ จึงต้องสร้างเป็นข้อความ)
   // orphans/widows = กฎ widow/orphan ระดับบรรทัดของเบราว์เซอร์ (ข้อ 84)
   const m = f.margins;
@@ -300,7 +327,8 @@ export function wrapLines(text, widthIn, cpi = CHARS_PER_INCH) {
  */
 export function paginate(blocks, opts = {}) {
   const fmt = opts.fmt && opts.fmt.elements ? opts.fmt : mergeSpFormat(opts.fmt);
-  const perPage = Math.max(4, opts.lines || linesPerPage(fmt.paper, fmt.margins));
+  // [alpha.58r บั๊ก 5] บรรทัดต่อหน้าคิดจาก "ช่วงบรรทัดที่ผู้ใช้ตั้ง" ด้วย ไม่ใช่ 1/6 นิ้วตายตัว
+  const perPage = Math.max(4, opts.lines || formatLines(fmt));
   const R = fmt.rules, S = fmt.strings;
   const cfg = (el) => fmt.elements[el] || fmt.elements.action;
 

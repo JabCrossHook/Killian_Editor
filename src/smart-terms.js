@@ -84,8 +84,11 @@ export function learnedTerms(counts, opts = {}) {
   for (const [word, n] of counts || []) {
     const key = lower(word);
     if (ignored.has(key)) continue;
+    // [alpha.58r บั๊ก 12] "ผู้ใช้กดจำเอง" ต้องชนะตัวกรองระดับตัวอักษร
+    // เดิม looksLikeTerm อยู่ก่อน → คำที่ตกด่านแรก (เช่นชื่อเฉพาะแปลก ๆ) pin กลับมาไม่ได้เลย
+    if (pinned.has(key)) { out.push([word, n]); continue; }
     if (!looksLikeTerm(word)) continue;
-    if (n >= min || pinned.has(key) || known.has(key)) out.push([word, n]);
+    if (n >= min || known.has(key)) out.push([word, n]);
   }
   out.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'th'));
   return out.map(([w]) => w);

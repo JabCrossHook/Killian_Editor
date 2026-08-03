@@ -34,6 +34,9 @@ const toggles = {
   spView: 'normal', showFormat: false, checkBeforeExport: true,
   // alpha.57a — เลขฉาก/เลขหน้า/เสียงพิมพ์
   sceneNumbers: false, pageNumbers: false, typeSound: false,
+  // [alpha.58r บั๊ก 7] ค่าเริ่มต้นของ "ข้อความต่อเนื่อง" คือ "เปิด" (CONTINUED_DEFAULTS.enabled = true)
+  // เดิมไม่มีคีย์นี้เลย → เมนูขึ้นเป็นไม่ติ๊กชั่วขณะจนกว่า renderer จะส่ง syncMenuToggles ครั้งแรก
+  continueds: true,
   panels: { 'tree-panel': true, 'props-panel': true, 'outline-panel': true },
 };
 // ตัวช่วยสร้างรายการสวิตช์ — ผู้ใช้เห็นชัดว่ากดแล้วเปิด/ปิด ไม่ใช่คำสั่งครั้งเดียว
@@ -135,10 +138,33 @@ function buildMenu() {
         // alpha.58 (บั๊ก 3) — กระดาษ 8.5 นิ้วจริงกว้างกว่าพื้นที่ทำงาน โปรแกรมบทอื่นเปิดมาที่ fit width
         { label: 'พอดีความกว้างหน้ากระดาษ', click: () => send('zoom', 'fit') },
       ] },
+      // [alpha.58r บั๊ก 15] มุมมองหน้ากระดาษใช้ได้กับนิยายด้วย — เดิมอยู่แต่ในเมนู "บท"
+      { label: 'มุมมองหน้ากระดาษ', submenu: [
+        { label: 'ปกติ (หน้ากระดาษ)', type: 'radio', checked: toggles.spView === 'normal',
+          click: () => send('sp-view', 'normal') },
+        { label: 'จัดหน้า — เห็นหน้าจริง (Layout)', type: 'radio', checked: toggles.spView === 'layout',
+          click: () => send('sp-view', 'layout') },
+        { label: 'ร่าง — ข้อความล้วน (Draft)', type: 'radio', checked: toggles.spView === 'draft',
+          click: () => send('sp-view', 'draft') },
+        { label: 'เรียงหน้าคู่ (Side-by-Side)', type: 'radio', checked: toggles.spView === 'side',
+          click: () => send('sp-view', 'side') },
+        { label: 'ภาพรวม 1px/ตัวอักษร', type: 'radio', checked: toggles.spView === 'overview1',
+          click: () => send('sp-view', 'overview1') },
+        { label: 'ภาพรวม 4px/ตัวอักษร', type: 'radio', checked: toggles.spView === 'overview4',
+          click: () => send('sp-view', 'overview4') },
+      ] },
       chk(`โหมดหน้ากระดาษ (${C}+${S}+P)`, toggles.paperMode, () => send('paper-mode')),
       chk('แสดงเลขบรรทัด', toggles.lineNumbers, () => send('line-numbers')),
       { type: 'separator' },
+      // [alpha.58r บั๊ก 16–24] รูปแบบของนิยาย (ย่อหน้า/ช่วงบรรทัด/หัวข้อ/ยกคำพูด/ฟอนต์)
+      { label: '📖 รูปแบบนิยาย (ย่อหน้า · ช่วงบรรทัด · หัวข้อ)…', click: () => send('prose-setup') },
+      // [alpha.58r บั๊ก 22] คนเขียนนิยายเห็นแต่เมนู "รูปแบบ" — ปุ่มหน้ากระดาษต้องอยู่ตรงนี้ด้วย
+      { label: '📐 หน้ากระดาษ · ระยะขอบ…', click: () => send('page-setup') },
+      { label: `📄 ไปที่หน้า/บท… (${C}+G)`, click: () => send('goto') },
+      { type: 'separator' },
       { label: 'แทรกรูป…', click: () => send('insert-image') },
+      { label: 'แทรกเส้นคั่น (---)', click: () => send('fmt', 'hr') },
+      { label: 'บล็อกโค้ด', click: () => send('fmt', 'code') },
     ] },
     // ---- alpha.57: เมนูเฉพาะงานบทภาพยนตร์ ----
     { id: 'Script', label: 'บท', submenu: [
@@ -173,8 +199,11 @@ function buildMenu() {
       { label: 'ส่วนเสริมท้ายชื่อตัวละคร (V.O. · O.S. · cont\'d)…', click: () => send('sp-extension') },
       { label: '🧠 จัดการ SmartType (ลบคำที่จำผิด)…', click: () => send('smart-manage') },
       { type: 'separator' },
+      // [alpha.58r บั๊ก 11] goto-page / goto-scene เคยมีแต่ case ใน handleCommand ไม่มีทางกด
       { label: `ไปที่หน้า/ฉาก… (${C}+G)`, click: () => send('goto') },
+      { label: 'ไปที่หน้า…', click: () => send('goto', 'page') },
       { label: 'ไปที่ฉาก…', click: () => send('goto', 'scene') },
+      { label: '⏮ ไปหน้าแรก', click: () => send('goto-page', 1) },
       { type: 'separator' },
       { label: `ตรวจหาข้อผิดพลาดถัดไป (${C}+${S}+U)`, click: () => send('sp-find-error') },
       { label: 'ตรวจทั้งบท (รายการข้อผิดพลาด)…', click: () => send('sp-check-all') },
@@ -253,6 +282,13 @@ function buildMenu() {
     { id: 'Help', label: 'ช่วยเหลือ', submenu: [
       { label: 'บันทึกการเปลี่ยนแปลง (Changelog)', click: () => send('changelog') },
       { label: 'บันทึกการทำงานของโปรแกรม (Log)…', click: () => send('show-log') },
+      { type: 'separator' },
+      // [alpha.58r ข้อ 4] คอนโซลนักพัฒนา — อยู่ที่เดียวกับ "เกี่ยวกับ" + มีคีย์ลัด
+      { label: `🛠 คอนโซลนักพัฒนา… (${C}+${S}+\`)`, click: () => send('dev-console') },
+      { label: 'เปิด DevTools ของ Chromium', click: () => {
+        try { win && win.webContents.toggleDevTools(); } catch {}
+      } },
+      { type: 'separator' },
       { label: 'เกี่ยวกับ Killian 2', click: () => send('about') },
     ] },
     { id: 'AI', label: 'AI', submenu: [

@@ -34,7 +34,7 @@ html,body { height:100%; margin:0; }
 :root { --ui-scale:1; }
 body { display:flex; flex-direction:column; background:var(--bg); color:var(--fg);
   font-family:"Segoe UI", "Leelawadee UI", "Noto Sans Thai", system-ui, sans-serif;
-  font-size:calc(14px * var(--ui-scale, 1)); line-height:1.5; }
+  font-size:calc(var(--ui-fs, 14px) * var(--ui-scale, 1)); line-height:1.5; }
 button, select { font:inherit; color:var(--fg); background:var(--bar);
   border:1px solid transparent; border-radius:6px; padding:4px 10px; cursor:pointer; }
 button:hover { background:#3a3936; }
@@ -226,12 +226,29 @@ body.k-panel-dragging, body.k-resizing { user-select:none; }
 .pane > .workspace { zoom:var(--page-scale, 1); display:flow-root; width:max-content; min-width:100%; }
 .ProseMirror { outline:none; width:var(--page-w); max-width:none; margin:24px auto 40vh;
   padding:0 var(--mg-right) 0 var(--mg-left);
-  font-size:var(--ed-fs, 16px); line-height:1.75; caret-color:var(--accent-hi); }
-.ProseMirror p { margin:0 0 .35em; }
+  font-size:var(--ed-fs, 16px); line-height:var(--ed-lh, 1.75); caret-color:var(--accent-hi); }
+/* [alpha.58r บั๊ก 4] ระยะขอบกระดาษเป็นของ "หน้ากระดาษ" ไม่ใช่ของ "โหมดกระดาษ"
+   เดิม padding บน/ล่างอยู่ในกฎ body.paper-mode เท่านั้น → ปิดโหมดกระดาษแล้ว layout ขยับทั้งหน้า
+   ทั้งที่โหมดกระดาษควรเปลี่ยนแค่ "สี/เงา/เส้นขอบ" · ตอนนี้ทั้งสองโหมดใช้ --mg-* ชุดเดียวกัน */
+.pane:not(.wiki-pane) > .workspace > .ProseMirror {
+  padding:var(--mg-top) var(--mg-right) calc(var(--mg-bottom) + 32vh) var(--mg-left);
+  margin:28px auto 40vh; }
+/* [alpha.58r บั๊ก 16+17] ย่อหน้า/ช่วงบรรทัดของนิยาย มาจาก prose-format.js (ตัวแปร --ed-*) */
+.ProseMirror p { margin:0 0 var(--ed-para, .35em); text-indent:var(--ed-indent, 0); }
 .ProseMirror h1,.ProseMirror h2,.ProseMirror h3,.ProseMirror h4,
-.ProseMirror h5,.ProseMirror h6 { color:var(--link); margin:1em 0 .4em; line-height:1.3; }
+.ProseMirror h5,.ProseMirror h6 { color:var(--link); margin:1em 0 .4em; line-height:1.3;
+  text-indent:0; }
 .ProseMirror blockquote { margin:.6em 0; padding:2px 0 2px 16px;
   border-left:3px solid var(--accent); color:var(--orange); font-style:italic; }
+.ProseMirror blockquote p { text-indent:0; }
+/* [alpha.58r บั๊ก 27] เส้นคั่น + บล็อกโค้ด */
+.ProseMirror hr { border:0; border-top:2px solid var(--border); margin:1.2em 0; height:0; }
+.ProseMirror hr.ProseMirror-selectednode { border-top-color:var(--accent-hi); }
+.ProseMirror pre { background:#1f1e1c; border:1px solid var(--border); border-radius:6px;
+  padding:10px 14px; overflow-x:auto; text-indent:0; margin:.6em 0;
+  font-family:"Courier Prime","Courier New",monospace; font-size:.92em; line-height:1.5;
+  white-space:pre-wrap; }
+.ProseMirror pre code { font-family:inherit; }
 .ProseMirror ul,.ProseMirror ol { padding-left:28px; margin:.3em 0; }
 .ProseMirror figure { margin:1em 0; text-align:center; }
 .ProseMirror figure img { max-width:100%; max-height:480px; border-radius:8px; }
@@ -239,14 +256,20 @@ body.k-panel-dragging, body.k-resizing { user-select:none; }
 .ProseMirror figure.ProseMirror-selectednode img { outline:3px solid var(--accent-hi); }
 .ProseMirror u { text-underline-offset:3px; }
 
-/* เลขบรรทัด (นับตามย่อหน้า/บล็อกระดับบน) — เปิดด้วย body.k-ln · ใช้ CSS counter จึงไม่ต้องวัดพิกเซล */
-body.k-ln .ProseMirror { counter-reset:kln; padding-left:64px; }
+/* เลขบรรทัด (นับตามย่อหน้า/บล็อกระดับบน) — เปิดด้วย body.k-ln · ใช้ CSS counter จึงไม่ต้องวัดพิกเซล
+   [alpha.58r บั๊ก 2] "เปิดเลขบรรทัดแล้วข้อความต้องไม่ขยับ"
+   เดิมกฎนี้ตั้ง padding-left:64px ทับ --mg-left (1.5in=144px) → ระยะขอบซ้ายหด ข้อความ reflow ทั้งหน้า
+   ตอนนี้ไม่แตะ padding เลย — เลขไปวางใน "ระยะขอบซ้ายของกระดาษ" ที่ว่างอยู่แล้ว (absolute ไม่กินที่)
+   เฉพาะบริบทที่ระยะขอบซ้ายแคบจริง ๆ (โหมดร่าง/ฟิลด์วิกิ) จึงค่อยเว้นที่ให้ */
+body.k-ln .ProseMirror { counter-reset:kln; }
 body.k-ln .ProseMirror > * { position:relative; }
 body.k-ln .ProseMirror > *::before {
   counter-increment:kln; content:counter(kln);
   position:absolute; left:-52px; width:40px; text-align:right;
   top:0; font-size:12px; line-height:inherit; color:var(--dim); opacity:.55;
   font-variant-numeric:tabular-nums; user-select:none; pointer-events:none; }
+body.k-ln .pane.sp-view-draft > .workspace > .ProseMirror { padding-left:64px !important; }
+body.k-ln .wiki-sec-ed .ProseMirror { padding-left:64px; }
 .plain-md { width:100%; height:100%; background:var(--bg); color:var(--fg); border:0;
   resize:none; outline:none; padding:24px 48px; font:15px/1.8 Consolas, monospace; }
 
@@ -741,8 +764,9 @@ body.printing #tabs, body.printing #statusbar { visibility:hidden; }
 figure.sp-image { margin:1em auto; text-align:center; }
 figure.sp-image img { max-width:100%; max-height:420px; border-radius:8px; }
 figure.sp-image.ProseMirror-selectednode img { outline:3px solid var(--accent-hi); }
-/* เปิดเลขบรรทัดต้องคุม padding-left ได้แม้บนหน้ากระดาษบทหนัง (specificity สูงกว่า) */
-body.k-ln .pane.sp-pane .ProseMirror { padding-left:64px; }
+/* [alpha.58r บั๊ก 2] เดิมที่นี่บังคับ padding-left:64px บนหน้ากระดาษบทหนังด้วย
+   → เปิดเลขบรรทัดทีเดียว ระยะเยื้องของทุก element เพี้ยนทั้งบท (บทวัดจากขอบกระดาษ)
+   เลขบรรทัดวางใน "ระยะขอบซ้าย" แบบ absolute อยู่แล้ว จึงไม่ต้องเว้นที่เพิ่ม */
 
 /* ---------- alpha.57a ข้อ 2: เลขฉาก + เลขหน้า ---------- */
 /* เลขฉาก — ตำแหน่งซ้าย/ขวาเป็น "นิ้ว" มาจาก spCss() (.k-scene-no-l / .k-scene-no-r)
@@ -1117,10 +1141,8 @@ body.paper-mode .pane:not(.wiki-pane) > .workspace > .ProseMirror {
   box-shadow:0 4px 26px rgba(0,0,0,.45);
   caret-color:var(--paper-ink);
 }
-/* ระยะขอบกระดาษ = ค่าที่ตั้งใน "ตั้งค่า → หน้ากระดาษ" (นิยายและบทหนังใช้ชุดเดียวกัน) */
-body.paper-mode .pane:not(.wiki-pane) > .workspace > .ProseMirror {
-  padding:var(--mg-top) var(--mg-right) calc(var(--mg-bottom) + 32vh) var(--mg-left);
-  margin:28px auto 40vh; }
+/* [alpha.58r บั๊ก 4] ระยะขอบ/ระยะห่างย้ายไปเป็นกฎกลางของหน้ากระดาษแล้ว (ดูบล็อกตัวแก้ไขด้านบน)
+   โหมดกระดาษเปลี่ยนเฉพาะ "สี · เส้นขอบ · เงา · caret" — สลับโหมดแล้ว layout ต้องไม่ขยับแม้แต่พิกเซลเดียว */
 
 /* นิยาย: หัวข้อ/ยกคำพูด/ลิงก์ ให้อ่านชัดบนกระดาษนวล */
 body.paper-mode .pane:not(.wiki-pane) > .workspace > .ProseMirror h1,
@@ -1137,8 +1159,7 @@ body.paper-mode .pane:not(.wiki-pane) > .workspace > .ProseMirror ::selection,
 body.paper-mode .pane.sp-pane > .workspace > .ProseMirror ::selection { background:#c9dcf2; color:#000; }
 body.paper-mode.k-ln .pane:not(.wiki-pane) > .workspace > .ProseMirror > *::before,
 body.paper-mode.k-ln .pane.sp-pane > .workspace > .ProseMirror > *::before { color:#b0a992; }
-body.paper-mode.k-ln .pane:not(.sp-pane):not(.wiki-pane) > .workspace > .ProseMirror { padding-left:64px; }
-body.paper-mode.k-ln .pane.sp-pane > .workspace > .ProseMirror { padding-left:64px; }
+/* (เดิมมี padding-left:64px ตรงนี้ — เอาออกตามบั๊ก 2: เลขบรรทัดต้องไม่ดันข้อความ) */
 
 /* บทหนัง: ธาตุต่าง ๆ เป็นหมึกดำแบบสคริปต์จริง */
 body.paper-mode .sp { color:var(--paper-ink); }
@@ -1359,11 +1380,30 @@ body.reading-mode .k-tab-group .k-tab-bar { display:none !important; }
 body.reading-mode #statusbar { display:none !important; }
 body.reading-mode #topbar { display:none !important; }
 body.reading-mode #k-fab { display:none; }
+/* [alpha.58r บั๊ก 3] โหมดอ่าน — ต้องมีระยะขอบเสมอ และหมึกต้องเข้ากับพื้นเสมอ
+   ทุก property ที่นี่เป็น !important เพราะโหมดมุมมองบท (sp-view-layout / sp-view-draft)
+   ก็ใช้ !important เหมือนกัน — ถ้าไม่ใส่ กฎพวกนั้นจะชนะแล้วได้พื้นขาว/ดำปนกับหมึกผิดสี */
 body.reading-mode .pane.on > .workspace > .ProseMirror,
 body.reading-mode .pane.on .sp-wrap {
   max-width:960px !important; margin:40px auto 20vh !important;
-  padding:40px 60px !important; background:var(--bg); color:var(--fg); border:none;
-  box-shadow:none; }
+  /* ระยะขอบใช้ค่าเดียวกับหน้ากระดาษจริง แต่ไม่ต่ำกว่า 40px/56px เพื่อไม่ให้ตัวหนังสือชนขอบ */
+  padding:max(40px, var(--mg-top)) max(56px, var(--mg-right))
+          calc(max(40px, var(--mg-bottom)) + 20vh) max(56px, var(--mg-left)) !important;
+  background:var(--bg) !important; color:var(--fg) !important; border:none !important;
+  box-shadow:none !important; }
+/* ไม่มีกระดาษ = ทุกอย่างต้องเป็นสีของธีม (กฎ .sp-* / .sp-view-layout ตั้งหมึกเข้มไว้) */
+body.reading-mode:not(.paper-mode) .pane.on > .workspace > .ProseMirror,
+body.reading-mode:not(.paper-mode) .pane.on > .workspace > .ProseMirror p,
+body.reading-mode:not(.paper-mode) .pane.on > .workspace > .ProseMirror .sp,
+body.reading-mode:not(.paper-mode) .pane.on > .workspace > .ProseMirror .sp-scene,
+body.reading-mode:not(.paper-mode) .pane.on > .workspace > .ProseMirror .sp-character,
+body.reading-mode:not(.paper-mode) .pane.on > .workspace > .ProseMirror .sp-dialogue,
+body.reading-mode:not(.paper-mode) .pane.on > .workspace > .ProseMirror .sp-transition,
+body.reading-mode:not(.paper-mode) .pane.on > .workspace > .ProseMirror .sp-subheader,
+body.reading-mode:not(.paper-mode) .pane.on > .workspace > .ProseMirror .sp-shot,
+body.reading-mode:not(.paper-mode) .pane.on > .workspace > .ProseMirror .sp-intercut,
+body.reading-mode:not(.paper-mode) .pane.on > .workspace > .ProseMirror .k-scene-no { color:var(--fg) !important; }
+body.reading-mode:not(.paper-mode) .pane.on > .workspace > .ProseMirror .sp-parenthetical { color:var(--dim) !important; }
 body.reading-mode #tabs { display:none; }
 body.reading-mode #panes { background:var(--bg); }
 /* โหมดอ่าน + โหมดหน้ากระดาษพร้อมกัน — ต้องคงกระดาษ (พื้นสว่าง/หมึกเข้ม) ไว้
@@ -1371,9 +1411,17 @@ body.reading-mode #panes { background:var(--bg); }
 body.reading-mode.paper-mode #panes { background:var(--paper-surround); }
 body.reading-mode.paper-mode .pane.on > .workspace > .ProseMirror,
 body.reading-mode.paper-mode .pane.on .sp-wrap {
-  background:var(--paper); color:var(--paper-ink);
-  border:1px solid var(--paper-edge); box-shadow:0 4px 26px rgba(0,0,0,.45); }
-body.reading-mode.paper-mode .pane.on > .workspace > .ProseMirror .sp { color:var(--paper-ink); }
+  background:var(--paper) !important; color:var(--paper-ink) !important;
+  border:1px solid var(--paper-edge) !important; box-shadow:0 4px 26px rgba(0,0,0,.45) !important; }
+body.reading-mode.paper-mode .pane.on > .workspace > .ProseMirror .sp,
+body.reading-mode.paper-mode .pane.on > .workspace > .ProseMirror p,
+body.reading-mode.paper-mode .pane.on > .workspace > .ProseMirror li { color:var(--paper-ink) !important; }
+body.reading-mode.paper-mode .pane.on > .workspace > .ProseMirror h1,
+body.reading-mode.paper-mode .pane.on > .workspace > .ProseMirror h2,
+body.reading-mode.paper-mode .pane.on > .workspace > .ProseMirror h3,
+body.reading-mode.paper-mode .pane.on > .workspace > .ProseMirror h4,
+body.reading-mode.paper-mode .pane.on > .workspace > .ProseMirror h5,
+body.reading-mode.paper-mode .pane.on > .workspace > .ProseMirror h6 { color:#111 !important; }
 #tb-read.on { background:var(--sel); color:var(--bright); }
 
 /* ====== กลุ่ม 8: Global Search ====== */
@@ -2202,6 +2250,20 @@ body.paper-mode .pane.sp-view-layout > .workspace > .ProseMirror {
 .pane.sp-view-layout .sp-shot { color:#111; }
 .pane.sp-view-layout .sp-parenthetical { color:#555; }
 .pane.sp-view-layout .k-scene-no { color:#666; }
+/* [alpha.58r บั๊ก 15] โหมดจัดหน้า/ร่าง ใช้กับ "นิยาย" ได้ด้วย — หมึกบนกระดาษขาวต้องเข้ม */
+.pane.sp-view-layout > .workspace > .ProseMirror p,
+.pane.sp-view-layout > .workspace > .ProseMirror li,
+.pane.sp-view-layout > .workspace > .ProseMirror blockquote,
+.pane.sp-view-layout > .workspace > .ProseMirror h1,
+.pane.sp-view-layout > .workspace > .ProseMirror h2,
+.pane.sp-view-layout > .workspace > .ProseMirror h3,
+.pane.sp-view-layout > .workspace > .ProseMirror h4,
+.pane.sp-view-layout > .workspace > .ProseMirror h5,
+.pane.sp-view-layout > .workspace > .ProseMirror h6 { color:#111; }
+.pane.sp-view-layout > .workspace > .ProseMirror pre { background:#f2f0ea; color:#222;
+  border-color:#d8d2c2; }
+/* โหมดร่างของนิยาย: ไม่ต้องมีย่อหน้า/ระยะขอบกระดาษ (เห็นข้อความล้วน) */
+.pane.sp-view-draft > .workspace > .ProseMirror p { text-indent:0 !important; }
 /* ช่องว่างระหว่างหน้า — ล้ำออกไปนอกระยะขอบทั้งสองข้างให้เห็นว่า "คนละแผ่น" */
 .pane.sp-view-layout .sp-page-break {
   height:var(--sp-page-gap, 28px); border:0;
@@ -2263,6 +2325,18 @@ body.paper-mode .sp-cont-mark { color:#6b6552; }
 .sp-continued-top { color:#555; }
 .sp-continued-bottom { text-align:right; color:#555; margin-top:1em; }
 .sp-pageview .sp-more { margin-left:2.2in; color:#333; }
+/* [alpha.58r บั๊ก 15+20] มุมมองหน้ากระดาษของ "นิยาย" (renderProsePageView) */
+.sp-pageview .ed-page { color:var(--paper-ink); }
+.sp-pageview .ed-page p, .sp-pageview .ed-page li { color:var(--paper-ink); margin-top:0; }
+.sp-pageview .ed-page h1, .sp-pageview .ed-page h2, .sp-pageview .ed-page h3,
+.sp-pageview .ed-page h4, .sp-pageview .ed-page h5, .sp-pageview .ed-page h6 {
+  color:#111; margin:1em 0 .4em; line-height:1.3; }
+.sp-pageview .ed-page blockquote { color:#4a4438; font-style:italic;
+  border-left:3px solid #c9c2ae; padding-left:12px; margin:.6em 0; }
+.sp-pageview .ed-page hr { border:0; border-top:1px solid #c9c2ae; margin:1em 0; }
+.sp-pageview .ed-page .pv-figure { color:#7a7466; font-style:italic; text-align:center; margin:1em 0; }
+/* เส้นคั่นหน้าในตัวแก้ไขนิยาย — ใช้หน้าตาเดียวกับของบทภาพยนตร์ */
+.ed-page-break { pointer-events:none; }
 /* [60] ภาพรวม — เล็กมากจนอ่านตัวอักษรไม่ออก แต่เห็น "รูปทรงหน้า" (คลิกเพื่อกระโดดไป) */
 .pane.sp-view-overview .sp-pageview .sp-page { cursor:pointer; }
 .pane.sp-view-overview .sp-pageview .sp-page:hover { outline-width:1px; }
@@ -2362,3 +2436,25 @@ body.paper-mode .sp-cont-mark { color:#6b6552; }
   border-bottom:1px solid var(--border); }
 .k-smart-row:last-child { border-bottom:0; }
 .k-smart-word { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* ══════════ alpha.58r ══════════ */
+/* [ข้อ 4] คอนโซลนักพัฒนา — เมนู ช่วยเหลือ → คอนโซลนักพัฒนา (Ctrl+Shift+`) */
+.k-dev-dlg { width:900px; max-width:94vw; }
+.k-dev-input { width:100%; font-family:"Courier Prime","Courier New",monospace;
+  font-size:calc(13px * var(--ui-scale, 1)); resize:vertical; }
+.k-dev-btns { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0; }
+.k-dev-out { background:#1b1a18; border:1px solid var(--border); border-radius:8px;
+  padding:8px 10px; height:300px; overflow:auto; margin:0;
+  font-family:"Courier Prime","Courier New",monospace;
+  font-size:calc(12.5px * var(--ui-scale, 1)); line-height:1.5;
+  white-space:pre-wrap; word-break:break-word; color:var(--fg); }
+.k-dev-line { padding:1px 0; }
+.k-dev-line.k-dev-in { color:var(--accent-hi); }
+.k-dev-line.k-dev-err { color:#e5695e; }
+.k-dev-line.k-dev-log { color:var(--dim); }
+.k-about-dlg { width:460px; max-width:92vw; }
+.k-about-dlg > div { margin-bottom:6px; }
+/* [บั๊ก 23] ตารางหัวข้อในแท็บ "รูปแบบนิยาย" */
+#st-pr-heads input[type=number] { width:70px; }
+#st-pr-heads select { max-width:130px; }
+#st-pr-heads td { padding:3px 6px; }

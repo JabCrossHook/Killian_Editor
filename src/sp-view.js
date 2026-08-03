@@ -9,7 +9,8 @@
 // ส่วนที่แตะ DOM มีเฉพาะ renderPageView() ซึ่งรับ host element มาจากผู้เรียก
 
 import { paginate, mergeSpFormat, textWidth, wrapLines, CHARS_PER_INCH, LINE_HEIGHT_IN,
-         linesPerPage, pageNumberLabel } from './sp-format.js';
+         linesPerPage, pageNumberLabel, lineHeightIn, formatLines,
+         clampLineHeight } from './sp-format.js';
 
 // ───────── รายการโหมด ─────────
 export const SP_VIEWS = ['normal', 'layout', 'draft', 'side', 'overview1', 'overview4'];
@@ -50,17 +51,21 @@ export function pageMetrics(fmt, dpi = 96) {
   const m = f.margins;
   const usableWidth = textWidth(f.paper, m);
   const usableHeight = Math.max(0.5, +f.paper.height - m.top - m.bottom);
-  const lpp = linesPerPage(f.paper, m);
+  // [alpha.58r บั๊ก 9] ความสูงบรรทัดต้องคูณ spLineHeight ที่ผู้ใช้ตั้ง ไม่งั้น --sp-line-h
+  // (16px เสมอ) ไม่ตรงกับความสูงที่ CSS วาดจริง (--sp-fs × --sp-lh)
+  const lh = lineHeightIn(f);
+  const lpp = linesPerPage(f.paper, m, lh);
   return {
     linesPerPage: lpp,
     charsPerLine: Math.floor(usableWidth * CHARS_PER_INCH),
     usableWidth: +usableWidth.toFixed(4),
     usableHeight: +usableHeight.toFixed(4),
-    lineHeightIn: LINE_HEIGHT_IN,
+    lineHeight: clampLineHeight(f.lineHeight),
+    lineHeightIn: +lh.toFixed(6),
     pageWidthPx: Math.round(+f.paper.width * dpi),
     pageHeightPx: Math.round(+f.paper.height * dpi),
     bodyHeightPx: Math.round(usableHeight * dpi),
-    lineHeightPx: +(LINE_HEIGHT_IN * dpi).toFixed(4),
+    lineHeightPx: +(lh * dpi).toFixed(4),
   };
 }
 
@@ -181,7 +186,8 @@ export function findNthScene(blocks, n) {
 /** ข้อมูลหน้าทั้งหมดของบท (พร้อม pos) — ผู้เรียกส่ง blocks จาก blocksFromDoc มา */
 export function pagesOf(blocks, fmt, lines) {
   const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
-  return paginate(blocks, { fmt: f, lines });
+  // ไม่ส่ง lines = ให้ paginate คิดเองจาก fmt (รวม lineHeight ที่ผู้ใช้ตั้ง — บั๊ก 5)
+  return paginate(blocks, { fmt: f, lines: lines || formatLines(f) });
 }
 
 const cssIn = (v) => (+v || 0) + 'in';

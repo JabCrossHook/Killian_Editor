@@ -14,6 +14,9 @@ const RE_H = /^(#{1,6}) /;
 const RE_UL = /^[-*] /;
 const RE_OL = /^(\d+)\. /;
 const RE_IMG = /^!\[([^\]\n]*)\]\(([^)\n]+)\)\s*$/;
+// [alpha.58r บั๊ก 27] เส้นคั่น + บล็อกโค้ด (schema เดิมไม่มี node สองตัวนี้เลย)
+const RE_HR = /^\s{0,3}(-{3,}|\*{3,}|_{3,})\s*$/;
+const RE_FENCE = /^\s{0,3}(`{3,}|~{3,})\s*([\w+-]*)\s*$/;
 
 // ---------- inline: md → [{text, marks:Set}] ----------
 function parseInline(s, base = []) {
@@ -50,8 +53,35 @@ function para(text) {
 // ---------- md → doc ----------
 // การจัดหน้า (align) เก็บเป็นคอมเมนต์นำหน้าบล็อก <!--align:center--> (คงไฟล์เป็น markdown แท้
 // เปิดร่วมกับ v1 ได้ — v1 จะเห็นเป็นข้อความคอมเมนต์เฉย ๆ ไม่พัง)
+// [alpha.58r บั๊ก 25] ทางเลือกที่สะอาดกว่า: เก็บ align ไว้ใน frontmatter (`align: [3:center]`)
+// แล้ว body เป็น markdown แท้ ๆ ไม่มีคอมเมนต์ปน — ยังอ่านรูปแบบเดิมได้เสมอ (ไฟล์เก่าไม่พัง)
 const RE_ALIGN = /^<!--align:(left|center|right|justify)-->/;
-function mdToDoc(md) {
+const ALIGNS = ['left', 'center', 'right', 'justify'];
+
+/** แผนที่ align ของบล็อกระดับบน → { "3": "center" } (ใช้เขียนลง frontmatter) */
+function collectAlign(doc) {
+  const out = {};
+  (doc.content || []).forEach((n, i) => {
+    const a = (n.attrs || {}).align;
+    if (a && a !== 'left' && ALIGNS.includes(a)) out[String(i)] = a;
+  });
+  return out;
+}
+/** "3:center, 7:right" ⇄ { "3": "center" } */
+function alignToString(map) {
+  return Object.keys(map || {}).sort((a, b) => a - b).map((k) => k + ':' + map[k]).join(', ');
+}
+function alignFromString(v) {
+  const out = {};
+  const list = Array.isArray(v) ? v : String(v || '').split(',');
+  for (const part of list) {
+    const m = /^\s*(\d+)\s*:\s*(left|center|right|justify)\s*$/.exec(String(part));
+    if (m && m[2] !== 'left') out[m[1]] = m[2];
+  }
+  return out;
+}
+
+function mdToDoc(md, alignMap) {
   const lines = md.split('\n');
   const out = [];
   let i = 0;
@@ -61,7 +91,21 @@ function mdToDoc(md) {
     const am = RE_ALIGN.exec(line);
     if (am) { align = am[1] === 'left' ? null : am[1]; line = line.slice(am[0].length); }
     let m;
-    if ((m = RE_IMG.exec(line))) {
+    if ((m = RE_FENCE.exec(line))) {
+      const fence = m[1], lang = m[2] || '';
+      const body = [];
+      i++;
+      while (i < lines.length && !new RegExp('^\\s{0,3}' + fence[0] + '{' + fence.length + ',}\\s*$').test(lines[i])) {
+        body.push(lines[i]); i++;
+      }
+      if (i < lines.length) i++;                        // กินบรรทัดปิด
+      const txt = body.join('\n');
+      out.push({ type: 'code_block', attrs: { lang, fence },
+                 ...(txt ? { content: [{ type: 'text', text: txt }] } : {}) });
+    } else if (RE_HR.test(line)) {
+      out.push({ type: 'horizontal_rule' });
+      i++;
+    } else if ((m = RE_IMG.exec(line))) {
       out.push({ type: 'figure', attrs: { src: m[2], alt: m[1], md: line.trimEnd() } });
       i++;
     } else if ((m = RE_H.exec(line))) {
@@ -93,7 +137,17 @@ function mdToDoc(md) {
       i++;
     }
   }
-  return { type: 'doc', content: out.length ? out : [{ type: 'paragraph' }] };
+  const doc = { type: 'doc', content: out.length ? out : [{ type: 'paragraph' }] };
+  // align จาก frontmatter (ถ้ามี) — ทับค่าที่ได้จากคอมเมนต์แบบเก่า
+  const map = alignMap && typeof alignMap === 'object' && !Array.isArray(alignMap)
+    ? alignMap : alignFromString(alignMap);
+  for (const k of Object.keys(map || {})) {
+    const n = doc.content[+k];
+    if (n && (n.type === 'paragraph' || n.type === 'heading')) {
+      n.attrs = { ...(n.attrs || {}), align: map[k] };
+    }
+  }
+  return doc;
 }
 
 // ---------- inline: nodes → md (ซ้อนเครื่องหมายตามความยาวช่วงจริง เหมือน v1) ----------
@@ -153,12 +207,27 @@ function inlineToMd(content) {
 }
 
 // ---------- doc → md ----------
-function docToMd(doc) {
+function docToMd(doc, opts) {
   const lines = [];
+  // opts.alignComments === false → ไม่เขียน <!--align:…--> ลงไฟล์ (เก็บใน frontmatter แทน)
+  const useComments = !opts || opts.alignComments !== false;
   const alignPfx = (n) => { const a = (n.attrs || {}).align;
-                            return a && a !== 'left' ? `<!--align:${a}-->` : ''; };
+                            return useComments && a && a !== 'left' ? `<!--align:${a}-->` : ''; };
+  const textOf = (n) => (n.content || []).filter((x) => x.type === 'text')
+                          .map((x) => x.text).join('');
   for (const node of doc.content || []) {
     switch (node.type) {
+      case 'horizontal_rule':
+        lines.push('---');
+        break;
+      case 'code_block': {
+        const a = node.attrs || {};
+        const fence = a.fence && /^(`{3,}|~{3,})$/.test(a.fence) ? a.fence : '```';
+        lines.push(fence + (a.lang || ''));
+        for (const l of textOf(node).split('\n')) lines.push(l);
+        lines.push(fence);
+        break;
+      }
       case 'figure': {
         const a = node.attrs || {};
         lines.push(a.md || `![${a.alt || ''}](${a.src || ''})`);
@@ -229,4 +298,5 @@ function countWords(body) {
   return n;
 }
 
-module.exports = { mdToDoc, docToMd, parseMdFile, dumpMdFile, countWords };
+module.exports = { mdToDoc, docToMd, parseMdFile, dumpMdFile, countWords,
+                   collectAlign, alignToString, alignFromString };

@@ -7,7 +7,7 @@
 // บริสุทธิ์ 100% : ไม่แตะ DOM / kapi / state → ทดสอบด้วย node ได้ (test/sp-reports.test.cjs)
 // รับ blocks ชุดเดียวกับ sp-format/sp-view (`{el, text, pos?, idx?}`)
 
-import { mergeSpFormat, paginate, wrapLines, linesPerPage } from './sp-format.js';
+import { mergeSpFormat, paginate, wrapLines, linesPerPage, formatLines } from './sp-format.js';
 import { SCENE_PREFIX, splitCharacter } from './fountain.js';
 
 // ───────── ตัวช่วยอ่านหัวฉาก ─────────
@@ -59,7 +59,7 @@ export function cleanCharacterName(text) {
  */
 export function sceneBreakdown(blocks, opts = {}) {
   const fmt = opts.fmt && opts.fmt.elements ? opts.fmt : mergeSpFormat(opts.fmt);
-  const lines = opts.lines || linesPerPage(fmt.paper, fmt.margins);
+  const lines = opts.lines || formatLines(fmt);
   const startPage = Math.max(1, Math.round(+opts.startPage || 1));
   const pages = paginate(blocks, { fmt, lines });
 
@@ -172,7 +172,7 @@ export function generateCharacterReport(blocks, opts = {}) {
   // นับบทพูดจริงต้องเดินซ้ำอีกรอบ (sceneBreakdown รวมยอดต่อฉาก ไม่ได้แยกต่อคน)
   const chars = new Map();
   const pageOf = new Map();
-  const pages = paginate(blocks, { fmt, lines: opts.lines || linesPerPage(fmt.paper, fmt.margins) });
+  const pages = paginate(blocks, { fmt, lines: opts.lines || formatLines(fmt) });
   for (const pg of pages.pages) {
     for (const b of pg.blocks || []) {
       if (Number.isFinite(b.idx) && !pageOf.has(b.idx)) pageOf.set(b.idx, pg.index);
@@ -228,7 +228,7 @@ export function chartKind(el) {
 
 export function generateDialogueChart(blocks, opts = {}) {
   const fmt = opts.fmt && opts.fmt.elements ? opts.fmt : mergeSpFormat(opts.fmt);
-  const lines = opts.lines || linesPerPage(fmt.paper, fmt.margins);
+  const lines = opts.lines || formatLines(fmt);
   const startPage = Math.max(1, Math.round(+opts.startPage || 1));
   const pages = paginate(blocks, { fmt, lines });
   const dlgW = (fmt.elements.dialogue || {}).width || 3.5;

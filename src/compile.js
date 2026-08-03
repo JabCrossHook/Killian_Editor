@@ -14,6 +14,8 @@ import { resolveVars } from './template-vars.js';
 import { parseScript, lineFor } from './fountain.js';
 import { paginate, mergeSpFormat } from './sp-format.js';
 import { pagesWithContinueds } from './sp-continued.js';
+// [alpha.58r บั๊ก 19] WYSIWYG — HTML ที่ส่งออกต้องใช้ฟอนต์/ช่วงบรรทัด/ย่อหน้า ชุดเดียวกับบนจอ
+import { mergeProseFormat, proseExportCss } from './prose-format.js';
 
 export const PAGE_BREAK = '<!-- ขึ้นหน้าใหม่ -->';
 
@@ -113,6 +115,10 @@ export const PRESETS = [
      ['cover', 'skip-memo', 'chapter-heading', 'scene-separator', 'to-html']),
   wf('print', 'พร้อมพิมพ์ (HTML ขึ้นหน้าใหม่ทุกบท)', 'html',
      ['cover', 'skip-memo', 'chapter-heading', 'page-break', 'scene-separator', 'to-html']),
+  // [alpha.58r บั๊ก 13] พรีเซ็ตของ "บทภาพยนตร์" — เดิมไม่มีพรีเซ็ตไหนเปิด sp-continued เลย
+  // ผู้ใช้จึงต้องไปเปิดเองทุกครั้ง (และส่วนใหญ่ไม่รู้ว่ามีฟีเจอร์นี้)
+  wf('screenplay', '🎬 บทภาพยนตร์ (CONTINUED · MORE)', 'txt',
+     ['skip-memo', 'strip-comments', 'sp-continued']),
 ];
 
 export function newWorkflow(name) {
@@ -186,18 +192,18 @@ export function mdToHtmlBody(md) {
   return out.join('\n');
 }
 
-// แปลง Markdown → หน้า HTML เต็ม (หัวข้อ/ย่อหน้า/ยกคำพูด/รายการ/เส้นคั่น/รูป)
-export function mdToHtml(md, title) {
+/**
+ * แปลง Markdown → หน้า HTML เต็ม (หัวข้อ/ย่อหน้า/ยกคำพูด/รายการ/เส้นคั่น/รูป)
+ * [alpha.58r บั๊ก 19] `style` = รูปแบบนิยายที่ใช้อยู่ (prose-format) — ไม่ส่ง = ค่ามาตรฐานนิยาย
+ * เดิมฝัง Sarabun 18px/1.85 ตายตัว → เขียนอย่างหนึ่ง ส่งออกได้อีกอย่าง (ผิดหลัก WYSIWYG)
+ */
+export function mdToHtml(md, title, style = null, paper = null, margins = null) {
+  const css = proseExportCss(mergeProseFormat(style), paper, margins);
   return `<!DOCTYPE html>
 <html lang="th"><head><meta charset="utf-8">
 <title>${esc(title || '')}</title>
 <style>
- body{max-width:42em;margin:3em auto;padding:0 1.2em;line-height:1.85;
-      font-family:"Sarabun","Noto Sans Thai",system-ui,sans-serif;font-size:18px}
- h1,h2,h3{line-height:1.4} hr{border:0;border-top:1px solid #ccc;margin:2em 0}
- blockquote{border-left:3px solid #ccc;margin:1em 0;padding-left:1em;color:#555}
- img{max-width:100%} .pb{page-break-before:always;break-before:page;height:0}
- @media print{body{margin:0;max-width:none;font-size:12pt}}
+${css}
 </style></head><body>
 ${mdToHtmlBody(md)}
 </body></html>`;
@@ -219,7 +225,9 @@ function modelStats(model) {
   return { chapters: model.chapters.length, scenes: sc, words: w };
 }
 
-export function runWorkflow(model0, workflow, { allowJs = true, varCtx = {}, spFormat = null } = {}) {
+export function runWorkflow(model0, workflow,
+    { allowJs = true, varCtx = {}, spFormat = null,
+      proseFormat = null, paper = null, margins = null } = {}) {
   const warn = [];
   // สำเนาลึกแบบพอเพียง — ไม่แก้ของเดิม
   const model = { title: model0.title, author: model0.author || '', roster: model0.roster || '',
@@ -325,7 +333,9 @@ export function runWorkflow(model0, workflow, { allowJs = true, varCtx = {}, spF
       catch (e) { warn.push('แทรกข้อความต่อเนื่องไม่สำเร็จ: ' + e.message); }
       continue;
     }
-    if (st.key === 'to-html') { text = mdToHtml(text, model.title); ext = 'html'; continue; }
+    if (st.key === 'to-html') {
+      text = mdToHtml(text, model.title, proseFormat, paper, margins); ext = 'html'; continue;
+    }
     if (st.key === 'js') {
       if (!allowJs) { warn.push('ข้ามขั้นตอน JavaScript (ปิดไว้)'); continue; }
       try {

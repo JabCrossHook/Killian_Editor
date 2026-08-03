@@ -13475,6 +13475,8 @@
       var RE_UL = /^[-*] /;
       var RE_OL = /^(\d+)\. /;
       var RE_IMG = /^!\[([^\]\n]*)\]\(([^)\n]+)\)\s*$/;
+      var RE_HR = /^\s{0,3}(-{3,}|\*{3,}|_{3,})\s*$/;
+      var RE_FENCE = /^\s{0,3}(`{3,}|~{3,})\s*([\w+-]*)\s*$/;
       function parseInline(s, base3 = []) {
         const segs = [];
         while (s) {
@@ -13506,7 +13508,28 @@
         return { type: "paragraph", ...content.length ? { content } : {} };
       }
       var RE_ALIGN = /^<!--align:(left|center|right|justify)-->/;
-      function mdToDoc3(md) {
+      var ALIGNS = ["left", "center", "right", "justify"];
+      function collectAlign2(doc3) {
+        const out = {};
+        (doc3.content || []).forEach((n, i2) => {
+          const a = (n.attrs || {}).align;
+          if (a && a !== "left" && ALIGNS.includes(a)) out[String(i2)] = a;
+        });
+        return out;
+      }
+      function alignToString2(map2) {
+        return Object.keys(map2 || {}).sort((a, b) => a - b).map((k) => k + ":" + map2[k]).join(", ");
+      }
+      function alignFromString2(v) {
+        const out = {};
+        const list = Array.isArray(v) ? v : String(v || "").split(",");
+        for (const part of list) {
+          const m = /^\s*(\d+)\s*:\s*(left|center|right|justify)\s*$/.exec(String(part));
+          if (m && m[2] !== "left") out[m[1]] = m[2];
+        }
+        return out;
+      }
+      function mdToDoc3(md, alignMap) {
         const lines = md.split("\n");
         const out = [];
         let i2 = 0;
@@ -13519,7 +13542,25 @@
             line = line.slice(am[0].length);
           }
           let m;
-          if (m = RE_IMG.exec(line)) {
+          if (m = RE_FENCE.exec(line)) {
+            const fence = m[1], lang = m[2] || "";
+            const body = [];
+            i2++;
+            while (i2 < lines.length && !new RegExp("^\\s{0,3}" + fence[0] + "{" + fence.length + ",}\\s*$").test(lines[i2])) {
+              body.push(lines[i2]);
+              i2++;
+            }
+            if (i2 < lines.length) i2++;
+            const txt = body.join("\n");
+            out.push({
+              type: "code_block",
+              attrs: { lang, fence },
+              ...txt ? { content: [{ type: "text", text: txt }] } : {}
+            });
+          } else if (RE_HR.test(line)) {
+            out.push({ type: "horizontal_rule" });
+            i2++;
+          } else if (m = RE_IMG.exec(line)) {
             out.push({ type: "figure", attrs: { src: m[2], alt: m[1], md: line.trimEnd() } });
             i2++;
           } else if (m = RE_H.exec(line)) {
@@ -13562,7 +13603,15 @@
             i2++;
           }
         }
-        return { type: "doc", content: out.length ? out : [{ type: "paragraph" }] };
+        const doc3 = { type: "doc", content: out.length ? out : [{ type: "paragraph" }] };
+        const map2 = alignMap && typeof alignMap === "object" && !Array.isArray(alignMap) ? alignMap : alignFromString2(alignMap);
+        for (const k of Object.keys(map2 || {})) {
+          const n = doc3.content[+k];
+          if (n && (n.type === "paragraph" || n.type === "heading")) {
+            n.attrs = { ...n.attrs || {}, align: map2[k] };
+          }
+        }
+        return doc3;
       }
       var MARKSET = ["strong", "em", "underline", "strike"];
       function starKind(sig) {
@@ -13617,14 +13666,27 @@
         }));
         return emitRuns(runs);
       }
-      function docToMd3(doc3) {
+      function docToMd3(doc3, opts) {
         const lines = [];
+        const useComments = !opts || opts.alignComments !== false;
         const alignPfx = (n) => {
           const a = (n.attrs || {}).align;
-          return a && a !== "left" ? `<!--align:${a}-->` : "";
+          return useComments && a && a !== "left" ? `<!--align:${a}-->` : "";
         };
+        const textOf = (n) => (n.content || []).filter((x) => x.type === "text").map((x) => x.text).join("");
         for (const node of doc3.content || []) {
           switch (node.type) {
+            case "horizontal_rule":
+              lines.push("---");
+              break;
+            case "code_block": {
+              const a = node.attrs || {};
+              const fence = a.fence && /^(`{3,}|~{3,})$/.test(a.fence) ? a.fence : "```";
+              lines.push(fence + (a.lang || ""));
+              for (const l of textOf(node).split("\n")) lines.push(l);
+              lines.push(fence);
+              break;
+            }
             case "figure": {
               const a = node.attrs || {};
               lines.push(a.md || `![${a.alt || ""}](${a.src || ""})`);
@@ -13686,7 +13748,16 @@
         }
         return n;
       }
-      module.exports = { mdToDoc: mdToDoc3, docToMd: docToMd3, parseMdFile: parseMdFile9, dumpMdFile: dumpMdFile4, countWords: countWords4 };
+      module.exports = {
+        mdToDoc: mdToDoc3,
+        docToMd: docToMd3,
+        parseMdFile: parseMdFile9,
+        dumpMdFile: dumpMdFile4,
+        countWords: countWords4,
+        collectAlign: collectAlign2,
+        alignToString: alignToString2,
+        alignFromString: alignFromString2
+      };
     }
   });
 
@@ -13770,6 +13841,964 @@
     }
   });
 
+  // src/sp-format.js
+  function clampLineHeight(v) {
+    const n = parseFloat(v);
+    return Number.isFinite(n) && n >= 0.8 && n <= 2.5 ? n : 1;
+  }
+  function lineHeightIn(fmt) {
+    const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+    return LINE_HEIGHT_IN * clampLineHeight(f.lineHeight);
+  }
+  function linesPerPage(paper, margins, lh = LINE_HEIGHT_IN) {
+    const p = paper || PAPER_SIZES.letter;
+    const m = { ...MARGIN_DEFAULTS, ...margins || {} };
+    const usable = num(p.height, 11) - num(m.top, 1) - num(m.bottom, 1);
+    return Math.max(1, Math.floor(usable / (lh || LINE_HEIGHT_IN)));
+  }
+  function formatLines(fmt) {
+    const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+    return linesPerPage(f.paper, f.margins, lineHeightIn(f));
+  }
+  function textWidth(paper, margins) {
+    const p = paper || PAPER_SIZES.letter;
+    const m = { ...MARGIN_DEFAULTS, ...margins || {} };
+    return Math.max(0.5, num(p.width, 8.5) - num(m.left, 1.5) - num(m.right, 1));
+  }
+  function num(v, d) {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : d;
+  }
+  function sceneNumberOffsets(fmt) {
+    const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+    const sn = f.sceneNumbers;
+    const cfg = f.elements.scene;
+    const boxLeft = num(cfg.indent, f.margins.left);
+    const boxRight = boxLeft + num(cfg.width, 6);
+    return {
+      left: +(num(sn.left, 0.75) - boxLeft).toFixed(4),
+      right: +(boxRight - (num(f.paper.width, 8.5) - num(sn.right, 1))).toFixed(4)
+    };
+  }
+  function pageNumberLabel(index, fmt, startPage) {
+    const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+    const pn = f.pageNumbers;
+    if (!pn.show) return "";
+    const i2 = Math.max(1, Math.round(+index || 1));
+    if (i2 === 1 && !pn.firstPage) return "";
+    const start = Math.max(1, Math.round(+startPage || 1));
+    return String(start + i2 - 1) + (pn.suffix || "");
+  }
+  function mergeSpFormat(user) {
+    const u = user || {};
+    const paperSize = PAPER_SIZES[u.paperSize] ? u.paperSize : "letter";
+    const basePaper = PAPER_SIZES[paperSize];
+    const paper = paperSize === "custom" ? { width: num(u.paper?.width, basePaper.width), height: num(u.paper?.height, basePaper.height), unit: "in" } : { ...basePaper };
+    const elements = {};
+    for (const k of SP_ELEMENT_KEYS) elements[k] = { ...SP_ELEMENT_CONFIG[k], ...u.elements?.[k] || {} };
+    const styles = {};
+    for (const k of SP_ELEMENT_KEYS) {
+      styles[k] = {
+        screen: { ...SP_ELEMENT_STYLES[k].screen, ...u.styles?.[k]?.screen || {} },
+        print: { ...SP_ELEMENT_STYLES[k].print, ...u.styles?.[k]?.print || {} }
+      };
+    }
+    return {
+      paperSize,
+      paper,
+      margins: { ...MARGIN_DEFAULTS, ...u.margins || {} },
+      elements,
+      styles,
+      rules: { ...PAGE_BREAK_RULES, ...u.rules || {} },
+      strings: { ...SP_STRINGS, ...u.strings || {} },
+      sceneNumbers: { ...SCENE_NUMBER_DEFAULTS, ...u.sceneNumbers || {} },
+      pageNumbers: { ...PAGE_NUMBER_DEFAULTS, ...u.pageNumbers || {} },
+      continued: { ...CONTINUED_DEFAULTS, ...u.continued || {} },
+      lineHeight: clampLineHeight(u.lineHeight)
+    };
+  }
+  function pageCssVars(fmt) {
+    const f = fmt && fmt.margins ? fmt : mergeSpFormat(fmt);
+    const m = f.margins;
+    return {
+      "--page-w": f.paper.width + "in",
+      "--page-h": f.paper.height + "in",
+      "--mg-top": m.top + "in",
+      "--mg-bottom": m.bottom + "in",
+      "--mg-left": m.left + "in",
+      "--mg-right": m.right + "in",
+      "--text-w": +textWidth(f.paper, m).toFixed(4) + "in",
+      // [alpha.57a] เลขหน้า — ระยะจากขอบกระดาษ (ไม่ใช่จากขอบพื้นที่พิมพ์)
+      "--pg-no-top": (f.pageNumbers?.top ?? 0.5) + "in",
+      "--pg-no-right": (f.pageNumbers?.right ?? 1) + "in"
+    };
+  }
+  function spCss(fmt) {
+    const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+    const left = f.margins.left;
+    const out = [];
+    const decl = (st) => [
+      "text-transform:" + (st.caps ? "uppercase" : "none"),
+      "font-weight:" + (st.bold ? "700" : "400"),
+      "font-style:" + (st.italic ? "italic" : "normal"),
+      "text-decoration:" + (st.underline ? "underline" : "none")
+    ].join(";");
+    const tw = textWidth(f.paper, f.margins);
+    for (const k of SP_ELEMENT_KEYS) {
+      const c = f.elements[k];
+      const s = f.styles[k];
+      const ml = Math.max(0, +(num(c.indent, left) - left).toFixed(4));
+      const w = Math.max(0.3, Math.min(num(c.width, 6), +(tw - ml).toFixed(4)));
+      const mt = num(c.linesBefore, 10) / 10;
+      const mb = num(c.linesBetween, 10) / 10 - 1;
+      out.push(`.sp.sp-${k}{margin-left:${ml}in;width:${w}in;max-width:none;margin-top:${mt}em;margin-bottom:${Math.max(0, mb)}em;${decl(s.screen)}}`);
+    }
+    const so = sceneNumberOffsets(f);
+    out.push(".sp.sp-scene{position:relative}");
+    out.push(".k-scene-no{position:absolute;top:0;white-space:nowrap;user-select:none;pointer-events:none;text-transform:none;font-weight:400;font-style:normal;text-decoration:none}");
+    out.push(`.k-scene-no-l{left:${so.left}in}`);
+    out.push(`.k-scene-no-r{right:${so.right}in}`);
+    const ct = { ...CONTINUED_DEFAULTS, ...f.continued || {} };
+    const moreML = Math.max(0, +(num(ct.indent, 3.7) - left).toFixed(4));
+    out.push(`.sp.sp-more{margin-left:${moreML}in;width:auto;max-width:none;margin-top:0;margin-bottom:0;text-transform:none}`);
+    out.push(`.sp-continued-top,.sp-cont-top{margin-left:0;width:${+tw.toFixed(4)}in;text-align:left}`);
+    out.push(`.sp-continued-bottom,.sp-cont-bottom{margin-left:0;width:${+tw.toFixed(4)}in;text-align:right}`);
+    const contdML = Math.max(0, +(num(f.elements.character?.indent, 3.7) - left).toFixed(4));
+    out.push(`.sp.sp-contd,.sp-cont-mark.sp-contd{margin-left:${contdML}in;width:auto;max-width:none;margin-top:0;margin-bottom:0}`);
+    const m = f.margins;
+    out.push(`@page{size:${f.paper.width}in ${f.paper.height}in;margin:${m.top}in ${m.right}in ${m.bottom}in ${m.left}in;orphans:${Math.max(1, f.rules.minActionLinesAtBottom)};widows:${Math.max(1, f.rules.minActionLinesAtTop)};}`);
+    const printRules = SP_ELEMENT_KEYS.map((k) => `.sp.sp-${k}{${decl(f.styles[k].print)}}`).join("");
+    out.push("@media print{" + printRules + "}");
+    return out.join("\n");
+  }
+  function wrapLines(text, widthIn, cpi = CHARS_PER_INCH) {
+    const cols = Math.max(1, Math.floor(num(widthIn, 6) * cpi));
+    const s = String(text ?? "");
+    if (!s.trim()) return 1;
+    let total = 0;
+    for (const para2 of s.split("\n")) {
+      const words = para2.split(/\s+/).filter(Boolean);
+      if (!words.length) {
+        total += 1;
+        continue;
+      }
+      let line = 0, used = 0;
+      for (const w of words) {
+        const need = used ? used + 1 + w.length : w.length;
+        if (need <= cols) {
+          used = need;
+        } else {
+          line++;
+          used = w.length;
+          while (used > cols) {
+            line++;
+            used -= cols;
+          }
+        }
+      }
+      total += line + 1;
+    }
+    return Math.max(1, total);
+  }
+  function paginate(blocks, opts = {}) {
+    const fmt = opts.fmt && opts.fmt.elements ? opts.fmt : mergeSpFormat(opts.fmt);
+    const perPage = Math.max(4, opts.lines || formatLines(fmt));
+    const R = fmt.rules, S = fmt.strings;
+    const cfg = (el3) => fmt.elements[el3] || fmt.elements.action;
+    const CT = { ...CONTINUED_DEFAULTS, ...fmt.continued || {} };
+    const wantDlgMarkers = CT.enabled !== false && CT.dialogue !== false;
+    const pages = [];
+    let cur = [], used = 0, lastChar = "";
+    let sceneSeq = 0, curScene = 0, pageSceneStart = 0;
+    const addBlock = (blk) => {
+      if (blk.el === "scene" && blk.split !== "tail") {
+        curScene = ++sceneSeq;
+        if (!cur.length) pageSceneStart = curScene;
+      }
+      cur.push(blk);
+    };
+    const pushPage = () => {
+      pages.push({
+        index: pages.length + 1,
+        blocks: cur,
+        sceneStart: pageSceneStart,
+        sceneEnd: curScene
+      });
+      cur = [];
+      used = 0;
+      pageSceneStart = curScene;
+    };
+    const list = (blocks || []).filter((b) => b && b.el !== "blank");
+    for (let i2 = 0; i2 < list.length; i2++) {
+      const b = list[i2];
+      const c = cfg(b.el);
+      if (b.el === "character") lastChar = String(b.text || "");
+      const before = cur.length ? Math.round(num(c.linesBefore, 10) / 10) : 0;
+      const body = wrapLines(b.text, c.width);
+      const need = before + body;
+      const free = perPage - used;
+      if (need <= free) {
+        addBlock({ ...b, lines: body });
+        used += need;
+        continue;
+      }
+      const isDlg = b.el === "dialogue";
+      const isAct = b.el === "action" || b.el === "note" || b.el === "summary";
+      const minBot = isDlg ? R.minDialogueLinesAtBottom : R.minActionLinesAtBottom;
+      const minTop = isDlg ? R.minDialogueLinesAtTop : R.minActionLinesAtTop;
+      const canBottom = free - before;
+      if ((isDlg || isAct) && canBottom >= minBot && body - canBottom >= minTop) {
+        const head = splitText(b.text, c.width, canBottom);
+        addBlock({ ...b, text: head.head, lines: canBottom, split: "head" });
+        if (isDlg && wantDlgMarkers) addBlock({ el: "more", text: S.dialogueMore, lines: 1, more: true });
+        pushPage();
+        if (isDlg && wantDlgMarkers && lastChar) {
+          addBlock({ el: "character", text: lastChar + " " + S.dialogueContd, lines: 1, contd: true });
+          used += 1;
+        }
+        addBlock({ ...b, text: head.rest, lines: body - canBottom, split: "tail" });
+        used += body - canBottom;
+        continue;
+      }
+      const carry = [];
+      if (b.el === "dialogue" || b.el === "parenthetical") {
+        while (cur.length && ["character", "parenthetical"].includes(cur[cur.length - 1].el)) {
+          carry.unshift(cur.pop());
+        }
+      }
+      for (const x of carry) used -= x.lines || 1;
+      pushPage();
+      for (const x of carry) {
+        cur.push(x);
+        used += x.lines || 1;
+      }
+      addBlock({ ...b, lines: body });
+      used += body;
+    }
+    if (cur.length) pushPage();
+    if (!pages.length) pages.push({ index: 1, blocks: [], sceneStart: 0, sceneEnd: 0 });
+    annotateContinued(pages, fmt);
+    return { pages, count: pages.length };
+  }
+  function annotateContinued(pages, fmt) {
+    const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+    const S = f.strings;
+    const CT = { ...CONTINUED_DEFAULTS, ...f.continued || {} };
+    const on = CT.enabled !== false && CT.scene !== false;
+    for (const p of pages) {
+      delete p.continuedBottom;
+      delete p.continuedTop;
+      delete p.contdRun;
+    }
+    let run2 = 1, contScene = 0;
+    for (let i2 = 0; i2 < pages.length - 1; i2++) {
+      const p = pages[i2], n = pages[i2 + 1];
+      const spans = on && p.sceneEnd > 0 && n.sceneStart === p.sceneEnd;
+      if (!spans) {
+        run2 = 1;
+        contScene = 0;
+        continue;
+      }
+      if (p.sceneEnd !== contScene) {
+        run2 = 1;
+        contScene = p.sceneEnd;
+      }
+      run2++;
+      p.continuedBottom = S.continuedBottom;
+      n.contdRun = run2;
+      n.continuedTop = CT.number !== false && run2 > 2 ? `${S.continuedTop} (${run2 - 1})` : S.continuedTop;
+    }
+    return pages;
+  }
+  function splitText(text, widthIn, n) {
+    const cols = Math.max(1, Math.floor(num(widthIn, 6) * CHARS_PER_INCH));
+    const words = String(text ?? "").split(/\s+/).filter(Boolean);
+    const lines = [];
+    let cur = "";
+    for (const w of words) {
+      const next = cur ? cur + " " + w : w;
+      if (next.length <= cols) cur = next;
+      else {
+        if (cur) lines.push(cur);
+        cur = w;
+      }
+    }
+    if (cur) lines.push(cur);
+    const k = Math.max(1, Math.min(n, lines.length - 1 >= 1 ? lines.length - 1 : 1));
+    return { head: lines.slice(0, k).join(" "), rest: lines.slice(k).join(" ") };
+  }
+  function pageCount(blocks, opts) {
+    return paginate(blocks, opts).count;
+  }
+  function newRoster() {
+    return {
+      version: ROSTER_VERSION,
+      title: SP_STRINGS.castTitle,
+      characters: [],
+      scene: "",
+      time: "",
+      showScene: true,
+      showTime: true,
+      includeInExport: true
+    };
+  }
+  function normalizeRoster(r) {
+    const base3 = newRoster();
+    if (!r || typeof r !== "object") return base3;
+    return {
+      ...base3,
+      ...r,
+      version: ROSTER_VERSION,
+      title: typeof r.title === "string" && r.title.trim() ? r.title : base3.title,
+      characters: (Array.isArray(r.characters) ? r.characters : []).map((c) => ({ name: String(c?.name ?? ""), detail: String(c?.detail ?? "") })),
+      scene: String(r.scene ?? ""),
+      time: String(r.time ?? ""),
+      showScene: r.showScene !== false,
+      showTime: r.showTime !== false,
+      includeInExport: r.includeInExport !== false
+    };
+  }
+  function rosterToText(roster, fmt) {
+    const r = normalizeRoster(roster);
+    const f = fmt && fmt.margins ? fmt : mergeSpFormat(fmt);
+    const cols = Math.max(20, Math.floor(textWidth(f.paper, f.margins) * CHARS_PER_INCH));
+    const mid = (s) => " ".repeat(Math.max(0, Math.floor((cols - s.length) / 2))) + s;
+    const out = [mid(r.title)];
+    out.push("");
+    for (const c of r.characters) {
+      if (!c.name && !c.detail) continue;
+      out.push(c.name + ":" + (c.detail ? "	" + c.detail : ""));
+      out.push("");
+    }
+    if (r.showScene && (r.scene || "").trim()) {
+      out.push(mid(f.strings.sceneTitle), "", r.scene.trim(), "", "");
+    }
+    if (r.showTime && (r.time || "").trim()) {
+      out.push(mid(f.strings.timeTitle), "", r.time.trim());
+    }
+    while (out.length && out[out.length - 1] === "") out.pop();
+    return out.join("\n");
+  }
+  var PAPER_SIZES, MARGIN_DEFAULTS, CHARS_PER_INCH, LINES_PER_INCH, LINE_HEIGHT_IN, SP_ELEMENT_CONFIG, ST, SP_ELEMENT_STYLES, PAGE_BREAK_RULES, CONTINUED_DEFAULTS, SP_STRINGS, SCENE_NUMBER_DEFAULTS, PAGE_NUMBER_DEFAULTS, DEFAULT_SP_FORMAT, SP_ELEMENT_KEYS, ROSTER_VERSION;
+  var init_sp_format = __esm({
+    "src/sp-format.js"() {
+      PAPER_SIZES = {
+        letter: { name: "Letter (8.5 \xD7 11 \u0E19\u0E34\u0E49\u0E27)", width: 8.5, height: 11, unit: "in" },
+        a4: { name: "A4 (8.27 \xD7 11.69 \u0E19\u0E34\u0E49\u0E27)", width: 8.27, height: 11.69, unit: "in" },
+        legal: { name: "Legal (8.5 \xD7 14 \u0E19\u0E34\u0E49\u0E27)", width: 8.5, height: 14, unit: "in" },
+        custom: { name: "\u0E01\u0E33\u0E2B\u0E19\u0E14\u0E40\u0E2D\u0E07", width: 8.5, height: 11, unit: "in" }
+      };
+      MARGIN_DEFAULTS = { top: 1, bottom: 1, left: 1.5, right: 1 };
+      CHARS_PER_INCH = 10;
+      LINES_PER_INCH = 6;
+      LINE_HEIGHT_IN = 1 / LINES_PER_INCH;
+      SP_ELEMENT_CONFIG = {
+        scene: { indent: 1.5, width: 6, linesBefore: 20, linesBetween: 10 },
+        action: { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 },
+        character: { indent: 3.7, width: 3.8, linesBefore: 10, linesBetween: 10 },
+        parenthetical: { indent: 3.1, width: 2.9, linesBefore: 0, linesBetween: 10 },
+        dialogue: { indent: 2.5, width: 3.5, linesBefore: 0, linesBetween: 10 },
+        // [alpha.57a ข้อ 2] ทรานซิชันเข้า = ชิดซ้าย · ทรานซิชันออก = ชิดขวา (ของเดิม)
+        "transition-in": { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 },
+        transition: { indent: 6, width: 2, linesBefore: 10, linesBetween: 10 },
+        // [alpha.58 ข้อเสนอ] ฉากย่อย + ช็อต วางตัวเหมือนหัวฉากทุกอย่าง (ระยะเยื้อง/ความกว้าง/ระยะเว้น)
+        // ต่างกันแค่ "ไม่มีเลขฉาก" — เลขฉากผูกกับ el === 'scene' เท่านั้น
+        subheader: { indent: 1.5, width: 6, linesBefore: 20, linesBetween: 10 },
+        intercut: { indent: 1.5, width: 6, linesBefore: 20, linesBetween: 10 },
+        shot: { indent: 1.5, width: 6, linesBefore: 20, linesBetween: 10 },
+        "act-break": { indent: 1.5, width: 6, linesBefore: 20, linesBetween: 10 },
+        note: { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 },
+        summary: { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 },
+        outline1: { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 },
+        outline2: { indent: 1.7, width: 5.8, linesBefore: 10, linesBetween: 10 },
+        outline3: { indent: 1.9, width: 5.6, linesBefore: 10, linesBetween: 10 },
+        image: { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 },
+        raw: { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 }
+      };
+      ST = (caps, bold, italic, underline) => ({ caps, bold, italic, underline });
+      SP_ELEMENT_STYLES = {
+        scene: { screen: ST(true, true, false, false), print: ST(true, true, false, false) },
+        action: { screen: ST(false, false, false, false), print: ST(false, false, false, false) },
+        character: { screen: ST(true, false, false, false), print: ST(true, false, false, false) },
+        parenthetical: { screen: ST(false, false, true, false), print: ST(false, false, false, false) },
+        dialogue: { screen: ST(false, false, false, false), print: ST(false, false, false, false) },
+        "transition-in": { screen: ST(true, false, false, false), print: ST(true, false, false, false) },
+        transition: { screen: ST(true, false, false, false), print: ST(true, false, false, false) },
+        // [alpha.58] ฉากย่อย/สลับฉาก/ช็อต = ตัวหนาพิมพ์ใหญ่เหมือนหัวฉาก (เลิกขีดเส้นใต้)
+        subheader: { screen: ST(true, true, false, false), print: ST(true, true, false, false) },
+        intercut: { screen: ST(true, true, false, false), print: ST(true, true, false, false) },
+        shot: { screen: ST(true, true, false, false), print: ST(true, true, false, false) },
+        "act-break": { screen: ST(true, true, false, false), print: ST(true, true, false, true) },
+        note: { screen: ST(false, false, true, false), print: ST(false, false, true, false) },
+        summary: { screen: ST(false, false, true, false), print: ST(false, false, true, false) },
+        outline1: { screen: ST(false, true, false, false), print: ST(false, true, false, false) },
+        outline2: { screen: ST(false, true, false, false), print: ST(false, true, false, false) },
+        outline3: { screen: ST(false, true, false, false), print: ST(false, true, false, false) },
+        image: { screen: ST(false, false, false, false), print: ST(false, false, false, false) },
+        raw: { screen: ST(false, false, false, false), print: ST(false, false, false, false) }
+      };
+      PAGE_BREAK_RULES = {
+        minActionLinesAtBottom: 2,
+        // ต้องเหลือ action อย่างน้อยกี่บรรทัดท้ายหน้าจึงยอมตัด
+        minDialogueLinesAtBottom: 2,
+        // ต้องเหลือบทพูดอย่างน้อยกี่บรรทัดท้ายหน้า
+        minActionLinesAtTop: 3,
+        // ส่วนที่ยกไปหน้าใหม่ต้องได้อย่างน้อยกี่บรรทัด
+        minDialogueLinesAtTop: 3,
+        maxConsecutiveHyphens: 2,
+        // ห้ามลงท้ายบรรทัดด้วยขีดติดกันเกินกี่บรรทัด
+        keepSceneWithNext: 2
+        // หัวฉากท้ายหน้าต้องมีเนื้อตามอย่างน้อยกี่บรรทัด ไม่งั้นยกทั้งก้อน
+      };
+      CONTINUED_DEFAULTS = {
+        enabled: true,
+        scene: true,
+        dialogue: true,
+        number: true,
+        indent: 3.7
+      };
+      SP_STRINGS = {
+        continuedBottom: "(CONTINUED)",
+        continuedTop: "CONTINUED:",
+        dialogueMore: "(MORE)",
+        dialogueContd: "(cont'd)",
+        sceneContinued: "\u0E15\u0E48\u0E2D",
+        castTitle: "Cast of Characters",
+        sceneTitle: "Scene",
+        timeTitle: "Time"
+      };
+      SCENE_NUMBER_DEFAULTS = { show: false, left: 0.75, right: 1, suffix: "" };
+      PAGE_NUMBER_DEFAULTS = { show: false, right: 1, top: 0.5, suffix: ".", firstPage: false };
+      DEFAULT_SP_FORMAT = {
+        paperSize: "letter",
+        paper: { width: 8.5, height: 11 },
+        // ใช้เมื่อ paperSize === 'custom'
+        margins: { ...MARGIN_DEFAULTS },
+        elements: SP_ELEMENT_CONFIG,
+        styles: SP_ELEMENT_STYLES,
+        rules: PAGE_BREAK_RULES,
+        strings: SP_STRINGS,
+        sceneNumbers: SCENE_NUMBER_DEFAULTS,
+        pageNumbers: PAGE_NUMBER_DEFAULTS,
+        continued: CONTINUED_DEFAULTS,
+        // [alpha.58r บั๊ก 5+9] ช่วงบรรทัดที่ผู้ใช้ปรับได้ — ต้องอยู่ใน fmt เพื่อให้ paginate/pageMetrics เห็น
+        lineHeight: 1
+      };
+      SP_ELEMENT_KEYS = Object.keys(SP_ELEMENT_CONFIG);
+      ROSTER_VERSION = 1;
+    }
+  });
+
+  // src/prose-format.js
+  function mergeProseFormat(user) {
+    const u = user || {};
+    const headings = HEADING_DEFAULTS.map((d, i2) => ({ ...d, ...(u.headings || [])[i2] || {} }));
+    return {
+      ...PROSE_DEFAULTS,
+      ...u,
+      fontFamily: String(u.fontFamily || ""),
+      fontPt: clamp(u.fontPt, 6, 48, PROSE_DEFAULTS.fontPt),
+      lineHeight: clamp(u.lineHeight, 0.8, 4, PROSE_DEFAULTS.lineHeight),
+      paraSpacing: clamp(u.paraSpacing, 0, 4, PROSE_DEFAULTS.paraSpacing),
+      firstLineIndent: clamp(u.firstLineIndent, 0, 3, PROSE_DEFAULTS.firstLineIndent),
+      align: u.align === "justify" ? "justify" : "left",
+      avgCharEm: clamp(u.avgCharEm, 0.3, 1.2, PROSE_DEFAULTS.avgCharEm),
+      headingNumberLevel: clamp(u.headingNumberLevel, 1, 6, 1),
+      headings,
+      quote: { ...QUOTE_DEFAULTS, ...u.quote || {} }
+    };
+  }
+  function proseFontStack(fmt) {
+    const f = fmt && fmt.headings ? fmt : mergeProseFormat(fmt);
+    return f.fontFamily && f.fontFamily.trim() ? f.fontFamily : DEFAULT_PROSE_FONT;
+  }
+  function proseHeadingStack(fmt) {
+    const f = fmt && fmt.headings ? fmt : mergeProseFormat(fmt);
+    return f.headingFont && f.headingFont.trim() ? f.headingFont : proseFontStack(f);
+  }
+  function proseCssVars(fmt) {
+    const f = fmt && fmt.headings ? fmt : mergeProseFormat(fmt);
+    return {
+      "--ed-lh": String(f.lineHeight),
+      "--ed-para": f.paraSpacing + "em",
+      "--ed-indent": f.firstLineIndent + "in",
+      "--ed-align": f.align,
+      "--ed-line-h": proseLinePx(f) + "px"
+    };
+  }
+  function proseCss(fmt, sel = ".pane:not(.sp-pane):not(.wiki-pane) > .workspace > .ProseMirror") {
+    const f = fmt && fmt.headings ? fmt : mergeProseFormat(fmt);
+    const out = [];
+    const q = f.quote;
+    out.push(`${sel}{line-height:${f.lineHeight};text-align:${f.align}}`);
+    out.push(`${sel} p{margin:0 0 ${f.paraSpacing}em;text-indent:${f.firstLineIndent}in}`);
+    if (!f.indentAfterHeading) {
+      out.push(`${sel} > p:first-child,${sel} > h1+p,${sel} > h2+p,${sel} > h3+p,${sel} > h4+p,${sel} > h5+p,${sel} > h6+p{text-indent:0}`);
+    }
+    f.headings.forEach((h, i2) => {
+      const lv = i2 + 1;
+      const parts = [
+        `font-size:${+h.size.toFixed(3)}em`,
+        `font-weight:${h.bold ? 700 : 400}`,
+        `font-style:${h.italic ? "italic" : "normal"}`,
+        `margin:${h.before}em 0 ${h.after}em`,
+        `font-family:${proseHeadingStack(f)}`
+      ];
+      if (h.align) parts.push("text-align:" + h.align);
+      if (f.headingColor) parts.push("color:" + f.headingColor);
+      out.push(`${sel} h${lv}{${parts.join(";")}}`);
+    });
+    if (f.headingNumber) {
+      const lv = f.headingNumberLevel;
+      out.push(`${sel}{counter-reset:k-chap}`);
+      out.push(`${sel} h${lv}{counter-increment:k-chap}`);
+      out.push(`${sel} h${lv}::before{content:"${headingNumberText(f, '" counter(k-chap) "')}\\A";white-space:pre;display:block;font-size:.62em;opacity:.72;font-weight:400}`);
+    }
+    const qp = [
+      `font-style:${q.italic ? "italic" : "normal"}`,
+      `padding:2px 0 2px ${q.indent}in`,
+      `margin:${Math.max(0.2, f.paraSpacing || 0.6)}em 0`
+    ];
+    qp.push(q.border ? "border-left:3px solid var(--accent)" : "border-left:0");
+    if (q.color) qp.push("color:" + q.color);
+    if (q.bg) qp.push("background:" + q.bg);
+    out.push(`${sel} blockquote{${qp.join(";")}}`);
+    out.push(`${sel} blockquote p{text-indent:0}`);
+    return out.join("\n");
+  }
+  function headingNumberText(fmt, n) {
+    const f = fmt && fmt.headings ? fmt : mergeProseFormat(fmt);
+    return String(f.headingNumberFormat || "\u0E1A\u0E17\u0E17\u0E35\u0E48 {n}").replace(/\{n\}/g, String(n));
+  }
+  function proseExportCss(fmt, paper, margins) {
+    const f = fmt && fmt.headings ? fmt : mergeProseFormat(fmt);
+    const p = paper || PAPER_SIZES.letter;
+    const m = { ...MARGIN_DEFAULTS, ...margins || {} };
+    const tw = textWidth(p, m);
+    const body = [
+      `font-family:${proseFontStack(f)}`,
+      `font-size:${f.fontPt}pt`,
+      `line-height:${f.lineHeight}`,
+      `max-width:${+tw.toFixed(3)}in`,
+      "margin:3em auto",
+      "padding:0 1.2em",
+      `text-align:${f.align}`
+    ].join(";");
+    const out = [
+      `body{${body}}`,
+      `p{margin:0 0 ${f.paraSpacing}em;text-indent:${f.firstLineIndent}in}`,
+      "body > p:first-of-type,h1+p,h2+p,h3+p,h4+p,h5+p,h6+p{text-indent:0}"
+    ];
+    f.headings.forEach((h, i2) => {
+      out.push(`h${i2 + 1}{font-size:${+h.size.toFixed(3)}em;font-weight:${h.bold ? 700 : 400};margin:${h.before}em 0 ${h.after}em;font-family:${proseHeadingStack(f)}` + (h.align ? ";text-align:" + h.align : "") + (f.headingColor ? ";color:" + f.headingColor : "") + "}");
+    });
+    const q = f.quote;
+    out.push(`blockquote{font-style:${q.italic ? "italic" : "normal"};padding-left:${q.indent}in;margin:1em 0;` + (q.border ? "border-left:3px solid #ccc" : "border-left:0") + (q.color ? ";color:" + q.color : ";color:#555") + "}");
+    out.push("blockquote p{text-indent:0}");
+    out.push("hr{border:0;border-top:1px solid #ccc;margin:2em 0}");
+    out.push("img{max-width:100%}");
+    out.push('pre{background:#f4f4f4;padding:10px 14px;border-radius:6px;overflow:auto;font-family:"Courier Prime","Courier New",monospace;font-size:.92em;text-indent:0}');
+    out.push(".pb{page-break-before:always;break-before:page;height:0}");
+    out.push(`@page{size:${p.width}in ${p.height}in;margin:${m.top}in ${m.right}in ${m.bottom}in ${m.left}in}`);
+    out.push("@media print{body{margin:0;max-width:none;padding:0}}");
+    return out.join("\n");
+  }
+  function proseLinesPerPage(fmt, paper, margins) {
+    const f = fmt && fmt.headings ? fmt : mergeProseFormat(fmt);
+    const p = paper || PAPER_SIZES.letter;
+    const m = { ...MARGIN_DEFAULTS, ...margins || {} };
+    const usable = Math.max(0.5, num2(p.height, 11) - num2(m.top, 1) - num2(m.bottom, 1));
+    return Math.max(1, Math.floor(usable * DPI / proseLinePx(f)));
+  }
+  function proseCharsPerLine(fmt, paper, margins) {
+    const f = fmt && fmt.headings ? fmt : mergeProseFormat(fmt);
+    const p = paper || PAPER_SIZES.letter;
+    const m = { ...MARGIN_DEFAULTS, ...margins || {} };
+    const wPx = textWidth(p, m) * DPI;
+    return Math.max(10, Math.floor(wPx / (proseFontPx(f) * f.avgCharEm)));
+  }
+  function proseMetrics(fmt, paper, margins) {
+    const f = fmt && fmt.headings ? fmt : mergeProseFormat(fmt);
+    const p = paper || PAPER_SIZES.letter;
+    const m = { ...MARGIN_DEFAULTS, ...margins || {} };
+    const usableH = Math.max(0.5, num2(p.height, 11) - num2(m.top, 1) - num2(m.bottom, 1));
+    return {
+      linesPerPage: proseLinesPerPage(f, p, m),
+      charsPerLine: proseCharsPerLine(f, p, m),
+      usableWidth: +textWidth(p, m).toFixed(4),
+      usableHeight: +usableH.toFixed(4),
+      pageWidthPx: Math.round(num2(p.width, 8.5) * DPI),
+      pageHeightPx: Math.round(num2(p.height, 11) * DPI),
+      bodyHeightPx: Math.round(usableH * DPI),
+      lineHeightPx: proseLinePx(f),
+      fontPx: proseFontPx(f)
+    };
+  }
+  function proseWrap(text, cols, indentCols = 0) {
+    const s = String(text ?? "");
+    if (!s.trim()) return 1;
+    const c = Math.max(1, Math.floor(cols));
+    let total = 0;
+    for (const para2 of s.split("\n")) {
+      const words = para2.split(/\s+/).filter(Boolean);
+      if (!words.length) {
+        total += 1;
+        continue;
+      }
+      let line = 0, used = Math.max(0, Math.round(indentCols));
+      for (const w of words) {
+        const need = used ? used + 1 + w.length : w.length;
+        if (need <= c) used = need;
+        else {
+          line++;
+          used = w.length;
+          while (used > c) {
+            line++;
+            used -= c;
+          }
+        }
+      }
+      total += line + 1;
+    }
+    return Math.max(1, total);
+  }
+  function proseBlockLines(b, fmt, cols) {
+    const f = fmt && fmt.headings ? fmt : mergeProseFormat(fmt);
+    const type = b && b.type || "p";
+    const text = String(b && b.text || "");
+    if (type === "hr") return 2;
+    if (type === "figure") return 8;
+    const hm = /^h([1-6])$/.exec(type);
+    if (hm) {
+      const h = f.headings[+hm[1] - 1] || f.headings[0];
+      const c = Math.max(4, Math.floor(cols / h.size));
+      const body = proseWrap(text, c) * h.size;
+      return Math.ceil(body + h.before * h.size + h.after * h.size);
+    }
+    if (type === "blockquote" || type === "li" || type === "code") {
+      const c = Math.max(4, cols - 6);
+      return proseWrap(text, c) + (f.paraSpacing ? Math.ceil(f.paraSpacing) : 0);
+    }
+    const indentCols = f.firstLineIndent ? Math.round(f.firstLineIndent * DPI / (proseFontPx(f) * f.avgCharEm)) : 0;
+    return proseWrap(text, cols, indentCols) + (f.paraSpacing ? Math.ceil(f.paraSpacing) : 0);
+  }
+  function paginateProse(blocks, opts = {}) {
+    const f = opts.fmt && opts.fmt.headings ? opts.fmt : mergeProseFormat(opts.fmt);
+    const paper = opts.paper || PAPER_SIZES.letter;
+    const margins = { ...MARGIN_DEFAULTS, ...opts.margins || {} };
+    const perPage = Math.max(4, opts.lines || proseLinesPerPage(f, paper, margins));
+    const cols = Math.max(8, opts.cols || proseCharsPerLine(f, paper, margins));
+    const pages = [];
+    let cur = [], used = 0;
+    const push = () => {
+      pages.push({ index: pages.length + 1, blocks: cur });
+      cur = [];
+      used = 0;
+    };
+    for (const b of blocks || []) {
+      if (!b) continue;
+      const need = proseBlockLines(b, f, cols);
+      if (used && used + need > perPage) push();
+      cur.push({ ...b, lines: need });
+      used += need;
+      if (used >= perPage) push();
+    }
+    if (cur.length) push();
+    if (!pages.length) pages.push({ index: 1, blocks: [] });
+    return { pages, count: pages.length };
+  }
+  function prosePageLabel(index, fmt, startPage) {
+    const f = fmt && fmt.headings ? fmt : mergeProseFormat(fmt);
+    if (!f.pageNumbers) return "";
+    const i2 = Math.max(1, Math.round(+index || 1));
+    if (i2 === 1 && !f.pageNumberFirst) return "";
+    const start = Math.max(1, Math.round(+startPage || 1));
+    return String(start + i2 - 1);
+  }
+  function proseBlocksFromDoc(doc3) {
+    const out = [];
+    if (!doc3 || typeof doc3.forEach !== "function") return out;
+    let i2 = 0;
+    doc3.forEach((node, offset) => {
+      const name = node.type && node.type.name;
+      const text = node.textContent || "";
+      let type = "p", level = 0;
+      if (name === "heading") {
+        level = node.attrs && node.attrs.level || 1;
+        type = "h" + level;
+      } else if (name === "blockquote") type = "blockquote";
+      else if (name === "bullet_list" || name === "ordered_list") type = "li";
+      else if (name === "figure") type = "figure";
+      else if (name === "horizontal_rule") type = "hr";
+      else if (name === "code_block") type = "code";
+      const b = { type, text, pos: offset, idx: i2++ };
+      if (level) b.level = level;
+      if (name === "figure") {
+        b.src = node.attrs.resolved || node.attrs.src;
+        b.alt = node.attrs.alt || "";
+      }
+      out.push(b);
+    });
+    return out;
+  }
+  function prosePageStarts(pages) {
+    const list = pages && pages.pages || pages || [];
+    return list.map((pg) => {
+      const b = (pg.blocks || []).find((x) => Number.isFinite(x && x.pos));
+      return b ? b.pos : null;
+    });
+  }
+  function findProsePageStart(pages, n) {
+    const arr = prosePageStarts(pages);
+    const i2 = Math.max(1, Math.round(+n || 1)) - 1;
+    if (i2 === 0) return arr.length ? arr[0] ?? 0 : 0;
+    return i2 < arr.length ? arr[i2] : null;
+  }
+  function proseHeadings(blocks, level) {
+    const out = [];
+    let n = 0;
+    for (const b of blocks || []) {
+      if (!b || !/^h[1-6]$/.test(b.type)) continue;
+      if (level && b.level !== level) continue;
+      n++;
+      out.push({
+        n,
+        pos: Number.isFinite(b.pos) ? b.pos : null,
+        level: b.level,
+        text: String(b.text || "").trim()
+      });
+    }
+    return out;
+  }
+  var num2, clamp, PT_PX, DPI, DEFAULT_PROSE_FONT, H, HEADING_DEFAULTS, QUOTE_DEFAULTS, PROSE_DEFAULTS, proseFontPx, proseLinePx;
+  var init_prose_format = __esm({
+    "src/prose-format.js"() {
+      init_sp_format();
+      num2 = (v, d) => {
+        const n = parseFloat(v);
+        return Number.isFinite(n) ? n : d;
+      };
+      clamp = (v, lo, hi, d) => {
+        const n = parseFloat(v);
+        return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : d;
+      };
+      PT_PX = 4 / 3;
+      DPI = 96;
+      DEFAULT_PROSE_FONT = '"Sarabun", "TH Sarabun New", "Noto Serif Thai", "Noto Sans Thai", Georgia, "Times New Roman", serif';
+      H = (size, bold, before, after) => ({ size, bold, italic: false, before, after, align: "" });
+      HEADING_DEFAULTS = [
+        H(2, true, 1, 0.4),
+        // h1
+        H(1.6, true, 1, 0.4),
+        // h2
+        H(1.35, true, 1, 0.4),
+        // h3
+        H(1.2, true, 1, 0.4),
+        // h4
+        H(1.1, true, 1, 0.4),
+        // h5
+        H(1, true, 1, 0.4)
+        // h6
+      ];
+      QUOTE_DEFAULTS = {
+        italic: true,
+        indent: 0.35,
+        border: true,
+        color: "",
+        bg: ""
+      };
+      PROSE_DEFAULTS = {
+        fontFamily: "",
+        // '' = DEFAULT_PROSE_FONT
+        fontPt: 12,
+        // ขนาดเนื้อเรื่อง (พอยต์)
+        lineHeight: 1.75,
+        // ช่วงบรรทัด (เท่าของขนาดตัวอักษร)
+        paraSpacing: 0,
+        // ระยะระหว่างย่อหน้า (em) — นิยายมาตรฐาน = 0 (ใช้ย่อหน้าแทน)
+        firstLineIndent: 0.5,
+        // [16] ย่อหน้าบรรทัดแรก (นิ้ว) — 0 = ไม่ย่อ
+        indentAfterHeading: false,
+        // ย่อหน้าแรกหลังหัวข้อไหม (ธรรมเนียมสากล = ไม่ย่อ)
+        align: "left",
+        // left | justify (จัดหน้าเริ่มต้นของย่อหน้า)
+        headingFont: "",
+        // '' = เหมือนเนื้อเรื่อง
+        headingColor: "",
+        // '' = ใช้สีของธีม
+        headingNumber: false,
+        // [23] เติมเลขบทอัตโนมัติ
+        headingNumberFormat: "\u0E1A\u0E17\u0E17\u0E35\u0E48 {n}",
+        headingNumberLevel: 1,
+        // ใส่เลขให้หัวข้อระดับไหน
+        headings: null,
+        // [23] null = HEADING_DEFAULTS
+        quote: null,
+        // [24] null = QUOTE_DEFAULTS
+        avgCharEm: 0.5,
+        // ความกว้างเฉลี่ยต่อตัวอักษร (เท่าของ em) — ใช้ประมาณการนับหน้า
+        pageNumbers: false,
+        // [20] แสดงเลขหน้าในมุมมองหน้ากระดาษ
+        pageNumberFirst: false
+        // พิมพ์เลขบนหน้าแรกไหม
+      };
+      proseFontPx = (fmt) => {
+        const f = fmt && fmt.headings ? fmt : mergeProseFormat(fmt);
+        return +(f.fontPt * PT_PX).toFixed(4);
+      };
+      proseLinePx = (fmt) => {
+        const f = fmt && fmt.headings ? fmt : mergeProseFormat(fmt);
+        return +(proseFontPx(f) * f.lineHeight).toFixed(4);
+      };
+    }
+  });
+
+  // src/prose-view.js
+  function proseLayoutCssVars(fmt, paper, margins, gapPx = 28) {
+    const mt = proseMetrics(fmt, paper, margins);
+    return {
+      "--ed-body-h": mt.bodyHeightPx + "px",
+      "--ed-page-gap": Math.max(8, Math.round(gapPx)) + "px",
+      "--ed-line-h": mt.lineHeightPx + "px"
+    };
+  }
+  function prosePagesOf(blocks, fmt, paper, margins) {
+    return paginateProse(blocks, { fmt, paper, margins });
+  }
+  function setProsePageBreaks(list) {
+    const next = (list || []).filter((b) => b && Number.isFinite(b.pos) && b.pos > 0);
+    const sig = next.map((b) => b.pos + ":" + b.page).join(",");
+    if (sig === _edBreakSig) return false;
+    _edBreakSig = sig;
+    _edBreaks = next;
+    return true;
+  }
+  function prosePageBreaks() {
+    return _edBreaks.slice();
+  }
+  function edPbDecos(doc3) {
+    if (!_edBreaks.length || !doc3) return DecorationSet.empty;
+    const max = doc3.content.size;
+    const out = [];
+    for (const b of _edBreaks) {
+      if (b.pos > max) continue;
+      out.push(Decoration.widget(b.pos, () => {
+        const d = document.createElement("div");
+        d.className = "sp-page-break ed-page-break";
+        d.dataset.page = String(b.page || "");
+        d.setAttribute("contenteditable", "false");
+        const lbl = document.createElement("span");
+        lbl.className = "sp-page-break-num";
+        lbl.textContent = "\u0E2B\u0E19\u0E49\u0E32 " + (b.page || "");
+        d.append(lbl);
+        return d;
+      }, { side: -1, key: "edpb" + b.pos + "-" + b.page }));
+    }
+    return DecorationSet.create(doc3, out);
+  }
+  function prosePageBreakPlugin() {
+    return new Plugin({
+      key: edPbKey,
+      state: {
+        init: (_c, st) => edPbDecos(st.doc),
+        apply(tr2, prev, _o, st) {
+          if (!tr2.docChanged && !tr2.getMeta(edPbKey)) return prev.map(tr2.mapping, tr2.doc);
+          return edPbDecos(st.doc);
+        }
+      },
+      props: { decorations(state2) {
+        return edPbKey.getState(state2);
+      } }
+    });
+  }
+  function refreshProsePageBreaks(view) {
+    if (view) view.dispatch(view.state.tr.setMeta(edPbKey, true));
+  }
+  function renderProsePageView(host2, pages, fmt, opts = {}) {
+    const f = fmt && fmt.headings ? fmt : mergeProseFormat(fmt);
+    const paper = opts.paper || PAPER_SIZES.letter;
+    const m = { ...MARGIN_DEFAULTS, ...opts.margins || {} };
+    const list = pages && pages.pages || pages || [];
+    const scale = opts.scale ?? 1;
+    const gap = opts.gap ?? 20;
+    const pw = +paper.width, ph = +paper.height;
+    const pxW = pw * 96 * scale, pxH = ph * 96 * scale;
+    host2.innerHTML = "";
+    host2.style.setProperty("--sp-pv-scale", String(scale));
+    host2.style.setProperty("--sp-pv-gap", gap + "px");
+    const els = [];
+    for (const pg of list) {
+      const slot = document.createElement("div");
+      slot.className = "sp-page-slot";
+      slot.style.width = pxW + "px";
+      slot.style.height = pxH + "px";
+      const page = document.createElement("div");
+      page.className = "sp-page ed-page";
+      page.dataset.page = String(pg.index);
+      page.style.width = cssIn(pw);
+      page.style.minHeight = cssIn(ph);
+      page.style.paddingTop = cssIn(m.top);
+      page.style.paddingBottom = cssIn(m.bottom);
+      page.style.paddingLeft = cssIn(m.left);
+      page.style.paddingRight = cssIn(m.right);
+      page.style.transform = "scale(" + scale + ")";
+      page.style.fontFamily = proseFontStack(f);
+      page.style.fontSize = proseFontPx(f) + "px";
+      page.style.lineHeight = String(f.lineHeight);
+      const label = f.pageNumbers ? prosePageLabel(pg.index, f, opts.startPage) : opts.showPageNumbers !== false && pg.index > 1 ? String(pg.index) : "";
+      if (label) {
+        const n = document.createElement("div");
+        n.className = "sp-page-num";
+        n.textContent = label;
+        page.append(n);
+      }
+      for (const b of pg.blocks || []) {
+        const type = b.type || "p";
+        let d;
+        if (type === "hr") {
+          d = document.createElement("hr");
+        } else if (/^h[1-6]$/.test(type)) {
+          d = document.createElement(type);
+          d.style.fontSize = (f.headings[+type[1] - 1] || f.headings[0]).size + "em";
+          d.style.fontFamily = proseHeadingStack(f);
+          d.textContent = b.text || "";
+        } else if (type === "blockquote") {
+          d = document.createElement("blockquote");
+          d.textContent = b.text || "";
+        } else if (type === "figure") {
+          d = document.createElement("div");
+          d.className = "pv-figure";
+          d.textContent = "\u{1F5BC} " + (b.alt || "\u0E23\u0E39\u0E1B");
+        } else {
+          d = document.createElement("p");
+          d.style.textIndent = f.firstLineIndent + "in";
+          d.style.marginBottom = f.paraSpacing + "em";
+          d.textContent = b.text || "";
+        }
+        d.classList.add("pv-block");
+        if (Number.isFinite(b.pos)) d.dataset.pos = String(b.pos);
+        page.append(d);
+      }
+      slot.append(page);
+      host2.append(slot);
+      els.push(page);
+    }
+    return { pages: els, scale, perRow: opts.perRow ?? 0 };
+  }
+  var edPbKey, _edBreaks, _edBreakSig, cssIn;
+  var init_prose_view = __esm({
+    "src/prose-view.js"() {
+      init_dist4();
+      init_dist5();
+      init_prose_format();
+      init_sp_format();
+      edPbKey = new PluginKey("kedpagebreak");
+      _edBreaks = [];
+      _edBreakSig = "";
+      cssIn = (v) => (+v || 0) + "in";
+    }
+  });
+
   // src/editor.js
   function changedRange(tr2) {
     let from2 = Infinity, to = -Infinity;
@@ -13784,9 +14813,9 @@
   }
   function blockRange(doc3, from2, to) {
     const size = doc3.content.size;
-    const clamp2 = (v) => Math.max(0, Math.min(v, size));
-    const $f = doc3.resolve(clamp2(from2));
-    const $t = doc3.resolve(clamp2(to));
+    const clamp3 = (v) => Math.max(0, Math.min(v, size));
+    const $f = doc3.resolve(clamp3(from2));
+    const $t = doc3.resolve(clamp3(to));
     return { from: $f.depth ? $f.before(1) : 0, to: $t.depth ? $t.after(1) : size };
   }
   function incrementalDecoState(key, scan) {
@@ -13973,7 +15002,10 @@
         (m, n) => n.childCount + n.attrs.order === +m[1]
       ),
       markRule(/(\*\*)([^*]+)\*\*$/, s.marks.strong),
-      markRule(/(~~)([^~]+)~~$/, s.marks.strike)
+      markRule(/(~~)([^~]+)~~$/, s.marks.strike),
+      // [alpha.58r บั๊ก 27] พิมพ์ ``` แล้วได้บล็อกโค้ด · พิมพ์ --- แล้วได้เส้นคั่น
+      textblockTypeInputRule(/^```([\w+-]*)\s$/, s.nodes.code_block, (m) => ({ lang: m[1] || "" })),
+      new InputRule(/^(?:-{3,}|\*{3,}|_{3,})$/, (state2, match, start, end) => state2.tr.replaceRangeWith(start, end, s.nodes.horizontal_rule.create()))
     ] });
   }
   var import_md, mentionKey, spellKey, focusKey, _focusOn, cmKey, _cmQuotes, _cmActive, schema, KEditor;
@@ -13991,6 +15023,7 @@
       init_dist13();
       import_md = __toESM(require_md());
       init_search();
+      init_prose_view();
       init_dist4();
       init_dist5();
       mentionKey = new PluginKey("kmention");
@@ -14079,6 +15112,28 @@
               }]
             ]
           },
+          // [alpha.58r บั๊ก 27] เส้นคั่น + บล็อกโค้ด (เดิม schema ไม่มี → พิมพ์ ``` หรือ --- แล้วหายไปเฉย ๆ)
+          horizontal_rule: {
+            group: "block",
+            atom: true,
+            selectable: true,
+            parseDOM: [{ tag: "hr" }],
+            toDOM: () => ["hr"]
+          },
+          code_block: {
+            group: "block",
+            content: "text*",
+            marks: "",
+            code: true,
+            defining: true,
+            attrs: { lang: { default: "" }, fence: { default: "```" } },
+            parseDOM: [{
+              tag: "pre",
+              preserveWhitespace: "full",
+              getAttrs: (d) => ({ lang: d.getAttribute("data-lang") || "" })
+            }],
+            toDOM: (n) => ["pre", n.attrs.lang ? { "data-lang": n.attrs.lang } : {}, ["code", 0]]
+          },
           text: { group: "inline" }
         },
         marks: {
@@ -14097,14 +15152,17 @@
           getNames = null,
           onMention = null,
           getChecker = null,
-          editable = null
+          editable = null,
+          alignMap = null,
+          alignComments = false
         } = {}) {
           this.onChange = onChange;
           this.resolveSrc = resolveSrc;
           this.getNames = getNames;
           this.getChecker = getChecker;
           this.editableFn = editable;
-          const doc3 = this._docFromMd(markdown);
+          this.alignComments = !!alignComments;
+          const doc3 = this._docFromMd(markdown, alignMap);
           const self2 = this;
           this.view = new EditorView(mount, {
             editable: editable ? () => editable() : void 0,
@@ -14153,10 +15211,15 @@
               ...this.getChecker ? [spellPlugin(this.getChecker)] : [],
               focusLinePlugin(),
               commentAnchorPlugin(),
+              prosePageBreakPlugin(),
+              // [20] เส้นคั่นหน้าของนิยาย
               buildRules(schema),
               keymap({
                 // ขึ้นบรรทัดใหม่แล้วรูปแบบตัวอักษร (หนา/เอียง/ขีด) ต้องติดไปด้วย — แบบ Word
-                Enter: chainCommands(splitListItem(schema.nodes.list_item), splitBlockKeepMarks),
+                // ในบล็อกโค้ด Enter = ขึ้นบรรทัดใน pre (ไม่ใช่แตกบล็อก) · Shift+Enter = ออกจากบล็อก
+                Enter: chainCommands(newlineInCode, splitListItem(schema.nodes.list_item), splitBlockKeepMarks),
+                "Shift-Enter": exitCode,
+                "Mod-Enter": exitCode,
                 Tab: sinkListItem(schema.nodes.list_item),
                 "Shift-Tab": liftListItem(schema.nodes.list_item)
               }),
@@ -14168,22 +15231,37 @@
             ]
           });
         }
-        _docFromMd(md) {
-          const json = (0, import_md.mdToDoc)(md);
+        _docFromMd(md, alignMap) {
+          const json = (0, import_md.mdToDoc)(md, alignMap);
           for (const n of json.content) {
             if (n.type === "figure") n.attrs.resolved = this.resolveSrc(n.attrs.src);
           }
           return schema.nodeFromJSON(json);
         }
         // ---------- content ----------
-        getMarkdown() {
-          return (0, import_md.docToMd)(this.view.state.doc.toJSON());
+        getMarkdown(opts) {
+          return (0, import_md.docToMd)(
+            this.view.state.doc.toJSON(),
+            opts || { alignComments: this.alignComments }
+          );
         }
-        setMarkdown(md) {
-          this.view.updateState(this._mkState(this._docFromMd(md)));
+        /** แผนที่จัดหน้าของบล็อกระดับบน — เก็บลง frontmatter (`align: [3:center]`) */
+        getAlignMap() {
+          return (0, import_md.collectAlign)(this.view.state.doc.toJSON());
+        }
+        setMarkdown(md, alignMap) {
+          this.view.updateState(this._mkState(this._docFromMd(md, alignMap)));
         }
         getText() {
           return this.view.state.doc.textBetween(0, this.view.state.doc.content.size, "\n");
+        }
+        /** [alpha.58r บั๊ก 20] ย้ายเคอร์เซอร์ไปตำแหน่ง pos แล้วเลื่อนจอให้เห็น (คู่กับ SPEditor.gotoPos) */
+        gotoPos(pos) {
+          const v = this.view;
+          const p = Math.max(0, Math.min(Number(pos) || 0, v.state.doc.content.size));
+          v.dispatch(v.state.tr.setSelection(TextSelection.near(v.state.doc.resolve(p), 1)).scrollIntoView());
+          v.focus();
+          return true;
         }
         // ---------- commands (เรียกจากเมนู Electron — คีย์ลัดเลยใช้ได้ทุก layout รวมไทย) ----------
         cmd(name, arg) {
@@ -14218,6 +15296,14 @@
               return run2(wrapInList(s.nodes.bullet_list));
             case "ol":
               return run2(wrapInList(s.nodes.ordered_list));
+            // [alpha.58r บั๊ก 27] เส้นคั่น + บล็อกโค้ด
+            case "code":
+              return run2(setBlockType2(s.nodes.code_block));
+            case "hr": {
+              v.dispatch(v.state.tr.replaceSelectionWith(s.nodes.horizontal_rule.create()).scrollIntoView());
+              v.focus();
+              return;
+            }
             case "align": {
               const val = arg === "left" ? null : arg;
               const { from: from2, to } = v.state.selection;
@@ -14256,7 +15342,7 @@
             out[k] = empty2 ? !!mk.isInSet(st.storedMarks || $from.marks()) : st.doc.rangeHasMark(from2, to, mk);
           }
           const p = st.selection.$from.parent;
-          out.block = p.type.name === "heading" ? "h" + p.attrs.level : st.selection.$from.node(-1) && st.selection.$from.node(-1).type.name === "blockquote" ? "quote" : "p";
+          out.block = p.type.name === "heading" ? "h" + p.attrs.level : p.type.name === "code_block" ? "code" : st.selection.$from.node(-1) && st.selection.$from.node(-1).type.name === "blockquote" ? "quote" : "p";
           out.align = p.type.name === "paragraph" || p.type.name === "heading" ? p.attrs.align || "left" : null;
           return out;
         }
@@ -14816,437 +15902,6 @@
     }
   });
 
-  // src/sp-format.js
-  function linesPerPage(paper, margins, lineHeightIn = LINE_HEIGHT_IN) {
-    const p = paper || PAPER_SIZES.letter;
-    const m = { ...MARGIN_DEFAULTS, ...margins || {} };
-    const usable = num(p.height, 11) - num(m.top, 1) - num(m.bottom, 1);
-    return Math.max(1, Math.floor(usable / (lineHeightIn || LINE_HEIGHT_IN)));
-  }
-  function textWidth(paper, margins) {
-    const p = paper || PAPER_SIZES.letter;
-    const m = { ...MARGIN_DEFAULTS, ...margins || {} };
-    return Math.max(0.5, num(p.width, 8.5) - num(m.left, 1.5) - num(m.right, 1));
-  }
-  function num(v, d) {
-    const n = parseFloat(v);
-    return Number.isFinite(n) ? n : d;
-  }
-  function sceneNumberOffsets(fmt) {
-    const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
-    const sn = f.sceneNumbers;
-    const cfg = f.elements.scene;
-    const boxLeft = num(cfg.indent, f.margins.left);
-    const boxRight = boxLeft + num(cfg.width, 6);
-    return {
-      left: +(num(sn.left, 0.75) - boxLeft).toFixed(4),
-      right: +(boxRight - (num(f.paper.width, 8.5) - num(sn.right, 1))).toFixed(4)
-    };
-  }
-  function pageNumberLabel(index, fmt, startPage) {
-    const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
-    const pn = f.pageNumbers;
-    if (!pn.show) return "";
-    const i2 = Math.max(1, Math.round(+index || 1));
-    if (i2 === 1 && !pn.firstPage) return "";
-    const start = Math.max(1, Math.round(+startPage || 1));
-    return String(start + i2 - 1) + (pn.suffix || "");
-  }
-  function mergeSpFormat(user) {
-    const u = user || {};
-    const paperSize = PAPER_SIZES[u.paperSize] ? u.paperSize : "letter";
-    const basePaper = PAPER_SIZES[paperSize];
-    const paper = paperSize === "custom" ? { width: num(u.paper?.width, basePaper.width), height: num(u.paper?.height, basePaper.height), unit: "in" } : { ...basePaper };
-    const elements = {};
-    for (const k of SP_ELEMENT_KEYS) elements[k] = { ...SP_ELEMENT_CONFIG[k], ...u.elements?.[k] || {} };
-    const styles = {};
-    for (const k of SP_ELEMENT_KEYS) {
-      styles[k] = {
-        screen: { ...SP_ELEMENT_STYLES[k].screen, ...u.styles?.[k]?.screen || {} },
-        print: { ...SP_ELEMENT_STYLES[k].print, ...u.styles?.[k]?.print || {} }
-      };
-    }
-    return {
-      paperSize,
-      paper,
-      margins: { ...MARGIN_DEFAULTS, ...u.margins || {} },
-      elements,
-      styles,
-      rules: { ...PAGE_BREAK_RULES, ...u.rules || {} },
-      strings: { ...SP_STRINGS, ...u.strings || {} },
-      sceneNumbers: { ...SCENE_NUMBER_DEFAULTS, ...u.sceneNumbers || {} },
-      pageNumbers: { ...PAGE_NUMBER_DEFAULTS, ...u.pageNumbers || {} },
-      continued: { ...CONTINUED_DEFAULTS, ...u.continued || {} }
-    };
-  }
-  function pageCssVars(fmt) {
-    const f = fmt && fmt.margins ? fmt : mergeSpFormat(fmt);
-    const m = f.margins;
-    return {
-      "--page-w": f.paper.width + "in",
-      "--page-h": f.paper.height + "in",
-      "--mg-top": m.top + "in",
-      "--mg-bottom": m.bottom + "in",
-      "--mg-left": m.left + "in",
-      "--mg-right": m.right + "in",
-      "--text-w": +textWidth(f.paper, m).toFixed(4) + "in",
-      // [alpha.57a] เลขหน้า — ระยะจากขอบกระดาษ (ไม่ใช่จากขอบพื้นที่พิมพ์)
-      "--pg-no-top": (f.pageNumbers?.top ?? 0.5) + "in",
-      "--pg-no-right": (f.pageNumbers?.right ?? 1) + "in"
-    };
-  }
-  function spCss(fmt) {
-    const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
-    const left = f.margins.left;
-    const out = [];
-    const decl = (st) => [
-      "text-transform:" + (st.caps ? "uppercase" : "none"),
-      "font-weight:" + (st.bold ? "700" : "400"),
-      "font-style:" + (st.italic ? "italic" : "normal"),
-      "text-decoration:" + (st.underline ? "underline" : "none")
-    ].join(";");
-    const tw = textWidth(f.paper, f.margins);
-    for (const k of SP_ELEMENT_KEYS) {
-      const c = f.elements[k];
-      const s = f.styles[k];
-      const ml = Math.max(0, +(num(c.indent, left) - left).toFixed(4));
-      const w = Math.max(0.3, Math.min(num(c.width, 6), +(tw - ml).toFixed(4)));
-      const mt = num(c.linesBefore, 10) / 10;
-      const mb = num(c.linesBetween, 10) / 10 - 1;
-      out.push(`.sp.sp-${k}{margin-left:${ml}in;width:${w}in;max-width:none;margin-top:${mt}em;margin-bottom:${Math.max(0, mb)}em;${decl(s.screen)}}`);
-    }
-    const so = sceneNumberOffsets(f);
-    out.push(".sp.sp-scene{position:relative}");
-    out.push(".k-scene-no{position:absolute;top:0;white-space:nowrap;user-select:none;pointer-events:none;text-transform:none;font-weight:400;font-style:normal;text-decoration:none}");
-    out.push(`.k-scene-no-l{left:${so.left}in}`);
-    out.push(`.k-scene-no-r{right:${so.right}in}`);
-    const ct = { ...CONTINUED_DEFAULTS, ...f.continued || {} };
-    const moreML = Math.max(0, +(num(ct.indent, 3.7) - left).toFixed(4));
-    out.push(`.sp.sp-more{margin-left:${moreML}in;width:auto;max-width:none;margin-top:0;margin-bottom:0;text-transform:none}`);
-    out.push(`.sp-continued-top,.sp-cont-top{margin-left:0;width:${+tw.toFixed(4)}in;text-align:left}`);
-    out.push(`.sp-continued-bottom,.sp-cont-bottom{margin-left:0;width:${+tw.toFixed(4)}in;text-align:right}`);
-    const m = f.margins;
-    out.push(`@page{size:${f.paper.width}in ${f.paper.height}in;margin:${m.top}in ${m.right}in ${m.bottom}in ${m.left}in;orphans:${Math.max(1, f.rules.minActionLinesAtBottom)};widows:${Math.max(1, f.rules.minActionLinesAtTop)};}`);
-    const printRules = SP_ELEMENT_KEYS.map((k) => `.sp.sp-${k}{${decl(f.styles[k].print)}}`).join("");
-    out.push("@media print{" + printRules + "}");
-    return out.join("\n");
-  }
-  function wrapLines(text, widthIn, cpi = CHARS_PER_INCH) {
-    const cols = Math.max(1, Math.floor(num(widthIn, 6) * cpi));
-    const s = String(text ?? "");
-    if (!s.trim()) return 1;
-    let total = 0;
-    for (const para2 of s.split("\n")) {
-      const words = para2.split(/\s+/).filter(Boolean);
-      if (!words.length) {
-        total += 1;
-        continue;
-      }
-      let line = 0, used = 0;
-      for (const w of words) {
-        const need = used ? used + 1 + w.length : w.length;
-        if (need <= cols) {
-          used = need;
-        } else {
-          line++;
-          used = w.length;
-          while (used > cols) {
-            line++;
-            used -= cols;
-          }
-        }
-      }
-      total += line + 1;
-    }
-    return Math.max(1, total);
-  }
-  function paginate(blocks, opts = {}) {
-    const fmt = opts.fmt && opts.fmt.elements ? opts.fmt : mergeSpFormat(opts.fmt);
-    const perPage = Math.max(4, opts.lines || linesPerPage(fmt.paper, fmt.margins));
-    const R = fmt.rules, S = fmt.strings;
-    const cfg = (el3) => fmt.elements[el3] || fmt.elements.action;
-    const CT = { ...CONTINUED_DEFAULTS, ...fmt.continued || {} };
-    const wantDlgMarkers = CT.enabled !== false && CT.dialogue !== false;
-    const pages = [];
-    let cur = [], used = 0, lastChar = "";
-    let sceneSeq = 0, curScene = 0, pageSceneStart = 0;
-    const addBlock = (blk) => {
-      if (blk.el === "scene" && blk.split !== "tail") {
-        curScene = ++sceneSeq;
-        if (!cur.length) pageSceneStart = curScene;
-      }
-      cur.push(blk);
-    };
-    const pushPage = () => {
-      pages.push({
-        index: pages.length + 1,
-        blocks: cur,
-        sceneStart: pageSceneStart,
-        sceneEnd: curScene
-      });
-      cur = [];
-      used = 0;
-      pageSceneStart = curScene;
-    };
-    const list = (blocks || []).filter((b) => b && b.el !== "blank");
-    for (let i2 = 0; i2 < list.length; i2++) {
-      const b = list[i2];
-      const c = cfg(b.el);
-      if (b.el === "character") lastChar = String(b.text || "");
-      const before = cur.length ? Math.round(num(c.linesBefore, 10) / 10) : 0;
-      const body = wrapLines(b.text, c.width);
-      const need = before + body;
-      const free = perPage - used;
-      if (need <= free) {
-        addBlock({ ...b, lines: body });
-        used += need;
-        continue;
-      }
-      const isDlg = b.el === "dialogue";
-      const isAct = b.el === "action" || b.el === "note" || b.el === "summary";
-      const minBot = isDlg ? R.minDialogueLinesAtBottom : R.minActionLinesAtBottom;
-      const minTop = isDlg ? R.minDialogueLinesAtTop : R.minActionLinesAtTop;
-      const canBottom = free - before;
-      if ((isDlg || isAct) && canBottom >= minBot && body - canBottom >= minTop) {
-        const head = splitText(b.text, c.width, canBottom);
-        addBlock({ ...b, text: head.head, lines: canBottom, split: "head" });
-        if (isDlg && wantDlgMarkers) addBlock({ el: "more", text: S.dialogueMore, lines: 1, more: true });
-        pushPage();
-        if (isDlg && wantDlgMarkers && lastChar) {
-          addBlock({ el: "character", text: lastChar + " " + S.dialogueContd, lines: 1, contd: true });
-          used += 1;
-        }
-        addBlock({ ...b, text: head.rest, lines: body - canBottom, split: "tail" });
-        used += body - canBottom;
-        continue;
-      }
-      const carry = [];
-      if (b.el === "dialogue" || b.el === "parenthetical") {
-        while (cur.length && ["character", "parenthetical"].includes(cur[cur.length - 1].el)) {
-          carry.unshift(cur.pop());
-        }
-      }
-      for (const x of carry) used -= x.lines || 1;
-      pushPage();
-      for (const x of carry) {
-        cur.push(x);
-        used += x.lines || 1;
-      }
-      addBlock({ ...b, lines: body });
-      used += body;
-    }
-    if (cur.length) pushPage();
-    if (!pages.length) pages.push({ index: 1, blocks: [], sceneStart: 0, sceneEnd: 0 });
-    annotateContinued(pages, fmt);
-    return { pages, count: pages.length };
-  }
-  function annotateContinued(pages, fmt) {
-    const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
-    const S = f.strings;
-    const CT = { ...CONTINUED_DEFAULTS, ...f.continued || {} };
-    const on = CT.enabled !== false && CT.scene !== false;
-    for (const p of pages) {
-      delete p.continuedBottom;
-      delete p.continuedTop;
-      delete p.contdRun;
-    }
-    let run2 = 1, contScene = 0;
-    for (let i2 = 0; i2 < pages.length - 1; i2++) {
-      const p = pages[i2], n = pages[i2 + 1];
-      const spans = on && p.sceneEnd > 0 && n.sceneStart === p.sceneEnd;
-      if (!spans) {
-        run2 = 1;
-        contScene = 0;
-        continue;
-      }
-      if (p.sceneEnd !== contScene) {
-        run2 = 1;
-        contScene = p.sceneEnd;
-      }
-      run2++;
-      p.continuedBottom = S.continuedBottom;
-      n.contdRun = run2;
-      n.continuedTop = CT.number !== false && run2 > 2 ? `${S.continuedTop} (${run2 - 1})` : S.continuedTop;
-    }
-    return pages;
-  }
-  function splitText(text, widthIn, n) {
-    const cols = Math.max(1, Math.floor(num(widthIn, 6) * CHARS_PER_INCH));
-    const words = String(text ?? "").split(/\s+/).filter(Boolean);
-    const lines = [];
-    let cur = "";
-    for (const w of words) {
-      const next = cur ? cur + " " + w : w;
-      if (next.length <= cols) cur = next;
-      else {
-        if (cur) lines.push(cur);
-        cur = w;
-      }
-    }
-    if (cur) lines.push(cur);
-    const k = Math.max(1, Math.min(n, lines.length - 1 >= 1 ? lines.length - 1 : 1));
-    return { head: lines.slice(0, k).join(" "), rest: lines.slice(k).join(" ") };
-  }
-  function pageCount(blocks, opts) {
-    return paginate(blocks, opts).count;
-  }
-  function newRoster() {
-    return {
-      version: ROSTER_VERSION,
-      title: SP_STRINGS.castTitle,
-      characters: [],
-      scene: "",
-      time: "",
-      showScene: true,
-      showTime: true,
-      includeInExport: true
-    };
-  }
-  function normalizeRoster(r) {
-    const base3 = newRoster();
-    if (!r || typeof r !== "object") return base3;
-    return {
-      ...base3,
-      ...r,
-      version: ROSTER_VERSION,
-      title: typeof r.title === "string" && r.title.trim() ? r.title : base3.title,
-      characters: (Array.isArray(r.characters) ? r.characters : []).map((c) => ({ name: String(c?.name ?? ""), detail: String(c?.detail ?? "") })),
-      scene: String(r.scene ?? ""),
-      time: String(r.time ?? ""),
-      showScene: r.showScene !== false,
-      showTime: r.showTime !== false,
-      includeInExport: r.includeInExport !== false
-    };
-  }
-  function rosterToText(roster, fmt) {
-    const r = normalizeRoster(roster);
-    const f = fmt && fmt.margins ? fmt : mergeSpFormat(fmt);
-    const cols = Math.max(20, Math.floor(textWidth(f.paper, f.margins) * CHARS_PER_INCH));
-    const mid = (s) => " ".repeat(Math.max(0, Math.floor((cols - s.length) / 2))) + s;
-    const out = [mid(r.title)];
-    out.push("");
-    for (const c of r.characters) {
-      if (!c.name && !c.detail) continue;
-      out.push(c.name + ":" + (c.detail ? "	" + c.detail : ""));
-      out.push("");
-    }
-    if (r.showScene && (r.scene || "").trim()) {
-      out.push(mid(f.strings.sceneTitle), "", r.scene.trim(), "", "");
-    }
-    if (r.showTime && (r.time || "").trim()) {
-      out.push(mid(f.strings.timeTitle), "", r.time.trim());
-    }
-    while (out.length && out[out.length - 1] === "") out.pop();
-    return out.join("\n");
-  }
-  var PAPER_SIZES, MARGIN_DEFAULTS, CHARS_PER_INCH, LINES_PER_INCH, LINE_HEIGHT_IN, SP_ELEMENT_CONFIG, ST, SP_ELEMENT_STYLES, PAGE_BREAK_RULES, CONTINUED_DEFAULTS, SP_STRINGS, SCENE_NUMBER_DEFAULTS, PAGE_NUMBER_DEFAULTS, DEFAULT_SP_FORMAT, SP_ELEMENT_KEYS, ROSTER_VERSION;
-  var init_sp_format = __esm({
-    "src/sp-format.js"() {
-      PAPER_SIZES = {
-        letter: { name: "Letter (8.5 \xD7 11 \u0E19\u0E34\u0E49\u0E27)", width: 8.5, height: 11, unit: "in" },
-        a4: { name: "A4 (8.27 \xD7 11.69 \u0E19\u0E34\u0E49\u0E27)", width: 8.27, height: 11.69, unit: "in" },
-        legal: { name: "Legal (8.5 \xD7 14 \u0E19\u0E34\u0E49\u0E27)", width: 8.5, height: 14, unit: "in" },
-        custom: { name: "\u0E01\u0E33\u0E2B\u0E19\u0E14\u0E40\u0E2D\u0E07", width: 8.5, height: 11, unit: "in" }
-      };
-      MARGIN_DEFAULTS = { top: 1, bottom: 1, left: 1.5, right: 1 };
-      CHARS_PER_INCH = 10;
-      LINES_PER_INCH = 6;
-      LINE_HEIGHT_IN = 1 / LINES_PER_INCH;
-      SP_ELEMENT_CONFIG = {
-        scene: { indent: 1.5, width: 6, linesBefore: 20, linesBetween: 10 },
-        action: { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 },
-        character: { indent: 3.7, width: 3.8, linesBefore: 10, linesBetween: 10 },
-        parenthetical: { indent: 3.1, width: 2.9, linesBefore: 0, linesBetween: 10 },
-        dialogue: { indent: 2.5, width: 3.5, linesBefore: 0, linesBetween: 10 },
-        // [alpha.57a ข้อ 2] ทรานซิชันเข้า = ชิดซ้าย · ทรานซิชันออก = ชิดขวา (ของเดิม)
-        "transition-in": { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 },
-        transition: { indent: 6, width: 2, linesBefore: 10, linesBetween: 10 },
-        // [alpha.58 ข้อเสนอ] ฉากย่อย + ช็อต วางตัวเหมือนหัวฉากทุกอย่าง (ระยะเยื้อง/ความกว้าง/ระยะเว้น)
-        // ต่างกันแค่ "ไม่มีเลขฉาก" — เลขฉากผูกกับ el === 'scene' เท่านั้น
-        subheader: { indent: 1.5, width: 6, linesBefore: 20, linesBetween: 10 },
-        intercut: { indent: 1.5, width: 6, linesBefore: 20, linesBetween: 10 },
-        shot: { indent: 1.5, width: 6, linesBefore: 20, linesBetween: 10 },
-        "act-break": { indent: 1.5, width: 6, linesBefore: 20, linesBetween: 10 },
-        note: { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 },
-        summary: { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 },
-        outline1: { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 },
-        outline2: { indent: 1.7, width: 5.8, linesBefore: 10, linesBetween: 10 },
-        outline3: { indent: 1.9, width: 5.6, linesBefore: 10, linesBetween: 10 },
-        image: { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 },
-        raw: { indent: 1.5, width: 6, linesBefore: 10, linesBetween: 10 }
-      };
-      ST = (caps, bold, italic, underline) => ({ caps, bold, italic, underline });
-      SP_ELEMENT_STYLES = {
-        scene: { screen: ST(true, true, false, false), print: ST(true, true, false, false) },
-        action: { screen: ST(false, false, false, false), print: ST(false, false, false, false) },
-        character: { screen: ST(true, false, false, false), print: ST(true, false, false, false) },
-        parenthetical: { screen: ST(false, false, true, false), print: ST(false, false, false, false) },
-        dialogue: { screen: ST(false, false, false, false), print: ST(false, false, false, false) },
-        "transition-in": { screen: ST(true, false, false, false), print: ST(true, false, false, false) },
-        transition: { screen: ST(true, false, false, false), print: ST(true, false, false, false) },
-        // [alpha.58] ฉากย่อย/สลับฉาก/ช็อต = ตัวหนาพิมพ์ใหญ่เหมือนหัวฉาก (เลิกขีดเส้นใต้)
-        subheader: { screen: ST(true, true, false, false), print: ST(true, true, false, false) },
-        intercut: { screen: ST(true, true, false, false), print: ST(true, true, false, false) },
-        shot: { screen: ST(true, true, false, false), print: ST(true, true, false, false) },
-        "act-break": { screen: ST(true, true, false, false), print: ST(true, true, false, true) },
-        note: { screen: ST(false, false, true, false), print: ST(false, false, true, false) },
-        summary: { screen: ST(false, false, true, false), print: ST(false, false, true, false) },
-        outline1: { screen: ST(false, true, false, false), print: ST(false, true, false, false) },
-        outline2: { screen: ST(false, true, false, false), print: ST(false, true, false, false) },
-        outline3: { screen: ST(false, true, false, false), print: ST(false, true, false, false) },
-        image: { screen: ST(false, false, false, false), print: ST(false, false, false, false) },
-        raw: { screen: ST(false, false, false, false), print: ST(false, false, false, false) }
-      };
-      PAGE_BREAK_RULES = {
-        minActionLinesAtBottom: 2,
-        // ต้องเหลือ action อย่างน้อยกี่บรรทัดท้ายหน้าจึงยอมตัด
-        minDialogueLinesAtBottom: 2,
-        // ต้องเหลือบทพูดอย่างน้อยกี่บรรทัดท้ายหน้า
-        minActionLinesAtTop: 3,
-        // ส่วนที่ยกไปหน้าใหม่ต้องได้อย่างน้อยกี่บรรทัด
-        minDialogueLinesAtTop: 3,
-        maxConsecutiveHyphens: 2,
-        // ห้ามลงท้ายบรรทัดด้วยขีดติดกันเกินกี่บรรทัด
-        keepSceneWithNext: 2
-        // หัวฉากท้ายหน้าต้องมีเนื้อตามอย่างน้อยกี่บรรทัด ไม่งั้นยกทั้งก้อน
-      };
-      CONTINUED_DEFAULTS = {
-        enabled: true,
-        scene: true,
-        dialogue: true,
-        number: true,
-        indent: 3.7
-      };
-      SP_STRINGS = {
-        continuedBottom: "(CONTINUED)",
-        continuedTop: "CONTINUED:",
-        dialogueMore: "(MORE)",
-        dialogueContd: "(cont'd)",
-        sceneContinued: "\u0E15\u0E48\u0E2D",
-        castTitle: "Cast of Characters",
-        sceneTitle: "Scene",
-        timeTitle: "Time"
-      };
-      SCENE_NUMBER_DEFAULTS = { show: false, left: 0.75, right: 1, suffix: "" };
-      PAGE_NUMBER_DEFAULTS = { show: false, right: 1, top: 0.5, suffix: ".", firstPage: false };
-      DEFAULT_SP_FORMAT = {
-        paperSize: "letter",
-        paper: { width: 8.5, height: 11 },
-        // ใช้เมื่อ paperSize === 'custom'
-        margins: { ...MARGIN_DEFAULTS },
-        elements: SP_ELEMENT_CONFIG,
-        styles: SP_ELEMENT_STYLES,
-        rules: PAGE_BREAK_RULES,
-        strings: SP_STRINGS,
-        sceneNumbers: SCENE_NUMBER_DEFAULTS,
-        pageNumbers: PAGE_NUMBER_DEFAULTS,
-        continued: CONTINUED_DEFAULTS
-      };
-      SP_ELEMENT_KEYS = Object.keys(SP_ELEMENT_CONFIG);
-      ROSTER_VERSION = 1;
-    }
-  });
-
   // src/lang-fonts.js
   function defaultLangFonts() {
     return [
@@ -15367,7 +16022,7 @@
     PAGE_BREAK_RULES: () => PAGE_BREAK_RULES,
     PAGE_NUMBER_DEFAULTS: () => PAGE_NUMBER_DEFAULTS,
     PAPER_SIZES: () => PAPER_SIZES,
-    PT_PX: () => PT_PX,
+    PT_PX: () => PT_PX2,
     REL_COLOR: () => REL_COLOR,
     REL_ICON: () => REL_ICON,
     REL_LABEL: () => REL_LABEL,
@@ -15389,17 +16044,21 @@
     UI_SCALE_MAX: () => UI_SCALE_MAX,
     UI_SCALE_MIN: () => UI_SCALE_MIN,
     accelText: () => accelText,
+    annotateContinued: () => annotateContinued,
     applyDataI18n: () => applyDataI18n,
     applyLangFonts: () => applyLangFonts,
     buildLangFontCss: () => buildLangFontCss,
     categorizeRole: () => categorizeRole,
     categorizeWith: () => categorizeWith,
+    clampLineHeight: () => clampLineHeight,
     cssFamilyName: () => cssFamilyName,
     defaultLangFonts: () => defaultLangFonts,
     el: () => el,
+    formatLines: () => formatLines,
     formatShortcut: () => formatShortcut,
     i18n: () => i18n,
     isLangFontUsable: () => isUsable,
+    lineHeightIn: () => lineHeightIn,
     linesPerPage: () => linesPerPage,
     loadLanguage: () => loadLanguage,
     log: () => log,
@@ -15584,7 +16243,7 @@
     const sc = formatShortcut(code2, ctrl, shift2);
     return label + " (" + sc + ")";
   }
-  var $, el, state, smart, LOG_BUF, LOG_MAX, DEFAULT_SETTINGS, DEFAULT_GOALS, DEFAULT_SP_CYCLE, DEFAULT_SP_CYCLE_KEYS, PT_PX, ptToPx, BASE_ED_FS, BASE_SP_FS, DEFAULT_SCRIPT_FONT, SCALE_MIN, SCALE_MAX, UI_SCALE_MIN, UI_SCALE_MAX, SCENE_STATUSES, SCENE_COLORS, STATUS_COLORS, DEFAULT_STATUS_COLOR, BUILTIN_CATS, CAT_ICON, i18n, langHooks, BUILTIN_EN, SHORTCUTS, shortcutId, SHORTCUT_LABELS, isMac, accelText;
+  var $, el, state, smart, LOG_BUF, LOG_MAX, DEFAULT_SETTINGS, DEFAULT_GOALS, DEFAULT_SP_CYCLE, DEFAULT_SP_CYCLE_KEYS, PT_PX2, ptToPx, BASE_ED_FS, BASE_SP_FS, DEFAULT_SCRIPT_FONT, SCALE_MIN, SCALE_MAX, UI_SCALE_MIN, UI_SCALE_MAX, SCENE_STATUSES, SCENE_COLORS, STATUS_COLORS, DEFAULT_STATUS_COLOR, BUILTIN_CATS, CAT_ICON, i18n, langHooks, BUILTIN_EN, SHORTCUTS, shortcutId, SHORTCUT_LABELS, isMac, accelText;
   var init_core = __esm({
     "src/core.js"() {
       init_smart();
@@ -15704,8 +16363,14 @@
         // [58] ความสูงช่องว่างระหว่างหน้าในโหมดจัดหน้า (px)
         smartLearnMin: 2,
         // [บั๊ก 1] SmartType จำคำจากบทเมื่อเจอซ้ำกี่บล็อก (1–5)
-        heavyDocBlocks: 400
+        heavyDocBlocks: 400,
         // [บั๊ก 4] เกินกี่บล็อกถือว่า "เอกสารหนัก" แล้วหน่วงงานหนักให้ห่างขึ้น
+        // ---- alpha.58r ----
+        // [16–24] รูปแบบนิยายทั้งชุด (ฟอนต์/ช่วงบรรทัด/ย่อหน้า/หัวข้อ/ยกคำพูด/เลขหน้า)
+        // null = ใช้ค่ามาตรฐานของ prose-format.js ทั้งหมด (ดู PROSE_DEFAULTS)
+        prose: null,
+        // [25] เก็บ "จัดหน้า" ของย่อหน้าไว้ที่ไหน — 'frontmatter' = .md สะอาด · 'comment' = แบบเดิม (v1)
+        mdAlignStyle: "frontmatter"
       };
       DEFAULT_GOALS = { dailyWords: 500, projectWords: 5e4 };
       DEFAULT_SP_CYCLE = {
@@ -15733,8 +16398,8 @@
         tab: { code: "Tab", shift: false, ctrl: false, alt: false },
         shiftTab: { code: "Tab", shift: true, ctrl: false, alt: false }
       };
-      PT_PX = 4 / 3;
-      ptToPx = (pt) => +((parseFloat(pt) || 12) * PT_PX).toFixed(2);
+      PT_PX2 = 4 / 3;
+      ptToPx = (pt) => +((parseFloat(pt) || 12) * PT_PX2).toFixed(2);
       BASE_ED_FS = ptToPx(12);
       BASE_SP_FS = ptToPx(12);
       DEFAULT_SCRIPT_FONT = '"Courier Prime", "Courier Final Draft", "Courier New", "TH Sarabun New", "Sarabun", monospace';
@@ -15843,7 +16508,7 @@
           },
           "errors": { "noProject": "No project open", "noFile": "File not found", "saveFailed": "Save failed", "loadFailed": "Load failed", "aiNoKey": "Please set AI API key", "aiFailed": "AI request failed", "openProjectFirst": "Open a project first", "notKillianProject": "This folder is not a Killian project", "needScene": "Open a scene first", "moveCrossDraft": "Moving across drafts not supported", "requiresCtrl": "Ctrl/\u2318 required", "pressShortcut": "Press shortcut..." },
           "status": { "ready": "Ready", "saving": "Saving...", "saved": "Saved", "loading": "Loading...", "searching": "Searching...", "settingsSaved": "Settings saved", "zoom": "Zoom", "zoomReset": "Zoom reset to 100%", "uiScale": "UI size", "copied": "Markdown copied", "movedScene": "Moved scene to", "typewriterOn": "Typewriter: ON", "typewriterOff": "Typewriter: OFF", "focusOn": "Focus mode: ON", "focusOff": "Focus mode: OFF", "paperOn": "Paper mode: ON", "paperOff": "Paper mode: OFF", "dirtyClose": "tabs with unsaved changes", "saveAllAndClose": "Save all and close", "closeWithoutSaving": "Close without saving" },
-          "shortcuts": { "save": "Save", "saveAll": "Save All", "saveAs": "Save As...", "newProject": "New Project", "openProject": "Open Project", "print": "Print", "closeTab": "Close Tab", "find": "Find", "settings": "Settings", "undo": "Undo", "redo": "Redo", "bold": "Bold", "italic": "Italic", "underline": "Underline", "strikethrough": "Strikethrough", "heading1": "Heading 1", "heading2": "Heading 2", "heading3": "Heading 3", "bodyText": "Body Text", "bulletList": "Bullet List", "numberedList": "Numbered List", "clearFormatting": "Clear Formatting", "alignLeft": "Align Left", "alignCenter": "Align Center", "alignRight": "Align Right", "justify": "Justify", "toggleFormat": "Toggle Mode", "paperMode": "Paper Mode", "globalSearch": "Search Project", "focusMode": "Focus Mode", "quickOpen": "Quick Open", "typewriter": "Typewriter Mode", "compile": "Compile", "splitView": "Split View", "kanban": "Kanban Board", "exportBlog": "Export as Blog HTML", "gallery": "Gallery", "spScene": "SP: Scene", "spAction": "SP: Action", "spCharacter": "SP: Character", "spParenthetical": "SP: Parenthetical", "spDialogue": "SP: Dialogue", "spTransition": "SP: Transition", "spShot": "SP: Shot", "spActBreak": "SP: Act Break", "spNote": "SP: Note", "selectScene": "Select Scene", "nbsp": "Non-Breaking Space", "goto": "Go to Page/Scene", "findError": "Find Next Error" }
+          "shortcuts": { "save": "Save", "saveAll": "Save All", "saveAs": "Save As...", "newProject": "New Project", "openProject": "Open Project", "print": "Print", "closeTab": "Close Tab", "find": "Find", "settings": "Settings", "undo": "Undo", "redo": "Redo", "bold": "Bold", "italic": "Italic", "underline": "Underline", "strikethrough": "Strikethrough", "heading1": "Heading 1", "heading2": "Heading 2", "heading3": "Heading 3", "bodyText": "Body Text", "bulletList": "Bullet List", "numberedList": "Numbered List", "clearFormatting": "Clear Formatting", "alignLeft": "Align Left", "alignCenter": "Align Center", "alignRight": "Align Right", "justify": "Justify", "toggleFormat": "Toggle Mode", "paperMode": "Paper Mode", "globalSearch": "Search Project", "focusMode": "Focus Mode", "quickOpen": "Quick Open", "typewriter": "Typewriter Mode", "compile": "Compile", "splitView": "Split View", "kanban": "Kanban Board", "exportBlog": "Export as Blog HTML", "gallery": "Gallery", "spScene": "SP: Scene", "spAction": "SP: Action", "spCharacter": "SP: Character", "spParenthetical": "SP: Parenthetical", "spDialogue": "SP: Dialogue", "spTransition": "SP: Transition", "spShot": "SP: Shot", "spActBreak": "SP: Act Break", "spNote": "SP: Note", "selectScene": "Select Scene", "nbsp": "Non-Breaking Space", "goto": "Go to Page/Scene", "findError": "Find Next Error", "devConsole": "Developer Console" }
         }
       };
       SHORTCUTS = [
@@ -15899,7 +16564,9 @@
         ["Space", true, true, "nbsp"],
         // [78] ไปที่หน้า/ฉาก · [54] ตรวจหาข้อผิดพลาดถัดไป (alpha.57)
         ["KeyG", true, false, "goto"],
-        ["KeyU", true, true, "sp-find-error"]
+        ["KeyU", true, true, "sp-find-error"],
+        // [alpha.58r ข้อ 4] คอนโซลนักพัฒนา — Ctrl+Shift+` (ไม่ชนกับ DevTools ของ Chromium)
+        ["Backquote", true, true, "dev-console"]
       ];
       shortcutId = (s) => s.slice(3).join(":");
       SHORTCUT_LABELS = {
@@ -15951,7 +16618,8 @@
         "select-scene": "shortcuts.selectScene",
         "nbsp": "shortcuts.nbsp",
         "goto": "shortcuts.goto",
-        "sp-find-error": "shortcuts.findError"
+        "sp-find-error": "shortcuts.findError",
+        "dev-console": "shortcuts.devConsole"
       };
       isMac = (() => {
         try {
@@ -17373,17 +18041,19 @@
     const m = f.margins;
     const usableWidth = textWidth(f.paper, m);
     const usableHeight = Math.max(0.5, +f.paper.height - m.top - m.bottom);
-    const lpp = linesPerPage(f.paper, m);
+    const lh = lineHeightIn(f);
+    const lpp = linesPerPage(f.paper, m, lh);
     return {
       linesPerPage: lpp,
       charsPerLine: Math.floor(usableWidth * CHARS_PER_INCH),
       usableWidth: +usableWidth.toFixed(4),
       usableHeight: +usableHeight.toFixed(4),
-      lineHeightIn: LINE_HEIGHT_IN,
+      lineHeight: clampLineHeight(f.lineHeight),
+      lineHeightIn: +lh.toFixed(6),
       pageWidthPx: Math.round(+f.paper.width * dpi),
       pageHeightPx: Math.round(+f.paper.height * dpi),
       bodyHeightPx: Math.round(usableHeight * dpi),
-      lineHeightPx: +(LINE_HEIGHT_IN * dpi).toFixed(4)
+      lineHeightPx: +(lh * dpi).toFixed(4)
     };
   }
   function layoutCssVars(fmt, gapPx = 28) {
@@ -17470,13 +18140,9 @@
     }
     return out;
   }
-  function findNthScene(blocks, n) {
-    const s = scenePositions(blocks)[Math.max(1, Math.round(+n || 1)) - 1];
-    return s ? s.pos : null;
-  }
   function pagesOf(blocks, fmt, lines) {
     const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
-    return paginate(blocks, { fmt: f, lines });
+    return paginate(blocks, { fmt: f, lines: lines || formatLines(f) });
   }
   function renderPageView(host2, pages, fmt, opts = {}) {
     const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
@@ -17498,23 +18164,23 @@
       const page = document.createElement("div");
       page.className = "sp-page";
       page.dataset.page = String(pg.index);
-      page.style.width = cssIn(pw);
-      page.style.minHeight = cssIn(ph);
-      page.style.paddingTop = cssIn(f.margins.top);
-      page.style.paddingBottom = cssIn(f.margins.bottom);
-      page.style.paddingLeft = cssIn(f.margins.left);
-      page.style.paddingRight = cssIn(f.margins.right);
+      page.style.width = cssIn2(pw);
+      page.style.minHeight = cssIn2(ph);
+      page.style.paddingTop = cssIn2(f.margins.top);
+      page.style.paddingBottom = cssIn2(f.margins.bottom);
+      page.style.paddingLeft = cssIn2(f.margins.left);
+      page.style.paddingRight = cssIn2(f.margins.right);
       page.style.transform = "scale(" + scale + ")";
       const label = f.pageNumbers && f.pageNumbers.show ? pageNumberLabel(pg.index, f, opts.startPage) : showNums && pg.index > 1 ? pg.index + "." : "";
       if (label) {
-        const num4 = document.createElement("div");
-        num4.className = "sp-page-num";
+        const num5 = document.createElement("div");
+        num5.className = "sp-page-num";
         if (f.pageNumbers && f.pageNumbers.show) {
-          num4.style.top = cssIn(f.pageNumbers.top);
-          num4.style.right = cssIn(f.pageNumbers.right);
+          num5.style.top = cssIn2(f.pageNumbers.top);
+          num5.style.right = cssIn2(f.pageNumbers.right);
         }
-        num4.textContent = label;
-        page.append(num4);
+        num5.textContent = label;
+        page.append(num5);
       }
       if (pg.continuedTop) {
         const ct = document.createElement("div");
@@ -17553,7 +18219,7 @@
     const name = SP_VIEW_LABELS[mode] || SP_VIEW_LABELS.normal;
     return Number.isFinite(pageCount2) ? `\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07: ${name} \xB7 ${pageCount2} \u0E2B\u0E19\u0E49\u0E32` : "\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07: " + name;
   }
-  var SP_VIEWS, SP_VIEW_LABELS, SP_VIEW_CLASS, ALL_VIEW_CLASSES, isPageView, isValidView, isEditView, LINE_MARK, cssIn;
+  var SP_VIEWS, SP_VIEW_LABELS, SP_VIEW_CLASS, ALL_VIEW_CLASSES, isPageView, isValidView, isEditView, LINE_MARK, cssIn2;
   var init_sp_view = __esm({
     "src/sp-view.js"() {
       init_sp_format();
@@ -17586,7 +18252,7 @@
       isValidView = (mode) => SP_VIEWS.includes(mode);
       isEditView = (mode) => !isPageView(mode);
       LINE_MARK = { hard: "\xB6", soft: "\xB7" };
-      cssIn = (v) => (+v || 0) + "in";
+      cssIn2 = (v) => (+v || 0) + "in";
     }
   });
 
@@ -18764,11 +19430,11 @@
         async refresh() {
           const ents = await this.loadEntities();
           const W = Math.max(600, this.pane.clientWidth || 900);
-          const H = Math.max(400, this.pane.clientHeight || 600);
+          const H2 = Math.max(400, this.pane.clientHeight || 600);
           this.nodes = ents.map((e, i2) => ({
             ...e,
-            x: W / 2 + Math.cos(i2 / Math.max(1, ents.length) * Math.PI * 2) * Math.min(W, H) * 0.32,
-            y: H / 2 + Math.sin(i2 / Math.max(1, ents.length) * Math.PI * 2) * Math.min(W, H) * 0.32
+            x: W / 2 + Math.cos(i2 / Math.max(1, ents.length) * Math.PI * 2) * Math.min(W, H2) * 0.32,
+            y: H2 / 2 + Math.sin(i2 / Math.max(1, ents.length) * Math.PI * 2) * Math.min(W, H2) * 0.32
           }));
           const byName = Object.fromEntries(this.nodes.map((n) => [n.name, n]));
           this.edges = [];
@@ -18783,12 +19449,12 @@
               this.edges.push({ a: n, b: t2, role: r.role || "", type: r.type || categorizeRole(r.role) });
             }
           }
-          this._force(120, W, H);
+          this._force(120, W, H2);
           this._buildHint();
           this._fit();
           this.draw();
         }
-        _force(iters, W, H) {
+        _force(iters, W, H2) {
           for (let it = 0; it < iters; it++) {
             for (const a of this.nodes) {
               let fx = 0, fy = 0;
@@ -18806,7 +19472,7 @@
                 fy += (o.y - a.y) * 0.02;
               }
               fx += (W / 2 - a.x) * 4e-3;
-              fy += (H / 2 - a.y) * 4e-3;
+              fy += (H2 / 2 - a.y) * 4e-3;
               a.x += Math.max(-14, Math.min(14, fx));
               a.y += Math.max(-14, Math.min(14, fy));
             }
@@ -43310,12 +43976,12 @@
           this._groupVis.set(g.id, { rect, label });
         }
         _cardChildren(n) {
-          const W = n.width || CARD_W, H = n.height || CARD_H;
+          const W = n.width || CARD_W, H2 = n.height || CARD_H;
           const kids = [new import_fabric.fabric.Rect({
             left: 0,
             top: 0,
             width: W,
-            height: H,
+            height: H2,
             rx: 8,
             ry: 8,
             fill: n.color || "#3f3e3a",
@@ -43383,7 +44049,7 @@
               const label = vt ? (vt.icon || "\u25CF") + " " + t2 : "#" + t2;
               const txt = new import_fabric.fabric.Text(label, {
                 left: tx,
-                top: H - 30,
+                top: H2 - 30,
                 fontSize: 9,
                 fill: vt ? vt.color : "rgba(255,255,255,0.4)",
                 fontFamily: '"Segoe UI", sans-serif',
@@ -43399,7 +44065,7 @@
             const short2 = n.file.split(/[\\/]/).pop() || n.file;
             kids.push(new import_fabric.fabric.Text("\u{1F4CE} " + short2, {
               left: 10,
-              top: H - 16,
+              top: H2 - 16,
               fontSize: 9,
               fill: "rgba(255,255,255,0.35)",
               fontFamily: '"Segoe UI", sans-serif',
@@ -43934,8 +44600,8 @@
         _autoLayout() {
           const ns = this._nodes;
           if (ns.length < 2) return;
-          const W = this.canvas.getWidth(), H = this.canvas.getHeight();
-          const k = Math.min(W, H) / Math.sqrt(ns.length) * 0.8;
+          const W = this.canvas.getWidth(), H2 = this.canvas.getHeight();
+          const k = Math.min(W, H2) / Math.sqrt(ns.length) * 0.8;
           for (let it = 0; it < 120; it++) {
             const F = {};
             for (const n of ns) F[n.id] = { x: 0, y: 0 };
@@ -43963,7 +44629,7 @@
               }
             for (const n of ns) {
               n.x = Math.max(10, Math.min(W - n.width - 10, n.x + F[n.id].x));
-              n.y = Math.max(10, Math.min(H - n.height - 10, n.y + F[n.id].y));
+              n.y = Math.max(10, Math.min(H2 - n.height - 10, n.y + F[n.id].y));
             }
           }
           for (const g of this._groups) this._updateGroupBounds(g);
@@ -43989,10 +44655,10 @@
           const maxX = Math.max(...this._nodes.map((n) => n.x + n.width));
           const maxY = Math.max(...this._nodes.map((n) => n.y + n.height));
           const bw = maxX - minX, bh = maxY - minY;
-          const W = this.canvas.getWidth(), H = this.canvas.getHeight();
-          const z = Math.min(W / (bw + 60), H / (bh + 60), 1.5);
+          const W = this.canvas.getWidth(), H2 = this.canvas.getHeight();
+          const z = Math.min(W / (bw + 60), H2 / (bh + 60), 1.5);
           this.zoomLevel = z;
-          this.canvas.setViewportTransform([z, 0, 0, z, (W - bw * z) / 2 - minX * z, (H - bh * z) / 2 - minY * z]);
+          this.canvas.setViewportTransform([z, 0, 0, z, (W - bw * z) / 2 - minX * z, (H2 - bh * z) / 2 - minY * z]);
           this.canvas.requestRenderAll();
         }
         // ================= Export / ตัวอย่าง =================
@@ -44876,17 +45542,13 @@
     closeList();
     return out.join("\n");
   }
-  function mdToHtml(md, title) {
+  function mdToHtml(md, title, style = null, paper = null, margins = null) {
+    const css = proseExportCss(mergeProseFormat(style), paper, margins);
     return `<!DOCTYPE html>
 <html lang="th"><head><meta charset="utf-8">
 <title>${esc(title || "")}</title>
 <style>
- body{max-width:42em;margin:3em auto;padding:0 1.2em;line-height:1.85;
-      font-family:"Sarabun","Noto Sans Thai",system-ui,sans-serif;font-size:18px}
- h1,h2,h3{line-height:1.4} hr{border:0;border-top:1px solid #ccc;margin:2em 0}
- blockquote{border-left:3px solid #ccc;margin:1em 0;padding-left:1em;color:#555}
- img{max-width:100%} .pb{page-break-before:always;break-before:page;height:0}
- @media print{body{margin:0;max-width:none;font-size:12pt}}
+${css}
 </style></head><body>
 ${mdToHtmlBody(md)}
 </body></html>`;
@@ -44899,7 +45561,14 @@ ${mdToHtmlBody(md)}
     }
     return { chapters: model.chapters.length, scenes: sc, words: w };
   }
-  function runWorkflow(model0, workflow, { allowJs = true, varCtx = {}, spFormat: spFormat2 = null } = {}) {
+  function runWorkflow(model0, workflow, {
+    allowJs = true,
+    varCtx = {},
+    spFormat: spFormat2 = null,
+    proseFormat: proseFormat2 = null,
+    paper = null,
+    margins = null
+  } = {}) {
     const warn = [];
     const model = {
       title: model0.title,
@@ -45013,7 +45682,7 @@ ${mdToHtmlBody(md)}
         continue;
       }
       if (st.key === "to-html") {
-        text = mdToHtml(text, model.title);
+        text = mdToHtml(text, model.title, proseFormat2, paper, margins);
         ext = "html";
         continue;
       }
@@ -45042,6 +45711,7 @@ ${mdToHtmlBody(md)}
       init_fountain();
       init_sp_format();
       init_sp_continued();
+      init_prose_format();
       PAGE_BREAK = "<!-- \u0E02\u0E36\u0E49\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E43\u0E2B\u0E21\u0E48 -->";
       STEP_DEFS = [
         // ---- ช่วงเนื้อหา ----
@@ -45174,6 +45844,14 @@ ${mdToHtmlBody(md)}
           "\u0E1E\u0E23\u0E49\u0E2D\u0E21\u0E1E\u0E34\u0E21\u0E1E\u0E4C (HTML \u0E02\u0E36\u0E49\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E43\u0E2B\u0E21\u0E48\u0E17\u0E38\u0E01\u0E1A\u0E17)",
           "html",
           ["cover", "skip-memo", "chapter-heading", "page-break", "scene-separator", "to-html"]
+        ),
+        // [alpha.58r บั๊ก 13] พรีเซ็ตของ "บทภาพยนตร์" — เดิมไม่มีพรีเซ็ตไหนเปิด sp-continued เลย
+        // ผู้ใช้จึงต้องไปเปิดเองทุกครั้ง (และส่วนใหญ่ไม่รู้ว่ามีฟีเจอร์นี้)
+        wf(
+          "screenplay",
+          "\u{1F3AC} \u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C (CONTINUED \xB7 MORE)",
+          "txt",
+          ["skip-memo", "strip-comments", "sp-continued"]
         )
       ];
       esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -45357,8 +46035,8 @@ ${mdToHtmlBody(md)}
   function newPin(x, y, kind = "note") {
     return {
       id: "pin-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-      x: clamp(x),
-      y: clamp(y),
+      x: clamp2(x),
+      y: clamp2(y),
       label: "",
       kind,
       entityFile: "",
@@ -45367,7 +46045,7 @@ ${mdToHtmlBody(md)}
       note: ""
     };
   }
-  function clamp(n) {
+  function clamp2(n) {
     return Math.max(0, Math.min(100, n));
   }
   function findMap(maps, id) {
@@ -47194,11 +47872,11 @@ ${mdToHtmlBody(md)}
 
   // src/panels/panel-drag.js
   function clampFloat(box, vw, vh) {
-    const W = vw || window.innerWidth, H = vh || window.innerHeight;
+    const W = vw || window.innerWidth, H2 = vh || window.innerHeight;
     const w = Math.max(FLOAT_MIN_W, Math.min(Math.round(box.w ?? 320), W));
-    const h = Math.max(FLOAT_MIN_H, Math.min(Math.round(box.h ?? 300), H));
+    const h = Math.max(FLOAT_MIN_H, Math.min(Math.round(box.h ?? 300), H2));
     const x = Math.round(Math.min(Math.max(box.x ?? 80, KEEP_VISIBLE - w), W - KEEP_VISIBLE));
-    const y = Math.round(Math.min(Math.max(box.y ?? 80, 0), H - 28));
+    const y = Math.round(Math.min(Math.max(box.y ?? 80, 0), H2 - 28));
     return { x, y, w, h };
   }
   function createDropOverlay() {
@@ -48510,7 +49188,10 @@ ${mdToHtmlBody(md)}
       sceneNumbers: { ...SCENE_NUMBER_DEFAULTS, ...s.spSceneNumbers || {} },
       pageNumbers: { ...PAGE_NUMBER_DEFAULTS, ...s.spPageNumbers || {} },
       // [alpha.57a ข้อ 5] ฟอนต์ตามภาษา (สำเนาทำงาน)
-      langFonts: normalizeLangFonts(s.langFonts)
+      langFonts: normalizeLangFonts(s.langFonts),
+      // [alpha.58r บั๊ก 5] ช่วงบรรทัดบท + ช่องว่างคั่นหน้าในโหมดจัดหน้า
+      spLineHeight: Number.isFinite(+s.spLineHeight) ? +s.spLineHeight : 1,
+      spPageGap: parseInt(s.spPageGap, 10) || 28
     };
     const ov = el("div", "k-overlay");
     const box = el("div", "k-dialog k-settings");
@@ -48522,6 +49203,7 @@ ${mdToHtmlBody(md)}
       <div class="k-set-tab" data-p="auto">${t("settings.automation")}</div>
       <div class="k-set-tab" data-p="setup">\u{1F39E} \u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E1C\u0E25\u0E07\u0E32\u0E19</div>
       <div class="k-set-tab" data-p="page">\u{1F4D0} \u0E2B\u0E19\u0E49\u0E32\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29</div>
+      <div class="k-set-tab" data-p="prose">\u{1F4D6} \u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A\u0E19\u0E34\u0E22\u0E32\u0E22</div>
       <div class="k-set-tab" data-p="spfmt">\u{1F3AC} \u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A\u0E1A\u0E17</div>
       <div class="k-set-tab" data-p="sp">\u2328 \u0E1B\u0E38\u0E48\u0E21\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07</div>
       <div class="k-set-tab" data-p="fonts">\u{1F524} \u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E15\u0E32\u0E21\u0E20\u0E32\u0E29\u0E32</div>
@@ -48540,9 +49222,9 @@ ${mdToHtmlBody(md)}
     <div class="k-set-page k-set-2col" data-p="write">
       <div class="k-row"><label>${t("settings.fontFamily")}<span class="k-hint">${t("settings.fontFamilyHint")}</span></label><select id="st-fontfamily" class="k-dlg-select" style="width:100%"></select></div>
       <div class="k-row"><label>${t("settings.spFontFamily")}<span class="k-hint">${t("settings.spFontFamilyHint")}</span></label><select id="st-spfontfamily" class="k-dlg-select" style="width:100%"></select></div>
-      <div class="k-row"><label>\u0E02\u0E19\u0E32\u0E14\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E19\u0E34\u0E22\u0E32\u0E22 (pt)<span class="k-hint">\u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19\u0E15\u0E49\u0E19\u0E09\u0E1A\u0E31\u0E1A = 12pt (Courier Final Draft)</span></label><input type="number" id="st-edpt" class="k-narrow" min="6" max="48" step="0.5"></div>
+      <div class="k-row"><label>\u0E02\u0E19\u0E32\u0E14\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E19\u0E34\u0E22\u0E32\u0E22 (pt)<span class="k-hint">\u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19\u0E15\u0E49\u0E19\u0E09\u0E1A\u0E31\u0E1A = 12pt \xB7 \u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A\u0E2D\u0E37\u0E48\u0E19 \u0E46 \u0E14\u0E39\u0E17\u0E35\u0E48\u0E41\u0E17\u0E47\u0E1A "\u{1F4D6} \u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A\u0E19\u0E34\u0E22\u0E32\u0E22"</span></label><input type="number" id="st-edpt" class="k-narrow" min="6" max="48" step="0.5"></div>
       <div class="k-row"><label>\u0E02\u0E19\u0E32\u0E14\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C (pt)<span class="k-hint">\u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19\u0E1A\u0E17 = 12pt \u0E17\u0E38\u0E01\u0E20\u0E32\u0E29\u0E32</span></label><input type="number" id="st-sppt" class="k-narrow" min="6" max="48" step="0.5"></div>
-      <div class="k-row"><label>${t("settings.fontSize")}<span class="k-hint">${t("settings.fontSizeHint")} (${BASE_ED_FS}px)</span></label><input type="number" id="st-font" min="-6" max="16" step="1"></div>
+      <div class="k-row"><label>\u0E02\u0E19\u0E32\u0E14\u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23\u0E02\u0E2D\u0E07 UI<span class="k-hint">[\u0E1A\u0E31\u0E4A\u0E01 14] \u0E1B\u0E23\u0E31\u0E1A\u0E08\u0E32\u0E01\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19 14px \u2014 \u0E21\u0E35\u0E1C\u0E25\u0E01\u0E31\u0E1A\u0E40\u0E1B\u0E25\u0E37\u0E2D\u0E01\u0E42\u0E1B\u0E23\u0E41\u0E01\u0E23\u0E21\u0E40\u0E17\u0E48\u0E32\u0E19\u0E31\u0E49\u0E19 \u0E44\u0E21\u0E48\u0E41\u0E15\u0E30\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23</span></label><input type="number" id="st-font" min="-6" max="16" step="1"></div>
       <div class="k-row"><label>\u0E02\u0E19\u0E32\u0E14\u0E01\u0E32\u0E23\u0E4C\u0E14\u0E2B\u0E19\u0E49\u0E32\u0E41\u0E23\u0E01 (px)<span class="k-hint">\u0E04\u0E27\u0E32\u0E21\u0E01\u0E27\u0E49\u0E32\u0E07\u0E01\u0E32\u0E23\u0E4C\u0E14 4 \u0E04\u0E2D\u0E25\u0E31\u0E21\u0E19\u0E4C\u0E1A\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E41\u0E23\u0E01</span></label><input type="number" id="st-homethumb" class="k-narrow" min="120" max="400" step="10"></div>
       <div class="k-row"><label>${t("settings.lineNumbers")}<span class="k-hint">${t("settings.lineNumbersHint")}</span></label><input type="checkbox" id="st-ln"></div>
       <div class="k-row"><label>${t("settings.spellCheck")}<span class="k-hint">${t("settings.spellCheckHint")}</span></label><input type="checkbox" id="st-spell"></div>
@@ -48591,6 +49273,8 @@ ${mdToHtmlBody(md)}
         <div class="k-row"><label>\u0E0B\u0E49\u0E32\u0E22 (Left)</label><input type="number" id="st-mg-left" class="k-narrow" min="0" max="5" step="0.05"></div>
         <div class="k-row"><label>\u0E02\u0E27\u0E32 (Right)</label><input type="number" id="st-mg-right" class="k-narrow" min="0" max="5" step="0.05"></div>
       </div>
+      <div class="k-row"><label>\u0E0A\u0E48\u0E27\u0E07\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C<span class="k-hint">\u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19 = 1 (6 \u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14/\u0E19\u0E34\u0E49\u0E27) \xB7 \u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E41\u0E25\u0E49\u0E27\u0E08\u0E33\u0E19\u0E27\u0E19\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E15\u0E48\u0E2D\u0E2B\u0E19\u0E49\u0E32\u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E15\u0E32\u0E21</span></label><input type="number" id="st-splh" class="k-narrow" min="0.8" max="2.5" step="0.05"></div>
+      <div class="k-row"><label>\u0E0A\u0E48\u0E2D\u0E07\u0E27\u0E48\u0E32\u0E07\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E2B\u0E19\u0E49\u0E32\u0E43\u0E19\u0E42\u0E2B\u0E21\u0E14\u0E08\u0E31\u0E14\u0E2B\u0E19\u0E49\u0E32 (px)</label><input type="number" id="st-sppagegap" class="k-narrow" min="8" max="120" step="2"></div>
       <div class="k-hint k-full" id="st-page-info" style="margin-top:8px"></div>
       <div class="k-set-sub k-full">\u0E40\u0E25\u0E02\u0E09\u0E32\u0E01 (Scene Number)</div>
       <div class="k-row"><label>\u0E41\u0E2A\u0E14\u0E07\u0E40\u0E25\u0E02\u0E09\u0E32\u0E01\u0E02\u0E49\u0E32\u0E07\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01<span class="k-hint">\u0E40\u0E25\u0E02\u0E08\u0E30\u0E2D\u0E22\u0E39\u0E48\u0E17\u0E31\u0E49\u0E07\u0E0B\u0E49\u0E32\u0E22\u0E41\u0E25\u0E30\u0E02\u0E27\u0E32\u0E02\u0E2D\u0E07\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01</span></label><input type="checkbox" id="st-sn-show"></div>
@@ -48620,6 +49304,42 @@ ${mdToHtmlBody(md)}
       <div class="k-row"><label>\u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D Scene / Time (\u0E2B\u0E19\u0E49\u0E32\u0E23\u0E32\u0E22\u0E0A\u0E37\u0E48\u0E2D)</label>
         <span><input type="text" id="st-str-scene" style="width:46%"> <input type="text" id="st-str-time" style="width:46%"></span></div>
       <div class="k-full" style="margin-top:12px; text-align:right"><button id="st-page-reset" class="k-reset-btn">\u21BA \u0E04\u0E37\u0E19\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19</button></div>
+    </div>
+    <div class="k-set-page k-set-2col" data-p="prose">
+      <div class="k-hint k-full" style="margin-bottom:10px">
+        [16\u201324] \u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A\u0E02\u0E2D\u0E07 "\u0E40\u0E19\u0E37\u0E49\u0E2D\u0E40\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E19\u0E34\u0E22\u0E32\u0E22" \u2014 \u0E22\u0E48\u0E2D\u0E2B\u0E19\u0E49\u0E32\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E41\u0E23\u0E01 \xB7 \u0E0A\u0E48\u0E27\u0E07\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14 \xB7 \u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D \xB7 \u0E22\u0E01\u0E04\u0E33\u0E1E\u0E39\u0E14
+        \xB7 \u0E04\u0E48\u0E32\u0E17\u0E35\u0E48\u0E15\u0E31\u0E49\u0E07\u0E17\u0E35\u0E48\u0E19\u0E35\u0E48\u0E43\u0E0A\u0E49\u0E17\u0E31\u0E49\u0E07\u0E1A\u0E19\u0E08\u0E2D\u0E41\u0E25\u0E30\u0E15\u0E2D\u0E19\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01 HTML (WYSIWYG)</div>
+      <div class="k-set-sub k-full">\u0E40\u0E19\u0E37\u0E49\u0E2D\u0E40\u0E23\u0E37\u0E48\u0E2D\u0E07</div>
+      <div class="k-row"><label>\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E19\u0E34\u0E22\u0E32\u0E22<span class="k-hint">\u0E27\u0E48\u0E32\u0E07 = \u0E15\u0E31\u0E27\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E2A\u0E31\u0E14\u0E2A\u0E48\u0E27\u0E19\u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19 (Sarabun/Georgia) \u0E44\u0E21\u0E48\u0E43\u0E0A\u0E48 Courier \u0E02\u0E2D\u0E07\u0E1A\u0E17</span></label><select id="st-pr-font" class="k-dlg-select" style="width:100%"></select></div>
+      <div class="k-row"><label>\u0E02\u0E19\u0E32\u0E14 (pt)</label><input type="number" id="st-pr-pt" class="k-narrow" min="6" max="48" step="0.5"></div>
+      <div class="k-row"><label>\u0E0A\u0E48\u0E27\u0E07\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14<span class="k-hint">1.0 = \u0E0A\u0E34\u0E14 \xB7 1.75 = \u0E1B\u0E01\u0E15\u0E34 \xB7 2.0 = \u0E40\u0E27\u0E49\u0E19\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E04\u0E39\u0E48</span></label><input type="number" id="st-pr-lh" class="k-narrow" min="0.8" max="4" step="0.05"></div>
+      <div class="k-row"><label>\u0E23\u0E30\u0E22\u0E30\u0E23\u0E30\u0E2B\u0E27\u0E48\u0E32\u0E07\u0E22\u0E48\u0E2D\u0E2B\u0E19\u0E49\u0E32 (em)<span class="k-hint">\u0E19\u0E34\u0E22\u0E32\u0E22\u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19 = 0 (\u0E43\u0E0A\u0E49\u0E22\u0E48\u0E2D\u0E2B\u0E19\u0E49\u0E32\u0E41\u0E17\u0E19\u0E01\u0E32\u0E23\u0E40\u0E27\u0E49\u0E19\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14)</span></label><input type="number" id="st-pr-para" class="k-narrow" min="0" max="4" step="0.05"></div>
+      <div class="k-row"><label>\u0E22\u0E48\u0E2D\u0E2B\u0E19\u0E49\u0E32\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E41\u0E23\u0E01 (\u0E19\u0E34\u0E49\u0E27)<span class="k-hint">\u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19 0.3\u20130.5 \u0E19\u0E34\u0E49\u0E27 \xB7 0 = \u0E44\u0E21\u0E48\u0E22\u0E48\u0E2D</span></label><input type="number" id="st-pr-indent" class="k-narrow" min="0" max="3" step="0.05"></div>
+      <div class="k-row"><label>\u0E22\u0E48\u0E2D\u0E2B\u0E19\u0E49\u0E32\u0E41\u0E23\u0E01\u0E2B\u0E25\u0E31\u0E07\u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D\u0E14\u0E49\u0E27\u0E22<span class="k-hint">\u0E18\u0E23\u0E23\u0E21\u0E40\u0E19\u0E35\u0E22\u0E21\u0E2A\u0E32\u0E01\u0E25: \u0E22\u0E48\u0E2D\u0E2B\u0E19\u0E49\u0E32\u0E41\u0E23\u0E01\u0E02\u0E2D\u0E07\u0E1A\u0E17\u0E44\u0E21\u0E48\u0E22\u0E48\u0E2D</span></label><input type="checkbox" id="st-pr-indent-h"></div>
+      <div class="k-row"><label>\u0E08\u0E31\u0E14\u0E2B\u0E19\u0E49\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19</label><select id="st-pr-align" class="k-dlg-select"><option value="left">\u0E0A\u0E34\u0E14\u0E0B\u0E49\u0E32\u0E22</option><option value="justify">\u0E40\u0E15\u0E47\u0E21\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14</option></select></div>
+      <div class="k-set-sub k-full">\u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D (h1\u2013h6)</div>
+      <div class="k-row"><label>\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D<span class="k-hint">\u0E27\u0E48\u0E32\u0E07 = \u0E40\u0E2B\u0E21\u0E37\u0E2D\u0E19\u0E40\u0E19\u0E37\u0E49\u0E2D\u0E40\u0E23\u0E37\u0E48\u0E2D\u0E07</span></label><select id="st-pr-hfont" class="k-dlg-select" style="width:100%"></select></div>
+      <div class="k-row"><label>\u0E2A\u0E35\u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D<span class="k-hint">\u0E27\u0E48\u0E32\u0E07 = \u0E43\u0E0A\u0E49\u0E2A\u0E35\u0E02\u0E2D\u0E07\u0E18\u0E35\u0E21</span></label><input type="text" id="st-pr-hcolor" class="k-narrow" placeholder="#c8792f"></div>
+      <div class="k-full"><table class="k-sp-cycle-tbl" id="st-pr-heads">
+        <thead><tr><th>\u0E23\u0E30\u0E14\u0E31\u0E1A</th><th>\u0E02\u0E19\u0E32\u0E14 (\u0E40\u0E17\u0E48\u0E32)</th><th>\u0E2B\u0E19\u0E32</th><th>\u0E40\u0E2D\u0E35\u0E22\u0E07</th><th>\u0E40\u0E27\u0E49\u0E19\u0E01\u0E48\u0E2D\u0E19 (em)</th><th>\u0E40\u0E27\u0E49\u0E19\u0E2B\u0E25\u0E31\u0E07 (em)</th><th>\u0E08\u0E31\u0E14\u0E2B\u0E19\u0E49\u0E32</th></tr></thead>
+        <tbody></tbody></table></div>
+      <div class="k-row"><label>\u0E40\u0E15\u0E34\u0E21\u0E40\u0E25\u0E02\u0E1A\u0E17\u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34<span class="k-hint">\u0E27\u0E32\u0E14\u0E14\u0E49\u0E27\u0E22 CSS \u2014 \u0E44\u0E21\u0E48\u0E40\u0E02\u0E35\u0E22\u0E19\u0E15\u0E31\u0E27\u0E40\u0E25\u0E02\u0E25\u0E07\u0E44\u0E1F\u0E25\u0E4C</span></label><input type="checkbox" id="st-pr-hnum"></div>
+      <div class="k-row"><label>\u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A\u0E40\u0E25\u0E02\u0E1A\u0E17<span class="k-hint">\u0E43\u0E0A\u0E49 {n}</span></label><input type="text" id="st-pr-hnumfmt"></div>
+      <div class="k-row"><label>\u0E43\u0E2A\u0E48\u0E40\u0E25\u0E02\u0E43\u0E2B\u0E49\u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D\u0E23\u0E30\u0E14\u0E31\u0E1A</label><input type="number" id="st-pr-hnumlv" class="k-narrow" min="1" max="6"></div>
+      <div class="k-set-sub k-full">\u0E22\u0E01\u0E04\u0E33\u0E1E\u0E39\u0E14 (Blockquote)</div>
+      <div class="k-row"><label>\u0E15\u0E31\u0E27\u0E40\u0E2D\u0E35\u0E22\u0E07</label><input type="checkbox" id="st-pr-qi"></div>
+      <div class="k-row"><label>\u0E21\u0E35\u0E40\u0E2A\u0E49\u0E19\u0E02\u0E2D\u0E1A\u0E0B\u0E49\u0E32\u0E22</label><input type="checkbox" id="st-pr-qb"></div>
+      <div class="k-row"><label>\u0E23\u0E30\u0E22\u0E30\u0E40\u0E22\u0E37\u0E49\u0E2D\u0E07 (\u0E19\u0E34\u0E49\u0E27)</label><input type="number" id="st-pr-qind" class="k-narrow" min="0" max="3" step="0.05"></div>
+      <div class="k-row"><label>\u0E2A\u0E35\u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23<span class="k-hint">\u0E27\u0E48\u0E32\u0E07 = \u0E43\u0E0A\u0E49\u0E2A\u0E35\u0E02\u0E2D\u0E07\u0E18\u0E35\u0E21</span></label><input type="text" id="st-pr-qcolor" class="k-narrow" placeholder="#c8792f"></div>
+      <div class="k-set-sub k-full">\u0E40\u0E25\u0E02\u0E2B\u0E19\u0E49\u0E32 (\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07\u0E2B\u0E19\u0E49\u0E32\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E02\u0E2D\u0E07\u0E19\u0E34\u0E22\u0E32\u0E22)</div>
+      <div class="k-row"><label>\u0E41\u0E2A\u0E14\u0E07\u0E40\u0E25\u0E02\u0E2B\u0E19\u0E49\u0E32</label><input type="checkbox" id="st-pr-pgnum"></div>
+      <div class="k-row"><label>\u0E43\u0E2A\u0E48\u0E40\u0E25\u0E02\u0E1A\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E41\u0E23\u0E01\u0E14\u0E49\u0E27\u0E22</label><input type="checkbox" id="st-pr-pgfirst"></div>
+      <div class="k-hint k-full" id="st-pr-info" style="margin-top:8px"></div>
+      <div class="k-full" style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap">
+        <button id="st-pr-preset-novel" class="k-key-btn">\u{1F4D6} \u0E15\u0E31\u0E49\u0E07\u0E40\u0E1B\u0E47\u0E19\u0E41\u0E1A\u0E1A\u0E19\u0E34\u0E22\u0E32\u0E22\u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19</button>
+        <button id="st-pr-preset-ms" class="k-key-btn">\u{1F4C4} \u0E15\u0E49\u0E19\u0E09\u0E1A\u0E31\u0E1A\u0E2A\u0E48\u0E07\u0E2A\u0E33\u0E19\u0E31\u0E01\u0E1E\u0E34\u0E21\u0E1E\u0E4C (\u0E40\u0E27\u0E49\u0E19\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E04\u0E39\u0E48)</button>
+        <button id="st-pr-reset" class="k-reset-btn">\u21BA \u0E04\u0E37\u0E19\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19</button>
+      </div>
     </div>
     <div class="k-set-page" data-p="spfmt">
       <div class="k-hint" style="margin-bottom:10px">[81][82][83] \u0E23\u0E30\u0E22\u0E30\u0E40\u0E22\u0E37\u0E49\u0E2D\u0E07 (\u0E27\u0E31\u0E14\u0E08\u0E32\u0E01\u0E02\u0E2D\u0E1A\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29) \xB7 \u0E04\u0E27\u0E32\u0E21\u0E01\u0E27\u0E49\u0E32\u0E07 \xB7 \u0E23\u0E30\u0E22\u0E30\u0E40\u0E27\u0E49\u0E19\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14 (10 = 1 \u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14) \xB7 \u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23\u0E1A\u0E19\u0E08\u0E2D / \u0E15\u0E2D\u0E19\u0E1E\u0E34\u0E21\u0E1E\u0E4C</div>
@@ -48763,6 +49483,208 @@ ${mdToHtmlBody(md)}
     };
     q("#st-edpt").oninput = previewPt;
     q("#st-sppt").oninput = previewPt;
+    const origProse = JSON.parse(JSON.stringify(s.prose || {}));
+    const P = mergeProseFormat(s.prose);
+    const PROSE_FONTS = [
+      { name: "\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19\u0E19\u0E34\u0E22\u0E32\u0E22 (\u0E15\u0E31\u0E27\u0E1E\u0E34\u0E21\u0E1E\u0E4C\u0E2A\u0E31\u0E14\u0E2A\u0E48\u0E27\u0E19)", value: "" },
+      { name: "Sarabun", value: '"Sarabun", sans-serif' },
+      { name: "TH Sarabun New", value: '"TH Sarabun New", sans-serif' },
+      { name: "Noto Serif Thai", value: '"Noto Serif Thai", serif' },
+      { name: "Noto Sans Thai", value: '"Noto Sans Thai", sans-serif' },
+      { name: "Leelawadee UI", value: '"Leelawadee UI", sans-serif' },
+      { name: "Georgia", value: "Georgia, serif" },
+      { name: "Times New Roman", value: '"Times New Roman", serif' },
+      { name: "Segoe UI", value: '"Segoe UI", system-ui, sans-serif' },
+      { name: "Courier Prime (\u0E41\u0E1A\u0E1A\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C)", value: DEFAULT_SCRIPT_FONT }
+    ];
+    const fillFontSel = (sel, val) => {
+      if (!sel) return;
+      sel.innerHTML = "";
+      for (const f of PROSE_FONTS) {
+        const o = document.createElement("option");
+        o.value = f.value;
+        o.textContent = f.name;
+        if (f.value === (val || "")) o.selected = true;
+        sel.appendChild(o);
+      }
+    };
+    fillFontSel(q("#st-pr-font"), P.fontFamily);
+    fillFontSel(q("#st-pr-hfont"), P.headingFont);
+    q("#st-pr-pt").value = P.fontPt;
+    q("#st-pr-lh").value = P.lineHeight;
+    q("#st-pr-para").value = P.paraSpacing;
+    q("#st-pr-indent").value = P.firstLineIndent;
+    q("#st-pr-indent-h").checked = !!P.indentAfterHeading;
+    q("#st-pr-align").value = P.align;
+    q("#st-pr-hcolor").value = P.headingColor || "";
+    q("#st-pr-hnum").checked = !!P.headingNumber;
+    q("#st-pr-hnumfmt").value = P.headingNumberFormat || "\u0E1A\u0E17\u0E17\u0E35\u0E48 {n}";
+    q("#st-pr-hnumlv").value = P.headingNumberLevel;
+    q("#st-pr-qi").checked = !!P.quote.italic;
+    q("#st-pr-qb").checked = !!P.quote.border;
+    q("#st-pr-qind").value = P.quote.indent;
+    q("#st-pr-qcolor").value = P.quote.color || "";
+    q("#st-pr-pgnum").checked = !!P.pageNumbers;
+    q("#st-pr-pgfirst").checked = !!P.pageNumberFirst;
+    const headBody = q("#st-pr-heads tbody");
+    const renderHeads = () => {
+      headBody.innerHTML = "";
+      P.headings.forEach((h, i2) => {
+        const tr2 = document.createElement("tr");
+        const td = (node) => {
+          const c = document.createElement("td");
+          c.append(node);
+          tr2.append(c);
+          return c;
+        };
+        const lbl = document.createElement("td");
+        lbl.textContent = "h" + (i2 + 1);
+        tr2.append(lbl);
+        const mkNum = (val, min, max, step, set) => {
+          const n = document.createElement("input");
+          n.type = "number";
+          n.className = "k-narrow";
+          n.min = min;
+          n.max = max;
+          n.step = step;
+          n.value = val;
+          n.oninput = () => {
+            set(parseFloat(n.value));
+            previewProse();
+          };
+          return n;
+        };
+        const mkChk = (val, set) => {
+          const c = document.createElement("input");
+          c.type = "checkbox";
+          c.checked = !!val;
+          c.onchange = () => {
+            set(c.checked);
+            previewProse();
+          };
+          return c;
+        };
+        td(mkNum(h.size, 0.5, 5, 0.05, (v) => {
+          h.size = Number.isFinite(v) ? v : 1;
+        }));
+        td(mkChk(h.bold, (v) => {
+          h.bold = v;
+        }));
+        td(mkChk(h.italic, (v) => {
+          h.italic = v;
+        }));
+        td(mkNum(h.before, 0, 6, 0.1, (v) => {
+          h.before = Number.isFinite(v) ? v : 0;
+        }));
+        td(mkNum(h.after, 0, 6, 0.1, (v) => {
+          h.after = Number.isFinite(v) ? v : 0;
+        }));
+        const al = document.createElement("select");
+        for (const [v, lb] of [["", "\u0E15\u0E32\u0E21\u0E40\u0E19\u0E37\u0E49\u0E2D\u0E40\u0E23\u0E37\u0E48\u0E2D\u0E07"], ["left", "\u0E0A\u0E34\u0E14\u0E0B\u0E49\u0E32\u0E22"], ["center", "\u0E01\u0E36\u0E48\u0E07\u0E01\u0E25\u0E32\u0E07"], ["right", "\u0E0A\u0E34\u0E14\u0E02\u0E27\u0E32"]]) {
+          const o = document.createElement("option");
+          o.value = v;
+          o.textContent = lb;
+          if (v === (h.align || "")) o.selected = true;
+          al.appendChild(o);
+        }
+        al.onchange = () => {
+          h.align = al.value;
+          previewProse();
+        };
+        td(al);
+        headBody.append(tr2);
+      });
+    };
+    const readProse = () => {
+      P.fontFamily = q("#st-pr-font").value || "";
+      P.fontPt = parseFloat(q("#st-pr-pt").value) || 12;
+      P.lineHeight = parseFloat(q("#st-pr-lh").value) || 1.75;
+      P.paraSpacing = parseFloat(q("#st-pr-para").value) || 0;
+      P.firstLineIndent = parseFloat(q("#st-pr-indent").value) || 0;
+      P.indentAfterHeading = q("#st-pr-indent-h").checked;
+      P.align = q("#st-pr-align").value;
+      P.headingFont = q("#st-pr-hfont").value || "";
+      P.headingColor = q("#st-pr-hcolor").value.trim();
+      P.headingNumber = q("#st-pr-hnum").checked;
+      P.headingNumberFormat = q("#st-pr-hnumfmt").value || "\u0E1A\u0E17\u0E17\u0E35\u0E48 {n}";
+      P.headingNumberLevel = parseInt(q("#st-pr-hnumlv").value, 10) || 1;
+      P.quote.italic = q("#st-pr-qi").checked;
+      P.quote.border = q("#st-pr-qb").checked;
+      P.quote.indent = parseFloat(q("#st-pr-qind").value) || 0;
+      P.quote.color = q("#st-pr-qcolor").value.trim();
+      P.pageNumbers = q("#st-pr-pgnum").checked;
+      P.pageNumberFirst = q("#st-pr-pgfirst").checked;
+      return P;
+    };
+    const previewProse = () => {
+      const f = mergeProseFormat(readProse());
+      applyProseVars(f);
+      const paper = PAPER_SIZES[W.paperSize] || PAPER_SIZES.letter;
+      const pp = W.paperSize === "custom" ? W.customPaper : paper;
+      q("#st-pr-info").textContent = `\u2248 ${proseLinesPerPage(f, pp, W.margins)} \u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14/\u0E2B\u0E19\u0E49\u0E32 \xB7 \u2248 ${proseCharsPerLine(f, pp, W.margins)} \u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23/\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14 (\u0E42\u0E14\u0E22\u0E1B\u0E23\u0E30\u0E21\u0E32\u0E13)`;
+    };
+    for (const id of [
+      "#st-pr-font",
+      "#st-pr-pt",
+      "#st-pr-lh",
+      "#st-pr-para",
+      "#st-pr-indent",
+      "#st-pr-indent-h",
+      "#st-pr-align",
+      "#st-pr-hfont",
+      "#st-pr-hcolor",
+      "#st-pr-hnum",
+      "#st-pr-hnumfmt",
+      "#st-pr-hnumlv",
+      "#st-pr-qi",
+      "#st-pr-qb",
+      "#st-pr-qind",
+      "#st-pr-qcolor",
+      "#st-pr-pgnum",
+      "#st-pr-pgfirst"
+    ]) {
+      const n = q(id);
+      if (!n) continue;
+      n.oninput = previewProse;
+      n.onchange = previewProse;
+    }
+    const loadProse = (src) => {
+      const f = mergeProseFormat(src);
+      Object.assign(P, f);
+      P.headings = f.headings.map((h) => ({ ...h }));
+      P.quote = { ...f.quote };
+      fillFontSel(q("#st-pr-font"), P.fontFamily);
+      fillFontSel(q("#st-pr-hfont"), P.headingFont);
+      q("#st-pr-pt").value = P.fontPt;
+      q("#st-pr-lh").value = P.lineHeight;
+      q("#st-pr-para").value = P.paraSpacing;
+      q("#st-pr-indent").value = P.firstLineIndent;
+      q("#st-pr-indent-h").checked = !!P.indentAfterHeading;
+      q("#st-pr-align").value = P.align;
+      q("#st-pr-hcolor").value = P.headingColor || "";
+      q("#st-pr-hnum").checked = !!P.headingNumber;
+      q("#st-pr-hnumfmt").value = P.headingNumberFormat;
+      q("#st-pr-hnumlv").value = P.headingNumberLevel;
+      q("#st-pr-qi").checked = !!P.quote.italic;
+      q("#st-pr-qb").checked = !!P.quote.border;
+      q("#st-pr-qind").value = P.quote.indent;
+      q("#st-pr-qcolor").value = P.quote.color || "";
+      q("#st-pr-pgnum").checked = !!P.pageNumbers;
+      q("#st-pr-pgfirst").checked = !!P.pageNumberFirst;
+      renderHeads();
+      previewProse();
+    };
+    q("#st-pr-reset").onclick = () => loadProse(null);
+    q("#st-pr-preset-novel").onclick = () => loadProse({ ...PROSE_DEFAULTS, firstLineIndent: 0.5, paraSpacing: 0, lineHeight: 1.6 });
+    q("#st-pr-preset-ms").onclick = () => loadProse({
+      ...PROSE_DEFAULTS,
+      firstLineIndent: 0.5,
+      paraSpacing: 0,
+      lineHeight: 2,
+      fontFamily: '"TH Sarabun New", "Times New Roman", serif'
+    });
+    renderHeads();
+    previewProse();
     const SETUP_FIELDS = [
       ["#st-email", "authorEmail"],
       ["#st-contact", "contact"],
@@ -48786,9 +49708,14 @@ ${mdToHtmlBody(md)}
       paperSel.append(o);
     }
     const pageInfo = () => {
-      const fmt = mergeSpFormat({ paperSize: W.paperSize, paper: W.customPaper, margins: W.margins });
+      const fmt = mergeSpFormat({
+        paperSize: W.paperSize,
+        paper: W.customPaper,
+        margins: W.margins,
+        lineHeight: W.spLineHeight
+      });
       q("#st-paper-custom").style.display = W.paperSize === "custom" ? "" : "none";
-      q("#st-page-info").textContent = `\u0E1E\u0E37\u0E49\u0E19\u0E17\u0E35\u0E48\u0E1E\u0E34\u0E21\u0E1E\u0E4C ${(fmt.paper.width - W.margins.left - W.margins.right).toFixed(2)} \xD7 ${(fmt.paper.height - W.margins.top - W.margins.bottom).toFixed(2)} \u0E19\u0E34\u0E49\u0E27 \xB7 ${linesPerPage(fmt.paper, fmt.margins)} \u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14/\u0E2B\u0E19\u0E49\u0E32`;
+      q("#st-page-info").textContent = `\u0E1E\u0E37\u0E49\u0E19\u0E17\u0E35\u0E48\u0E1E\u0E34\u0E21\u0E1E\u0E4C ${(fmt.paper.width - W.margins.left - W.margins.right).toFixed(2)} \xD7 ${(fmt.paper.height - W.margins.top - W.margins.bottom).toFixed(2)} \u0E19\u0E34\u0E49\u0E27 \xB7 ${formatLines(fmt)} \u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14/\u0E2B\u0E19\u0E49\u0E32`;
     };
     paperSel.onchange = () => {
       W.paperSize = paperSel.value;
@@ -48808,6 +49735,12 @@ ${mdToHtmlBody(md)}
       };
       return inp;
     };
+    numIn("#st-splh", () => W.spLineHeight, (v) => {
+      W.spLineHeight = Math.max(0.8, Math.min(2.5, v));
+    });
+    numIn("#st-sppagegap", () => W.spPageGap, (v) => {
+      W.spPageGap = Math.max(8, Math.min(120, Math.round(v)));
+    });
     numIn("#st-paper-w", () => W.customPaper.width, (v) => {
       W.customPaper.width = v;
     });
@@ -48904,7 +49837,9 @@ ${mdToHtmlBody(md)}
         spElements: s.spElements,
         spStyles: s.spStyles,
         spSceneNumbers: s.spSceneNumbers,
-        spPageNumbers: s.spPageNumbers
+        spPageNumbers: s.spPageNumbers,
+        spLineHeight: s.spLineHeight,
+        spPageGap: s.spPageGap
       };
       Object.assign(s, {
         paperSize: W.paperSize,
@@ -48913,7 +49848,9 @@ ${mdToHtmlBody(md)}
         spElements: W.elements,
         spStyles: W.styles,
         spSceneNumbers: W.sceneNumbers,
-        spPageNumbers: W.pageNumbers
+        spPageNumbers: W.pageNumbers,
+        spLineHeight: W.spLineHeight,
+        spPageGap: W.spPageGap
       });
       applyPageVars();
       try {
@@ -48983,6 +49920,10 @@ ${mdToHtmlBody(md)}
       W.margins = { ...MARGIN_DEFAULTS };
       W.rules = { ...PAGE_BREAK_RULES };
       W.strings = { ...SP_STRINGS };
+      W.spLineHeight = 1;
+      W.spPageGap = 28;
+      q("#st-splh").value = "1";
+      q("#st-sppagegap").value = "28";
       paperSel.value = "letter";
       for (const side of ["top", "bottom", "left", "right"]) q("#st-mg-" + side).value = W.margins[side];
       q("#st-paper-w").value = W.customPaper.width;
@@ -49333,6 +50274,8 @@ ${mdToHtmlBody(md)}
     const cancel = () => {
       s.edFontPt = origEdPt;
       s.spFontPt = origSpPt;
+      s.prose = Object.keys(origProse).length ? origProse : null;
+      applyProseVars(proseFormat());
       applyZoomVars(origFont);
       applyPageVars();
       applyUIScale(origUiScale);
@@ -49351,7 +50294,7 @@ ${mdToHtmlBody(md)}
       refreshAllSpell();
       close2();
     };
-    const num4 = (id, d) => {
+    const num5 = (id, d) => {
       const n = parseInt(q(id).value, 10);
       return Number.isFinite(n) ? Math.max(0, n) : d;
     };
@@ -49362,9 +50305,9 @@ ${mdToHtmlBody(md)}
     box.querySelector(".k-ok").onclick = async () => {
       m.title = q("#st-title").value.trim() || m.title;
       m.author = q("#st-author").value.trim();
-      s.autoSaveMinutes = num4("#st-auto", 5);
+      s.autoSaveMinutes = num5("#st-auto", 5);
       s.autoBackup = q("#st-backup").checked;
-      s.maxBackups = Math.max(1, num4("#st-maxbak", 10));
+      s.maxBackups = Math.max(1, num5("#st-maxbak", 10));
       s.uiFontSize = Math.max(-6, Math.min(16, parseInt(q("#st-font").value, 10) || 0));
       s.fontFamily = q("#st-fontfamily")?.value || "";
       s.spFontFamily = q("#st-spfontfamily")?.value || "";
@@ -49372,7 +50315,7 @@ ${mdToHtmlBody(md)}
       s.spellCheck = q("#st-spell").checked;
       s.spellCheckDict = q("#st-spelldict").checked;
       s.autoMention = q("#st-mention").checked;
-      s.recycleDays = Math.max(0, num4("#st-recycle", 30));
+      s.recycleDays = Math.max(0, num5("#st-recycle", 30));
       s.focusDim = Math.min(0.8, Math.max(0.05, parseFloat(q("#st-fmdim").value) || 0.3));
       applyFocusDim();
       s.uiScale = Math.min(2, Math.max(0.75, parseFloat(q("#st-uiscale").value) || 1));
@@ -49394,13 +50337,16 @@ ${mdToHtmlBody(md)}
       s.spStrings = { ...W.strings };
       s.spSceneNumbers = { ...W.sceneNumbers };
       s.spPageNumbers = { ...W.pageNumbers };
+      s.spLineHeight = W.spLineHeight;
+      s.spPageGap = W.spPageGap;
       s.typeSound = q("#st-typesnd").checked;
       s.typeSoundAlways = q("#st-typesnd-always").checked;
       s.typeSoundVolume = Math.min(1, Math.max(0, parseFloat(q("#st-typesnd-vol").value) || 0));
       s.langFonts = JSON.parse(JSON.stringify(W.langFonts));
+      s.prose = JSON.parse(JSON.stringify(mergeProseFormat(readProse())));
       for (const [sel, key] of SETUP_FIELDS) m[key] = q(sel).value.trim();
-      g.dailyWords = num4("#st-daily", 500);
-      g.projectWords = num4("#st-proj", 5e4);
+      g.dailyWords = num5("#st-daily", 500);
+      g.projectWords = num5("#st-proj", 5e4);
       try {
         await preloadLangFontUrls();
         await saveProjectMeta();
@@ -49576,6 +50522,7 @@ ${mdToHtmlBody(md)}
   var init_dialogs = __esm({
     "src/dialogs.js"() {
       init_app();
+      init_prose_format();
       init_core();
       init_typewriter_sound();
       init_fountain();
@@ -49986,8 +50933,8 @@ ${mdToHtmlBody(md)}
     canvas.onclick = async (e) => {
       if (e.target !== canvas && e.target !== img) return;
       const r = canvas.getBoundingClientRect();
-      const x = clamp((e.clientX - r.left) / r.width * 100);
-      const y = clamp((e.clientY - r.top) / r.height * 100);
+      const x = clamp2((e.clientX - r.left) / r.width * 100);
+      const y = clamp2((e.clientY - r.top) / r.height * 100);
       const pin = newPin(x, y);
       const res = await pinDialog(pin, maps, cur.id);
       if (!res) return;
@@ -50044,8 +50991,8 @@ ${mdToHtmlBody(md)}
         const mv = (ev) => {
           moved = true;
           el22.classList.add("dragging");
-          pin.x = clamp((ev.clientX - r.left) / r.width * 100);
-          pin.y = clamp((ev.clientY - r.top) / r.height * 100);
+          pin.x = clamp2((ev.clientX - r.left) / r.width * 100);
+          pin.y = clamp2((ev.clientY - r.top) / r.height * 100);
           el22.style.left = pin.x + "%";
           el22.style.top = pin.y + "%";
         };
@@ -55955,7 +56902,7 @@ ${mdToHtmlBody(md)}
           function M(e2, t3, r2, n2, i3) {
             this.good_length = e2, this.max_lazy = t3, this.nice_length = r2, this.max_chain = n2, this.func = i3;
           }
-          function H() {
+          function H2() {
             this.strm = null, this.status = 0, this.pending_buf = null, this.pending_buf_size = 0, this.pending_out = 0, this.pending = 0, this.wrap = 0, this.gzhead = null, this.gzindex = 0, this.method = v, this.last_flush = -1, this.w_size = 0, this.w_bits = 0, this.w_mask = 0, this.window = null, this.window_size = 0, this.prev = null, this.head = null, this.ins_h = 0, this.hash_size = 0, this.hash_bits = 0, this.hash_mask = 0, this.hash_shift = 0, this.block_start = 0, this.match_length = 0, this.prev_match = 0, this.match_available = 0, this.strstart = 0, this.match_start = 0, this.lookahead = 0, this.prev_length = 0, this.max_chain_length = 0, this.max_lazy_match = 0, this.level = 0, this.strategy = 0, this.good_match = 0, this.nice_match = 0, this.dyn_ltree = new c.Buf16(2 * w), this.dyn_dtree = new c.Buf16(2 * (2 * a + 1)), this.bl_tree = new c.Buf16(2 * (2 * o + 1)), D(this.dyn_ltree), D(this.dyn_dtree), D(this.bl_tree), this.l_desc = null, this.d_desc = null, this.bl_desc = null, this.bl_count = new c.Buf16(k + 1), this.heap = new c.Buf16(2 * s + 1), D(this.heap), this.heap_len = 0, this.heap_max = 0, this.depth = new c.Buf16(2 * s + 1), D(this.depth), this.l_buf = 0, this.lit_bufsize = 0, this.last_lit = 0, this.d_buf = 0, this.opt_len = 0, this.static_len = 0, this.matches = 0, this.insert = 0, this.bi_buf = 0, this.bi_valid = 0;
           }
           function G(e2) {
@@ -55973,7 +56920,7 @@ ${mdToHtmlBody(md)}
             var a2 = 1;
             if (t3 === g && (t3 = 6), n2 < 0 ? (a2 = 0, n2 = -n2) : 15 < n2 && (a2 = 2, n2 -= 16), i3 < 1 || y < i3 || r2 !== v || n2 < 8 || 15 < n2 || t3 < 0 || 9 < t3 || s2 < 0 || b < s2) return R(e2, _);
             8 === n2 && (n2 = 9);
-            var o2 = new H();
+            var o2 = new H2();
             return (e2.state = o2).strm = e2, o2.wrap = a2, o2.gzhead = null, o2.w_bits = n2, o2.w_size = 1 << o2.w_bits, o2.w_mask = o2.w_size - 1, o2.hash_bits = i3 + 7, o2.hash_size = 1 << o2.hash_bits, o2.hash_mask = o2.hash_size - 1, o2.hash_shift = ~~((o2.hash_bits + x - 1) / x), o2.window = new c.Buf8(2 * o2.w_size), o2.head = new c.Buf16(o2.hash_size), o2.prev = new c.Buf16(o2.w_size), o2.lit_bufsize = 1 << i3 + 6, o2.pending_buf_size = 4 * o2.lit_bufsize, o2.pending_buf = new c.Buf8(o2.pending_buf_size), o2.d_buf = 1 * o2.lit_bufsize, o2.l_buf = 3 * o2.lit_bufsize, o2.level = t3, o2.strategy = s2, o2.method = r2, K(e2);
           }
           h = [new M(0, 0, 0, 0, function(e2, t3) {
@@ -56653,12 +57600,12 @@ ${mdToHtmlBody(md)}
           function M(e2) {
             8 < e2.bi_valid ? U(e2, e2.bi_buf) : 0 < e2.bi_valid && (e2.pending_buf[e2.pending++] = e2.bi_buf), e2.bi_buf = 0, e2.bi_valid = 0;
           }
-          function H(e2, t3, r2, n2) {
+          function H2(e2, t3, r2, n2) {
             var i3 = 2 * t3, s2 = 2 * r2;
             return e2[i3] < e2[s2] || e2[i3] === e2[s2] && n2[t3] <= n2[r2];
           }
           function G(e2, t3, r2) {
-            for (var n2 = e2.heap[r2], i3 = r2 << 1; i3 <= e2.heap_len && (i3 < e2.heap_len && H(t3, e2.heap[i3 + 1], e2.heap[i3], e2.depth) && i3++, !H(t3, n2, e2.heap[i3], e2.depth)); ) e2.heap[r2] = e2.heap[i3], r2 = i3, i3 <<= 1;
+            for (var n2 = e2.heap[r2], i3 = r2 << 1; i3 <= e2.heap_len && (i3 < e2.heap_len && H2(t3, e2.heap[i3 + 1], e2.heap[i3], e2.depth) && i3++, !H2(t3, n2, e2.heap[i3], e2.depth)); ) e2.heap[r2] = e2.heap[i3], r2 = i3, i3 <<= 1;
             e2.heap[r2] = n2;
           }
           function K(e2, t3, r2) {
@@ -56961,7 +57908,7 @@ ${mdToHtmlBody(md)}
     if (position == null) return null;
     if (typeof position === "number") return { start: position, end: position, quote: "" };
     const { start = 0, end = start, quote = "" } = position;
-    return { start: num2(start), end: num2(end), quote: String(quote || "") };
+    return { start: num3(start), end: num3(end), quote: String(quote || "") };
   }
   function parseComments(md) {
     const m = BLOCK_RE.exec(String(md || ""));
@@ -57110,7 +58057,7 @@ ${BLOCK_END}
     }
     return out;
   }
-  var BLOCK_START, BLOCK_END, BLOCK_RE, _seq, newId, num2, CommentStore;
+  var BLOCK_START, BLOCK_END, BLOCK_RE, _seq, newId, num3, CommentStore;
   var init_comment_core = __esm({
     "src/comments/comment-core.js"() {
       BLOCK_START = "<!-- k2-comments";
@@ -57118,7 +58065,7 @@ ${BLOCK_END}
       BLOCK_RE = /\n*<!--\s*k2-comments\s*([\s\S]*?)-->\s*$/;
       _seq = 0;
       newId = (now) => "c" + Number(now).toString(36) + (_seq++).toString(36);
-      num2 = (v) => typeof v === "number" && isFinite(v) ? v : 0;
+      num3 = (v) => typeof v === "number" && isFinite(v) ? v : 0;
       CommentStore = class {
         constructor({ io, now = () => Date.now(), author = "" } = {}) {
           this.io = io;
@@ -60801,8 +61748,8 @@ ${preview}` + (found2.length > 8 ? `
           if (!r.width || !r.height) return;
           bindSceneTo(
             null,
-            clamp((e.clientX - r.left) / r.width * 100),
-            clamp((e.clientY - r.top) / r.height * 100)
+            clamp2((e.clientX - r.left) / r.width * 100),
+            clamp2((e.clientY - r.top) / r.height * 100)
           );
         };
       }
@@ -61031,9 +61978,9 @@ ${preview}` + (found2.length > 8 ? `
     const byCat = {};
     for (const e of entities) byCat[e.cat || e.entityTypeKey || "\u0E2D\u0E37\u0E48\u0E19 \u0E46"] = (byCat[e.cat || e.entityTypeKey || "\u0E2D\u0E37\u0E48\u0E19 \u0E46"] || 0) + 1;
     const grid = el("div", "cent-stats-grid");
-    const statCard = (num4, label) => {
+    const statCard = (num5, label) => {
       const c = el("div", "cent-stat-card");
-      c.append(el("div", "cent-stat-num", String(num4)), el("div", "cent-stat-lbl", label));
+      c.append(el("div", "cent-stat-num", String(num5)), el("div", "cent-stat-lbl", label));
       grid.append(c);
     };
     statCard(scenes.length.toLocaleString(), "\u0E09\u0E32\u0E01");
@@ -61679,8 +62626,8 @@ ${preview}` + (found2.length > 8 ? `
     }
   }
   function usageOf(input, output, total, text) {
-    const i2 = num3(input), o = num3(output) || (text ? estimateTokens(text) : 0);
-    return { input: i2, output: o, total: num3(total) || i2 + o };
+    const i2 = num4(input), o = num4(output) || (text ? estimateTokens(text) : 0);
+    return { input: i2, output: o, total: num4(total) || i2 + o };
   }
   function safeJson(s) {
     try {
@@ -61699,7 +62646,7 @@ ${preview}` + (found2.length > 8 ? `
   function estimateCost(provider, model, usage = {}) {
     const table = PRICES[provider] || PRICES.openai;
     const p = table[model] || table.default;
-    const inTok = num3(usage.input), outTok = num3(usage.output);
+    const inTok = num4(usage.input), outTok = num4(usage.output);
     return { usd: +((inTok * p.in + outTok * p.out) / 1e6).toFixed(6), in: inTok, out: outTok };
   }
   function mask(key) {
@@ -61858,7 +62805,7 @@ ${h.text}`;
     }
     return out;
   }
-  var PROVIDERS, PROVIDER_IDS, num3, PRICES, CostTracker, KEY_FILE2, SECRET_KEYS, KeyStore2, RateLimiter, defaultSleep, DEFAULT_AI, AIClient, retryable, backoff, EMBED_DIM, VectorIndex, INDEX_FILE, RagPipeline;
+  var PROVIDERS, PROVIDER_IDS, num4, PRICES, CostTracker, KEY_FILE2, SECRET_KEYS, KeyStore2, RateLimiter, defaultSleep, DEFAULT_AI, AIClient, retryable, backoff, EMBED_DIM, VectorIndex, INDEX_FILE, RagPipeline;
   var init_ai_core = __esm({
     "src/ai/ai-core.js"() {
       init_search_engine();
@@ -61974,7 +62921,7 @@ ${h.text}`;
         }
       };
       PROVIDER_IDS = Object.keys(PROVIDERS);
-      num3 = (v) => typeof v === "number" && isFinite(v) ? v : 0;
+      num4 = (v) => typeof v === "number" && isFinite(v) ? v : 0;
       PRICES = {
         openai: {
           "gpt-4o-mini": { in: 0.15, out: 0.6 },
@@ -62023,8 +62970,8 @@ ${h.text}`;
         summary() {
           return this.rows().reduce((s, r) => ({
             calls: s.calls + 1,
-            tokens: s.tokens + num3(r.tokens),
-            usd: +(s.usd + num3(r.usd)).toFixed(6)
+            tokens: s.tokens + num4(r.tokens),
+            usd: +(s.usd + num4(r.usd)).toFixed(6)
           }), { calls: 0, tokens: 0, usd: 0 });
         }
         byFeature() {
@@ -62033,8 +62980,8 @@ ${h.text}`;
             const k = r.feature || "\u0E2D\u0E37\u0E48\u0E19 \u0E46";
             m[k] = m[k] || { calls: 0, tokens: 0, usd: 0 };
             m[k].calls++;
-            m[k].tokens += num3(r.tokens);
-            m[k].usd = +(m[k].usd + num3(r.usd)).toFixed(6);
+            m[k].tokens += num4(r.tokens);
+            m[k].usd = +(m[k].usd + num4(r.usd)).toFixed(6);
           }
           return m;
         }
@@ -64981,8 +65928,12 @@ ${sc.body || ""}
     for (const [word, n] of counts || []) {
       const key = lower(word);
       if (ignored.has(key)) continue;
+      if (pinned.has(key)) {
+        out.push([word, n]);
+        continue;
+      }
       if (!looksLikeTerm(word)) continue;
-      if (n >= min || pinned.has(key) || known.has(key)) out.push([word, n]);
+      if (n >= min || known.has(key)) out.push([word, n]);
     }
     out.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "th"));
     return out.map(([w]) => w);
@@ -65047,7 +65998,7 @@ ${sc.body || ""}
   }
   function sceneBreakdown(blocks, opts = {}) {
     const fmt = opts.fmt && opts.fmt.elements ? opts.fmt : mergeSpFormat(opts.fmt);
-    const lines = opts.lines || linesPerPage(fmt.paper, fmt.margins);
+    const lines = opts.lines || formatLines(fmt);
     const startPage = Math.max(1, Math.round(+opts.startPage || 1));
     const pages = paginate(blocks, { fmt, lines });
     const pageOf = /* @__PURE__ */ new Map();
@@ -65188,7 +66139,7 @@ ${sc.body || ""}
     const startPage = Math.max(1, Math.round(+opts.startPage || 1));
     const chars = /* @__PURE__ */ new Map();
     const pageOf = /* @__PURE__ */ new Map();
-    const pages = paginate(blocks, { fmt, lines: opts.lines || linesPerPage(fmt.paper, fmt.margins) });
+    const pages = paginate(blocks, { fmt, lines: opts.lines || formatLines(fmt) });
     for (const pg of pages.pages) {
       for (const b of pg.blocks || []) {
         if (Number.isFinite(b.idx) && !pageOf.has(b.idx)) pageOf.set(b.idx, pg.index);
@@ -65255,7 +66206,7 @@ ${sc.body || ""}
   }
   function generateDialogueChart(blocks, opts = {}) {
     const fmt = opts.fmt && opts.fmt.elements ? opts.fmt : mergeSpFormat(opts.fmt);
-    const lines = opts.lines || linesPerPage(fmt.paper, fmt.margins);
+    const lines = opts.lines || formatLines(fmt);
     const startPage = Math.max(1, Math.round(+opts.startPage || 1));
     const pages = paginate(blocks, { fmt, lines });
     const dlgW = (fmt.elements.dialogue || {}).width || 3.5;
@@ -65784,11 +66735,14 @@ ${css}
     KTooltip: () => KTooltip,
     SECTION_STATUSES: () => SECTION_STATUSES,
     SP_REPORTS: () => SP_REPORTS,
+    aboutDialog: () => aboutDialog,
     activate: () => activate,
     addMapFlow: () => addMapFlow,
     allCatKeys: () => allCatKeys,
+    anyPageModel: () => anyPageModel,
     applyPageVars: () => applyPageVars,
     applyProjectLangFonts: () => applyProjectLangFonts,
+    applyProseVars: () => applyProseVars,
     applySettings: () => applySettings,
     applySpellcheck: () => applySpellcheck,
     applyTemplate: () => applyTemplate,
@@ -65822,6 +66776,7 @@ ${css}
     fmtTs: () => fmtTs,
     gotoDialog: () => gotoDialog,
     gotoPage: () => gotoPage,
+    gotoProsePos: () => gotoProsePos,
     gotoScene: () => gotoScene,
     guid: () => guid,
     invertRole: () => invertRole,
@@ -65840,6 +66795,7 @@ ${css}
     newProjectFromTemplate: () => newProjectFromTemplate,
     openCommentsPanel: () => openCommentsPanel,
     openCompileDialog: () => openCompileDialog,
+    openDevConsole: () => openDevConsole,
     openFirstSceneOf: () => openFirstSceneOf,
     openPlainFile: () => openPlainFile,
     openRef: () => openRef,
@@ -65850,6 +66806,9 @@ ${css}
     pickReference: () => pickReference,
     pinDialog: () => pinDialog,
     preloadLangFontUrls: () => preloadLangFontUrls,
+    proseFormat: () => proseFormat,
+    proseFormatSettings: () => proseFormatSettings,
+    prosePageModel: () => prosePageModel,
     refreshAllMentions: () => refreshAllMentions,
     refreshAllSpell: () => refreshAllSpell,
     refreshCommentsPanel: () => refreshCommentsPanel,
@@ -65898,6 +66857,7 @@ ${css}
     togglePageNumbers: () => togglePageNumbers,
     toggleSceneNumbers: () => toggleSceneNumbers,
     toggleShowFormat: () => toggleShowFormat,
+    uiFontOffset: () => uiFontOffset,
     uniqueSceneFileName: () => uniqueSceneFileName,
     updateErrorBadge: () => updateErrorBadge,
     updatePageNumberHint: () => updatePageNumberHint,
@@ -65914,8 +66874,7 @@ ${css}
     applySettings();
   }
   function applySettings() {
-    const off = parseInt(state.settings.uiFontSize, 10) || 0;
-    applyZoomVars(off);
+    applyZoomVars();
     applyUIScale();
     const spFmt = applyPageVars();
     setFormatGuide(!!state.settings.spShowFormat, spFmt);
@@ -65927,8 +66886,10 @@ ${css}
     document.body.classList.toggle("k-ln", !!state.settings.lineNumbers);
     document.body.classList.toggle("paper-mode", state.settings.paperMode !== false);
     const nLang = applyProjectLangFonts();
-    const edStack = state.settings.fontFamily || DEFAULT_SCRIPT_FONT;
+    const pf = proseFormat();
+    const edStack = pf.fontFamily || state.settings.fontFamily || DEFAULT_PROSE_FONT;
     document.documentElement.style.setProperty("--ed-font", withLangFamily(edStack, nLang > 0));
+    applyProseVars(pf);
     const spStack = state.settings.spFontFamily || DEFAULT_SCRIPT_FONT;
     document.documentElement.style.setProperty("--sp-font", withLangFamily(spStack, nLang > 0));
     setTypeVolume(state.settings.typeSoundVolume ?? 0.5);
@@ -65937,13 +66898,18 @@ ${css}
     refreshAllSpell();
     restartAutosave();
   }
-  function applyZoomVars(off) {
-    if (off === void 0) off = parseInt(state.settings.uiFontSize, 10) || 0;
+  function uiFontOffset() {
+    const n = parseInt(state.settings.uiFontSize, 10);
+    return Number.isFinite(n) ? Math.max(-6, Math.min(16, n)) : 0;
+  }
+  function applyZoomVars(uiOff) {
     const R = document.documentElement.style;
+    const off = uiOff === void 0 ? uiFontOffset() : parseInt(uiOff, 10) || 0;
+    R.setProperty("--ui-fs", 14 + off + "px");
     const edBase = ptToPx(state.settings.edFontPt ?? 12);
     const spBase = ptToPx(state.settings.spFontPt ?? 12);
-    const edfs = +(edBase + off).toFixed(2);
-    const spfs = Math.max(9, +(spBase + off).toFixed(2));
+    const edfs = Math.max(9, Math.min(96, +edBase.toFixed(2)));
+    const spfs = Math.max(9, Math.min(96, +spBase.toFixed(2)));
     R.setProperty("--ed-fs", edfs + "px");
     R.setProperty("--sp-fs", spfs + "px");
     R.setProperty("--page-scale", pageScale.toFixed(3));
@@ -65967,7 +66933,9 @@ ${css}
       strings: s.spStrings,
       sceneNumbers: s.spSceneNumbers,
       pageNumbers: s.spPageNumbers,
-      continued: s.spContinued
+      continued: s.spContinued,
+      // [alpha.58 · 55–56]
+      lineHeight: s.spLineHeight
     };
   }
   function spFormat() {
@@ -65992,7 +66960,31 @@ ${css}
     const lv = layoutCssVars(fmt, state.settings.spPageGap);
     for (const k of Object.keys(lv)) R.setProperty(k, lv[k]);
     R.setProperty("--sp-lh", String(spLineHeight()));
+    setFormatGuide(isFormatGuide(), fmt);
+    for (const tb2 of state.tabs.values()) if (tb2.sp) tb2.sp.refreshGuides();
+    const pv = proseLayoutCssVars(proseFormat(), fmt.paper, fmt.margins, state.settings.spPageGap);
+    for (const k of Object.keys(pv)) R.setProperty(k, pv[k]);
     return fmt;
+  }
+  function proseFormatSettings() {
+    return (state.settings || {}).prose || {};
+  }
+  function proseFormat() {
+    return mergeProseFormat(proseFormatSettings());
+  }
+  function applyProseVars(fmt) {
+    const f = fmt || proseFormat();
+    const R = document.documentElement.style;
+    const vars = proseCssVars(f);
+    for (const k of Object.keys(vars)) R.setProperty(k, vars[k]);
+    let st = document.getElementById("k-prose-format");
+    if (!st) {
+      st = document.createElement("style");
+      st.id = "k-prose-format";
+      document.head.appendChild(st);
+    }
+    st.textContent = proseCss(f);
+    return f;
   }
   function spLineHeight() {
     const v = parseFloat(state.settings.spLineHeight);
@@ -66041,18 +67033,28 @@ ${css}
   function scrollHosts() {
     return [...document.querySelectorAll(".pane.on, .k-split-pane > .pane, .roster-wrap > .workspace")].filter((e) => e && e.scrollWidth);
   }
+  function contentWidthOf(host2) {
+    const ws = host2.querySelector(":scope > .workspace") || host2.querySelector(".workspace");
+    const w = ws ? ws.scrollWidth : 0;
+    return Math.max(1, w || host2.scrollWidth);
+  }
   function keepZoomCenter(fn) {
     const hosts = scrollHosts();
     const before = hosts.map((h) => ({
       h,
-      cx: (h.scrollLeft + h.clientWidth / 2) / Math.max(1, h.scrollWidth),
-      cy: (h.scrollTop + h.clientHeight / 2) / Math.max(1, h.scrollHeight)
+      // ใช้ "ตำแหน่งกึ่งกลางเทียบกับพื้นที่ที่เลื่อนได้" — 0 เมื่อยังไม่มีอะไรให้เลื่อน
+      // (สัดส่วนเทียบความกว้างเนื้อหาจะเพี้ยนเมื่อ clientWidth เปลี่ยนตามระดับซูม)
+      fx: Math.max(0, h.scrollWidth - h.clientWidth) > 0 ? h.scrollLeft / (h.scrollWidth - h.clientWidth) : 0.5,
+      fy: Math.max(0, h.scrollHeight - h.clientHeight) > 0 ? h.scrollTop / (h.scrollHeight - h.clientHeight) : 0,
+      cw: contentWidthOf(h)
     }));
     fn();
     const restore = () => {
       for (const b of before) {
-        b.h.scrollLeft = Math.max(0, b.cx * b.h.scrollWidth - b.h.clientWidth / 2);
-        b.h.scrollTop = Math.max(0, b.cy * b.h.scrollHeight - b.h.clientHeight / 2);
+        const maxX = Math.max(0, b.h.scrollWidth - b.h.clientWidth);
+        const maxY = Math.max(0, b.h.scrollHeight - b.h.clientHeight);
+        b.h.scrollLeft = Math.max(0, Math.min(maxX, b.fx * maxX));
+        b.h.scrollTop = Math.max(0, Math.min(maxY, b.fy * maxY));
       }
     };
     restore();
@@ -66098,24 +67100,27 @@ ${css}
     if (!pane) return;
     pane.querySelectorAll(":scope > .sp-pageview").forEach((n) => n.remove());
   }
+  function pageViewHost(tab, gotoPos) {
+    let host2 = tab.pane.querySelector(":scope > .sp-pageview");
+    if (host2) return host2;
+    host2 = el("div", "sp-pageview");
+    tab.pane.append(host2);
+    host2.addEventListener("click", (ev) => {
+      const blk = ev.target.closest && ev.target.closest("[data-pos]");
+      const page = ev.target.closest && ev.target.closest(".sp-page");
+      if (!blk && !page) return;
+      const pos = blk ? parseInt(blk.dataset.pos, 10) : parseInt(page.querySelector("[data-pos]")?.dataset.pos ?? "", 10);
+      setSpView("normal");
+      if (Number.isFinite(pos)) gotoPos(pos);
+    });
+    return host2;
+  }
   function drawPageView(tab) {
     if (!tab || !tab.sp || !tab.pane) return 0;
     const fmt = spFormat();
     const blocks = blocksFromDoc(tab.sp.view.state.doc);
-    const pg = pagesOf(blocks, fmt, linesPerPage(fmt.paper, fmt.margins));
-    let host2 = tab.pane.querySelector(":scope > .sp-pageview");
-    if (!host2) {
-      host2 = el("div", "sp-pageview");
-      tab.pane.append(host2);
-      host2.addEventListener("click", (ev) => {
-        const blk = ev.target.closest && ev.target.closest(".sp[data-pos]");
-        const page = ev.target.closest && ev.target.closest(".sp-page");
-        if (!blk && !page) return;
-        const pos = blk ? parseInt(blk.dataset.pos, 10) : parseInt(page.querySelector(".sp[data-pos]")?.dataset.pos ?? "", 10);
-        setSpView("normal");
-        if (Number.isFinite(pos)) tab.sp.gotoPos(pos);
-      });
-    }
+    const pg = pagesOf(blocks, fmt);
+    const host2 = pageViewHost(tab, (pos) => tab.sp.gotoPos(pos));
     const pageWpx = fmt.paper.width * 96;
     const vs = viewScale(spViewMode, tab.pane.clientWidth || 900, pageWpx, 20);
     renderPageView(host2, pg, fmt, {
@@ -66126,6 +67131,30 @@ ${css}
     });
     return pg.count;
   }
+  function drawProsePageView(tab) {
+    if (!tab || !tab.editor || !tab.pane) return 0;
+    const spf = spFormat();
+    const pf = proseFormat();
+    const blocks = proseBlocksFromDoc(tab.editor.view.state.doc);
+    const pg = prosePagesOf(blocks, pf, spf.paper, spf.margins);
+    const host2 = pageViewHost(tab, (pos) => gotoProsePos(tab, pos));
+    const pageWpx = spf.paper.width * 96;
+    const vs = viewScale(spViewMode, tab.pane.clientWidth || 900, pageWpx, 20);
+    renderProsePageView(host2, pg, pf, {
+      scale: vs.scale,
+      perRow: vs.perRow,
+      gap: 20,
+      paper: spf.paper,
+      margins: spf.margins,
+      startPage: currentStartPage(tab)
+    });
+    return pg.count;
+  }
+  function gotoProsePos(tab, pos) {
+    const t2 = tab || state.active;
+    if (!t2 || !t2.editor) return false;
+    return t2.editor.gotoPos(pos);
+  }
   function setSpView(mode, quiet) {
     const m = isValidView(mode) ? mode : "normal";
     spViewMode = m;
@@ -66135,10 +67164,10 @@ ${css}
       if (p !== (tab && tab.pane)) clearPageView(p);
     });
     let pages = null;
-    if (tab && tab.sp && tab.pane) {
+    if (tab && tab.pane && (tab.sp || tab.editor)) {
       const cls = SP_VIEW_CLASS[m].split(" ").filter(Boolean);
       if (cls.length) tab.pane.classList.add(...cls);
-      if (isPageView(m)) pages = drawPageView(tab);
+      if (isPageView(m)) pages = tab.sp ? drawPageView(tab) : drawProsePageView(tab);
       else clearPageView(tab.pane);
     }
     const sel = $("#sp-view-select");
@@ -66151,6 +67180,7 @@ ${css}
     if (!isPageView(spViewMode)) return;
     const tab = state.active;
     if (tab && tab.sp) drawPageView(tab);
+    else if (tab && tab.editor) drawProsePageView(tab);
   }
   function toggleShowFormat(on) {
     const v = on ?? !isFormatGuide();
@@ -66246,54 +67276,68 @@ ${css}
     if (!t2 || !t2.sp) return null;
     const fmt = spFormat();
     const blocks = blocksFromDoc(t2.sp.view.state.doc);
-    const pages = pagesOf(blocks, fmt, linesPerPage(fmt.paper, fmt.margins));
+    const pages = pagesOf(blocks, fmt);
     return { fmt, blocks, pages, tab: t2 };
   }
+  function prosePageModel(tab) {
+    const t2 = tab || state.active;
+    if (!t2 || !t2.editor) return null;
+    const spf = spFormat();
+    const pf = proseFormat();
+    const blocks = proseBlocksFromDoc(t2.editor.view.state.doc);
+    const pages = prosePagesOf(blocks, pf, spf.paper, spf.margins);
+    return { fmt: pf, paper: spf.paper, margins: spf.margins, blocks, pages, tab: t2, prose: true };
+  }
+  function anyPageModel(tab) {
+    return spPageModel(tab) || prosePageModel(tab);
+  }
   function gotoPage(n) {
-    const m = spPageModel();
+    const m = anyPageModel();
     if (!m) {
-      setStatus("\u0E40\u0E1B\u0E34\u0E14\u0E09\u0E32\u0E01\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C\u0E01\u0E48\u0E2D\u0E19");
+      setStatus("\u0E40\u0E1B\u0E34\u0E14\u0E09\u0E32\u0E01\u0E01\u0E48\u0E2D\u0E19\u0E08\u0E36\u0E07\u0E08\u0E30\u0E44\u0E1B\u0E22\u0E31\u0E07\u0E2B\u0E19\u0E49\u0E32\u0E44\u0E14\u0E49");
       return false;
     }
-    const pos = findPageStart(m.pages, n);
+    const pos = m.prose ? findProsePageStart(m.pages, n) : findPageStart(m.pages, n);
     if (pos == null) {
-      setStatus(`\u0E44\u0E21\u0E48\u0E21\u0E35\u0E2B\u0E19\u0E49\u0E32 ${n} (\u0E1A\u0E17\u0E19\u0E35\u0E49\u0E21\u0E35 ${m.pages.count} \u0E2B\u0E19\u0E49\u0E32)`);
+      setStatus(`\u0E44\u0E21\u0E48\u0E21\u0E35\u0E2B\u0E19\u0E49\u0E32 ${n} (\u0E44\u0E1F\u0E25\u0E4C\u0E19\u0E35\u0E49\u0E21\u0E35 ${m.pages.count} \u0E2B\u0E19\u0E49\u0E32)`);
       return false;
     }
-    m.tab.sp.gotoPos(pos);
+    (m.prose ? m.tab.editor : m.tab.sp).gotoPos(pos);
     setStatus(`\u0E44\u0E1B\u0E17\u0E35\u0E48\u0E2B\u0E19\u0E49\u0E32 ${n} \u0E08\u0E32\u0E01 ${m.pages.count} \u0E2B\u0E19\u0E49\u0E32`);
     return true;
   }
   function gotoScene(n) {
-    const m = spPageModel();
+    const m = anyPageModel();
     if (!m) {
-      setStatus("\u0E40\u0E1B\u0E34\u0E14\u0E09\u0E32\u0E01\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C\u0E01\u0E48\u0E2D\u0E19");
+      setStatus("\u0E40\u0E1B\u0E34\u0E14\u0E09\u0E32\u0E01\u0E01\u0E48\u0E2D\u0E19");
       return false;
     }
-    const list = scenePositions(m.blocks);
-    const pos = findNthScene(m.blocks, n);
+    const list = m.prose ? proseHeadings(m.blocks) : scenePositions(m.blocks);
+    const item = list[Math.max(1, Math.round(+n || 1)) - 1];
+    const pos = item ? item.pos : null;
     if (pos == null) {
-      setStatus(`\u0E44\u0E21\u0E48\u0E21\u0E35\u0E09\u0E32\u0E01\u0E17\u0E35\u0E48 ${n} (\u0E1A\u0E17\u0E19\u0E35\u0E49\u0E21\u0E35 ${list.length} \u0E09\u0E32\u0E01)`);
+      setStatus(`\u0E44\u0E21\u0E48\u0E21\u0E35${m.prose ? "\u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D" : "\u0E09\u0E32\u0E01"}\u0E17\u0E35\u0E48 ${n} (\u0E44\u0E1F\u0E25\u0E4C\u0E19\u0E35\u0E49\u0E21\u0E35 ${list.length})`);
       return false;
     }
-    m.tab.sp.gotoPos(pos);
-    setStatus(`\u0E44\u0E1B\u0E17\u0E35\u0E48\u0E09\u0E32\u0E01 ${n}: ${list[n - 1]?.text || ""}`);
+    (m.prose ? m.tab.editor : m.tab.sp).gotoPos(pos);
+    setStatus(`\u0E44\u0E1B\u0E17\u0E35\u0E48${m.prose ? "\u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D" : "\u0E09\u0E32\u0E01"} ${n}: ${item.text || ""}`);
     return true;
   }
   function gotoDialog(kind) {
-    const m = spPageModel();
+    const m = anyPageModel();
     if (!m) {
-      setStatus("\u0E40\u0E1B\u0E34\u0E14\u0E09\u0E32\u0E01\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C\u0E01\u0E48\u0E2D\u0E19\u0E08\u0E36\u0E07\u0E08\u0E30\u0E44\u0E1B\u0E22\u0E31\u0E07\u0E2B\u0E19\u0E49\u0E32/\u0E09\u0E32\u0E01\u0E44\u0E14\u0E49");
+      setStatus("\u0E40\u0E1B\u0E34\u0E14\u0E09\u0E32\u0E01\u0E01\u0E48\u0E2D\u0E19\u0E08\u0E36\u0E07\u0E08\u0E30\u0E44\u0E1B\u0E22\u0E31\u0E07\u0E2B\u0E19\u0E49\u0E32/\u0E09\u0E32\u0E01\u0E44\u0E14\u0E49");
       return null;
     }
-    const scenes = scenePositions(m.blocks);
+    const scenes = m.prose ? proseHeadings(m.blocks) : scenePositions(m.blocks);
+    const unit = m.prose ? "\u0E1A\u0E17/\u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D" : "\u0E09\u0E32\u0E01";
     const ov = el("div", "k-overlay");
     const box = el("div", "k-dialog k-goto-dlg");
     box.append(el("div", "k-dlg-title", "\u0E44\u0E1B\u0E17\u0E35\u0E48\u2026"));
     const row = el("div", "k-goto-row");
     const sel = el("select", "k-dlg-select");
     sel.id = "goto-kind";
-    for (const [v, label] of [["page", "\u0E2B\u0E19\u0E49\u0E32"], ["scene", "\u0E09\u0E32\u0E01"]]) {
+    for (const [v, label] of [["page", "\u0E2B\u0E19\u0E49\u0E32"], ["scene", unit]]) {
       const o = el("option", null, label);
       o.value = v;
       sel.append(o);
@@ -66325,11 +67369,11 @@ ${css}
       }
       list.style.display = "";
       if (!scenes.length) {
-        list.append(el("div", "cmp-empty", "(\u0E1A\u0E17\u0E19\u0E35\u0E49\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01)"));
+        list.append(el("div", "cmp-empty", `(\u0E44\u0E1F\u0E25\u0E4C\u0E19\u0E35\u0E49\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35${unit})`));
         return;
       }
       for (const s of scenes) {
-        const d = el("div", "k-menu-item", `${s.n}. ${s.text || "(\u0E2B\u0E31\u0E27\u0E09\u0E32\u0E01\u0E27\u0E48\u0E32\u0E07)"}`);
+        const d = el("div", "k-menu-item", `${s.n}. ${s.text || "(\u0E27\u0E48\u0E32\u0E07)"}`);
         d.onclick = () => {
           ov.remove();
           gotoScene(s.n);
@@ -69362,7 +70406,14 @@ ${css}
         const { buildVarContext: buildVarContext2 } = await Promise.resolve().then(() => (init_template_vars(), template_vars_exports));
         Object.assign(varCtx, await buildVarContext2(state.root, kapi));
       }
-      return runWorkflow(model, cur(), { varCtx, spFormat: spFormat() });
+      const spf = spFormat();
+      return runWorkflow(model, cur(), {
+        varCtx,
+        spFormat: spf,
+        proseFormat: proseFormat(),
+        paper: spf.paper,
+        margins: spf.margins
+      });
     };
     const btns = el("div", "k-dlg-btns");
     const bPrev = el("button", null, "\u{1F441} \u0E14\u0E39\u0E15\u0E31\u0E27\u0E2D\u0E22\u0E48\u0E32\u0E07");
@@ -69431,7 +70482,13 @@ ${css}
   }
   async function currentScriptSource() {
     const t2 = state.active;
-    if (t2 && t2.sp) return { md: t2.sp.getMarkdown(), title: t2.title || state.title };
+    if (t2 && t2.sp) {
+      return {
+        md: t2.sp.getMarkdown(),
+        blocks: blocksFromDoc(t2.sp.view.state.doc),
+        title: t2.title || state.title
+      };
+    }
     const drafts = await listDrafts();
     if (!drafts.length) {
       setStatus("\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E1A\u0E17\u0E43\u0E2B\u0E49\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01 \u2014 \u0E40\u0E1B\u0E34\u0E14\u0E09\u0E32\u0E01\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C\u0E01\u0E48\u0E2D\u0E19");
@@ -69440,13 +70497,14 @@ ${css}
     const pick2 = drafts.length === 1 ? drafts[0].label : await pickFromList("\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01\u0E1A\u0E17\u0E08\u0E32\u0E01\u0E09\u0E1A\u0E31\u0E1A\u0E23\u0E48\u0E32\u0E07\u0E44\u0E2B\u0E19", drafts.map((d2) => d2.label));
     if (!pick2) return null;
     const d = drafts.find((x) => x.label === pick2);
-    return { md: await compileDraftText(d.dPath), title: state.title };
+    const md = await compileDraftText(d.dPath);
+    return { md, blocks: parseScript(md), title: state.title };
   }
   async function exportScript(kind) {
     if (!await checkBeforeExport()) return null;
     const src = await currentScriptSource();
     if (!src) return null;
-    const blocks = parseScript(src.md);
+    const blocks = src.blocks || parseScript(src.md);
     const meta2 = scriptMeta(src.title);
     const text = kind === "fdx" ? generateFdx(blocks, meta2) : generateRtf(blocks, meta2, spFormat());
     const dest = await kapi.saveAsDialog(safeName(src.title) + "." + kind, kind);
@@ -69474,7 +70532,7 @@ ${css}
     const src = await currentScriptSource();
     if (!src) return null;
     const fmt = spFormat();
-    const pages = pagesOf(parseScript(src.md), fmt, linesPerPage(fmt.paper, fmt.margins));
+    const pages = pagesOf(src.blocks, fmt);
     const saved = state.meta && state.meta.watermark || {};
     const ov = el("div", "k-overlay");
     const box = el("div", "k-dialog k-wm-dlg");
@@ -70437,6 +71495,10 @@ ${css}
     } else {
       tab.editor = new KEditor(mount, {
         markdown: body,
+        // [alpha.58r บั๊ก 25] จัดหน้าย่อหน้าเก็บใน frontmatter (`align: [3:center]`) → .md สะอาด
+        // ยังอ่านไฟล์เก่าที่ใช้ <!--align:x--> ได้เสมอ · ตั้งเป็น 'comment' ใน settings ถ้าอยากได้แบบเดิม
+        alignMap: (0, import_md10.alignFromString)(tab.meta.align),
+        alignComments: state.settings.mdAlignStyle === "comment",
         onChange: () => {
           markDirty(tab);
           scheduleCount();
@@ -70925,6 +71987,11 @@ ${css}
     }
     const body = tab.editor ? tab.editor.getMarkdown() : tab.sp ? tab.sp.getMarkdown() : tab.plain.value;
     tab.body = body;
+    if (tab.editor && state.settings.mdAlignStyle !== "comment") {
+      const am = (0, import_md10.alignToString)(tab.editor.getAlignMap());
+      if (am) tab.meta.align = "[" + am + "]";
+      else delete tab.meta.align;
+    }
     tab.meta.modified = (/* @__PURE__ */ new Date()).toISOString();
     tab.meta.appVersion = APP_VERSION;
     tab.meta.revision = String((parseInt(tab.meta.revision, 10) || 0) + 1);
@@ -71189,7 +72256,7 @@ ${css}
     const content = await kapi.readFile(file);
     const { meta: meta2, body } = (0, import_md10.parseMdFile)(content);
     if (t2.editor) {
-      t2.editor.setMarkdown(body);
+      t2.editor.setMarkdown(body, (0, import_md10.alignFromString)(meta2.align));
       refreshMentions(t2.editor.view);
     } else if (t2.sp) {
       t2.sp.destroy();
@@ -71558,7 +72625,7 @@ ${css}
         try {
           const fmt = spFormat();
           const blocks = blocksFromDoc(t2.sp.view.state.doc);
-          const pg = pagesOf(blocks, fmt, linesPerPage(fmt.paper, fmt.margins));
+          const pg = pagesOf(blocks, fmt);
           txt += ` \xB7 ${pg.count} \u0E2B\u0E19\u0E49\u0E32`;
           const base3 = currentStartPage(t2) - 1;
           const starts = pageStartPositions(pg);
@@ -71580,6 +72647,24 @@ ${css}
         setPageBreaks([]);
         setContinueds([]);
         _spErrors = [];
+      }
+      if (t2.editor) {
+        try {
+          const spf = spFormat(), pf = proseFormat();
+          const pblocks = proseBlocksFromDoc(t2.editor.view.state.doc);
+          const ppg = prosePagesOf(pblocks, pf, spf.paper, spf.margins);
+          txt += ` \xB7 ${ppg.count} \u0E2B\u0E19\u0E49\u0E32`;
+          const base3 = currentStartPage(t2) - 1;
+          const changed = setProsePageBreaks(
+            prosePageStarts(ppg).map((pos, i2) => ({ pos, page: base3 + i2 + 1 })).slice(1).filter((x) => Number.isFinite(x.pos))
+          );
+          if (changed) refreshProsePageBreaks(t2.editor.view);
+          refreshSpView();
+        } catch (e) {
+          log("warn", "\u0E19\u0E31\u0E1A\u0E2B\u0E19\u0E49\u0E32\u0E19\u0E34\u0E22\u0E32\u0E22\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08", e);
+        }
+      } else {
+        setProsePageBreaks([]);
       }
       $("#wc").textContent = txt;
       updateErrorBadge();
@@ -71744,6 +72829,205 @@ ${css}
     _logTimer = setInterval(() => {
       if (isPanelOpen("log")) renderLogPanel();
     }, 2e3);
+  }
+  function devApi() {
+    return {
+      state,
+      kapi,
+      $,
+      el,
+      log,
+      LOG_BUF,
+      tab: () => state.active,
+      doc: () => {
+        const t2 = state.active;
+        return t2 && (t2.editor || t2.sp)?.view.state.doc;
+      },
+      md: () => {
+        const t2 = state.active;
+        return t2 && (t2.editor || t2.sp)?.getMarkdown() || "";
+      },
+      settings: () => state.settings,
+      spFormat,
+      proseFormat,
+      spPageModel,
+      blocks: () => {
+        const t2 = state.active;
+        return t2 && t2.sp ? blocksFromDoc(t2.sp.view.state.doc) : t2 && t2.editor ? proseBlocksFromDoc(t2.editor.view.state.doc) : [];
+      },
+      cssVar: (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim(),
+      cmd: (ch, ...a) => handleCommand(ch, ...a),
+      version: APP_VERSION
+    };
+  }
+  function devHistory() {
+    try {
+      return JSON.parse(localStorage.getItem(DEV_HISTORY_KEY) || "[]");
+    } catch {
+      return [];
+    }
+  }
+  function pushDevHistory(code2) {
+    const h = devHistory().filter((x) => x !== code2);
+    h.push(code2);
+    try {
+      localStorage.setItem(DEV_HISTORY_KEY, JSON.stringify(h.slice(-50)));
+    } catch {
+    }
+  }
+  function devFormat(v) {
+    if (v === void 0) return "undefined";
+    if (v === null) return "null";
+    if (typeof v === "string") return v;
+    if (typeof v === "function") return String(v).slice(0, 400);
+    if (v instanceof Error) return v.stack || v.message;
+    try {
+      return JSON.stringify(v, (k, val) => val instanceof Map ? [...val] : val, 2).slice(0, 2e4);
+    } catch {
+      return String(v);
+    }
+  }
+  function openDevConsole() {
+    const ov = el("div", "k-overlay");
+    const box = el("div", "k-dialog k-dev-dlg");
+    box.append(el("div", "k-dlg-title", "\u{1F6E0} \u0E04\u0E2D\u0E19\u0E42\u0E0B\u0E25\u0E19\u0E31\u0E01\u0E1E\u0E31\u0E12\u0E19\u0E32"));
+    box.append(el(
+      "div",
+      "dim",
+      '\u0E1E\u0E34\u0E21\u0E1E\u0E4C JavaScript \u0E41\u0E25\u0E49\u0E27\u0E01\u0E14 Ctrl+Enter \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E23\u0E31\u0E19 \xB7 \u0E43\u0E0A\u0E49\u0E15\u0E31\u0E27\u0E41\u0E1B\u0E23 k2 \u0E40\u0E02\u0E49\u0E32\u0E16\u0E36\u0E07\u0E02\u0E2D\u0E07\u0E43\u0E19\u0E42\u0E1B\u0E23\u0E41\u0E01\u0E23\u0E21 (k2.state \xB7 k2.tab() \xB7 k2.md() \xB7 k2.blocks() \xB7 k2.cssVar("--ed-fs") \xB7 k2.cmd("save"))'
+    ));
+    const inp = el("textarea", "k-dlg-input k-dev-input");
+    inp.rows = 5;
+    inp.spellcheck = false;
+    inp.placeholder = '\u0E40\u0E0A\u0E48\u0E19  k2.cssVar("--ed-fs")   \u0E2B\u0E23\u0E37\u0E2D   k2.blocks().length';
+    box.append(inp);
+    const btns = el("div", "k-dev-btns");
+    const out = el("pre", "k-dev-out");
+    const write = (s, cls) => {
+      const line = el("div", "k-dev-line" + (cls ? " " + cls : ""), s);
+      out.append(line);
+      out.scrollTop = out.scrollHeight;
+    };
+    let histIdx = -1;
+    const run2 = () => {
+      const code2 = inp.value.trim();
+      if (!code2) return;
+      pushDevHistory(code2);
+      histIdx = -1;
+      write("\u203A " + code2, "k-dev-in");
+      const orig = { log: console.log, warn: console.warn, error: console.error };
+      const cap = [];
+      for (const k of ["log", "warn", "error"])
+        console[k] = (...a) => {
+          cap.push(a.map(devFormat).join(" "));
+          orig[k](...a);
+        };
+      let res, err = null;
+      try {
+        res = new Function("k2", "return (" + code2 + ")")(devApi());
+      } catch (e1) {
+        try {
+          res = new Function("k2", code2)(devApi());
+        } catch (e2) {
+          err = e2;
+        }
+      } finally {
+        Object.assign(console, orig);
+      }
+      for (const c of cap) write(c, "k-dev-log");
+      if (err) write(String(err && (err.stack || err.message || err)), "k-dev-err");
+      else if (res && typeof res.then === "function")
+        res.then((v) => write(devFormat(v))).catch((e) => write(String(e), "k-dev-err"));
+      else write(devFormat(res));
+    };
+    inp.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.code === "Enter") {
+        e.preventDefault();
+        run2();
+        return;
+      }
+      if (e.code === "ArrowUp" && (e.ctrlKey || e.metaKey)) {
+        const h = devHistory();
+        if (!h.length) return;
+        histIdx = histIdx < 0 ? h.length - 1 : Math.max(0, histIdx - 1);
+        inp.value = h[histIdx];
+        e.preventDefault();
+      }
+    });
+    const mkBtn = (label, fn, cls) => {
+      const b = el("button", cls || "cmp-mini", label);
+      b.onclick = fn;
+      return b;
+    };
+    btns.append(mkBtn("\u25B6 \u0E23\u0E31\u0E19 (Ctrl+Enter)", run2, "k-ok"));
+    btns.append(mkBtn("\u{1F9F9} \u0E25\u0E49\u0E32\u0E07\u0E1C\u0E25", () => {
+      out.innerHTML = "";
+    }));
+    btns.append(mkBtn("\u{1F4CB} \u0E04\u0E31\u0E14\u0E25\u0E2D\u0E01\u0E1C\u0E25", () => {
+      navigator.clipboard?.writeText(out.textContent || "");
+      setStatus("\u0E04\u0E31\u0E14\u0E25\u0E2D\u0E01\u0E1C\u0E25\u0E08\u0E32\u0E01\u0E04\u0E2D\u0E19\u0E42\u0E0B\u0E25\u0E41\u0E25\u0E49\u0E27");
+    }));
+    btns.append(mkBtn("\u{1F4DC} \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E25\u0E48\u0E32\u0E2A\u0E38\u0E14 (log)", async () => {
+      let text = "";
+      try {
+        text = await kapi.logRead(200) || "";
+      } catch {
+      }
+      write(text || LOG_BUF.slice(-200).join("\n") || "(\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01)", "k-dev-log");
+    }));
+    btns.append(mkBtn("\u2139 \u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25\u0E23\u0E30\u0E1A\u0E1A", () => {
+      write(devFormat({
+        version: APP_VERSION,
+        \u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C: state.root || "(\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E40\u0E1B\u0E34\u0E14)",
+        \u0E41\u0E17\u0E47\u0E1A\u0E17\u0E35\u0E48\u0E40\u0E1B\u0E34\u0E14: state.tabs.size,
+        \u0E42\u0E2B\u0E21\u0E14: state.active && state.active.sp ? "\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C" : state.active && state.active.editor ? "\u0E19\u0E34\u0E22\u0E32\u0E22" : "-",
+        \u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07: currentSpView(),
+        \u0E0B\u0E39\u0E21: Math.round(pageScale * 100) + "%",
+        "\u0E02\u0E19\u0E32\u0E14\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29": spFormat().paperSize,
+        "\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14/\u0E2B\u0E19\u0E49\u0E32 (\u0E1A\u0E17)": formatLines(spFormat()),
+        "\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14/\u0E2B\u0E19\u0E49\u0E32 (\u0E19\u0E34\u0E22\u0E32\u0E22)": proseLinesPerPage(proseFormat(), spFormat().paper, spFormat().margins),
+        "--ed-fs": getComputedStyle(document.documentElement).getPropertyValue("--ed-fs").trim(),
+        "--sp-fs": getComputedStyle(document.documentElement).getPropertyValue("--sp-fs").trim(),
+        "--ui-fs": getComputedStyle(document.documentElement).getPropertyValue("--ui-fs").trim()
+      }));
+    }));
+    box.append(btns, out);
+    const foot = el("div", "k-dlg-btns");
+    const close2 = el("button", "k-cancel", "\u0E1B\u0E34\u0E14");
+    close2.onclick = () => ov.remove();
+    foot.append(close2);
+    box.append(foot);
+    ov.append(box);
+    document.body.append(ov);
+    ov.addEventListener("mousedown", (e) => {
+      if (e.target === ov) ov.remove();
+    });
+    setTimeout(() => inp.focus(), 0);
+    return ov;
+  }
+  function aboutDialog() {
+    const ov = el("div", "k-overlay");
+    const box = el("div", "k-dialog k-about-dlg");
+    box.append(el("div", "k-dlg-title", "\u0E40\u0E01\u0E35\u0E48\u0E22\u0E27\u0E01\u0E31\u0E1A Killian 2"));
+    box.append(el("div", null, "\u0E04\u0E34\u0E40\u0E25\u0E35\u0E22\u0E19 \u0E2D\u0E35\u0E14\u0E34\u0E40\u0E15\u0E2D\u0E23\u0E4C " + APP_VERSION));
+    box.append(el("div", "dim", "\u0E42\u0E1B\u0E23\u0E41\u0E01\u0E23\u0E21\u0E40\u0E02\u0E35\u0E22\u0E19\u0E19\u0E34\u0E22\u0E32\u0E22/\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C \u2014 Electron + ProseMirror"));
+    box.append(el("div", "dim", "\u0E44\u0E1F\u0E25\u0E4C\u0E07\u0E32\u0E19\u0E40\u0E1B\u0E47\u0E19 Markdown + JSON \u0E40\u0E1B\u0E34\u0E14\u0E23\u0E48\u0E27\u0E21\u0E01\u0E31\u0E1A Killian v1 \u0E44\u0E14\u0E49 100%"));
+    const btns = el("div", "k-dlg-btns");
+    const dev = el("button", "cmp-mini", "\u{1F6E0} \u0E04\u0E2D\u0E19\u0E42\u0E0B\u0E25\u0E19\u0E31\u0E01\u0E1E\u0E31\u0E12\u0E19\u0E32");
+    dev.onclick = () => {
+      ov.remove();
+      openDevConsole();
+    };
+    const ok = el("button", "k-ok", "\u0E1B\u0E34\u0E14");
+    ok.onclick = () => ov.remove();
+    btns.append(dev, ok);
+    box.append(btns);
+    ov.append(box);
+    document.body.append(ov);
+    ov.addEventListener("mousedown", (e) => {
+      if (e.target === ov) ov.remove();
+    });
+    return ov;
   }
   function isFeaturePanel(id) {
     return !!FEATURE_PANELS[panelId(id)];
@@ -72049,7 +73333,15 @@ ${css}
         switchFormat(a[0]);
         break;
       case "about":
-        alert("Killian 2 (alpha)\n\u0E42\u0E1B\u0E23\u0E41\u0E01\u0E23\u0E21\u0E40\u0E02\u0E35\u0E22\u0E19\u0E19\u0E34\u0E22\u0E32\u0E22/\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07 \u2014 Electron + ProseMirror\n\u0E44\u0E1F\u0E25\u0E4C\u0E40\u0E1B\u0E47\u0E19 Markdown \u0E40\u0E1B\u0E34\u0E14\u0E23\u0E48\u0E27\u0E21\u0E01\u0E31\u0E1A Killian v1 \u0E44\u0E14\u0E49");
+        aboutDialog();
+        break;
+      // [alpha.58r ข้อ 4] คอนโซลนักพัฒนา (Ctrl+Shift+`) — อยู่เมนูเดียวกับ "เกี่ยวกับ"
+      case "dev-console":
+        openDevConsole();
+        break;
+      // [alpha.58r บั๊ก 16–24] รูปแบบนิยาย
+      case "prose-setup":
+        settingsDialog("prose");
         break;
       case "test-run":
         runTest(a[0]);
@@ -73686,22 +74978,56 @@ ${css}
       );
       await kapi.testShot("/tmp/k2_align_prose.png");
       check2(
-        "\u0E19\u0E34\u0E22\u0E32\u0E22: align \u0E40\u0E02\u0E35\u0E22\u0E19\u0E25\u0E07 markdown \u0E40\u0E1B\u0E47\u0E19\u0E04\u0E2D\u0E21\u0E40\u0E21\u0E19\u0E15\u0E4C",
-        t2.editor.getMarkdown().includes("<!--align:center-->"),
+        "[25] align \u0E44\u0E21\u0E48\u0E2B\u0E25\u0E38\u0E14\u0E25\u0E07 .md \u0E40\u0E1B\u0E47\u0E19\u0E04\u0E2D\u0E21\u0E40\u0E21\u0E19\u0E15\u0E4C\u0E41\u0E25\u0E49\u0E27",
+        !t2.editor.getMarkdown().includes("<!--align"),
         t2.editor.getMarkdown()
       );
-      t2.editor.setMarkdown("<!--align:right-->\u0E0A\u0E34\u0E14\u0E02\u0E27\u0E32\u0E17\u0E14\u0E2A\u0E2D\u0E1A");
+      check2(
+        "[25] align \u0E40\u0E01\u0E47\u0E1A\u0E40\u0E1B\u0E47\u0E19\u0E41\u0E1C\u0E19\u0E17\u0E35\u0E48\u0E1A\u0E25\u0E47\u0E2D\u0E01\u0E41\u0E17\u0E19",
+        t2.editor.getAlignMap()["0"] === "center",
+        JSON.stringify(t2.editor.getAlignMap())
+      );
+      check2(
+        "[25] \u0E41\u0E1B\u0E25\u0E07\u0E40\u0E1B\u0E47\u0E19\u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21\u0E2A\u0E33\u0E2B\u0E23\u0E31\u0E1A frontmatter \u0E44\u0E14\u0E49",
+        (0, import_md10.alignToString)(t2.editor.getAlignMap()) === "0:center"
+      );
+      t2.editor.setMarkdown("\u0E0A\u0E34\u0E14\u0E02\u0E27\u0E32\u0E17\u0E14\u0E2A\u0E2D\u0E1A", { 0: "right" });
       selHead(t2.editor.view);
       check2(
-        "\u0E19\u0E34\u0E22\u0E32\u0E22: \u0E2D\u0E48\u0E32\u0E19 align \u0E08\u0E32\u0E01\u0E44\u0E1F\u0E25\u0E4C\u0E01\u0E25\u0E31\u0E1A\u0E21\u0E32\u0E44\u0E14\u0E49 (right)",
+        "[25] \u0E2D\u0E48\u0E32\u0E19 align \u0E08\u0E32\u0E01 frontmatter \u0E01\u0E25\u0E31\u0E1A\u0E21\u0E32\u0E44\u0E14\u0E49 (right)",
         t2.editor.activeMarks().align === "right",
+        t2.editor.activeMarks().align
+      );
+      t2.editor.setMarkdown("<!--align:center-->\u0E44\u0E1F\u0E25\u0E4C\u0E40\u0E01\u0E48\u0E32");
+      selHead(t2.editor.view);
+      check2(
+        "[25] \u0E44\u0E1F\u0E25\u0E4C\u0E40\u0E01\u0E48\u0E32\u0E17\u0E35\u0E48\u0E43\u0E0A\u0E49 <!--align--> \u0E22\u0E31\u0E07\u0E2D\u0E48\u0E32\u0E19\u0E44\u0E14\u0E49",
+        t2.editor.activeMarks().align === "center",
         t2.editor.activeMarks().align
       );
       t2.editor.cmd("align", "left");
       check2(
-        "\u0E19\u0E34\u0E22\u0E32\u0E22: \u0E04\u0E37\u0E19\u0E0A\u0E34\u0E14\u0E0B\u0E49\u0E32\u0E22 = \u0E44\u0E21\u0E48\u0E40\u0E2B\u0E25\u0E37\u0E2D\u0E04\u0E2D\u0E21\u0E40\u0E21\u0E19\u0E15\u0E4C align",
-        !t2.editor.getMarkdown().includes("<!--align"),
+        "[25] \u0E04\u0E37\u0E19\u0E0A\u0E34\u0E14\u0E0B\u0E49\u0E32\u0E22 = \u0E41\u0E1C\u0E19\u0E17\u0E35\u0E48 align \u0E27\u0E48\u0E32\u0E07",
+        Object.keys(t2.editor.getAlignMap()).length === 0
+      );
+      t2.editor.setMarkdown("\u0E01\u0E48\u0E2D\u0E19" + String.fromCharCode(10) + "---" + String.fromCharCode(10) + "```js" + String.fromCharCode(10) + "let a = 1;" + String.fromCharCode(10) + "```");
+      check2(
+        "[27] --- \u0E01\u0E25\u0E32\u0E22\u0E40\u0E1B\u0E47\u0E19 hr \u0E08\u0E23\u0E34\u0E07\u0E43\u0E19\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23",
+        !!document.querySelector(".pane.on .ProseMirror hr")
+      );
+      check2(
+        "[27] ``` \u0E01\u0E25\u0E32\u0E22\u0E40\u0E1B\u0E47\u0E19\u0E1A\u0E25\u0E47\u0E2D\u0E01\u0E42\u0E04\u0E49\u0E14\u0E08\u0E23\u0E34\u0E07",
+        !!document.querySelector(".pane.on .ProseMirror pre code")
+      );
+      check2(
+        "[27] round-trip \u0E01\u0E25\u0E31\u0E1A\u0E40\u0E1B\u0E47\u0E19 markdown \u0E40\u0E14\u0E34\u0E21",
+        t2.editor.getMarkdown() === ["\u0E01\u0E48\u0E2D\u0E19", "---", "```js", "let a = 1;", "```"].join(String.fromCharCode(10)),
         t2.editor.getMarkdown()
+      );
+      t2.editor.cmd("hr");
+      check2(
+        "[27] \u0E04\u0E33\u0E2A\u0E31\u0E48\u0E07 fmt hr \u0E41\u0E17\u0E23\u0E01\u0E40\u0E2A\u0E49\u0E19\u0E04\u0E31\u0E48\u0E19\u0E44\u0E14\u0E49",
+        t2.editor.getMarkdown().split("---").length >= 2
       );
       t2.editor.setMarkdown(orig);
       resetPageScale();
@@ -75160,15 +76486,31 @@ ${css}
       applySettings();
       await new Promise((r) => setTimeout(r, 120));
       await kapi.testShot("/tmp/k2_ln.png");
-      const pmPadOn = getComputedStyle(document.querySelector(".pane.on .ProseMirror")).paddingLeft;
+      const pmLnEl = document.querySelector(".pane.on .ProseMirror");
+      const pmPadOn = getComputedStyle(pmLnEl).paddingLeft;
+      check2("\u0E40\u0E1B\u0E34\u0E14\u0E40\u0E25\u0E02\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14 \u2192 body \u0E21\u0E35 k-ln", document.body.classList.contains("k-ln"));
       check2(
-        "\u0E40\u0E1B\u0E34\u0E14\u0E40\u0E25\u0E02\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14 \u2192 body \u0E21\u0E35 k-ln \u0E41\u0E25\u0E30 ProseMirror \u0E02\u0E22\u0E31\u0E1A\u0E17\u0E35\u0E48\u0E27\u0E48\u0E32\u0E07\u0E0B\u0E49\u0E32\u0E22",
-        document.body.classList.contains("k-ln") && pmPadOn === "64px",
+        "[2] \u0E40\u0E1B\u0E34\u0E14\u0E40\u0E25\u0E02\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E41\u0E25\u0E49\u0E27 padding-left \u0E22\u0E31\u0E07\u0E40\u0E17\u0E48\u0E32\u0E23\u0E30\u0E22\u0E30\u0E02\u0E2D\u0E1A\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29 (1.5in = 144px)",
+        Math.abs(parseFloat(pmPadOn) - 144) < 2,
         pmPadOn
       );
+      const lnW0 = pmLnEl.getBoundingClientRect().width;
+      const lnNo = getComputedStyle(pmLnEl.firstElementChild, "::before");
+      check2(
+        "[2] \u0E40\u0E25\u0E02\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E27\u0E32\u0E14\u0E08\u0E23\u0E34\u0E07 (::before \u0E21\u0E35 content)",
+        lnNo.content && lnNo.content !== "none",
+        lnNo.content
+      );
+      check2("[2] \u0E40\u0E25\u0E02\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E40\u0E1B\u0E47\u0E19 absolute (\u0E44\u0E21\u0E48\u0E01\u0E34\u0E19\u0E1E\u0E37\u0E49\u0E19\u0E17\u0E35\u0E48\u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21)", lnNo.position === "absolute", lnNo.position);
       state.settings.lineNumbers = false;
       applySettings();
+      await new Promise((r) => setTimeout(r, 60));
       check2("\u0E1B\u0E34\u0E14\u0E40\u0E25\u0E02\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14 \u2192 \u0E40\u0E2D\u0E32 k-ln \u0E2D\u0E2D\u0E01", !document.body.classList.contains("k-ln"));
+      check2(
+        "[2] \u0E1B\u0E34\u0E14/\u0E40\u0E1B\u0E34\u0E14\u0E40\u0E25\u0E02\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E41\u0E25\u0E49\u0E27\u0E04\u0E27\u0E32\u0E21\u0E01\u0E27\u0E49\u0E32\u0E07\u0E40\u0E19\u0E37\u0E49\u0E2D\u0E2B\u0E32\u0E40\u0E17\u0E48\u0E32\u0E40\u0E14\u0E34\u0E21",
+        Math.abs(pmLnEl.getBoundingClientRect().width - lnW0) < 1.5,
+        `${lnW0} \u2192 ${pmLnEl.getBoundingClientRect().width}`
+      );
       {
         const dj = await kapi.readJson(await kapi.join(dPath, "draft.json"));
         const c2 = { guid: "c2test", title: "\u0E1A\u0E17\u0E22\u0E49\u0E32\u0E22\u0E17\u0E14\u0E2A\u0E2D\u0E1A", order: 99, folderName: "99 - \u0E1A\u0E17\u0E22\u0E49\u0E32\u0E22\u0E17\u0E14\u0E2A\u0E2D\u0E1A" };
@@ -75463,10 +76805,16 @@ ${css}
       const fontInp = document.querySelector("#st-font");
       fontInp.value = "4";
       fontInp.dispatchEvent(new Event("input"));
+      const edFsBeforeUi = getComputedStyle(document.documentElement).getPropertyValue("--ed-fs").trim();
       check2(
-        "\u0E1E\u0E23\u0E35\u0E27\u0E34\u0E27\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E17\u0E31\u0E19\u0E17\u0E35 (--ed-fs = \u0E10\u0E32\u0E19+4px)",
-        getComputedStyle(document.documentElement).getPropertyValue("--ed-fs").trim() === BASE_ED_FS + 4 + "px",
-        getComputedStyle(document.documentElement).getPropertyValue("--ed-fs")
+        "[14] \u0E1B\u0E23\u0E31\u0E1A\u0E02\u0E19\u0E32\u0E14 UI \u0E41\u0E25\u0E49\u0E27 --ui-fs \u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19 (\u0E10\u0E32\u0E19 14+4)",
+        getComputedStyle(document.documentElement).getPropertyValue("--ui-fs").trim() === "18px",
+        getComputedStyle(document.documentElement).getPropertyValue("--ui-fs")
+      );
+      check2(
+        "[14] \u0E1B\u0E23\u0E31\u0E1A\u0E02\u0E19\u0E32\u0E14 UI \u0E41\u0E25\u0E49\u0E27\u0E02\u0E19\u0E32\u0E14\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E15\u0E49\u0E2D\u0E07\u0E44\u0E21\u0E48\u0E02\u0E22\u0E31\u0E1A",
+        getComputedStyle(document.documentElement).getPropertyValue("--ed-fs").trim() === edFsBeforeUi,
+        edFsBeforeUi
       );
       const uiSl = document.querySelector("#st-uiscale");
       check2("\u0E15\u0E31\u0E49\u0E07\u0E04\u0E48\u0E32: \u0E21\u0E35 slider \u0E02\u0E19\u0E32\u0E14 UI \u0E43\u0E19\u0E41\u0E17\u0E47\u0E1A\u0E01\u0E32\u0E23\u0E40\u0E02\u0E35\u0E22\u0E19", !!uiSl);
@@ -75502,8 +76850,9 @@ ${css}
       check2("\u0E40\u0E02\u0E35\u0E22\u0E19\u0E0A\u0E37\u0E48\u0E2D/\u0E1C\u0E39\u0E49\u0E40\u0E02\u0E35\u0E22\u0E19\u0E25\u0E07\u0E44\u0E1F\u0E25\u0E4C", pj.title === "\u0E0A\u0E37\u0E48\u0E2D\u0E43\u0E2B\u0E21\u0E48\u0E17\u0E14\u0E2A\u0E2D\u0E1A" && pj.author === "\u0E1C\u0E39\u0E49\u0E40\u0E02\u0E35\u0E22\u0E19\u0E17\u0E14\u0E2A\u0E2D\u0E1A");
       check2("\u0E0A\u0E37\u0E48\u0E2D\u0E42\u0E1B\u0E23\u0E40\u0E08\u0E01\u0E15\u0E4C\u0E1A\u0E19\u0E08\u0E2D\u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E15\u0E32\u0E21", $("#projname").textContent === "\u0E0A\u0E37\u0E48\u0E2D\u0E43\u0E2B\u0E21\u0E48\u0E17\u0E14\u0E2A\u0E2D\u0E1A");
       check2(
-        "\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E15\u0E31\u0E27\u0E41\u0E01\u0E49\u0E44\u0E02\u0E16\u0E39\u0E01\u0E19\u0E33\u0E44\u0E1B\u0E43\u0E0A\u0E49\u0E08\u0E23\u0E34\u0E07 (\u0E10\u0E32\u0E19+4px)",
-        getComputedStyle(document.documentElement).getPropertyValue("--ed-fs").trim() === BASE_ED_FS + 4 + "px"
+        "[14] \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E41\u0E25\u0E49\u0E27\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E22\u0E31\u0E07\u0E43\u0E0A\u0E49\u0E02\u0E19\u0E32\u0E14\u0E15\u0E32\u0E21 edFontPt (\u0E44\u0E21\u0E48\u0E1A\u0E27\u0E01 uiFontSize)",
+        getComputedStyle(document.documentElement).getPropertyValue("--ed-fs").trim() === BASE_ED_FS + "px",
+        getComputedStyle(document.documentElement).getPropertyValue("--ed-fs")
       );
       check2("autosave \u0E19\u0E32\u0E17\u0E35\u0E16\u0E39\u0E01\u0E1B\u0E23\u0E31\u0E1A\u0E43\u0E19 state", state.settings.autoSaveMinutes === 2);
       openDashboard();
@@ -75518,9 +76867,9 @@ ${css}
       document.querySelector(".k-settings .k-cancel").click();
       await new Promise((r) => setTimeout(r, 20));
       check2(
-        '\u0E01\u0E14 "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01" \u0E04\u0E37\u0E19\u0E02\u0E19\u0E32\u0E14\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E40\u0E14\u0E34\u0E21 (\u0E10\u0E32\u0E19+4px)',
-        getComputedStyle(document.documentElement).getPropertyValue("--ed-fs").trim() === BASE_ED_FS + 4 + "px",
-        getComputedStyle(document.documentElement).getPropertyValue("--ed-fs")
+        '\u0E01\u0E14 "\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01" \u0E04\u0E37\u0E19\u0E02\u0E19\u0E32\u0E14 UI \u0E40\u0E14\u0E34\u0E21 (14+4 = 18px)',
+        getComputedStyle(document.documentElement).getPropertyValue("--ui-fs").trim() === "18px",
+        getComputedStyle(document.documentElement).getPropertyValue("--ui-fs")
       );
       window.dispatchEvent(new KeyboardEvent("keydown", { code: "Comma", ctrlKey: true, bubbles: true }));
       await new Promise((r) => setTimeout(r, 30));
@@ -75836,10 +77185,14 @@ ${css}
         const q = $("#search-body").querySelector(".k-dlg-input");
         q.value = "\u0E04\u0E27\u0E32\u0E21\u0E2B\u0E27\u0E31\u0E07";
         q.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-        await new Promise((r) => setTimeout(r, 400));
+        for (let i2 = 0; i2 < 60; i2++) {
+          if ($("#search-body").querySelectorAll(".k-gsearch-hit").length >= 1) break;
+          await new Promise((r) => setTimeout(r, 100));
+        }
         check2(
           "\u0E01\u0E14 Enter \u0E04\u0E49\u0E19\u0E2B\u0E32\u0E41\u0E25\u0E49\u0E27\u0E21\u0E35\u0E1C\u0E25\u0E25\u0E31\u0E1E\u0E18\u0E4C",
-          $("#search-body").querySelectorAll(".k-gsearch-hit").length >= 1 || !!$("#search-body").querySelector(".k-gsearch-status")
+          $("#search-body").querySelectorAll(".k-gsearch-hit").length >= 1 || !!$("#search-body").querySelector(".k-gsearch-status"),
+          $("#search-body").textContent.slice(0, 120)
         );
         await kapi.testShot("/tmp/k2_gsearch.png");
         hidePanel("search");
@@ -77749,6 +79102,10 @@ ${css}
         [...document.querySelectorAll(".k-set-tab")].find((x) => x.dataset.p === "write").click();
         const spSel = document.querySelector("#st-spfontfamily");
         check2('#2 \u0E41\u0E17\u0E47\u0E1A "\u0E01\u0E32\u0E23\u0E40\u0E02\u0E35\u0E22\u0E19" \u0E21\u0E35\u0E0A\u0E48\u0E2D\u0E07\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E41\u0E1A\u0E1A\u0E2D\u0E31\u0E01\u0E29\u0E23\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07', !!spSel);
+        for (let i2 = 0; i2 < 40; i2++) {
+          if (spSel && spSel.options.length >= 8) break;
+          await new Promise((r) => setTimeout(r, 50));
+        }
         check2(
           "#2 \u0E0A\u0E48\u0E2D\u0E07\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07\u0E21\u0E35\u0E23\u0E32\u0E22\u0E01\u0E32\u0E23\u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E43\u0E2B\u0E49\u0E40\u0E25\u0E37\u0E2D\u0E01",
           spSel && spSel.options.length >= 8,
@@ -77873,24 +79230,45 @@ ${css}
         S.pageMargins = { top: 1, bottom: 1, left: 1.5, right: 1 };
         applyPageVars();
         check2(
-          "[\u0E1F\u0E2D\u0E19\u0E15\u0E4C] \u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19\u0E40\u0E1B\u0E47\u0E19 Courier Final Draft",
-          rootVar("--ed-font").includes("Courier Final Draft") && rootVar("--sp-font").includes("Courier Final Draft"),
+          "[\u0E1F\u0E2D\u0E19\u0E15\u0E4C] \u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C\u0E43\u0E0A\u0E49 Courier Final Draft \u0E40\u0E1B\u0E47\u0E19\u0E04\u0E48\u0E32\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19",
+          rootVar("--sp-font").includes("Courier Final Draft"),
+          rootVar("--sp-font")
+        );
+        check2(
+          "[18] \u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19\u0E02\u0E2D\u0E07\u0E19\u0E34\u0E22\u0E32\u0E22\u0E44\u0E21\u0E48\u0E43\u0E0A\u0E48 Courier",
+          !/Courier/i.test(rootVar("--ed-font")),
+          rootVar("--ed-font")
+        );
+        check2(
+          "[18] \u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19\u0E02\u0E2D\u0E07\u0E19\u0E34\u0E22\u0E32\u0E22\u0E23\u0E2D\u0E07\u0E23\u0E31\u0E1A\u0E44\u0E17\u0E22",
+          /Sarabun|Thai/i.test(rootVar("--ed-font")),
           rootVar("--ed-font")
         );
         check2(
           "[\u0E1F\u0E2D\u0E19\u0E15\u0E4C] \u0E02\u0E19\u0E32\u0E14\u0E10\u0E32\u0E19 12pt = 16px \u0E17\u0E31\u0E49\u0E07\u0E19\u0E34\u0E22\u0E32\u0E22\u0E41\u0E25\u0E30\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07",
           S.edFontPt === 12 && S.spFontPt === 12 && BASE_ED_FS === 16 && BASE_SP_FS === 16
         );
-        const fsOff = parseInt(S.uiFontSize, 10) || 0;
         applyZoomVars();
         const edFsBefore = rootVar("--ed-fs");
         S.spFontPt = 14;
         applyZoomVars();
         check2(
           "[\u0E1F\u0E2D\u0E19\u0E15\u0E4C] \u0E01\u0E23\u0E2D\u0E01\u0E02\u0E19\u0E32\u0E14\u0E1A\u0E17\u0E2B\u0E19\u0E31\u0E07 14pt \u2192 --sp-fs \u0E15\u0E32\u0E21\u0E04\u0E48\u0E32\u0E17\u0E35\u0E48\u0E01\u0E23\u0E2D\u0E01",
-          Math.abs(parseFloat(rootVar("--sp-fs")) - (14 * 4 / 3 + fsOff)) < 0.05,
+          Math.abs(parseFloat(rootVar("--sp-fs")) - 14 * 4 / 3) < 0.05,
           rootVar("--sp-fs")
         );
+        const keepEdPt = S.edFontPt;
+        S.edFontPt = 1;
+        S.uiFontSize = -6;
+        applyZoomVars();
+        check2(
+          "[26] edFontPt \u0E40\u0E25\u0E47\u0E01\u0E2A\u0E38\u0E14 \u0E46 \u0E22\u0E31\u0E07\u0E16\u0E39\u0E01\u0E2B\u0E19\u0E35\u0E1A\u0E44\u0E21\u0E48\u0E15\u0E48\u0E33\u0E01\u0E27\u0E48\u0E32 9px",
+          parseFloat(rootVar("--ed-fs")) >= 9,
+          rootVar("--ed-fs")
+        );
+        S.edFontPt = keepEdPt;
+        S.uiFontSize = 0;
+        applyZoomVars();
         check2(
           "[\u0E1F\u0E2D\u0E19\u0E15\u0E4C] \u0E02\u0E19\u0E32\u0E14\u0E19\u0E34\u0E22\u0E32\u0E22\u0E44\u0E21\u0E48\u0E16\u0E39\u0E01\u0E01\u0E23\u0E30\u0E17\u0E1A",
           rootVar("--ed-fs") === edFsBefore,
@@ -78926,8 +80304,8 @@ ${css}
                 "[58] \u0E0A\u0E48\u0E2D\u0E07\u0E27\u0E48\u0E32\u0E07\u0E21\u0E35\u0E40\u0E2A\u0E49\u0E19\u0E02\u0E2D\u0E1A\u0E1A\u0E19-\u0E25\u0E48\u0E32\u0E07\u0E04\u0E31\u0E48\u0E19",
                 parseFloat(bCS.borderTopWidth) >= 1 && parseFloat(bCS.borderBottomWidth) >= 1
               );
-              const num4 = brks[0].querySelector(".sp-page-break-num");
-              check2("[58] \u0E21\u0E35\u0E40\u0E25\u0E02\u0E2B\u0E19\u0E49\u0E32\u0E01\u0E33\u0E01\u0E31\u0E1A\u0E23\u0E2D\u0E22\u0E15\u0E48\u0E2D", !!num4 && /\d/.test(num4.textContent), num4 && num4.textContent);
+              const num5 = brks[0].querySelector(".sp-page-break-num");
+              check2("[58] \u0E21\u0E35\u0E40\u0E25\u0E02\u0E2B\u0E19\u0E49\u0E32\u0E01\u0E33\u0E01\u0E31\u0E1A\u0E23\u0E2D\u0E22\u0E15\u0E48\u0E2D", !!num5 && /\d/.test(num5.textContent), num5 && num5.textContent);
             }
             check2(
               "[58] \u0E08\u0E33\u0E19\u0E27\u0E19\u0E23\u0E2D\u0E22\u0E15\u0E48\u0E2D = \u0E08\u0E33\u0E19\u0E27\u0E19\u0E2B\u0E19\u0E49\u0E32 \u2212 1 (\u0E15\u0E23\u0E07\u0E01\u0E31\u0E1A paginate)",
@@ -79778,9 +81156,14 @@ ${css}
         await new Promise((r) => setTimeout(r, 60));
         const rootVar2 = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
         check2(
-          "#2 \u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19\u0E0A\u0E35\u0E49\u0E44\u0E1B Courier Prime \u0E40\u0E1B\u0E47\u0E19\u0E15\u0E31\u0E27\u0E41\u0E23\u0E01",
-          /^\s*"Courier Prime"/.test(rootVar2("--sp-font")) && /^\s*"Courier Prime"/.test(rootVar2("--ed-font")),
+          "#2 \u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C\u0E0A\u0E35\u0E49\u0E44\u0E1B Courier Prime \u0E40\u0E1B\u0E47\u0E19\u0E15\u0E31\u0E27\u0E41\u0E23\u0E01",
+          /^\s*"Courier Prime"/.test(rootVar2("--sp-font")),
           rootVar2("--sp-font")
+        );
+        check2(
+          "[18] \u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E19\u0E34\u0E22\u0E32\u0E22\u0E44\u0E21\u0E48\u0E43\u0E0A\u0E48 Courier \u0E41\u0E25\u0E49\u0E27",
+          !/Courier/i.test(rootVar2("--ed-font")),
+          rootVar2("--ed-font")
         );
         try {
           await document.fonts.load('16px "Courier Prime"');
@@ -80003,6 +81386,371 @@ ${css}
           await new Promise((r) => setTimeout(r, 60));
         }
       }
+      {
+        const rv = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+        if (!state.tabs.has(t2.file)) {
+          document.querySelector(".scene").click();
+          await new Promise((r) => setTimeout(r, 600));
+        } else {
+          activate(t2.file);
+        }
+        await new Promise((r) => setTimeout(r, 250));
+        const T = state.active;
+        check2(
+          "[58r] \u0E21\u0E35\u0E41\u0E17\u0E47\u0E1A\u0E19\u0E34\u0E22\u0E32\u0E22\u0E1E\u0E23\u0E49\u0E2D\u0E21\u0E17\u0E14\u0E2A\u0E2D\u0E1A",
+          !!(T && T.editor && T.pane),
+          T ? (T.file || "") + " editor=" + !!T.editor : "no active"
+        );
+        const S2 = state.settings;
+        const pmR = T.pane.querySelector(":scope > .workspace > .ProseMirror");
+        check2("[58r] \u0E40\u0E08\u0E2D\u0E2B\u0E19\u0E49\u0E32\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E02\u0E2D\u0E07\u0E41\u0E17\u0E47\u0E1A\u0E19\u0E34\u0E22\u0E32\u0E22", !!pmR);
+        const paperWas = S2.paperMode !== false;
+        if (!paperWas) {
+          togglePaper(true);
+          await new Promise((r) => setTimeout(r, 120));
+        }
+        const csOn = getComputedStyle(pmR);
+        const layOn = { pl: csOn.paddingLeft, pt: csOn.paddingTop, pr: csOn.paddingRight, w: csOn.width };
+        const bgOn = csOn.backgroundColor;
+        togglePaper(false);
+        await new Promise((r) => setTimeout(r, 150));
+        const csOff = getComputedStyle(pmR);
+        check2(
+          "[4] \u0E1B\u0E34\u0E14\u0E42\u0E2B\u0E21\u0E14\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E41\u0E25\u0E49\u0E27\u0E23\u0E30\u0E22\u0E30\u0E02\u0E2D\u0E1A\u0E44\u0E21\u0E48\u0E02\u0E22\u0E31\u0E1A\u0E40\u0E25\u0E22",
+          csOff.paddingLeft === layOn.pl && csOff.paddingTop === layOn.pt && csOff.paddingRight === layOn.pr && csOff.width === layOn.w,
+          `${layOn.pl}/${layOn.pt} \u2192 ${csOff.paddingLeft}/${csOff.paddingTop}`
+        );
+        check2(
+          "[4] \u0E41\u0E15\u0E48\u0E2A\u0E35\u0E1E\u0E37\u0E49\u0E19\u0E15\u0E49\u0E2D\u0E07\u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E08\u0E23\u0E34\u0E07 (\u0E44\u0E21\u0E48\u0E07\u0E31\u0E49\u0E19\u0E2A\u0E27\u0E34\u0E15\u0E0A\u0E4C\u0E44\u0E21\u0E48\u0E21\u0E35\u0E04\u0E27\u0E32\u0E21\u0E2B\u0E21\u0E32\u0E22)",
+          csOff.backgroundColor !== bgOn,
+          `${bgOn} \u2192 ${csOff.backgroundColor}`
+        );
+        check2(
+          "[4] \u0E23\u0E30\u0E22\u0E30\u0E02\u0E2D\u0E1A\u0E0B\u0E49\u0E32\u0E22\u0E22\u0E31\u0E07\u0E40\u0E17\u0E48\u0E32\u0E01\u0E31\u0E1A --mg-left (1.5in = 144px)",
+          Math.abs(parseFloat(csOff.paddingLeft) - 144) < 2,
+          csOff.paddingLeft
+        );
+        togglePaper(true);
+        await new Promise((r) => setTimeout(r, 120));
+        const lum = (c) => {
+          const m = /(\d+),\s*(\d+),\s*(\d+)/.exec(c || "");
+          return m ? 0.299 * +m[1] + 0.587 * +m[2] + 0.114 * +m[3] : 0;
+        };
+        toggleReading(true);
+        await new Promise((r) => setTimeout(r, 220));
+        const pmRead = T.pane.querySelector(":scope > .workspace > .ProseMirror");
+        const csRead = getComputedStyle(pmRead);
+        check2(
+          "[3] \u0E42\u0E2B\u0E21\u0E14\u0E2D\u0E48\u0E32\u0E19+\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29: \u0E21\u0E35\u0E23\u0E30\u0E22\u0E30\u0E02\u0E2D\u0E1A\u0E0B\u0E49\u0E32\u0E22/\u0E1A\u0E19\u0E40\u0E2A\u0E21\u0E2D",
+          parseFloat(csRead.paddingLeft) >= 40 && parseFloat(csRead.paddingTop) >= 40,
+          `${csRead.paddingLeft} / ${csRead.paddingTop}`
+        );
+        check2(
+          "[3] \u0E42\u0E2B\u0E21\u0E14\u0E2D\u0E48\u0E32\u0E19+\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29: \u0E2B\u0E21\u0E36\u0E01\u0E40\u0E02\u0E49\u0E21\u0E1A\u0E19\u0E1E\u0E37\u0E49\u0E19\u0E2A\u0E27\u0E48\u0E32\u0E07",
+          lum(csRead.backgroundColor) - lum(csRead.color) > 60,
+          `bg=${csRead.backgroundColor} fg=${csRead.color}`
+        );
+        togglePaper(false);
+        await new Promise((r) => setTimeout(r, 200));
+        const csRead2 = getComputedStyle(pmRead);
+        check2(
+          "[3] \u0E42\u0E2B\u0E21\u0E14\u0E2D\u0E48\u0E32\u0E19\u0E41\u0E1A\u0E1A\u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29: \u0E2B\u0E21\u0E36\u0E01\u0E2A\u0E27\u0E48\u0E32\u0E07\u0E1A\u0E19\u0E1E\u0E37\u0E49\u0E19\u0E21\u0E37\u0E14",
+          lum(csRead2.color) - lum(csRead2.backgroundColor) > 60,
+          `bg=${csRead2.backgroundColor} fg=${csRead2.color}`
+        );
+        check2(
+          "[3] \u0E42\u0E2B\u0E21\u0E14\u0E2D\u0E48\u0E32\u0E19\u0E41\u0E1A\u0E1A\u0E44\u0E21\u0E48\u0E21\u0E35\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29: \u0E22\u0E31\u0E07\u0E21\u0E35\u0E23\u0E30\u0E22\u0E30\u0E02\u0E2D\u0E1A",
+          parseFloat(csRead2.paddingLeft) >= 40,
+          csRead2.paddingLeft
+        );
+        togglePaper(true);
+        toggleReading(false);
+        await new Promise((r) => setTimeout(r, 200));
+        const pf0 = proseFormat();
+        check2("[16] \u0E21\u0E35 --ed-indent (\u0E22\u0E48\u0E2D\u0E2B\u0E19\u0E49\u0E32\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E41\u0E23\u0E01)", /in$/.test(rv("--ed-indent")), rv("--ed-indent"));
+        check2("[17] \u0E21\u0E35 --ed-lh (\u0E0A\u0E48\u0E27\u0E07\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14)", parseFloat(rv("--ed-lh")) > 0, rv("--ed-lh"));
+        check2(
+          '[16][17] \u0E21\u0E35 <style id="k-prose-format"> \u0E17\u0E35\u0E48\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E08\u0E32\u0E01\u0E04\u0E48\u0E32\u0E15\u0E31\u0E49\u0E07',
+          !!document.getElementById("k-prose-format") && document.getElementById("k-prose-format").textContent.includes("text-indent")
+        );
+        T.editor.setMarkdown("\u0E22\u0E48\u0E2D\u0E2B\u0E19\u0E49\u0E32\u0E41\u0E23\u0E01\u0E17\u0E14\u0E2A\u0E2D\u0E1A\u0E01\u0E32\u0E23\u0E22\u0E48\u0E2D" + String.fromCharCode(10) + "\u0E22\u0E48\u0E2D\u0E2B\u0E19\u0E49\u0E32\u0E17\u0E35\u0E48\u0E2A\u0E2D\u0E07\u0E17\u0E14\u0E2A\u0E2D\u0E1A\u0E01\u0E32\u0E23\u0E22\u0E48\u0E2D");
+        await new Promise((r) => setTimeout(r, 120));
+        const p2 = T.pane.querySelectorAll(":scope > .workspace > .ProseMirror > p")[1];
+        check2(
+          "[16] \u0E22\u0E48\u0E2D\u0E2B\u0E19\u0E49\u0E32\u0E17\u0E35\u0E48\u0E2A\u0E2D\u0E07\u0E21\u0E35 text-indent \u0E08\u0E23\u0E34\u0E07",
+          parseFloat(getComputedStyle(p2).textIndent) > 10,
+          getComputedStyle(p2).textIndent
+        );
+        S2.prose = { ...pf0, firstLineIndent: 0, lineHeight: 2.4, paraSpacing: 1 };
+        applyProseVars(proseFormat());
+        await new Promise((r) => setTimeout(r, 120));
+        check2(
+          "[16] \u0E15\u0E31\u0E49\u0E07\u0E22\u0E48\u0E2D\u0E2B\u0E19\u0E49\u0E32 0 \u2192 \u0E44\u0E21\u0E48\u0E22\u0E48\u0E2D\u0E41\u0E25\u0E49\u0E27",
+          parseFloat(getComputedStyle(p2).textIndent) < 1,
+          getComputedStyle(p2).textIndent
+        );
+        check2(
+          "[17] \u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E0A\u0E48\u0E27\u0E07\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E41\u0E25\u0E49\u0E27\u0E40\u0E2B\u0E47\u0E19\u0E1C\u0E25\u0E08\u0E23\u0E34\u0E07",
+          Math.abs(parseFloat(getComputedStyle(p2).lineHeight) - parseFloat(rv("--ed-fs")) * 2.4) < 2,
+          getComputedStyle(p2).lineHeight
+        );
+        check2(
+          "[17] \u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E23\u0E30\u0E22\u0E30\u0E22\u0E48\u0E2D\u0E2B\u0E19\u0E49\u0E32\u0E41\u0E25\u0E49\u0E27\u0E40\u0E2B\u0E47\u0E19\u0E1C\u0E25\u0E08\u0E23\u0E34\u0E07",
+          parseFloat(getComputedStyle(p2).marginBottom) > 5,
+          getComputedStyle(p2).marginBottom
+        );
+        S2.prose = { ...pf0, headings: pf0.headings.map((h, i2) => i2 === 0 ? { ...h, size: 3 } : h) };
+        applyProseVars(proseFormat());
+        T.editor.setMarkdown("# \u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D\u0E17\u0E14\u0E2A\u0E2D\u0E1A");
+        await new Promise((r) => setTimeout(r, 120));
+        const h1El = T.pane.querySelector(".ProseMirror h1");
+        check2(
+          "[23] \u0E15\u0E31\u0E49\u0E07\u0E02\u0E19\u0E32\u0E14\u0E2B\u0E31\u0E27\u0E02\u0E49\u0E2D\u0E40\u0E2D\u0E07\u0E41\u0E25\u0E49\u0E27\u0E40\u0E2B\u0E47\u0E19\u0E1C\u0E25 (3 \u0E40\u0E17\u0E48\u0E32\u0E02\u0E2D\u0E07\u0E40\u0E19\u0E37\u0E49\u0E2D\u0E40\u0E23\u0E37\u0E48\u0E2D\u0E07)",
+          !!h1El && Math.abs(parseFloat(getComputedStyle(h1El).fontSize) - parseFloat(rv("--ed-fs")) * 3) < 2,
+          h1El && getComputedStyle(h1El).fontSize
+        );
+        S2.prose = { ...pf0, quote: { ...pf0.quote, border: false, italic: false } };
+        applyProseVars(proseFormat());
+        T.editor.setMarkdown("> \u0E22\u0E01\u0E04\u0E33\u0E1E\u0E39\u0E14\u0E17\u0E14\u0E2A\u0E2D\u0E1A");
+        await new Promise((r) => setTimeout(r, 120));
+        const bqEl = T.pane.querySelector(".ProseMirror blockquote");
+        check2(
+          "[24] \u0E1B\u0E34\u0E14\u0E40\u0E2A\u0E49\u0E19\u0E02\u0E2D\u0E1A\u0E22\u0E01\u0E04\u0E33\u0E1E\u0E39\u0E14\u0E41\u0E25\u0E49\u0E27\u0E2B\u0E32\u0E22\u0E08\u0E23\u0E34\u0E07",
+          !!bqEl && parseFloat(getComputedStyle(bqEl).borderLeftWidth) < 1,
+          bqEl && getComputedStyle(bqEl).borderLeftWidth
+        );
+        check2(
+          "[24] \u0E1B\u0E34\u0E14\u0E15\u0E31\u0E27\u0E40\u0E2D\u0E35\u0E22\u0E07\u0E41\u0E25\u0E49\u0E27\u0E44\u0E21\u0E48\u0E40\u0E2D\u0E35\u0E22\u0E07\u0E08\u0E23\u0E34\u0E07",
+          getComputedStyle(bqEl).fontStyle === "normal"
+        );
+        S2.prose = null;
+        applyProseVars(proseFormat());
+        T.editor.setMarkdown(orig);
+        await new Promise((r) => setTimeout(r, 120));
+        const pmodel = prosePageModel();
+        check2("[20] \u0E19\u0E34\u0E22\u0E32\u0E22\u0E21\u0E35\u0E42\u0E21\u0E40\u0E14\u0E25\u0E2B\u0E19\u0E49\u0E32\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29\u0E41\u0E25\u0E49\u0E27", !!pmodel && pmodel.pages.count >= 1);
+        check2("[20] anyPageModel \u0E40\u0E25\u0E37\u0E2D\u0E01\u0E43\u0E2B\u0E49\u0E16\u0E39\u0E01\u0E0A\u0E19\u0E34\u0E14\u0E40\u0E2D\u0E07", !!anyPageModel());
+        const longMd = [];
+        for (let i2 = 0; i2 < 400; i2++) longMd.push("\u0E22\u0E48\u0E2D\u0E2B\u0E19\u0E49\u0E32\u0E17\u0E14\u0E2A\u0E2D\u0E1A\u0E01\u0E32\u0E23\u0E08\u0E31\u0E14\u0E2B\u0E19\u0E49\u0E32\u0E02\u0E2D\u0E07\u0E19\u0E34\u0E22\u0E32\u0E22\u0E25\u0E33\u0E14\u0E31\u0E1A\u0E17\u0E35\u0E48 " + i2);
+        T.editor.setMarkdown(longMd.join(String.fromCharCode(10)));
+        scheduleCount();
+        await new Promise((r) => setTimeout(r, 900));
+        check2(
+          "[20] \u0E41\u0E16\u0E1A\u0E2A\u0E16\u0E32\u0E19\u0E30\u0E1A\u0E2D\u0E01\u0E08\u0E33\u0E19\u0E27\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E02\u0E2D\u0E07\u0E19\u0E34\u0E22\u0E32\u0E22",
+          /\d+ หน้า/.test($("#wc").textContent),
+          $("#wc").textContent
+        );
+        check2(
+          "[20] \u0E21\u0E35\u0E40\u0E2A\u0E49\u0E19\u0E04\u0E31\u0E48\u0E19\u0E2B\u0E19\u0E49\u0E32\u0E43\u0E19\u0E15\u0E31\u0E27\u0E41\u0E01\u0E49\u0E44\u0E02\u0E19\u0E34\u0E22\u0E32\u0E22",
+          prosePageBreaks().length >= 1 && !!T.pane.querySelector(".ed-page-break"),
+          String(prosePageBreaks().length)
+        );
+        const pm2 = prosePageModel();
+        check2("[20] \u0E44\u0E1B\u0E17\u0E35\u0E48\u0E2B\u0E19\u0E49\u0E32 2 \u0E44\u0E14\u0E49", pm2.pages.count > 1 && gotoPage(2));
+        setSpView("layout");
+        await new Promise((r) => setTimeout(r, 200));
+        check2("[15] \u0E19\u0E34\u0E22\u0E32\u0E22\u0E40\u0E02\u0E49\u0E32\u0E42\u0E2B\u0E21\u0E14\u0E08\u0E31\u0E14\u0E2B\u0E19\u0E49\u0E32\u0E44\u0E14\u0E49", T.pane.classList.contains("sp-view-layout"));
+        setSpView("side");
+        await new Promise((r) => setTimeout(r, 250));
+        check2(
+          "[15] \u0E19\u0E34\u0E22\u0E32\u0E22\u0E40\u0E02\u0E49\u0E32\u0E42\u0E2B\u0E21\u0E14\u0E40\u0E23\u0E35\u0E22\u0E07\u0E2B\u0E19\u0E49\u0E32\u0E04\u0E39\u0E48\u0E41\u0E25\u0E49\u0E27\u0E27\u0E32\u0E14\u0E2B\u0E19\u0E49\u0E32\u0E08\u0E23\u0E34\u0E07",
+          !!T.pane.querySelector(".sp-pageview .ed-page"),
+          String(T.pane.querySelectorAll(".sp-pageview .ed-page").length)
+        );
+        check2(
+          "[15] \u0E2B\u0E19\u0E49\u0E32\u0E17\u0E35\u0E48\u0E27\u0E32\u0E14\u0E21\u0E35 data-pos \u0E43\u0E2B\u0E49\u0E04\u0E25\u0E34\u0E01\u0E01\u0E23\u0E30\u0E42\u0E14\u0E14\u0E44\u0E14\u0E49",
+          !!T.pane.querySelector(".sp-pageview .ed-page [data-pos]")
+        );
+        setSpView("overview4");
+        await new Promise((r) => setTimeout(r, 250));
+        check2(
+          "[15] \u0E19\u0E34\u0E22\u0E32\u0E22\u0E40\u0E02\u0E49\u0E32\u0E42\u0E2B\u0E21\u0E14\u0E20\u0E32\u0E1E\u0E23\u0E27\u0E21\u0E44\u0E14\u0E49",
+          T.pane.classList.contains("sp-view-overview") && !!T.pane.querySelector(".sp-pageview .ed-page")
+        );
+        setSpView("normal");
+        await new Promise((r) => setTimeout(r, 200));
+        check2(
+          "[15] \u0E01\u0E25\u0E31\u0E1A\u0E42\u0E2B\u0E21\u0E14\u0E1B\u0E01\u0E15\u0E34\u0E41\u0E25\u0E49\u0E27\u0E21\u0E38\u0E21\u0E21\u0E2D\u0E07\u0E2B\u0E19\u0E49\u0E32\u0E16\u0E39\u0E01\u0E25\u0E49\u0E32\u0E07",
+          !T.pane.querySelector(".sp-pageview")
+        );
+        T.editor.setMarkdown(orig);
+        scheduleCount();
+        await new Promise((r) => setTimeout(r, 700));
+        const keepLh = S2.spLineHeight;
+        S2.spLineHeight = 1;
+        applyPageVars();
+        check2(
+          "[5] \u0E04\u0E48\u0E32\u0E21\u0E32\u0E15\u0E23\u0E10\u0E32\u0E19 \u2192 54 \u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14/\u0E2B\u0E19\u0E49\u0E32",
+          formatLines(spFormat()) === 54,
+          String(formatLines(spFormat()))
+        );
+        S2.spLineHeight = 1.5;
+        applyPageVars();
+        check2(
+          "[5] \u0E15\u0E31\u0E49\u0E07 1.5 \u2192 36 \u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14/\u0E2B\u0E19\u0E49\u0E32",
+          formatLines(spFormat()) === 36,
+          String(formatLines(spFormat()))
+        );
+        check2("[9] --sp-line-h \u0E15\u0E32\u0E21\u0E0A\u0E48\u0E27\u0E07\u0E1A\u0E23\u0E23\u0E17\u0E31\u0E14\u0E08\u0E23\u0E34\u0E07 (24px)", rv("--sp-line-h") === "24px", rv("--sp-line-h"));
+        check2("[9] --sp-lh \u0E2A\u0E48\u0E07\u0E16\u0E36\u0E07 CSS", rv("--sp-lh") === "1.5", rv("--sp-lh"));
+        S2.spLineHeight = keepLh ?? 1;
+        applyPageVars();
+        check2("[9] \u0E04\u0E37\u0E19\u0E04\u0E48\u0E32\u0E41\u0E25\u0E49\u0E27 --sp-line-h \u0E01\u0E25\u0E31\u0E1A\u0E40\u0E1B\u0E47\u0E19 16px", rv("--sp-line-h") === "16px", rv("--sp-line-h"));
+        const spCssTxt = document.getElementById("k-sp-format").textContent;
+        check2("[10] CSS \u0E17\u0E35\u0E48\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E21\u0E35\u0E01\u0E0E .sp-contd", /sp-contd\{[^}]*margin-left/.test(spCssTxt));
+        toggleShowFormat(true);
+        const keepMg = { ...S2.pageMargins };
+        S2.pageMargins = { top: 1, bottom: 1, left: 2.5, right: 1 };
+        applyPageVars();
+        check2(
+          '[8] \u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E23\u0E30\u0E22\u0E30\u0E02\u0E2D\u0E1A\u0E41\u0E25\u0E49\u0E27 "\u0E41\u0E2A\u0E14\u0E07\u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A" \u0E22\u0E31\u0E07\u0E40\u0E1B\u0E34\u0E14\u0E2D\u0E22\u0E39\u0E48\u0E41\u0E25\u0E30\u0E23\u0E31\u0E1A\u0E04\u0E48\u0E32\u0E43\u0E2B\u0E21\u0E48',
+          isFormatGuide() === true && rv("--mg-left") === "2.5in",
+          rv("--mg-left")
+        );
+        S2.pageMargins = keepMg;
+        applyPageVars();
+        toggleShowFormat(false);
+        const keepPt = S2.edFontPt;
+        S2.edFontPt = 1;
+        applyZoomVars();
+        check2("[26] edFontPt = 1 \u0E22\u0E31\u0E07\u0E44\u0E14\u0E49\u0E04\u0E48\u0E32\u0E44\u0E21\u0E48\u0E15\u0E48\u0E33\u0E01\u0E27\u0E48\u0E32 9px", parseFloat(rv("--ed-fs")) >= 9, rv("--ed-fs"));
+        S2.edFontPt = 500;
+        applyZoomVars();
+        check2("[26] edFontPt \u0E2A\u0E39\u0E07\u0E40\u0E01\u0E34\u0E19\u0E01\u0E47\u0E16\u0E39\u0E01\u0E2B\u0E19\u0E35\u0E1A", parseFloat(rv("--ed-fs")) <= 96, rv("--ed-fs"));
+        S2.edFontPt = keepPt ?? 12;
+        applyZoomVars();
+        const devOv = openDevConsole();
+        await new Promise((r) => setTimeout(r, 80));
+        check2("[dev] \u0E01\u0E25\u0E48\u0E2D\u0E07\u0E04\u0E2D\u0E19\u0E42\u0E0B\u0E25\u0E40\u0E1B\u0E34\u0E14\u0E44\u0E14\u0E49", !!document.querySelector(".k-dev-dlg .k-dev-input"));
+        const devIn = document.querySelector(".k-dev-dlg .k-dev-input");
+        devIn.value = "1 + 41";
+        [...document.querySelectorAll(".k-dev-dlg .k-dev-btns button")][0].click();
+        await new Promise((r) => setTimeout(r, 60));
+        check2(
+          "[dev] \u0E23\u0E31\u0E19\u0E19\u0E34\u0E1E\u0E08\u0E19\u0E4C\u0E41\u0E25\u0E49\u0E27\u0E44\u0E14\u0E49\u0E1C\u0E25\u0E25\u0E31\u0E1E\u0E18\u0E4C",
+          document.querySelector(".k-dev-out").textContent.includes("42"),
+          document.querySelector(".k-dev-out").textContent
+        );
+        devIn.value = "k2.version";
+        devIn.dispatchEvent(new KeyboardEvent("keydown", { code: "Enter", ctrlKey: true, bubbles: true }));
+        await new Promise((r) => setTimeout(r, 60));
+        check2(
+          "[dev] \u0E40\u0E02\u0E49\u0E32\u0E16\u0E36\u0E07\u0E02\u0E2D\u0E07\u0E43\u0E19\u0E42\u0E1B\u0E23\u0E41\u0E01\u0E23\u0E21\u0E1C\u0E48\u0E32\u0E19\u0E15\u0E31\u0E27\u0E41\u0E1B\u0E23 k2 \u0E44\u0E14\u0E49",
+          document.querySelector(".k-dev-out").textContent.includes(APP_VERSION)
+        );
+        devIn.value = 'throw new Error("\u0E17\u0E14\u0E2A\u0E2D\u0E1A")';
+        devIn.dispatchEvent(new KeyboardEvent("keydown", { code: "Enter", ctrlKey: true, bubbles: true }));
+        await new Promise((r) => setTimeout(r, 60));
+        check2(
+          "[dev] \u0E02\u0E49\u0E2D\u0E1C\u0E34\u0E14\u0E1E\u0E25\u0E32\u0E14\u0E16\u0E39\u0E01\u0E41\u0E2A\u0E14\u0E07 \u0E44\u0E21\u0E48\u0E17\u0E33\u0E42\u0E1B\u0E23\u0E41\u0E01\u0E23\u0E21\u0E25\u0E49\u0E21",
+          !!document.querySelector(".k-dev-out .k-dev-err")
+        );
+        devOv.remove();
+        window.dispatchEvent(new KeyboardEvent("keydown", { code: "Backquote", ctrlKey: true, shiftKey: true, bubbles: true }));
+        await new Promise((r) => setTimeout(r, 80));
+        check2("[dev] \u0E04\u0E35\u0E22\u0E4C\u0E25\u0E31\u0E14 Ctrl+Shift+` \u0E40\u0E1B\u0E34\u0E14\u0E04\u0E2D\u0E19\u0E42\u0E0B\u0E25\u0E44\u0E14\u0E49", !!document.querySelector(".k-dev-dlg"));
+        document.querySelectorAll(".k-overlay").forEach((o) => o.remove());
+        aboutDialog();
+        await new Promise((r) => setTimeout(r, 60));
+        check2(
+          '[dev] \u0E01\u0E25\u0E48\u0E2D\u0E07 "\u0E40\u0E01\u0E35\u0E48\u0E22\u0E27\u0E01\u0E31\u0E1A" \u0E21\u0E35\u0E1B\u0E38\u0E48\u0E21\u0E40\u0E1B\u0E34\u0E14\u0E04\u0E2D\u0E19\u0E42\u0E0B\u0E25\u0E19\u0E31\u0E01\u0E1E\u0E31\u0E12\u0E19\u0E32',
+          [...document.querySelectorAll(".k-about-dlg button")].some((b) => b.textContent.includes("\u0E04\u0E2D\u0E19\u0E42\u0E0B\u0E25"))
+        );
+        document.querySelectorAll(".k-overlay").forEach((o) => o.remove());
+        check2(
+          "[11] handleCommand \u0E23\u0E2D\u0E07\u0E23\u0E31\u0E1A goto-page/goto-scene",
+          typeof gotoPage === "function" && typeof gotoScene === "function"
+        );
+        await handleCommand("goto-page", 1);
+        check2("[11] \u0E2A\u0E31\u0E48\u0E07 goto-page \u0E1C\u0E48\u0E32\u0E19\u0E04\u0E33\u0E2A\u0E31\u0E48\u0E07\u0E44\u0E14\u0E49", true);
+        check2("[22] \u0E21\u0E35\u0E04\u0E33\u0E2A\u0E31\u0E48\u0E07 prose-setup", typeof settingsDialog === "function");
+        settingsDialog("prose");
+        await new Promise((r) => setTimeout(r, 120));
+        check2(
+          '[21] \u0E41\u0E17\u0E47\u0E1A "\u0E23\u0E39\u0E1B\u0E41\u0E1A\u0E1A\u0E19\u0E34\u0E22\u0E32\u0E22" \u0E40\u0E1B\u0E34\u0E14\u0E44\u0E14\u0E49 + \u0E21\u0E35\u0E1F\u0E34\u0E25\u0E14\u0E4C\u0E04\u0E23\u0E1A',
+          !!document.querySelector('.k-settings [data-p="prose"].on') && !!document.querySelector("#st-pr-indent") && !!document.querySelector("#st-pr-lh") && !!document.querySelector("#st-pr-heads tbody tr")
+        );
+        const prIndent = document.querySelector("#st-pr-indent");
+        prIndent.value = "0.75";
+        prIndent.dispatchEvent(new Event("input"));
+        await new Promise((r) => setTimeout(r, 60));
+        check2("[21] \u0E41\u0E01\u0E49\u0E04\u0E48\u0E32\u0E41\u0E25\u0E49\u0E27\u0E40\u0E2B\u0E47\u0E19\u0E1C\u0E25\u0E17\u0E31\u0E19\u0E17\u0E35 (--ed-indent)", rv("--ed-indent") === "0.75in", rv("--ed-indent"));
+        document.querySelector(".k-settings .k-cancel").click();
+        await new Promise((r) => setTimeout(r, 80));
+        check2("[21] \u0E01\u0E14\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01\u0E41\u0E25\u0E49\u0E27\u0E04\u0E37\u0E19\u0E04\u0E48\u0E32\u0E40\u0E14\u0E34\u0E21", rv("--ed-indent") !== "0.75in", rv("--ed-indent"));
+        {
+          const spTab2 = [...state.tabs.values()].find((x) => x.sp);
+          if (spTab2) {
+            activate(spTab2.file);
+            await new Promise((r) => setTimeout(r, 150));
+            const live = blocksFromDoc(spTab2.sp.view.state.doc).filter((b) => b.el !== "blank");
+            const viaMd = parseScript2(spTab2.sp.getMarkdown()).filter((b) => b.el !== "blank");
+            check2(
+              "[6] \u0E1A\u0E25\u0E47\u0E2D\u0E01\u0E08\u0E32\u0E01\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E08\u0E23\u0E34\u0E07\u0E21\u0E35\u0E2D\u0E22\u0E48\u0E32\u0E07\u0E19\u0E49\u0E2D\u0E22\u0E40\u0E17\u0E48\u0E32\u0E01\u0E31\u0E1A\u0E17\u0E35\u0E48\u0E44\u0E14\u0E49\u0E08\u0E32\u0E01 markdown",
+              live.length >= viaMd.length,
+              `${live.length} vs ${viaMd.length}`
+            );
+            check2(
+              "[6] currentScriptSource \u0E04\u0E37\u0E19 blocks \u0E08\u0E32\u0E01\u0E40\u0E2D\u0E01\u0E2A\u0E32\u0E23\u0E08\u0E23\u0E34\u0E07",
+              await (async () => {
+                const src = await (async () => {
+                  const t3 = state.active;
+                  return t3 && t3.sp ? { blocks: blocksFromDoc(t3.sp.view.state.doc) } : null;
+                })();
+                return !!src && Array.isArray(src.blocks) && src.blocks.length > 0;
+              })()
+            );
+            activate(T.file);
+            await new Promise((r) => setTimeout(r, 150));
+          }
+        }
+        resetPageScale();
+        await new Promise((r) => setTimeout(r, 120));
+        centerPage(t2.pane);
+        const frac = (p) => {
+          const m = Math.max(0, p.scrollWidth - p.clientWidth);
+          return m > 0 ? p.scrollLeft / m : 0.5;
+        };
+        const f0 = frac(t2.pane);
+        bumpPageScale(1);
+        await new Promise((r) => setTimeout(r, 140));
+        bumpPageScale(1);
+        await new Promise((r) => setTimeout(r, 140));
+        const f1z = frac(t2.pane);
+        check2(
+          "[1] \u0E0B\u0E39\u0E21\u0E40\u0E02\u0E49\u0E32\u0E2A\u0E2D\u0E07\u0E04\u0E23\u0E31\u0E49\u0E07\u0E41\u0E25\u0E49\u0E27\u0E22\u0E31\u0E07\u0E2D\u0E22\u0E39\u0E48\u0E01\u0E36\u0E48\u0E07\u0E01\u0E25\u0E32\u0E07 \u0E44\u0E21\u0E48\u0E15\u0E34\u0E14\u0E02\u0E2D\u0E1A\u0E0B\u0E49\u0E32\u0E22",
+          Math.abs(f1z - f0) < 0.08 && f1z > 0.1,
+          `${f0.toFixed(3)} \u2192 ${f1z.toFixed(3)}`
+        );
+        bumpPageScale(-1);
+        await new Promise((r) => setTimeout(r, 140));
+        bumpPageScale(-1);
+        await new Promise((r) => setTimeout(r, 140));
+        check2(
+          "[1] \u0E0B\u0E39\u0E21\u0E2D\u0E2D\u0E01\u0E01\u0E25\u0E31\u0E1A\u0E21\u0E32\u0E01\u0E47\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E15\u0E34\u0E14\u0E02\u0E2D\u0E1A\u0E0B\u0E49\u0E32\u0E22",
+          Math.abs(frac(t2.pane) - f0) < 0.08,
+          frac(t2.pane).toFixed(3)
+        );
+        resetPageScale();
+        await new Promise((r) => setTimeout(r, 120));
+        {
+          const html = mdToHtml(
+            "\u0E22\u0E48\u0E2D\u0E2B\u0E19\u0E49\u0E32\u0E17\u0E14\u0E2A\u0E2D\u0E1A",
+            "\u0E40\u0E23\u0E37\u0E48\u0E2D\u0E07",
+            proseFormat(),
+            spFormat().paper,
+            spFormat().margins
+          );
+          check2("[19] HTML \u0E17\u0E35\u0E48\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01\u0E43\u0E0A\u0E49 pt \u0E02\u0E2D\u0E07\u0E19\u0E34\u0E22\u0E32\u0E22", html.includes("font-size:" + proseFormat().fontPt + "pt"));
+          check2("[19] HTML \u0E17\u0E35\u0E48\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01\u0E44\u0E21\u0E48\u0E21\u0E35 18px \u0E1D\u0E31\u0E07\u0E15\u0E32\u0E22\u0E41\u0E25\u0E49\u0E27", !html.includes("font-size:18px"));
+          check2("[19] HTML \u0E17\u0E35\u0E48\u0E2A\u0E48\u0E07\u0E2D\u0E2D\u0E01\u0E21\u0E35 @page \u0E15\u0E32\u0E21\u0E02\u0E19\u0E32\u0E14\u0E01\u0E23\u0E30\u0E14\u0E32\u0E29", html.includes("@page{size:"));
+        }
+        check2(
+          '[13] \u0E21\u0E35\u0E1E\u0E23\u0E35\u0E40\u0E0B\u0E47\u0E15 "\u0E1A\u0E17\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C" \u0E17\u0E35\u0E48\u0E40\u0E1B\u0E34\u0E14 sp-continued',
+          !!PRESETS.find((p) => p.id === "screenplay" && p.steps.some((st2) => st2.key === "sp-continued" && st2.on !== false))
+        );
+        check2('[7] renderer \u0E2A\u0E48\u0E07\u0E2A\u0E16\u0E32\u0E19\u0E30 "\u0E02\u0E49\u0E2D\u0E04\u0E27\u0E32\u0E21\u0E15\u0E48\u0E2D\u0E40\u0E19\u0E37\u0E48\u0E2D\u0E07" \u0E43\u0E2B\u0E49\u0E40\u0E21\u0E19\u0E39\u0E40\u0E2A\u0E21\u0E2D', spContinuedOn() === true);
+      }
       out.push("ALL OK");
     } catch (e) {
       out.push("STOP: " + e.message + "\n" + (e.stack || ""));
@@ -80014,11 +81762,13 @@ ${css}
     await kapi.writeFile("/tmp/k2result.txt", out.join("\n"));
     document.title = out[out.length - 1] === "ALL OK" ? "TESTOK" : "TESTFAIL";
   }
-  var import_md10, tr, pageScale, autosaveTimer, _langFontUrls, _typeSoundBound, spViewMode, _spViewJob, _spErrors, SP_REPORTS, treeScope, _treeBuilding, _treeQueued, INV_C, FLOAT_Z_MIN, FLOAT_Z_MAX, _floatZ, mapsState_C, _menuTogSig, _readEsc, APP_VERSION, propsTarget_C, _propsGen, propsFlush_C, SECTION_STATUSES, plugins, TPL_CATS, FIELD_TYPES, _cmMigrated, uniqList, notIgnored, TERM_TTL, _termCache, imgURLBase, FMTS, ALWAYS_ON_TB, _smartJob, countJob, outlineJob, navShowBeats, navTrunc, _logTimer, FEATURE_PANELS, _featInFlight, TB_SC_MAP, floatBar, TIP_GAP, _tipEl, _tipHost, _tipSaved, _tipJob, _tipKt;
+  var import_md10, tr, pageScale, autosaveTimer, _langFontUrls, _typeSoundBound, spViewMode, _spViewJob, _spErrors, SP_REPORTS, treeScope, _treeBuilding, _treeQueued, INV_C, FLOAT_Z_MIN, FLOAT_Z_MAX, _floatZ, mapsState_C, _menuTogSig, _readEsc, APP_VERSION, propsTarget_C, _propsGen, propsFlush_C, SECTION_STATUSES, plugins, TPL_CATS, FIELD_TYPES, _cmMigrated, uniqList, notIgnored, TERM_TTL, _termCache, imgURLBase, FMTS, ALWAYS_ON_TB, _smartJob, countJob, outlineJob, navShowBeats, navTrunc, _logTimer, DEV_HISTORY_KEY, FEATURE_PANELS, _featInFlight, TB_SC_MAP, floatBar, TIP_GAP, _tipEl, _tipHost, _tipSaved, _tipJob, _tipKt;
   var init_app = __esm({
     "src/app.js"() {
       init_editor();
       import_md10 = __toESM(require_md());
+      init_prose_format();
+      init_prose_view();
       init_search();
       init_ui();
       init_wiki();
@@ -80179,6 +81929,7 @@ ${css}
       _logTimer = null;
       window.__k2test = (p) => runTest(p);
       window.__k2menu = null;
+      DEV_HISTORY_KEY = "k2-dev-history";
       FEATURE_PANELS = {
         dashboard: () => renderDashboard($("#dash-body")),
         kanban: () => renderKanbanPanel(),
