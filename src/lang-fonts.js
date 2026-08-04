@@ -34,6 +34,18 @@ export const BUILTIN_FONT_FILES = [
   { file: 'CourierThaiProp.ttf',       label: 'Courier Thai Proportional (ไทย · ความกว้างตามตัวอักษร)' },
 ];
 
+/**
+ * [alpha.60r3a] ฟอนต์ไทย "ของระบบ" ที่วางวรรณยุกต์ได้ถูกต้อง — เลือกได้จากกล่องฟอนต์ตามภาษา
+ * แจกมากับโปรแกรมไม่ได้ (สิทธิ์ของผู้ผลิต) แต่ถ้าเครื่องมีอยู่แล้วก็ใช้ได้ทันที
+ * Ayuthaya = ฟอนต์ระบบของ macOS · Leelawadee UI = ของ Windows
+ */
+export const SYSTEM_THAI_FONTS = [
+  { family: 'Ayuthaya',       label: 'Ayuthaya (macOS · วรรณยุกต์ไม่ลอย)' },
+  { family: 'Thonburi',       label: 'Thonburi (macOS)' },
+  { family: 'Leelawadee UI',  label: 'Leelawadee UI (Windows)' },
+  { family: 'TH Sarabun New', label: 'TH Sarabun New (ราชการไทย)' },
+];
+
 /** รายการเริ่มต้น: ไทยใช้ Courier Thai Mono ที่ฝังมา · นอกนั้นปล่อยตาม font stack เดิม */
 export function defaultLangFonts() {
   return [

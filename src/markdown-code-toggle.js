@@ -11,20 +11,21 @@
 // โมดูลนี้เก็บ "ตัวจับ prefix" เป็น pure function (`prefixLen`) จึงเทสได้โดยไม่ต้องมี ProseMirror
 import { Plugin as PMPlugin, PluginKey as PMKey } from 'prosemirror-state';
 import { Decoration as Deco, DecorationSet as DecoSet } from 'prosemirror-view';
+// ตารางรหัสอยู่ที่ fountain.js ที่เดียว — ที่นี่แค่เอามาซ่อน (fountain.js เป็นโมดูลบริสุทธิ์ ไม่วน import)
+import { SP_MD_PREFIXES } from './fountain.js';
 
 export const MD_CODE_KEY = new PMKey('kmdcodes');
 export const MD_HIDE_CLASS = 'k-md-hide-prefix';
 
 /**
- * รหัสที่ซ่อน — เรียง **ยาวก่อนสั้น** เสมอ
- * ไม่งั้น `#` จะกิน `###` และ `$in ` จะไม่มีวันถูกจับเพราะ `$intercut ` ยาวกว่า
- * (ตรงกับตาราง `SP_ELEMS` ใน fountain.js + หัวข้อ/เส้นคั่นของมาร์กดาวน์)
+ * รหัสที่ซ่อน — **แหล่งเดียวคือ `SP_MD_PREFIXES` ใน fountain.js** (เรียงยาวก่อนสั้นมาแล้ว)
+ *
+ * [alpha.60r3a] เดิมรายการนี้ถูกเขียนซ้ำไว้ที่นี่ แล้วรวม `#`/`##`/`###` เข้าไปด้วย
+ * ซึ่งผิด — มาตรฐานใหม่ให้ `###`/`####` เป็น **หัวข้อจริง H3/H4 ในโหมดนิยาย**
+ * (md.js แปลงเป็นโหนด heading ไปแล้ว ไม่มีข้อความ `#` เหลือเป็นตัวอักษรให้ซ่อนอยู่ดี)
+ * และ `---` กลายเป็นเส้นคั่น ซึ่งเป็นภาพแทน "ขึ้นหน้าใหม่" ที่ถูกต้องอยู่แล้ว
  */
-export const MD_PREFIXES = [
-  '$intercut ', '$shot ', '$sub ', '$act ', '$in ',
-  '### ', '## ', '# ', '= ', '((',
-  '.', '@', '>', '!',
-];
+export const MD_PREFIXES = SP_MD_PREFIXES;
 
 /**
  * ความยาวของรหัสนำหน้าในข้อความหนึ่งบรรทัด (pure)
@@ -49,8 +50,13 @@ export function prefixLen(text) {
       if (/^[\s.\d]/.test(rest)) return 0;
       return 1;
     }
-    if (p === '!' && /^\[[^\]\n]*\]\(/.test(rest)) return 0;   // ![alt](src) = รูปจริง
-    if ((p === '@' || p === '>' || p === '!') && /^\s/.test(rest)) return 0;
+    if (p === '!') {
+      if (/^\[[^\]\n]*\]\(/.test(rest)) return 0;     // ![alt](src) = รูปจริง ห้ามซ่อน
+      return 1;                                       // `!ข้อความ` = บรรยายบังคับแบบ v1
+    }
+    // `@` / `>` เดี่ยว ๆ ต้องติดกับเนื้อหา — เว้นวรรคแปลว่าเป็นข้อความปกติ
+    // (`>> ` / `<< ` ที่มีวรรคถูกจับไปแล้วข้างบน เพราะเรียงยาวก่อนสั้น)
+    if ((p === '@' || p === '>') && /^\s/.test(rest)) return 0;
     return p.length;
   }
   return 0;

@@ -15,6 +15,9 @@ export const FDX_TYPE_MAP = {
   intercut: 'Scene Heading',          // "INTERCUT WITH:" นับเป็นหัวฉากในสายการผลิต
   shot: 'Shot',
   'act-break': 'Act Break',
+  // [alpha.60r3a] `---` บังคับขึ้นหน้าใหม่ — FD ไม่มีชนิดนี้ ลงเป็น Action ว่าง
+  // (การ "ขึ้นหน้าใหม่" ถูกจัดการไปแล้วตอน paginate ก่อนส่งออก)
+  'page-break': 'Action',
   // element ที่ Final Draft ไม่มีตรง ๆ → ลงเป็น Action เพื่อไม่ให้เนื้อหาหาย
   note: 'Action',
   summary: 'Action',

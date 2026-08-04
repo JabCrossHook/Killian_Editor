@@ -66,9 +66,11 @@ export function omitElements(text, types) {
   const s = String(text ?? '');
   if (!drop.size || !s) return s;
   const out = [];
-  let prevBlank = true, prevType = 'action';
+  let prevBlank = true, prevType = 'action', prevLine;
   for (const line of s.split('\n')) {
-    const [el] = classify(line, prevBlank, prevType);
+    // ส่ง prevLine ด้วยเหมือน parseScript — `((…))` ต้องแยก "โน้ต" ออกจาก "วงเล็บใต้ตัวละคร" ให้ถูก
+    const [el] = classify(line, prevBlank, prevType, prevLine);
+    prevLine = line;
     if (el === 'blank') { out.push(''); prevBlank = true; continue; }
     if (drop.has(el)) continue;
     out.push(line);

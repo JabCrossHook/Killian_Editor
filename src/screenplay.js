@@ -27,7 +27,10 @@ export const spSchema = new Schema({
       attrs: { el: { default: 'action' }, align: { default: null } },
       parseDOM: [{ tag: 'div[data-el]', getAttrs: (d) => ({ el: d.getAttribute('data-el'),
                    align: d.style.textAlign || null }) }],
-      toDOM: (n) => ['div', { 'data-el': n.attrs.el, class: 'sp sp-' + n.attrs.el,
+      // [alpha.60r3a] `page-break` ต้องได้คลาส `sp-page-break-el` ไม่ใช่ `sp-page-break`
+      // — ชื่อหลังเป็นของ "เส้นคั่นหน้าอัตโนมัติ" ที่ paginate() วาดให้ ถ้าใช้ชื่อเดียวกันจะทับสไตล์กัน
+      toDOM: (n) => ['div', { 'data-el': n.attrs.el,
+                     class: 'sp sp-' + (n.attrs.el === 'page-break' ? 'page-break-el' : n.attrs.el),
                      ...(n.attrs.align ? { style: 'text-align:' + n.attrs.align } : {}) }, 0],
     },
     // รูปในบทหนัง — atom (แก้ text ไม่ได้ · ลากได้) เก็บ md เดิมเป๊ะ ไม่กลายเป็นข้อความ
@@ -121,12 +124,19 @@ export class SPEditor {
         ],
       }),
       handleKeyDown(view, ev) {
-        // [53] Parenthetical auto-wrap: กด ( ใน character/dialogue → parenthetical
+        // [53] Parenthetical auto-wrap: กด ( ในบทพูด "ที่ยังว่าง" → กลายเป็นวงเล็บ
+        //
+        // [alpha.60r3a บั๊ก] เดิมครอบ `character` ด้วย → พิมพ์ `@dave` แล้วเคาะ ` (V.O.)`
+        // บรรทัดชื่อตัวละครกลายเป็น parenthetical ทันทีที่กด `(` — ผิดสองชั้น:
+        //   (ก) วงเล็บท้ายชื่อตัวละครคือ **ส่วนเสริม** (V.O./O.S./cont'd) ไม่ใช่วงเล็บบอกอารมณ์
+        //   (ข) มาตรฐานกำหนดว่า **วงเล็บต้องอยู่บรรทัดใต้ตัวละครเท่านั้น**
+        // และเดิมยังเปลี่ยนบทพูดที่พิมพ์ไปแล้วครึ่งประโยคด้วย — วงเล็บกลางประโยคเป็นเครื่องหมายวรรคตอนปกติ
+        // → ตอนนี้แปลงเฉพาะ "บทพูดที่ยังไม่มีข้อความ" เท่านั้น
         if (ev.key === '(' && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
           const el = self.curElement();
-          if (el === 'character' || el === 'dialogue') {
+          const { node, pos } = self.curBlock();
+          if (el === 'dialogue' && node && node.content.size === 0) {
             ev.preventDefault();
-            const { node, pos } = self.curBlock();
             const from = view.state.selection.from;
             let tr = view.state.tr;
             tr = tr.setNodeMarkup(pos, null, { el: 'parenthetical', align: node.attrs.align || null });

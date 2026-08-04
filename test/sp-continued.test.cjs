@@ -140,8 +140,10 @@ check('[compile] แทรก (CONTINUED) ท้ายหน้า', withCont.in
 check('[compile] คั่นหน้าด้วยเครื่องหมายขึ้นหน้าใหม่', withCont.includes(CP.PAGE_BREAK));
 check('[compile] เนื้อบทเดิมยังอยู่ครบ',
   withCont.includes('บรรยายฉากที่ 0') && withCont.includes('บรรยายฉากที่ 89'));
-check('[compile] หัวฉากยัง round-trip ได้ (ยังขึ้นต้นด้วยจุด/INT.)',
-  /(^|\n)(\.|INT\.)/.test(withCont));
+// [alpha.60r3a] มาตรฐานรหัสใหม่: หัวฉากเขียนออกเป็น `### ` (H3) — รับรหัสเดิม (`.` / INT.) ด้วย
+check('[compile] หัวฉากยัง round-trip ได้ (### / จุด / INT.)',
+  /(^|\n)(### |\.|INT\.)/.test(withCont),
+  withCont.split('\n').slice(0, 3).join(' | '));
 check('[compile] มีขั้นตอน sp-continued ให้เลือกในเวิร์กโฟลว์',
   !!CP.stepDef('sp-continued') && CP.stepDef('sp-continued').stage === 'text');
 // [alpha.58r บั๊ก 13] พรีเซ็ตนิยายยังต้องไม่เปิด — แต่ต้องมีพรีเซ็ต "บทภาพยนตร์" ที่เปิดให้

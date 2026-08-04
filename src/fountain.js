@@ -1,34 +1,66 @@
-// ระบบ element บทภาพยนตร์ — กติกาไฟล์ชุดเดียวกับ v1 (fountain.py) ทุกประการ
-// .หัวฉาก !บรรยาย @ตัวละคร (วงเล็บ) บทพูด >ทรานซิชัน = สรุป #โครง ((โน้ต))
+// ระบบ element บทภาพยนตร์
+//
+// ═══ [alpha.60r3a] มาตรฐานรหัสใหม่ — "นิยาย ↔ บทหนัง สลับไปมาแล้วอ่านรู้เรื่องทั้งสองฝั่ง" ═══
+//
+// ปัญหาเดิม: รหัสของ v1 (`.หัวฉาก` `$shot` `$sub` `$in`) **ไม่ใช่มาร์กดาวน์**
+// พอสลับไฟล์เดียวกันไปโหมดนิยาย รหัสพวกนี้โผล่เป็นข้อความดิบเต็มหน้า อ่านไม่ได้เลย
+//
+// มาตรฐานใหม่เลือกรหัสที่ "เป็นมาร์กดาวน์อยู่แล้ว" ให้มากที่สุด (อิง kevinmcaleer/scriptmd2pdf):
+//
+//   หัวฉาก          `### INT. ห้องครัว - กลางวัน`   → ในนิยายเป็น **H3** (ไม่ใช่ข้อความดิบ)
+//   ฉากย่อย         `#### มุมห้อง`                  → ในนิยายเป็น **H4**
+//   บรรยาย          ข้อความเปล่า ๆ                   → ย่อหน้าปกติ
+//   ตัวละคร         `@สมชาย`                        (ส่วนเสริมต่อท้ายได้: `@สมชาย (V.O.)`)
+//   วงเล็บ          `((กระซิบ))`                     **ต้องอยู่บรรทัดใต้ตัวละครเท่านั้น**
+//   บทพูด           ข้อความหลังบรรทัดตัวละคร จนถึงบรรทัดว่าง
+//   ทรานซิชันออก    `>> CUT TO:`                     (ชิดขวา)
+//   ทรานซิชันเข้า    `<< FADE IN:`                    (ชิดซ้าย)
+//   ช็อต            `! CLOSE ON`
+//   ขึ้นหน้าใหม่      `---`                            (เส้นคั่นของมาร์กดาวน์)
+//   โน้ต            `/// โน้ตของผู้เขียน`
+//
+// **อ่านได้ทั้งของเก่าและของใหม่** — `classify()` ยังรู้จักรหัส v1 ทุกตัว (`.` `>` `$shot ` `$sub `
+// `$in ` `$intercut ` `$act `) ไฟล์เดิมจึงเปิดได้เหมือนเดิม แต่ `lineFor()` **เขียนด้วยรหัสใหม่เสมอ**
+// → บันทึกครั้งเดียวไฟล์ก็ย้ายมาตรฐานเอง
+//
+// กติกาที่ต้องระวังเพราะรหัสชนกับของเดิม:
+//   · `! ` (มีวรรค) = ช็อต · `!ข้อความ` (ไม่มีวรรค) = บรรยายบังคับแบบ v1 · `![alt](src)` = รูป
+//   · `((…))` ใต้บรรทัดตัวละคร = วงเล็บ · ที่อื่น = โน้ตแบบ v1 (จึงไม่ทำไฟล์เก่าพัง)
+//   · `### ` เดิมคือ "โครง 3" → ตอนนี้เป็นหัวฉาก (ตรงกับที่ผู้ใช้ต้องการ: H3 ในนิยาย = หัวฉากในบท)
+//     โครง 3 ย้ายไปใช้ `##### `
 
 export const SP_ELEMS = {
-  scene: { th: 'หัวฉาก', prefix: '.' },
-  action: { th: 'บรรยาย', prefix: '!' },        // ใส่ ! เฉพาะตอนจำเป็น
+  scene: { th: 'หัวฉาก', prefix: '### ' },
+  action: { th: 'บรรยาย', prefix: '' },         // ข้อความเปล่า — ใส่ `!` เฉพาะตอนจำเป็น (ดู lineFor)
   character: { th: 'ตัวละคร', prefix: '@' },
-  parenthetical: { th: 'วงเล็บ', prefix: '(' },
+  parenthetical: { th: 'วงเล็บ', prefix: '((' },
   dialogue: { th: 'บทพูด', prefix: '' },
-  // [alpha.57a ข้อ 2] ทรานซิชันแยกเข้า/ออก — "เข้า" ชิดซ้าย · "ออก" ชิดขวา (ของเดิม)
-  'transition-in': { th: 'ทรานซิชันเข้า (ซ้าย)', prefix: '$in ' },
-  transition: { th: 'ทรานซิชันออก (ขวา)', prefix: '>' },
-  // [alpha.58] เรียก "ฉากย่อย" ตามที่ผู้ใช้เข้าใจ (mini-slug) — วางตัวเหมือนหัวฉากแต่ไม่มีเลขฉาก
-  subheader: { th: 'ฉากย่อย', prefix: '$sub ' },
-  intercut: { th: 'สลับฉาก', prefix: '$intercut ' },     // [alpha.57a]
-  shot: { th: 'ช็อต', prefix: '$shot ' },        // [50] 9-element system
-  'act-break': { th: 'ตอน', prefix: '$act ' },   // [50]
+  // ทรานซิชันแยกเข้า/ออก — "เข้า" ชิดซ้าย (`<<`) · "ออก" ชิดขวา (`>>`)
+  'transition-in': { th: 'ทรานซิชันเข้า (ซ้าย)', prefix: '<< ' },
+  transition: { th: 'ทรานซิชันออก (ขวา)', prefix: '>> ' },
+  // "ฉากย่อย" (mini-slug) — วางตัวเหมือนหัวฉากแต่ไม่มีเลขฉาก
+  subheader: { th: 'ฉากย่อย', prefix: '#### ' },
+  // "สลับฉาก" ไม่มีรหัสเทียบเท่าในมาร์กดาวน์ และใช้ `#### ` ร่วมกับฉากย่อยไม่ได้
+  // (อ่านกลับแล้วจะกลายเป็นฉากย่อย = round-trip ไม่ปิดวง) → คงรหัส v1 ไว้
+  intercut: { th: 'สลับฉาก', prefix: '$intercut ' },
+  shot: { th: 'ช็อต', prefix: '! ' },
+  // "ตอน" ใช้ `## ` ไม่ได้ — ชนกับ "โครง 2" (อ่านกลับได้ outline2) → คงรหัส v1 ไว้เหมือน "สลับฉาก"
+  'act-break': { th: 'ตอน', prefix: '$act ' },
+  'page-break': { th: 'ขึ้นหน้าใหม่', prefix: '---' },    // [alpha.60r3a] บังคับขึ้นหน้าใหม่
   summary: { th: 'สรุป', prefix: '= ' },
   outline1: { th: 'โครง 1', prefix: '# ' },
   outline2: { th: 'โครง 2', prefix: '## ' },
-  outline3: { th: 'โครง 3', prefix: '### ' },
-  note: { th: 'โน้ต', prefix: '((' },
+  outline3: { th: 'โครง 3', prefix: '##### ' },
+  note: { th: 'โน้ต', prefix: '/// ' },
   image: { th: 'รูปภาพ', prefix: '' },          // ![alt](src) — แสดงเป็นรูปจริงในบทหนัง
   raw: { th: 'อื่น ๆ', prefix: '' },            // element ที่ v2 ยังไม่ทำ UI — คงบรรทัดเดิมเป๊ะ
 };
 export const TAB_CYCLE = ['action', 'scene', 'subheader', 'character', 'parenthetical', 'dialogue',
-  'transition-in', 'transition', 'intercut', 'shot', 'act-break', 'note'];
+  'transition-in', 'transition', 'intercut', 'shot', 'act-break', 'page-break', 'note'];
 export const NEXT_ELEM = { scene: 'action', action: 'action', character: 'dialogue',
   parenthetical: 'dialogue', dialogue: 'action', transition: 'scene',
   'transition-in': 'scene', subheader: 'action', intercut: 'action',
-  shot: 'action', 'act-break': 'action',
+  shot: 'action', 'act-break': 'action', 'page-break': 'scene',
   summary: 'action', outline1: 'outline2', outline2: 'outline3', outline3: 'action',
   note: 'action', image: 'action', raw: 'action' };
 
@@ -82,30 +114,73 @@ export function withExtension(text, ext) {
   return name ? name + ' ' + wrapped : wrapped;
 }
 
-export function classify(line, prevBlank = true, prevType = 'action') {
+/**
+ * บรรทัดก่อนหน้าเป็นบล็อกที่ "วงเล็บ" ต่อท้ายได้ไหม — วงเล็บอยู่ใต้ตัวละครเท่านั้น
+ * @param {string} [prevLine] บรรทัดก่อนหน้าแบบดิบ (ถ้าส่งมา)
+ */
+// `prevBlank` สำคัญ: วงเล็บอยู่ "ติด" ใต้ชื่อตัวละครเสมอ — มีบรรทัดว่างคั่น = คนละบล็อกกันแล้ว
+const CAN_TAKE_PAREN = (prevType, prevBlank) =>
+  !prevBlank && (prevType === 'character' || prevType === 'parenthetical');
+
+/**
+ * เข้มกว่านั้นสำหรับ `((…))` ซึ่งเป็น **รหัสโน้ตของ v1** ด้วย:
+ * ต้องอยู่ใต้ตัวละครที่เขียน `@` ไว้ชัดเจน (หรือใต้วงเล็บด้วยกัน) เท่านั้น
+ *
+ * เหตุผล: ตัวจับ "ชื่อตัวละครอัตโนมัติ" หลวมมาก (บรรทัดสั้น ≤25 ตัว ≤3 คำ หลังบรรทัดว่าง)
+ * บรรยายสั้น ๆ อย่าง "ลมพัดผ่าน" ก็เข้าเกณฑ์ → ถ้าใช้ `prevType` เฉย ๆ
+ * โน้ต `((…))` ของไฟล์ v1 ที่บังเอิญตามหลังบรรทัดแบบนั้น จะกลายเป็นวงเล็บทันที
+ */
+const CAN_TAKE_DOUBLE_PAREN = (prevType, prevLine, prevBlank) => {
+  if (prevBlank) return false;                       // มีบรรทัดว่างคั่น = ไม่ได้อยู่ใต้ตัวละครแล้ว
+  if (prevType === 'parenthetical') return true;
+  if (prevType !== 'character') return false;
+  // ไม่ได้ส่งบรรทัดก่อนหน้ามา = ผู้เรียกรู้ชนิดของบล็อกก่อนหน้าอยู่แล้ว (เช่น lineFor) → เชื่อ prevType
+  // `parseScript` ส่ง prevLine มาเสมอ จึงเป็นที่เดียวที่ต้องแยก "ตัวละครจริง" ออกจาก "ตัวละครที่เดาเอา"
+  if (prevLine === undefined) return true;
+  return /^\s*@/.test(String(prevLine));
+};
+
+export function classify(line, prevBlank = true, prevType = 'action', prevLine = undefined) {
   const s = line.trim();
   if (s === '') return ['blank', ''];
   if (IMG_RE.test(s)) return ['image', s];           // ![alt](src) ทั้งบรรทัด = รูป
-  // [50] Shot + Act Break — จับก่อน raw (RAW_PREFIX ย้าย shot/act ออกแล้ว)
+  // ── [alpha.60r3a] มาตรฐานใหม่ (มาร์กดาวน์) — ตรวจก่อนของเก่าเสมอ ──
+  // `---` (สามขีดขึ้นไป) ล้วน ๆ ทั้งบรรทัด = บังคับขึ้นหน้าใหม่
+  if (/^-{3,}$/.test(s)) return ['page-break', ''];
+  if (s.startsWith('#### ')) return ['subheader', s.slice(5).trim()];
+  if (s.startsWith('##### ')) return ['outline3', s.slice(6).trim()];
+  if (s.startsWith('### ')) return ['scene', s.slice(4).trim()];       // H3 ในนิยาย = หัวฉากในบท
+  if (s.startsWith('>> ') || s === '>>') return ['transition', s.slice(2).trim()];
+  if (s.startsWith('<< ') || s === '<<') return ['transition-in', s.slice(2).trim()];
+  if (s.startsWith('/// ') || s === '///') return ['note', s.slice(3).trim()];
+  if (s.startsWith('//')) return ['note', s.replace(/^\/+\s?/, '')];   // `//` ของ scriptmd2pdf
+  // ── รหัสของ v1 (ยังอ่านได้ทั้งหมด — ไฟล์เดิมเปิดได้เหมือนเดิม) ──
   if (s.startsWith('$shot ')) return ['shot', s.slice(6).trim()];
   if (s.startsWith('$act ')) return ['act-break', s.slice(5).trim()];
-  // [alpha.57a ข้อ 2] element ใหม่ — ใช้ prefix แบบเดียวกับ $shot/$act จึง round-trip ปลอดภัย
   if (s.startsWith('$in ')) return ['transition-in', s.slice(4).trim()];
   if (s.startsWith('$sub ')) return ['subheader', s.slice(5).trim()];
   if (s.startsWith('$intercut ')) return ['intercut', s.slice(10).trim()];
   if (RAW_PREFIX.test(s)) return ['raw', line];
-  if (s.startsWith('((') && s.endsWith('))')) return ['note', s.slice(2, -2).trim()];
-  if (s.startsWith('### ')) return ['outline3', s.slice(4).trim()];
+  // `((…))` — ใต้บรรทัดตัวละคร = วงเล็บ (มาตรฐานใหม่) · ที่อื่น = โน้ตแบบ v1 (ไฟล์เก่าไม่พัง)
+  if (s.startsWith('((') && s.endsWith('))')) {
+    const inner = s.slice(2, -2).trim();
+    return CAN_TAKE_DOUBLE_PAREN(prevType, prevLine, prevBlank)
+      ? ['parenthetical', '(' + inner + ')'] : ['note', inner];
+  }
   if (s.startsWith('## ')) return ['outline2', s.slice(3).trim()];
   if (s.startsWith('# ')) return ['outline1', s.slice(2).trim()];
   if (s.startsWith('= ')) return ['summary', s.slice(2).trim()];
   if (s.startsWith('.') && !s.startsWith('..')) return ['scene', s.slice(1).trim()];
+  // `! ` (มีวรรค) = ช็อต ตามมาตรฐานใหม่ · `!ข้อความ` (ไม่มีวรรค) = บรรยายบังคับแบบ v1
+  if (s.startsWith('! ')) return ['shot', s.slice(2).trim()];
   if (s.startsWith('!')) return ['action', s.slice(1).trim()];
   if (s.startsWith('@')) return ['character', s.slice(1).trim()];
   if (s.startsWith('>')) return ['transition', s.slice(1).trim()];
   if (SCENE_RE.test(s)) return ['scene', s];
   if (TRANS_RE.test(s) && s.length <= 30) return ['transition', s];
-  if (s.startsWith('(') && s.endsWith(')')) return ['parenthetical', s];
+  // วงเล็บเดี่ยว `(…)` เป็น "วงเล็บ" ได้เฉพาะใต้บรรทัดตัวละคร — ที่อื่นเป็นข้อความปกติ
+  // (เดิมจับทุกที่ → บทพูดที่เป็นวงเล็บทั้งประโยคกลายเป็น parenthetical กลางบทสนทนา)
+  if (s.startsWith('(') && s.endsWith(')') && CAN_TAKE_PAREN(prevType, prevBlank)) return ['parenthetical', s];
   // ตรวจจับ "ชื่อตัวละคร" อัตโนมัติ (บรรทัดไม่มี prefix @) — ใช้เป็น fallback เวลานำเข้า/วางข้อความดิบ
   // (ปกติผู้ใช้สร้างบล็อกตัวละครผ่านตัวเลือก element ซึ่งเติม @ ให้อยู่แล้ว)
   // เดิมบังคับ "พิมพ์ใหญ่ล้วน" ทำให้ชื่อผสมพิมพ์เล็ก (Nazarena, Frinton-Smith) และชื่อไทยไม่ถูกจับ
@@ -123,12 +198,13 @@ export function classify(line, prevBlank = true, prevType = 'action') {
 
 export function parseScript(md) {
   const out = [];
-  let prevBlank = true, prevType = 'action';
+  let prevBlank = true, prevType = 'action', prevLine;
   for (const line of md.split('\n')) {
-    const [el, text] = classify(line, prevBlank, prevType);
-    if (el === 'blank') { out.push({ el: 'blank', text: '' }); prevBlank = true; continue; }
+    // ส่ง "บรรทัดก่อนหน้าแบบดิบ" ไปด้วย — `((…))` ต้องรู้ว่าตัวละครข้างบนเขียน `@` ไว้จริงไหม
+    const [el, text] = classify(line, prevBlank, prevType, prevLine);
+    if (el === 'blank') { out.push({ el: 'blank', text: '' }); prevBlank = true; prevLine = line; continue; }
     out.push({ el, text });
-    prevBlank = false; prevType = el;
+    prevBlank = false; prevType = el; prevLine = line;
   }
   return out;
 }
@@ -139,28 +215,47 @@ export function lineFor(el, text, prevBlank, prevType) {
   if (el === 'raw' || el === 'image') return text;   // รูปเก็บ md เดิมทั้งบรรทัด
   let s;
   switch (el) {
-    case 'note': s = '((' + text + '))'; break;
-    case 'shot': s = '$shot ' + text; break;             // [50]
-    case 'act-break': s = '$act ' + text; break;         // [50]
-    case 'transition-in': s = '$in ' + text; break;      // [alpha.57a]
-    case 'subheader': s = '$sub ' + text; break;
-    case 'intercut': s = '$intercut ' + text; break;
-    case 'parenthetical':
-      s = text.startsWith('(') && text.endsWith(')') ? text : '(' + text + ')'; break;
+    // ── [alpha.60r3a] เขียนด้วยมาตรฐานใหม่เสมอ (อ่านได้ทั้งเก่า-ใหม่ แต่เขียนแบบใหม่อย่างเดียว) ──
+    case 'page-break': s = '---'; break;
+    case 'note': s = '/// ' + text; break;
+    case 'shot': s = '! ' + text; break;
+    case 'act-break': s = '$act ' + text; break;      // `## ` ชนกับโครง 2
+    case 'transition-in': s = '<< ' + text; break;
+    case 'subheader': s = '#### ' + text; break;
+    case 'intercut': s = '$intercut ' + text; break;   // ไม่มีรหัสมาร์กดาวน์เทียบเท่า
+    case 'parenthetical': {
+      // เขียนเป็น `((…))` เสมอ — วงเล็บชั้นเดียวชนกับข้อความปกติที่บังเอิญอยู่ในวงเล็บ
+      const inner = text.replace(/^\(+|\)+$/g, '').trim();
+      s = '((' + inner + '))'; break;
+    }
     case 'summary': s = '= ' + text; break;
     case 'outline1': s = '# ' + text; break;
     case 'outline2': s = '## ' + text; break;
-    case 'outline3': s = '### ' + text; break;
-    case 'scene': s = SCENE_RE.test(text) ? text : '.' + text; break;
-    case 'transition': s = TRANS_RE.test(text) ? text : '>' + text; break;
+    case 'outline3': s = '##### ' + text; break;
+    case 'scene': s = '### ' + text; break;
+    case 'transition': s = '>> ' + text; break;
     case 'character': s = '@' + text; break;
     default: s = text;                              // action / dialogue
   }
   const [got] = classify(s, prevBlank, prevType);
   if (got !== el) {
-    if (el === 'action') s = '!' + text;            // กันโดนตีเป็นอย่างอื่น
+    if (el === 'action') s = '!' + text;            // กันโดนตีเป็นอย่างอื่น (ไม่มีวรรค = บรรยายบังคับ)
     else if (el === 'character') s = '@' + text;
-    else if (el === 'scene') s = '.' + text;
+    else if (el === 'scene') s = '### ' + text;
   }
   return s;
 }
+
+/**
+ * [alpha.60r3a] รหัสนำหน้าบรรทัดที่ "โหมดนิยายจะเห็นเป็นข้อความดิบ" — ใช้โดย markdown-code-toggle.js
+ *
+ * ไม่รวม `#`/`##`/`###`/`####` เพราะ md.js แปลงเป็นหัวข้อจริง (H1–H4) อยู่แล้ว ไม่มีข้อความ `#` เหลือให้ซ่อน
+ * และไม่รวม `---` เพราะกลายเป็นเส้นคั่น (horizontal_rule) ซึ่งเป็นภาพแทน "ขึ้นหน้าใหม่" ที่ถูกต้องอยู่แล้ว
+ *
+ * **เรียงยาวก่อนสั้นเสมอ** — `>` จะกิน `>> ` และ `$in ` จะไม่มีวันถูกจับถ้าเรียงผิด
+ */
+export const SP_MD_PREFIXES = [
+  '$intercut ', '$shot ', '$sub ', '$act ', '$in ',       // v1 (ยังเปิดไฟล์เก่าได้)
+  '>> ', '<< ', '/// ', '// ', '= ', '((',                 // มาตรฐานใหม่
+  '!', '@', '>', '.',                                      // ตัวอักษรเดียว — ต้องอยู่ท้ายสุด
+];

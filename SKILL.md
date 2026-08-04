@@ -46,6 +46,19 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
   - `editor.js` — `KEditor` (นิยาย): schema + `mentionPlugin` + `spellPlugin` + export `imageLightbox`
   - `screenplay.js` — `SPEditor` (บทหนัง): fountain, Enter=element ถัดไป, **Ctrl+↑/↓ สลับ element** (Tab สงวนให้ SmartType), มี spellPlugin
   - `fountain.js` — `SP_ELEMS/TAB_CYCLE/NEXT_ELEM/SCENE_PREFIX/TIMES/TRANSITIONS`
+    · **[alpha.60r3a] มาตรฐานรหัสใหม่ = มาร์กดาวน์** (อิง `kevinmcaleer/scriptmd2pdf`)
+      หัวฉาก `### ` (=H3 ในนิยาย) · ฉากย่อย `#### ` (=H4) · ตัวละคร `@` · วงเล็บ `((…))` ·
+      ทรานซิชันออก `>> ` · เข้า `<< ` · ช็อต `! ` · ขึ้นหน้าใหม่ `---` · โน้ต `/// `
+      **อ่านรหัส v1 ได้ครบ** (`.` `>` `!x` `$shot ` `$sub ` `$in ` `$intercut ` `$act `)
+      แต่ `lineFor()` **เขียนแบบใหม่เสมอ** → บันทึกครั้งเดียวไฟล์ย้ายมาตรฐานเอง
+    · **รหัสที่ชนกันและวิธีตัดสิน** (พลาดตรงนี้แล้วไฟล์เก่าพังเงียบ ๆ):
+      `! ` (มีวรรค)=ช็อต · `!x` (ไม่มีวรรค)=บรรยายบังคับ v1 · `![](…)`=รูป ·
+      `((…))` ใต้ตัวละครที่เขียน `@` จริง **และไม่มีบรรทัดว่างคั่น** = วงเล็บ · ที่อื่น = โน้ต v1
+      (ตัวจับชื่อตัวละครอัตโนมัติหลวมมาก — บรรยายสั้นอย่าง "ลมพัดผ่าน" ก็เข้าเกณฑ์)
+    · `## `/`#### ` ใช้กับ "ตอน"/"สลับฉาก" ไม่ได้ (ชนโครง 2 / ฉากย่อย) → คงรหัส v1 (`$act `/`$intercut `)
+    · `classify(line, prevBlank, prevType, prevLine)` — **`prevLine` จำเป็น** ที่ `parseScript`/`omitElements`
+    · `SP_MD_PREFIXES` = แหล่งเดียวของรายการรหัสที่โหมดนิยายต้องซ่อน (markdown-code-toggle ดึงไปใช้)
+      **ไม่มี `#`/`##`/`###`/`---`** — md.js แปลงเป็นหัวข้อ/เส้นคั่นจริงไปแล้ว ไม่ต้องซ่อน
   - `smart.js` — `SmartType` (เดาชื่อขณะพิมพ์ · prefix match ไทยไม่มีช่องว่าง)
   - `spell.js` — เอนจินตรวจคำผิด (ไทย maximal-matching DP + อังกฤษ wordlist+morphology) · `loadBase/setExtra/check/ready`
   - `wiki.js` — `WikiEditor` + `imageLightbox`
@@ -141,8 +154,8 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
   - **`ai-analyzer-ui.js`** (alpha.60r3 · **ข้อ 5**) — แผง "🧠 AI วิเคราะห์" **ตัวอย่างหน้าตา**:
     `ANALYZER_CARDS` 5 ใบ + `analyzerStats()` (นับเล่ม/บท/ฉาก/คำ/เอนทิตี้จากดัชนีในเครื่อง ไม่ยิง AI)
     · มีป้าย "ยังไม่เปิดใช้งาน" กำกับ — **อย่าให้ mockup ดูเหมือนผลจริง**
-  - **`markdown-code-toggle.js`** (alpha.60r3 · **ข้อ 6**) — ซ่อนรหัสนำหน้าบรรทัดในตัวแก้ไขนิยาย:
-    `MD_PREFIXES` (**เรียงยาวก่อนสั้น** — `#` จะกิน `###` และ `$in ` ไม่มีวันถูกจับถ้าเรียงผิด) ·
+  - **`markdown-code-toggle.js`** (alpha.60r3 · **ข้อ 6** · แก้ใน r3a) — ซ่อนรหัสนำหน้าบรรทัดในตัวแก้ไขนิยาย:
+    `MD_PREFIXES` = re-export ของ `SP_MD_PREFIXES` (**เรียงยาวก่อนสั้น** — `>` จะกิน `>> ` ถ้าเรียงผิด) ·
     `prefixLen`/`suffixLen` **pure** · `markdownCodePlugin(decoState)` รับ `incrementalDecoState`
     ของ editor.js เข้ามา · ซ่อนด้วย `.k-md-hide-prefix{display:none}` — **ไฟล์ .md ไม่ถูกแก้เลย**
   - **`wiki-images.js`** (alpha.60r2 · **ข้อ 12**, บริสุทธิ์) — เมทาดาทาของรูปใน entity:
@@ -213,7 +226,7 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
 
 ## E2E test workflow (สำคัญ — ทำทุกครั้งก่อนเชื่อว่าแก้สำเร็จ)
 
-Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **1,706 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
+Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **1,729 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
 
 **Unit test โมดูลบริสุทธิ์ (alpha.39, รันเร็ว ไม่ต้องเปิด electron):**
 ```bash
@@ -635,7 +648,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ---
 
-## เวอร์ชัน (ล่าสุด alpha.60r3 · e2e 1,706 + unit 1,913)
+## เวอร์ชัน (ล่าสุด alpha.60r3a · e2e 1,729 + unit 1,913)
 
 .13–.22 (v1→v2 พื้นฐาน): snapshot, line numbers, spellcheck ไทย+Chromium, ปุ่มลัดตั้งเอง, mac build, บทหนัง Ctrl+arrow, relationship sync, floating format bar, sidebar resize, SmartType Final Draft, wiki gallery/lightbox, explorer search+tags, panel docking, tree float+snap
 .24 batch 8 (drag-move explorer, panel snap, split compare, version tracking, scene lock, screenplay Final Draft look, screenplay images, wiki links) · .25–.27 **Planner board** (fabric.js) · .28 **floating windows** · .29 memo-in-chapter + scoped search
@@ -939,6 +952,22 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
     (กล่อง overlay · แท็บหน้าแรก · แผงหน้าแรก) · ลำดับ: ส่งออก · นำเข้า · spacer · สร้างใหม่ · เปิด · ปิด
     · สวิตช์มุมมอง 📋 ย้ายขึ้นหัวกล่อง · **`importProjectZip()`** ใหม่ (`safeRel` กัน zip slip ·
     `commonPrefix` ปอกโฟลเดอร์ชั้นนอก · ไบนารีผ่าน `writeBytes`)
+
+.60r3a **แก้ข้อ 6 ที่เข้าใจผิด — มาตรฐานรหัสบทเป็นมาร์กดาวน์ + บั๊ก (V.O.) + ฟอนต์ไทย**
+  r3 ทำข้อ 6 เป็น "ซ่อนรหัสเดิมของ v1" ซึ่งแก้ไม่ตรงจุด — โจทย์จริงคือ **เปลี่ยนตัวรหัสให้เป็นมาร์กดาวน์**
+  **มาตรฐานใหม่** (ดูตารางเต็มที่ `fountain.js` ด้านบน): `### `หัวฉาก · `#### `ฉากย่อย · `@`ตัวละคร ·
+    `((…))`วงเล็บ · `>> `/`<< `ทรานซิชันออก/เข้า · `! `ช็อต · `---`ขึ้นหน้าใหม่ · `/// `โน้ต
+  **`page-break` เป็น element จริง** — `paginate()` ปิดหน้าแล้วขึ้นหน้าใหม่เมื่อเจอ (ไม่กินบรรทัด ไม่ถูกใส่ลงหน้า)
+    · คลาส CSS ต้องเป็น `sp-page-break-el` — ชื่อ `sp-page-break` เป็นของ **เส้นคั่นหน้าอัตโนมัติ** อยู่แล้ว
+  **บั๊ก `@dave (V.O.)` → วงเล็บ**: `screenplay.js` ดักปุ่ม `(` แล้วแปลงบล็อกเมื่ออยู่บน character **หรือ** dialogue
+    → พิมพ์ส่วนเสริมท้ายชื่อตัวละครไม่ได้เลย · **แก้: แปลงเฉพาะ "บทพูดที่ยังไม่มีข้อความ"**
+    (วงเล็บกลางประโยคของบทพูดก็เป็นเครื่องหมายวรรคตอนปกติ ไม่ควรถูกแปลงเหมือนกัน)
+  **ฟอนต์ไทย**: `THAI_FONT_STACK` ใหม่ใน core.js — **Ayuthaya** (ฟอนต์ระบบ macOS ที่วางมาร์กถูก) มาก่อน
+    → เครื่อง Mac ได้ทันที เครื่องอื่นตกไปตัวถัดไป · `SYSTEM_THAI_FONTS` ใน lang-fonts.js ให้เลือกเองได้
+    (แจกฟอนต์ Apple มากับโปรแกรมไม่ได้ — สิทธิ์)
+  แก้เทสเดิม 2 ข้อที่ผูกกับรหัสเก่า: `[compile] หัวฉาก round-trip` (รับ `### ` ด้วย) ·
+    `ส่งออกบล็อก: ปิดหัวฉากแล้วไม่มี <h3>` → เปลี่ยนเป็น "ตัวส่งออกไม่เติมหัวข้อชื่อฉากให้"
+    เพราะหัวฉากของบท **เป็น `<h3>` จริงในเนื้อหา** ตามมาตรฐานใหม่
 
 **ยังเหลือ**: `search-engine.js` ยังเป็น orphan — Global Search (`global-search.js`) ยังสแกนไฟล์ตรง ๆ ไม่ได้ใช้ inverted index (ควรสลับมาใช้เพื่อความเร็ว) · multiple-drafts-per-book UI (โครงรองรับแล้ว), screenplay align persistence, Campaign/D&D mode, electron-builder + code signing, .icns/.ico icon, native arm64 build. Top เคยบอก paper/indent "อาจต้องปรับปรุง ไว้ก่อน"
 

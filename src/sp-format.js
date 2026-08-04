@@ -78,6 +78,8 @@ export const SP_ELEMENT_CONFIG = {
   intercut:      { indent: 1.5, width: 6.0, linesBefore: 20, linesBetween: 10, keepNext: true },
   shot:          { indent: 1.5, width: 6.0, linesBefore: 20, linesBetween: 10, keepNext: true },
   'act-break':   { indent: 1.5, width: 6.0, linesBefore: 20, linesBetween: 10, keepNext: true },
+  // [alpha.60r3a] `---` บังคับขึ้นหน้าใหม่ — ไม่กินบรรทัดของตัวเอง (paginate ปิดหน้าให้แทน)
+  'page-break':  { indent: 1.5, width: 6.0, linesBefore: 0,  linesBetween: 0,  keepNext: false },
   note:          { indent: 1.5, width: 6.0, linesBefore: 10, linesBetween: 10, keepNext: false },
   summary:       { indent: 1.5, width: 6.0, linesBefore: 10, linesBetween: 10, keepNext: false },
   outline1:      { indent: 1.5, width: 6.0, linesBefore: 10, linesBetween: 10, keepNext: true },
@@ -108,6 +110,7 @@ export const SP_ELEMENT_STYLES = {
   intercut:      { screen: ST(true,  true,  false, false), print: ST(true,  true,  false, false) },
   shot:          { screen: ST(true,  true,  false, false), print: ST(true,  true,  false, false) },
   'act-break':   { screen: ST(true,  true,  false, false), print: ST(true,  true,  false, true) },
+  'page-break':  { screen: ST(false, false, false, false), print: ST(false, false, false, false) },
   note:          { screen: ST(false, false, true,  false), print: ST(false, false, true,  false) },
   summary:       { screen: ST(false, false, true,  false), print: ST(false, false, true,  false) },
   outline1:      { screen: ST(false, true,  false, false), print: ST(false, true,  false, false) },
@@ -268,7 +271,9 @@ export function spCss(fmt) {
     const w = Math.max(0.3, Math.min(num(c.width, 6), +(tw - ml).toFixed(4)));
     const mt = num(c.linesBefore, 10) / 10;
     const mb = num(c.linesBetween, 10) / 10 - 1;      // 1 บรรทัดคือระยะของตัวมันเอง
-    out.push(`.sp.sp-${k}{margin-left:${ml}in;width:${w}in;max-width:none;` +
+    // [alpha.60r3a] `page-break` ใช้คลาส `sp-page-break-el` (ชื่อ `sp-page-break` เป็นของเส้นคั่นหน้าอัตโนมัติ)
+    const cls = k === 'page-break' ? 'page-break-el' : k;
+    out.push(`.sp.sp-${cls}{margin-left:${ml}in;width:${w}in;max-width:none;` +
              `margin-top:${mt}em;margin-bottom:${Math.max(0, mb)}em;${decl(s.screen)}}`);
   }
   // [alpha.57a ข้อ 2] เลขฉากสองฝั่งของหัวฉาก — วางแบบ absolute เทียบกับกล่องหัวฉาก
@@ -365,6 +370,9 @@ export function paginate(blocks, opts = {}) {
   for (let i = 0; i < list.length; i++) {
     const b = list[i];
     const c = cfg(b.el);
+    // [alpha.60r3a] `---` = บังคับขึ้นหน้าใหม่ — ปิดหน้าปัจจุบันแล้วไปต่อหน้าถัดไป
+    // ตัวมันเองไม่กินบรรทัดและไม่ถูกใส่ลงหน้าใด (เป็นคำสั่ง ไม่ใช่เนื้อหา)
+    if (b.el === 'page-break') { if (cur.length) pushPage(); continue; }
     if (b.el === 'character') lastChar = String(b.text || '');
     const before = cur.length ? Math.round(num(c.linesBefore, 10) / 10) : 0;
     const body = wrapLines(b.text, c.width);

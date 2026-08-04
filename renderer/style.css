@@ -1963,6 +1963,15 @@ body.fm2 #tabs { display:none; }
 /* ====== AI Chat Tab ====== */
 .ai-chat-msg { margin:6px 0; padding:8px 12px; border-radius:8px; font-size:calc(14px * var(--ui-scale, 1)); line-height:1.8; }
 
+/* ====== [alpha.60r3a] `---` ขึ้นหน้าใหม่แบบบังคับ (element ของผู้ใช้) ======
+   **คนละตัวกับ `.sp-page-break`** ซึ่งเป็นเส้นคั่นหน้า "อัตโนมัติ" ที่ paginate() วาดให้
+   ตัวนี้คือบล็อกจริงในเอกสารที่ผู้ใช้แทรกเอง — ต้องเห็นชัดว่ามีคำสั่งอยู่ ไม่ใช่บรรทัดว่าง */
+.sp.sp-page-break-el { position:relative; text-align:center; color:var(--accent-hi);
+  border-top:2px dashed var(--accent); margin:12px 0; min-height:1.3em;
+  font-size:calc(11px * var(--ui-scale, 1)); letter-spacing:0; }
+.sp.sp-page-break-el::after { content:'— ขึ้นหน้าใหม่ —'; }
+body.paper-mode .sp.sp-page-break-el { border-top-color:#c9a06a; color:#a5752f; }
+
 /* ====== [alpha.60r3 ข้อ 6] ซ่อนรหัสนำหน้าบรรทัด (fountain / มาร์กดาวน์) ======
    ซ่อนเฉพาะ "ตัวนำหน้า" — เนื้อหาหลังรหัสยังแสดงตามปกติ และไฟล์ .md ไม่ถูกแก้เลย */
 .k-md-hide-prefix { display:none; }

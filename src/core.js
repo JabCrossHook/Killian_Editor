@@ -163,8 +163,14 @@ export const BASE_SP_FS = ptToPx(12); // 16px = 12pt (ตรงกับ .sp ใ
 // ฟอนต์มาตรฐานของเนื้อเรื่อง — Courier Final Draft ทุกภาษา (มี fallback ให้เครื่องที่ยังไม่ลงฟอนต์)
 // Courier Prime มาก่อน — ฝังมากับโปรแกรมแล้ว (renderer/assets/fonts) จึงได้หน้าตาเดียวกันทุกเครื่อง
 // "Courier Final Draft" ไว้ให้เครื่องที่ลงฟอนต์นั้นเองใช้ · ไทยตกไป TH Sarabun New/Sarabun
+//
+// [alpha.60r3a] **Ayuthaya มาก่อนฟอนต์ไทยตัวอื่นเสมอ** — ผู้ใช้รายงานว่าวรรณยุกต์ยัง "ลอย"
+// กับ CourierThaiMono (ฟอนต์ปี 1998 วางมาร์กห่างพยัญชนะ ~7% ของ em · ดูบทเรียน 48)
+// Ayuthaya เป็นฟอนต์ระบบของ macOS ที่วางมาร์กได้ถูกต้อง — แจกมากับโปรแกรมไม่ได้ (สิทธิ์ของ Apple)
+// จึงใส่ไว้ต้นลูกโซ่: เครื่อง Mac ได้ Ayuthaya ทันที · เครื่องอื่นตกไปตัวถัดไปเองตามเดิม
+export const THAI_FONT_STACK = '"Ayuthaya", "Thonburi", "Leelawadee UI", "TH Sarabun New", "Sarabun"';
 export const DEFAULT_SCRIPT_FONT =
-  '"Courier Prime", "Courier Final Draft", "Courier New", "TH Sarabun New", "Sarabun", monospace';
+  '"Courier Prime", "Courier Final Draft", "Courier New", ' + THAI_FONT_STACK + ', monospace';
 // ซูมหน้ากระดาษ = ย่อ/ขยาย "ทั้งหน้า" ด้วย CSS zoom (ฟอนต์+ระยะขอบ+ความกว้าง ไปพร้อมกัน)
 export const SCALE_MIN = 0.5, SCALE_MAX = 2.5;
 // ขนาด UI (แถบเครื่องมือ/แผง/กล่อง) — คนละตัวกับซูมหน้ากระดาษ
@@ -198,7 +204,7 @@ export { PAPER_SIZES, MARGIN_DEFAULTS, SP_ELEMENT_CONFIG, SP_ELEMENT_STYLES, SP_
          newRoster, normalizeRoster, rosterToText, ROSTER_VERSION,
          SCENE_NUMBER_DEFAULTS, PAGE_NUMBER_DEFAULTS, sceneNumberOffsets, pageNumberLabel } from './sp-format.js';
 // ฟอนต์ตามภาษา (alpha.57a ข้อ 5) — โมดูลบริสุทธิ์ ส่งต่อจาก lang-fonts.js
-export { LANG_FAMILY, SCRIPT_PRESETS, BUILTIN_FONT_FILES, defaultLangFonts, normalizeLangFonts,
+export { LANG_FAMILY, SCRIPT_PRESETS, BUILTIN_FONT_FILES, SYSTEM_THAI_FONTS, defaultLangFonts, normalizeLangFonts,
          normalizeRange, cssFamilyName, isUsable as isLangFontUsable, buildLangFontCss,
          withLangFamily, applyLangFonts } from './lang-fonts.js';
 

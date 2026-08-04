@@ -9,7 +9,7 @@ import { $, BASE_ED_FS, LOG_BUF, el, log, setStatus, state, i18n, loadLanguage, 
          PAPER_SIZES, MARGIN_DEFAULTS, SP_ELEMENT_KEYS, SP_ELEMENT_CONFIG, SP_ELEMENT_STYLES,
          PAGE_BREAK_RULES, SP_STRINGS, mergeSpFormat, linesPerPage, formatLines,
          SCENE_NUMBER_DEFAULTS, PAGE_NUMBER_DEFAULTS,
-         LANG_FAMILY, SCRIPT_PRESETS, BUILTIN_FONT_FILES, defaultLangFonts, normalizeLangFonts,
+         LANG_FAMILY, SCRIPT_PRESETS, BUILTIN_FONT_FILES, SYSTEM_THAI_FONTS, defaultLangFonts, normalizeLangFonts,
          normalizeRange, buildLangFontCss, applyLangFonts } from './core.js';
 import { setTypeVolume, playType } from './typewriter-sound.js';
 // [alpha.60r2 ข้อ 6] ชุดระยะขอบสำเร็จรูป (ตารางอยู่ใน margin-presets.json)
@@ -277,6 +277,9 @@ export function settingsDialog(openTab) {
       { name: 'Courier Prime (ฝังมากับโปรแกรม)', value: DEFAULT_SCRIPT_FONT },
       { name: 'Courier Thai Mono (ไทย · ฝังมากับโปรแกรม)', value: '"Courier Thai Mono", "Courier Prime", monospace' },
       { name: 'Courier Thai Proportional (ไทย · ฝังมากับโปรแกรม)', value: '"Courier Thai Proportional", "Courier Prime", monospace' },
+      // [alpha.60r3a] ฟอนต์ระบบที่วางวรรณยุกต์ไทยได้ถูกต้อง — แจกมากับโปรแกรมไม่ได้ แต่ถ้าเครื่องมีก็ใช้ได้เลย
+      { name: 'Ayuthaya (macOS · วรรณยุกต์ไม่ลอย)', value: 'Ayuthaya, "Leelawadee UI", sans-serif' },
+      { name: 'Thonburi (macOS)', value: 'Thonburi, "Leelawadee UI", sans-serif' },
       { name: 'Segoe UI', value: '"Segoe UI", system-ui, sans-serif' },
       { name: 'Sarabun', value: 'Sarabun, sans-serif' },
       { name: 'Noto Sans Thai', value: '"Noto Sans Thai", sans-serif' },
@@ -375,6 +378,7 @@ export function settingsDialog(openTab) {
     { name: 'ค่าเริ่มต้นนิยาย (ตัวพิมพ์สัดส่วน)', value: '' },
     { name: 'Sarabun', value: '"Sarabun", sans-serif' },
     { name: 'TH Sarabun New', value: '"TH Sarabun New", sans-serif' },
+    { name: 'Ayuthaya (macOS · วรรณยุกต์ไม่ลอย)', value: 'Ayuthaya, "Leelawadee UI", sans-serif' },
     { name: 'Noto Serif Thai', value: '"Noto Serif Thai", serif' },
     { name: 'Noto Sans Thai', value: '"Noto Sans Thai", sans-serif' },
     { name: 'Leelawadee UI', value: '"Leelawadee UI", sans-serif' },
@@ -819,6 +823,8 @@ export function settingsDialog(openTab) {
       const addOpt = (val, text) => { const o = el('option', null, text); o.value = val; fontSel.append(o); };
       addOpt('', '— ใช้ฟอนต์ที่ลงในเครื่อง (พิมพ์ชื่อ) —');
       for (const b of BUILTIN_FONT_FILES) addOpt('b:' + b.file, b.label);
+      // [alpha.60r3a] ฟอนต์ไทยของระบบ (Ayuthaya ฯลฯ) — ใช้ได้เมื่อเครื่องมีติดตั้งอยู่แล้ว
+      for (const f of SYSTEM_THAI_FONTS) addOpt('f:' + f.family, f.label);
       for (const f of projectFonts) addOpt('p:' + f, f + ' (โปรเจกต์)');
       fontSel.value = row.builtin ? 'b:' + row.builtin : (row.file ? 'p:' + row.file : '');
       const famIn = el('input', 'k-font-family');

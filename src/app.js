@@ -65,7 +65,7 @@ import { attachAiFieldButton, generateSceneSynopsis, fieldPrompt, cleanResult,
 import { renderAIAnalyzerPanel, ANALYZER_CARDS, analyzerStats } from './ai-analyzer-ui.js';
 // [alpha.60r3 ข้อ 6] ซ่อน/แสดงรหัสนำหน้าบรรทัด
 import { setMarkdownCodes, markdownCodesOn, refreshMarkdownCodes,
-         prefixLen as mdPrefixLen, MD_HIDE_CLASS } from './markdown-code-toggle.js';
+         prefixLen as mdPrefixLen, suffixLen as mdSuffixLen, MD_HIDE_CLASS } from './markdown-code-toggle.js';
 // [alpha.60r3 ข้อ 4] Localizer — ไฟล์ภาษา ↔ ตาราง CSV (โมดูลบริสุทธิ์ · มี unit test แยก)
 // (`importSummary` ชนกับของ import-sp.js → เปลี่ยนชื่อเป็น csvImportSummary)
 import { jsonToCsv, csvToJson, mergeStrings, flatten, unflatten, parseCsv,
@@ -11764,8 +11764,21 @@ async function runTest(projectPath) {
         check('ส่งออกบล็อก: ไม่มี markdown ดิบหลุดไป (# / ** / frontmatter)',
               !/\n#{1,6}\s/.test(b1.html) && !b1.html.includes('**') && !b1.html.includes('---\ntitle:'));
         const b2 = await buildBlogHtml({ theme: 'dark', chapterHeads: false, sceneHeads: false });
-        check('ส่งออกบล็อก: ปิดหัวบท/หัวฉากแล้วไม่มี <h2>/<h3>',
-              !b2.html.includes('<h2>') && !b2.html.includes('<h3>'));
+        // [alpha.60r3a] เช็คว่า "ตัวส่งออกไม่เติมหัวข้อชื่อบท/ชื่อฉากให้" — ไม่ใช่ "ห้ามมี h3 เลย"
+        // เพราะมาตรฐานใหม่ทำให้ **หัวฉากของบทภาพยนตร์เป็น `### ` = <h3> จริงในเนื้อหา**
+        // (เทียบกับ b1 ที่เปิดสวิตช์ไว้ → ต้องมีหัวข้อของชื่อบท/ชื่อฉากโผล่มาจริง)
+        const titlesOf = (html, tag) =>
+          [...html.matchAll(new RegExp('<' + tag + '>([^<]*)</' + tag + '>', 'g'))].map((m) => m[1]);
+        // h3 ที่ "มีตอนเปิดสวิตช์ แต่หายตอนปิด" = หัวข้อที่ตัวส่งออกเติมให้จริง
+        // (h3 ที่เหลือคือหัวฉากในเนื้อบท ซึ่งต้องอยู่ทั้งสองแบบ — เป็นเนื้อหา ไม่ใช่ของที่สวิตช์คุม)
+        const h3on = titlesOf(b1.html, 'h3'), h3off = titlesOf(b2.html, 'h3');
+        const added = h3on.filter((x) => !h3off.includes(x));
+        check('ส่งออกบล็อก: เปิดสวิตช์แล้วมีหัวข้อชื่อฉากที่ตัวส่งออกเติมให้', added.length >= 1,
+              'on=' + h3on.join(',') + ' off=' + h3off.join(','));
+        check('ส่งออกบล็อก: ปิดหัวบทแล้วไม่มีหัวข้อชื่อบท',
+              titlesOf(b2.html, 'h2').length === 0, titlesOf(b2.html, 'h2').join(','));
+        check('ส่งออกบล็อก: h3 ที่เหลือตอนปิดสวิตช์เป็นหัวฉากในเนื้อบท (ไม่ใช่ชื่อฉากที่เติมให้)',
+              h3off.every((x) => h3on.includes(x)), h3off.join(','));
         check('ส่งออกบล็อก: เลือกธีมมืดแล้ว CSS เปลี่ยนจริง',
               b2.html.includes(BLOG_THEMES.dark.css.trim().split('\n')[0]));
         const b3 = await buildBlogHtml({ embedImages: true });
@@ -14992,16 +15005,27 @@ async function runTest(projectPath) {
 
         // ---- [r3-6] ซ่อนรหัสนำหน้าบรรทัด ----
         {
-          check('[r3-6] prefix ของ fountain ถูกจับ: หัวฉาก', mdPrefixLen('.INT. บ้าน - กลางวัน') === 1);
-          check('[r3-6] prefix ของ fountain ถูกจับ: ชื่อตัวละคร', mdPrefixLen('@ทอร่า') === 1);
-          check('[r3-6] prefix ของ fountain ถูกจับ: ทรานซิชัน', mdPrefixLen('>CUT TO:') === 1);
-          check('[r3-6] prefix ยาวถูกจับก่อนสั้น: $intercut', mdPrefixLen('$intercut ห้องครัว') === 10);
-          check('[r3-6] $shot / $sub / $in / $act ถูกจับครบ',
+          // ── [alpha.60r3a] มาตรฐานรหัสใหม่ ──
+          check('[r3-6] >> ทรานซิชันออก ถูกซ่อน', mdPrefixLen('>> CUT TO:') === 3);
+          check('[r3-6] << ทรานซิชันเข้า ถูกซ่อน', mdPrefixLen('<< FADE IN:') === 3);
+          check('[r3-6] /// โน้ต ถูกซ่อน', mdPrefixLen('/// เขียนต่อพรุ่งนี้') === 4);
+          check('[r3-6] ! ช็อต ถูกซ่อน', mdPrefixLen('! CLOSE ON') === 1);
+          check('[r3-6] @ ชื่อตัวละคร ถูกซ่อน', mdPrefixLen('@ทอร่า') === 1);
+          check('[r3-6] (( )) วงเล็บ ถูกซ่อนทั้งหัวและท้าย',
+                mdPrefixLen('((กระซิบ))') === 2 && mdSuffixLen('((กระซิบ))') === 2);
+          check('[r3-6] >> ถูกจับก่อน > (เรียงยาวก่อนสั้น)', mdPrefixLen('>> CUT TO:') === 3);
+          // รหัส v1 ยังซ่อนได้ (ไฟล์เก่ายังอ่านสบายในโหมดนิยาย)
+          check('[r3-6] รหัส v1: หัวฉาก .', mdPrefixLen('.INT. บ้าน - กลางวัน') === 1);
+          check('[r3-6] รหัส v1: ทรานซิชัน >', mdPrefixLen('>CUT TO:') === 1);
+          check('[r3-6] รหัส v1: $intercut ยาวถูกจับก่อน', mdPrefixLen('$intercut ห้องครัว') === 10);
+          check('[r3-6] รหัส v1: $shot / $sub / $in / $act ถูกจับครบ',
                 mdPrefixLen('$shot มุมสูง') === 6 && mdPrefixLen('$sub ห้องนอน') === 5 &&
                 mdPrefixLen('$in FADE IN:') === 4 && mdPrefixLen('$act ตอนที่หนึ่ง') === 5);
-          check('[r3-6] หัวข้อมาร์กดาวน์ ### ถูกจับก่อน # (ยาวก่อนสั้น)',
-                mdPrefixLen('### โครงสาม') === 4 && mdPrefixLen('# โครงหนึ่ง') === 2);
-          check('[r3-6] โน้ต (( )) ถูกจับทั้งหัวและท้าย', mdPrefixLen('((โน้ตทดสอบ))') === 2);
+          // ── หัวข้อมาร์กดาวน์ **ห้ามซ่อน** — เป็น H3/H4 จริงในโหมดนิยาย (ข้อที่เข้าใจผิดรอบก่อน) ──
+          check('[r3-6] ### หัวฉาก ไม่ถูกซ่อน (เป็น H3 จริงในนิยาย)', mdPrefixLen('### INT. บ้าน') === 0);
+          check('[r3-6] #### ฉากย่อย ไม่ถูกซ่อน (เป็น H4 จริงในนิยาย)', mdPrefixLen('#### มุมห้อง') === 0);
+          check('[r3-6] # / ## ไม่ถูกซ่อน', mdPrefixLen('# องก์') === 0 && mdPrefixLen('## ฉาก') === 0);
+          check('[r3-6] --- ไม่ถูกซ่อน (เป็นเส้นคั่นจริงในนิยาย)', mdPrefixLen('---') === 0);
           // ต้องไม่ซ่อนของที่ไม่ใช่รหัส
           check('[r3-6] ประโยคที่ขึ้นต้นด้วยจุดไข่ปลาไม่ถูกซ่อน', mdPrefixLen('...แล้วเธอก็เงียบ') === 0);
           check('[r3-6] จุดทศนิยมไม่ถูกซ่อน', mdPrefixLen('.5 วินาที') === 0);
@@ -15010,6 +15034,39 @@ async function runTest(projectPath) {
           check('[r3-6] บรรทัดที่มีแต่รหัสไม่ถูกซ่อน (เป็นข้อความจริงของผู้ใช้)',
                 mdPrefixLen('.') === 0 && mdPrefixLen('#') === 0 && mdPrefixLen('@') === 0);
           check('[r3-6] ข้อความปกติไม่ถูกแตะ', mdPrefixLen('เธอเดินเข้ามา') === 0);
+
+          // ── [alpha.60r3a] บั๊กที่ผู้ใช้รายงาน: `@dave (V.O.)` ต้องไม่กลายเป็นวงเล็บ ──
+          {
+            const b = parseScript(['@dave (V.O.)', '((กระซิบ))', 'สวัสดีครับ', '', '---',
+                                   '### INT. ห้องครัว - เช้า', '! CLOSE ON มือ',
+                                   '>> CUT TO:', '<< FADE IN:', '/// โน้ต'].join('\n'));
+            const els = b.map((x) => x.el);
+            check('[r3-6] @dave (V.O.) ยังเป็นชื่อตัวละคร ไม่ใช่วงเล็บ', els[0] === 'character', els[0]);
+            check('[r3-6] ส่วนเสริม (V.O.) ติดอยู่กับชื่อครบ', b[0].text === 'dave (V.O.)', b[0].text);
+            check('[r3-6] ((กระซิบ)) ใต้ตัวละคร = วงเล็บ', els[1] === 'parenthetical', els[1]);
+            check('[r3-6] บรรทัดถัดไป = บทพูด', els[2] === 'dialogue', els[2]);
+            check('[r3-6] --- = ขึ้นหน้าใหม่', els[4] === 'page-break', els[4]);
+            check('[r3-6] ### = หัวฉาก', els[5] === 'scene' && b[5].text === 'INT. ห้องครัว - เช้า');
+            check('[r3-6] ! + วรรค = ช็อต', els[6] === 'shot' && b[6].text === 'CLOSE ON มือ');
+            check('[r3-6] >> / << = ทรานซิชันออก/เข้า',
+                  els[7] === 'transition' && els[8] === 'transition-in', els.slice(7, 9).join(','));
+            check('[r3-6] /// = โน้ต', els[9] === 'note' && b[9].text === 'โน้ต');
+            // `---` บังคับให้ paginate ขึ้นหน้าใหม่จริง
+            // paginate() คืน { pages, count } ไม่ใช่อาร์เรย์
+            const pg = paginate([{ el: 'action', text: 'ก่อนคั่น' },
+                                 { el: 'page-break', text: '' },
+                                 { el: 'action', text: 'หลังคั่น' }], {}).pages;
+            check('[r3-6] --- ทำให้ paginate ขึ้นหน้าใหม่จริง', pg.length === 2, pg.length);
+            check('[r3-6] เนื้อหาไปอยู่คนละหน้า',
+                  pg[0].blocks[0].text === 'ก่อนคั่น' && pg[1].blocks[0].text === 'หลังคั่น',
+                  JSON.stringify(pg.map((p) => p.blocks.map((x) => x.text))));
+            check('[r3-6] page-break ไม่ถูกนับเป็นเนื้อหาในหน้า',
+                  !pg.some((p) => p.blocks.some((x) => x.el === 'page-break')));
+            // ไม่มี --- = ไม่ขึ้นหน้าใหม่ (กันเช็คข้างบนผ่านเพราะเหตุอื่น)
+            check('[r3-6] ไม่มี --- ก็อยู่หน้าเดียวตามเดิม',
+                  paginate([{ el: 'action', text: 'ก่อนคั่น' },
+                            { el: 'action', text: 'หลังคั่น' }], {}).pages.length === 1);
+          }
 
           // ทดสอบบน editor จริง — บล็อกที่ active สดอยู่ (บทเรียน 2)
           const chC = (await kapi.readJson(await kapi.join(dPath, 'draft.json'))).chapters[0];
