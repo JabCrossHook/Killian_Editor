@@ -1,6 +1,52 @@
 // home-ui.js — หน้า Home แสดงรายการโปรเจกต์ทั้งหมดแบบ Grid (เหมือน Notion)
-import { $, el, state, setStatus, log } from './core.js';
+import { $, el, state, setStatus, log, t as tr } from './core.js';
 import { activate, closeTab, loadProject, newProject } from './app.js';
+// [alpha.60r3 ข้อ 9] ปุ่มส่งออก/นำเข้าโปรเจกต์บนหน้าแรก
+import { exportProjectZip, importProjectZip } from './export-zip.js';
+
+/**
+ * [alpha.60r3 ข้อ 9] แถวปุ่มมาตรฐานของหน้าแรก — ใช้ร่วมกันทั้ง 3 โหมดการวาด
+ * (กล่อง overlay · แท็บหน้าแรก · แผงหน้าแรก) เพื่อไม่ให้หลุดที่ใดที่หนึ่งเหมือนรอบก่อน ๆ
+ *
+ * ลำดับตามภาพที่ผู้ใช้ส่งมา (DaVinci Resolve):
+ *   [📤 ส่งออก] [📥 นำเข้า] ── ช่องว่างยืดได้ ── [➕ สร้างโปรเจกต์ใหม่] [📂 เปิดโปรเจกต์] [✕ ปิด]
+ * @param {{onClose?:Function, afterOpen?:Function}} opts  ไม่มี onClose = ไม่แสดงปุ่มปิด
+ */
+export function buildHomeActions(opts = {}) {
+  const actions = el('div', 'home-actions');
+  const mk = (cls, label, title) => {
+    const b = el('button', cls, label);
+    if (title) b.title = title;
+    return b;
+  };
+  const exportBtn = mk('home-btn-export', tr('home.export', '📤 ส่งออก'), 'ส่งออกโปรเจกต์ที่เปิดอยู่เป็นไฟล์ .zip');
+  const importBtn = mk('home-btn-import', tr('home.import', '📥 นำเข้า'), 'นำเข้าโปรเจกต์จากไฟล์ .zip');
+  const spacer = el('div', 'home-actions-spacer');
+  const newBtn = mk('k-ok home-btn-new', tr('home.newProject', '➕ สร้างโปรเจกต์ใหม่'));
+  const openBtn = mk('home-btn-open', tr('home.openProject', '📂 เปิดโปรเจกต์'));
+  const closeBtn = mk('home-btn-close', tr('home.close', '✕ ปิด'), 'ปิดหน้าแรก');
+
+  exportBtn.onclick = async () => {
+    if (!state.root) { setStatus('เปิดโปรเจกต์ก่อน จึงจะส่งออกเป็น .zip ได้'); return; }
+    await exportProjectZip();
+  };
+  importBtn.onclick = async () => {
+    const dest = await importProjectZip();
+    if (dest) opts.onClose?.();          // เปิดโปรเจกต์ใหม่แล้ว → ปิดหน้าแรกให้เห็นงาน
+  };
+  newBtn.onclick = () => { opts.onClose?.(); newProject(); };
+  openBtn.onclick = async () => {
+    const projectPath = await kapi.openProjectDialog?.();
+    if (!projectPath) return;
+    opts.onClose?.();
+    await loadProject(projectPath);
+  };
+  closeBtn.onclick = () => opts.onClose?.();
+
+  actions.append(exportBtn, importBtn, spacer, newBtn, openBtn);
+  if (opts.onClose) actions.append(closeBtn); else closeBtn.remove();
+  return { actions, exportBtn, importBtn, spacer, newBtn, openBtn, closeBtn };
+}
 
 // เปิดหน้า Home — สร้างแท็บใหม่ หรือเปิดแท็บที่มีอยู่แล้ว
 export async function openHome() {
@@ -34,31 +80,19 @@ export async function renderHome(pane) {
   head.append(el('h1', 'home-title', 'Killian 2'));
   head.append(el('p', 'home-sub', 'โปรแกรมเขียนนิยาย+บทภาพยนตร์ แบบพกพา'));
   
-  // ปุ่มสร้างโปรเจกต์ใหม่
-  const actions = el('div', 'home-actions');
-  const newBtn = el('button', 'k-ok home-new-btn', '+ สร้างโปรเจกต์ใหม่');
-  const openBtn = el('button', null, '📂 เปิดโปรเจกต์…');
-  actions.append(newBtn, openBtn);
-  
+  // [alpha.60r3 ข้อ 9] แถวปุ่มมาตรฐาน — ปิดแท็บหน้าแรกเมื่อกด ✕
+  const { actions } = buildHomeActions({ onClose: () => closeTab('::home::') });
+
   // คอนเทนเนอร์การ์ด (grid)
   const grid = el('div', 'home-grid');
   grid.id = 'home-grid';
-  
+
   wrap.append(head, actions, grid);
   pane.append(wrap);
-  
+
   // --- โหลดรายการโปรเจกต์ ---
   await loadProjects(grid);
-  
-  // --- ผูกปุ่มสร้าง/เปิดโปรเจกต์ ---
-  newBtn.onclick = () => newProject();
-  openBtn.onclick = async () => {
-    const projectPath = await kapi.openProjectDialog?.();
-    if (projectPath) {
-      await loadProject(projectPath);
-    }
-  };
-  
+
   return wrap;
 }
 
@@ -238,12 +272,12 @@ export async function showHomeDialog() {
   closeBtn.onclick = () => ov.remove();
   head.append(closeBtn);
   head.append(el('h2', 'home-title', 'Killian 2'));
-  const actions = el('div', 'home-actions');
-  const newBtn = el('button', 'k-ok', '+ สร้างโปรเจกต์ใหม่');
-  const openBtn = el('button', null, '📂 เปิด');
-  const viewBtn = el('button', null, '📋');
+  // [alpha.60r3 ข้อ 9] สวิตช์มุมมอง (การ์ด/รายการ) ย้ายขึ้นมาอยู่บนหัวกล่อง ข้างปุ่ม ✕
+  // — แถวปุ่มด้านล่างจะได้เหลือเฉพาะคำสั่งที่ทำอะไรกับโปรเจกต์จริง ๆ
+  const viewBtn = el('button', 'home-view-btn', '📋');
   viewBtn.title = 'สลับมุมมอง (การ์ด / รายการ)';
-  actions.append(newBtn, openBtn, viewBtn);
+  head.append(viewBtn);
+  const { actions } = buildHomeActions({ onClose: () => ov.remove() });
   const grid = el('div', 'home-grid');
   const scroll = el('div', 'home-dlg-scroll');   // กรอบคงที่ · เลื่อนเฉพาะรายการข้างใน
   scroll.append(grid);
@@ -252,11 +286,6 @@ export async function showHomeDialog() {
   document.body.append(ov);
   ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
 
-  newBtn.onclick = () => { ov.remove(); newProject(); };
-  openBtn.onclick = async () => {
-    const projectPath = await kapi.openProjectDialog?.();
-    if (projectPath) { ov.remove(); const { loadProject } = await import('./app.js'); await loadProject(projectPath); }
-  };
   document.addEventListener('keydown', function esc(e) { if (e.key === 'Escape') { ov.remove(); document.removeEventListener('keydown', esc); } });
 
   // บั๊ก #12: ขนาดต้อง "นิ่ง" — จำมุมมองที่เลือกไว้ และตั้ง --home-thumb จากตั้งค่าโปรเจกต์
@@ -280,19 +309,11 @@ export async function renderHomePanel(host) {
   const wrap = el('div', 'home-wrap');
   const head = el('div', 'home-head');
   head.append(el('h2', 'home-title', 'Killian 2'));
-  const actions = el('div', 'home-actions');
-  const newBtn = el('button', 'k-ok', '+ สร้างโปรเจกต์ใหม่');
-  const openBtn = el('button', null, '📂 เปิด');
-  actions.append(newBtn, openBtn);
+  // แผงหน้าแรกปิดด้วยปุ่ม ✕ บนหัวแผงอยู่แล้ว → ไม่ต้องมีปุ่มปิดซ้ำในแถวคำสั่ง
+  const { actions } = buildHomeActions();
   const list = el('div', 'home-grid');
   wrap.append(head, actions, list);
   host.append(wrap);
-
-  newBtn.onclick = () => newProject();   // (เดิม `const {newProject}=import(...)` = undefined → TypeError)
-  openBtn.onclick = async () => {
-    const projectPath = await kapi.openProjectDialog?.();
-    if (projectPath) { const { loadProject } = await import('./app.js'); await loadProject(projectPath); }
-  };
 
   await loadPanelProjects(list);
   return wrap;

@@ -1202,8 +1202,20 @@ body.paper-mode .sp-raw { color:#888; }
 .home-head { text-align:center; margin-bottom:32px; }
 .home-title { font-size:calc(36px * var(--ui-scale, 1)); font-weight:700; color:var(--bright); margin:0 0 8px; }
 .home-sub { color:var(--dim); font-size:calc(15px * var(--ui-scale, 1)); margin:0; }
-.home-actions { display:flex; justify-content:center; gap:12px; margin-bottom:36px; }
+/* [alpha.60r3 ข้อ 9] แถวปุ่มหน้าแรกแบบ DaVinci Resolve:
+   [ส่งออก][นำเข้า] ── ช่องว่างยืดได้ ── [สร้างใหม่][เปิด][ปิด]
+   ปุ่มกว้างเท่ากันทุกใบ (min-width) — ไม่งั้นปุ่มไทยสั้น-ยาวไม่เท่ากันดูรก */
+.home-actions { display:flex; align-items:center; gap:10px; margin-bottom:36px; flex-wrap:wrap; }
+.home-actions-spacer { flex:1 1 24px; min-width:24px; }
+.home-actions button { min-width:120px; padding:8px 16px;
+  font-size:calc(13.5px * var(--ui-scale, 1)); white-space:nowrap; }
+.home-actions .home-btn-new { font-weight:600; }
+.home-actions .home-btn-close { min-width:72px; }
 .home-new-btn { font-size:calc(15px * var(--ui-scale, 1)); padding:10px 24px; }
+/* สวิตช์มุมมองบนหัวกล่อง (ย้ายมาจากแถวปุ่ม) */
+.home-view-btn { position:absolute; right:44px; top:10px; min-width:0; padding:2px 10px;
+  background:none; border:1px solid var(--border); border-radius:6px; color:var(--dim); cursor:pointer; }
+.home-view-btn:hover { color:var(--fg); border-color:var(--accent); }
 /* บั๊ก #12: หน้าแรกต้องได้ 4 คอลัมน์ และ "ขนาดนิ่ง" — ไม่เปลี่ยนตอนสลับการ์ด ↔ รายการ
    --home-thumb = ความกว้างการ์ด (ตั้งได้ที่ ตั้งค่า → ทั่วไป) · การ์ดสูงคงที่ ไม่ยืดตามเนื้อหา */
 :root { --home-thumb:190px; }
@@ -1951,8 +1963,53 @@ body.fm2 #tabs { display:none; }
 /* ====== AI Chat Tab ====== */
 .ai-chat-msg { margin:6px 0; padding:8px 12px; border-radius:8px; font-size:calc(14px * var(--ui-scale, 1)); line-height:1.8; }
 
+/* ====== [alpha.60r3 ข้อ 6] ซ่อนรหัสนำหน้าบรรทัด (fountain / มาร์กดาวน์) ======
+   ซ่อนเฉพาะ "ตัวนำหน้า" — เนื้อหาหลังรหัสยังแสดงตามปกติ และไฟล์ .md ไม่ถูกแก้เลย */
+.k-md-hide-prefix { display:none; }
+
+/* ====== [alpha.60r3 ข้อ 5] แผง "🧠 AI วิเคราะห์" (ตัวอย่างหน้าตา) ====== */
+.aia-wrap { padding:12px 14px; display:flex; flex-direction:column; gap:12px; }
+.aia-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.aia-title { font-weight:700; font-size:calc(15px * var(--ui-scale, 1)); display:flex; align-items:center; gap:6px; }
+.aia-badge { font-size:calc(11px * var(--ui-scale, 1)); color:#d9b757;
+  border:1px solid #d9b757; border-radius:999px; padding:1px 10px; }
+.aia-lead { color:var(--dim); font-size:calc(12.5px * var(--ui-scale, 1)); line-height:1.7; }
+.aia-stats { display:flex; gap:8px; flex-wrap:wrap; }
+.aia-stat { flex:1 1 72px; background:var(--bar); border:1px solid var(--border);
+  border-radius:8px; padding:6px 8px; text-align:center; }
+.aia-stat-val { font-weight:700; font-size:calc(15px * var(--ui-scale, 1)); }
+.aia-stat-label { color:var(--dim); font-size:calc(11px * var(--ui-scale, 1)); }
+.aia-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:10px; }
+.aia-card { background:var(--bar); border:1px solid var(--border); border-radius:10px;
+  padding:10px 12px; display:flex; flex-direction:column; gap:6px; }
+.aia-card-head { font-weight:600; font-size:calc(13.5px * var(--ui-scale, 1)); }
+.aia-card-desc { color:var(--dim); font-size:calc(12px * var(--ui-scale, 1)); line-height:1.65; }
+.aia-card-list { margin:0; padding-left:18px; color:var(--dim);
+  font-size:calc(11.5px * var(--ui-scale, 1)); line-height:1.7; }
+.aia-run { align-self:flex-start; margin-top:2px; background:none;
+  border:1px solid var(--border); border-radius:6px; color:var(--dim); cursor:pointer;
+  padding:2px 12px; font-size:calc(12px * var(--ui-scale, 1)); }
+.aia-run:hover { color:var(--fg); border-color:var(--accent); }
+.aia-foot { color:var(--dim); font-size:calc(11.5px * var(--ui-scale, 1)); line-height:1.7;
+  border-top:1px solid var(--border); padding-top:8px; }
+
+/* ====== [alpha.60r3 ข้อ 2] ปุ่ม ✨ ให้ AI เติมช่องคุณสมบัติฉาก ====== */
+.k-ai-fill { flex:0 0 auto; align-self:flex-start; margin-left:4px;
+  background:none; border:1px solid var(--border); border-radius:6px;
+  color:var(--dim); cursor:pointer; padding:2px 7px; line-height:1.4;
+  font-size:calc(13px * var(--ui-scale, 1)); }
+.k-ai-fill:hover:not(:disabled) { color:var(--accent-hi); border-color:var(--accent); }
+.k-ai-fill:disabled { opacity:.5; cursor:progress; }
+
 /* ====== Wiki Backlinks section ====== */
 .wiki-backlinks { margin-top:24px; padding-top:16px; border-top:1px solid var(--border); }
+/* [alpha.60r3 ข้อ 1] ปุ่ม 🔄 บนหัวข้อ "ฉากที่กล่าวถึง" */
+.wiki-bl-head { display:flex; align-items:center; gap:6px; }
+.wiki-bl-refresh { background:none; border:1px solid var(--border); border-radius:6px;
+  color:var(--dim); cursor:pointer; padding:0 6px; line-height:1.6;
+  font-size:calc(12px * var(--ui-scale, 1)); }
+.wiki-bl-refresh:hover:not(:disabled) { color:var(--fg); border-color:var(--accent); }
+.wiki-bl-refresh:disabled { opacity:.45; cursor:progress; }
 
 
 /* ================= ขนาด UI (--ui-scale) — โครงสร้างของ "เปลือกโปรแกรม" (บั๊ก #9) =================
@@ -2191,8 +2248,8 @@ body.paper-mode .roster-page { background:var(--paper); color:var(--paper-ink); 
   max-width:94vw; height:78vh; min-height:420px;
   display:flex; flex-direction:column; overflow:hidden; }
 .k-home-dlg .home-dlg-scroll { flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; padding-right:4px; }
-.k-home-dlg .home-head { flex:0 0 auto; }
-.k-home-dlg .home-actions { flex:0 0 auto; }
+.k-home-dlg .home-head { flex:0 0 auto; position:relative; }
+.k-home-dlg .home-actions { flex:0 0 auto; margin-bottom:14px; }
 /* มุมมองรายการต้องไม่ทำให้กล่องเปลี่ยนขนาด — สูงเท่ากันทุกแถว เลื่อนในกรอบเดิม */
 .k-home-dlg .home-grid { align-content:start; }
 

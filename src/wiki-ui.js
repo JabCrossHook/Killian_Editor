@@ -1,11 +1,12 @@
 // wiki-ui.js — Wiki: หมวด (สร้าง/แก้/ลบ) + เอนทิตี้ (เพิ่ม/เปิด/ทำสำเนา)
-import { INV_C, activate, allCatKeys, applyTemplate, buildTree, catEditDialog, catIcon, catKeyFrom, catLabel, closeTab, entityCreateDialog, fieldLabels, guid, invertRole, markDirty, pickFromList, relationDialog, revealFile, safeName, saveProjectMeta, spellChecker, wikiRoot } from './app.js';
-import { $, BUILTIN_CATS, el, setStatus, smart, state } from './core.js';
+import { INV_C, activate, allCatKeys, applyTemplate, buildTree, catEditDialog, catIcon, catKeyFrom, catLabel, closeTab, entityCreateDialog, fieldLabels, findEntityInScenes, guid, invertRole, markDirty, pickFromList, relationDialog, revealFile, safeName, saveProjectMeta, spellChecker, wikiRoot } from './app.js';
+// บทเรียน 68: ไฟล์นี้มี `for (const t of state.tabs.values())` อยู่แล้ว → import เป็น `tr` เสมอ
+import { $, BUILTIN_CATS, el, setStatus, smart, state, t as tr } from './core.js';
 import { pickImage } from './gallery.js';
 import { confirmBox, ask } from './ui.js';
 import { iconHtml } from './icons.js';
 import { CAT_TH, WikiEditor } from './wiki.js';
-import { ensureAutoLink, renderBacklinksTab } from './world-story/auto-link-ui.js';
+import { ensureAutoLink, renderBacklinksTab, rebuildAutoLink } from './world-story/auto-link-ui.js';
 import { notifyEntityRenamed } from './auto-task/event-ui.js';
 import { findScenePath } from './project-scan.js';
 import { choicesByCharacter, renderChoicePanel } from './player-choices.js';
@@ -116,6 +117,8 @@ export async function openEntity(file) {
     },
     // [alpha.58] หาไฟล์ในดิสก์ — เอนทิตี้เป็นไฟล์ .json แก้นอกโปรแกรมได้ ต้องเปิดโฟลเดอร์เจอ
     onReveal: (f) => revealFile(f),
+    // [alpha.60r3 ข้อ 1] คลิกขวาในหน้า Wiki → เมนูรายชื่อฉาก (ทางเดียวกับ Explorer)
+    onFindInScenes: (f, name, x, y) => findEntityInScenes(f, name || tab.title, x, y),
     onSnapshot: async () => {
       const { snapshotFile } = await import('./app.js');
       if (tab.wiki.dirty) await tab.wiki.save();
@@ -185,6 +188,8 @@ export async function openEntity(file) {
   });
   tab.wiki.onDirty(() => markDirty(tab));
   // ---- Backlinks (ข้อ 86): ฉากที่กล่าวถึงเอนทิตี้นี้ ----
+  // [alpha.60r3 ข้อ 1] หัวข้อมีปุ่ม 🔄 บังคับสร้างดัชนีใหม่ทั้งชุด
+  // (ดัชนีอัปเดตเองทุกครั้งที่บันทึกฉากแล้ว — ปุ่มนี้ไว้ใช้ตอนแก้ไฟล์ .md นอกโปรแกรม)
   function attachBacklinks() { ensureAutoLink().then(() => {
     const wrap = pane.querySelector('.wiki-wrap');
     if (!wrap) return;
@@ -192,8 +197,21 @@ export async function openEntity(file) {
     if (!blSec) {
       blSec = el('div', 'wiki-backlinks');
       blSec.style.cssText = 'margin-top:24px;padding-top:16px;border-top:1px solid var(--border)';
-      const blHead = el('div'); blHead.style.cssText = 'font-weight:600;color:var(--dim);margin-bottom:8px';
-      blHead.innerHTML = iconHtml('link', 14) + ' ฉากที่กล่าวถึง';
+      const blHead = el('div', 'wiki-bl-head');
+      blHead.style.cssText = 'font-weight:600;color:var(--dim);margin-bottom:8px;display:flex;align-items:center;gap:6px';
+      const blTitle = el('span');
+      blTitle.innerHTML = iconHtml('link', 14) + ' ' + tr('wiki.backlinksTitle', 'ฉากที่กล่าวถึง');
+      const reBtn = el('button', 'wiki-bl-refresh', '🔄');
+      reBtn.type = 'button';
+      reBtn.title = tr('wiki.backlinksRefresh', 'สร้างดัชนีเชื่อมโยงใหม่ทั้งโปรเจกต์');
+      reBtn.onclick = async () => {
+        reBtn.disabled = true;
+        setStatus(tr('wiki.backlinksScanning', 'กำลังสแกนฉากทั้งโปรเจกต์…'));
+        try { await rebuildAutoLink(); } finally { reBtn.disabled = false; }
+        attachBacklinks();
+        setStatus(tr('wiki.backlinksDone', 'อัปเดตดัชนี “ฉากที่กล่าวถึง” แล้ว'));
+      };
+      blHead.append(blTitle, reBtn);
       blSec.append(blHead);
       const blBody = el('div', 'wiki-bl-body');
       blSec.append(blBody);
@@ -226,6 +244,8 @@ export async function openEntity(file) {
     });
   }
   attachBacklinks();
+  // [alpha.60r3 ข้อ 1] app.js เรียกตัวนี้หลังบันทึกฉาก → รายการ "ฉากที่กล่าวถึง" สดเสมอ
+  tab.refreshBacklinks = attachBacklinks;
   tabBtn.onclick = (e) => { if (e.target !== x) activate(file); };
   x.onclick = () => closeTab(file);
   state.tabs.set(file, tab);

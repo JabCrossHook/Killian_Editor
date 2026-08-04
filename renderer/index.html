@@ -106,6 +106,8 @@
   <button id="tb-img" class="tb" title="แทรกรูป" data-icon="image-add"></button>
   <button id="tb-gallery" class="tb" title="คลังรูปภาพ (Ctrl+Shift+G)" data-icon="image"></button>
   <button id="tb-source" class="tb" title="ดู Markdown ดิบของฉากนี้" data-icon="code-alt"></button>
+  <!-- [alpha.60r3 ข้อ 6] ซ่อน/แสดงรหัสนำหน้าบรรทัด (. @ > $shot # …) — เปิดไว้เป็นค่าเริ่มต้น -->
+  <button id="tb-md-codes" class="tb tb-toggle" title="ซ่อนรหัสนำหน้าบรรทัด (. @ &gt; $shot # …)" data-icon="eye"></button>
   <button id="tb-read" class="tb tb-toggle" title="โหมดอ่าน (เต็มจอ)" data-icon="book-open"></button>
   <button id="tb-gsearch" class="tb" title="ค้นหาทั้งโปรเจกต์ (Ctrl+Shift+F)" data-icon="search"></button>
   <button id="tb-tree-panel"    class="tb tb-toggle" title="โปรเจกต์ (Explorer)" data-icon="book-content"></button>
@@ -127,6 +129,8 @@
   <button id="tb-dashboard" class="tb tb-toggle" title="แดชบอร์ด (Dashboard — สถิติ · ความคืบหน้า)" data-icon="chart"></button>
   <button id="tb-ai" class="tb" title="AI ผู้ช่วยเขียน" data-icon="bot"></button>
   <button id="tb-ai-chat" class="tb" title="แชทกับเรื่องของคุณ" data-icon="chat"></button>
+  <!-- [alpha.60r3 ข้อ 5] แผงวิเคราะห์ด้วย AI -->
+  <button id="tb-ai-analyzer" class="tb tb-toggle" title="🧠 AI วิเคราะห์ (จังหวะเรื่อง · ตัวละคร · คำซ้ำ)" data-icon="brain"></button>
   <button id="tb-plug" class="tb" title="คำสั่งจากปลั๊กอิน" style="display:none" data-icon="extension"></button>
 </div>
 <div id="findbar">
@@ -189,6 +193,8 @@
     <div id="maps-panel" class="k-featpanel"><div id="maps-body"></div></div>
     <!-- [alpha.60r1 ข้อ 21] คลังรูปเป็นแผง — เดิมเป็นแท็บเอกสาร แย่งที่กับฉากที่กำลังเขียน -->
     <div id="gal-panel" class="k-featpanel"><div id="gal-body"></div></div>
+    <!-- [alpha.60r3 ข้อ 5] แผงวิเคราะห์ด้วย AI (ตัวอย่างหน้าตา) -->
+    <div id="ai-analyzer-panel" class="k-featpanel"><div id="ai-analyzer-body"></div></div>
 </div>
 <div id="statusbar"><span id="status" data-i18n="app.ready">พร้อม</span>
   <span id="status-center"></span>

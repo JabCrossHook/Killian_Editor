@@ -6,6 +6,9 @@ import * as spell from './spell.js';
 // [alpha.60r2 ข้อ 13] คุณสมบัติฉากอยู่ใน frontmatter ของ .md เป็นหลัก — scenes.json เป็นดัชนี/แคช
 // ทุกทางอ่าน-เขียนผ่าน readSceneMeta/writeSceneMeta ที่เดียว
 import { readSceneMeta, writeSceneMeta, SCENE_HEAVY_KEYS } from './scene-meta.js';
+// [alpha.60r3 ข้อ 2] ปุ่ม ✨ ให้ AI เขียนเรื่องย่อ/POV/อารมณ์/ความขัดแย้ง จากเนื้อฉาก
+import { attachAiFieldButton } from './ai-synopsis.js';
+import { parseMdFile } from './md.js';
 
 export async function sceneProps(dPath, ch, sc) {
   const sf = await kapi.join(dPath, 'scenes.json');
@@ -19,12 +22,14 @@ export async function sceneProps(dPath, ch, sc) {
   const ov = el('div', 'k-overlay');
   const box = el('div', 'k-dialog');
   box.append(el('div', 'k-dlg-title', 'คุณสมบัติฉาก — ' + row.title));
+  // mk คืน <input> เหมือนเดิม แต่จำแถวไว้ให้ปุ่ม ✨ มาแปะทีหลังได้
+  const rowOf = new Map();
   const mk = (label, val, tag = 'input') => {
     const r = el('div', 'wiki-row');
     r.append(el('label', null, label));
     const i = el(tag, 'wiki-input');
     i.value = val || '';
-    r.append(i); box.append(r); return i;
+    r.append(i); box.append(r); rowOf.set(i, r); return i;
   };
   // ช่องเลือก (สถานะ/สี) — คืน <select>
   const mkSelect = (label, options, cur) => {
@@ -72,6 +77,17 @@ export async function sceneProps(dPath, ch, sc) {
   // เลือกได้อย่างละหนึ่ง — ติ๊กตัวหนึ่งแล้วอีกตัวหลุดเอง
   iFb.addEventListener('change', () => { if (iFb.checked) iFf.checked = false; });
   iFf.addEventListener('change', () => { if (iFf.checked) iFb.checked = false; });
+
+  // ---- [alpha.60r3 ข้อ 2] ปุ่ม ✨ ให้ AI เขียนให้ (อ่านเนื้อฉากจากไฟล์ .md ตรง ๆ) ----
+  const aiCtx = async () => {
+    let body = '';
+    try { body = parseMdFile(await kapi.readFile(file)).body || ''; } catch {}
+    return { body, title: row.title || '' };
+  };
+  attachAiFieldButton(rowOf.get(iSyn), iSyn, 'synopsis', aiCtx);
+  attachAiFieldButton(rowOf.get(iPov), iPov, 'pov', aiCtx);
+  attachAiFieldButton(rowOf.get(iEmotion), iEmotion, 'emotion', aiCtx);
+  attachAiFieldButton(rowOf.get(iConflict), iConflict, 'conflict', aiCtx);
 
   const btns = el('div', 'k-dlg-btns');
   const cB = el('button', null, 'ยกเลิก');

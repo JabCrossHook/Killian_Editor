@@ -31,8 +31,10 @@ export class WikiEditor {
                                     onOpenEntity = null, pickFromGallery = null,
                                     getChecker = null, onRendered = null,
                                     onVersions = null, onSnapshot = null,
-                                    onSwapTemplate = null, onReveal = null } = {}) {
+                                    onSwapTemplate = null, onReveal = null,
+                                    onFindInScenes = null } = {}) {
     this.onRendered = onRendered;
+    this.onFindInScenes = onFindInScenes;   // [alpha.60r3 ข้อ 1] คลิกขวา → เมนูรายชื่อฉากที่กล่าวถึง
     this.onVersions = onVersions; this.onSnapshot = onSnapshot;   // ประวัติเวอร์ชันหน้า Wiki (ข้อ 10)
     this.onReveal = onReveal;                                      // [alpha.58] หาไฟล์ในดิสก์
     this.onSwapTemplate = onSwapTemplate;                          // เปลี่ยนเทมเพลต (ข้อ 18b)
@@ -76,13 +78,17 @@ export class WikiEditor {
         e.preventDefault();
         const items = [];
         if (this.onOpenEntity) {
+          // [alpha.60r3 ข้อ 1] เดิมแค่ "เลื่อนจอลงไปหาแผง backlinks" — ผู้ใช้ที่แผงยังว่าง
+          // (ดัชนียังไม่ทันสร้าง) เห็นเหมือนคำสั่งไม่ทำงานเลย
+          // ตอนนี้เปิดเมนูรายชื่อฉากตรง ๆ แบบเดียวกับคลิกขวาใน Explorer (findEntityInScenes)
           items.push({ label: iconHtml('link', 14) + ' ค้นหาในฉาก (Find on location)', click: async () => {
-            // เปิด centralize/backlinks สำหรับ entity นี้
-            if (this.file) {
+            if (!this.file) return;
+            if (this.onFindInScenes) {
+              await this.onFindInScenes(this.file, this.e.name || '', e.clientX, e.clientY);
+            } else {
               const { ensureAutoLink } = await import('./world-story/auto-link-ui.js');
               await ensureAutoLink();
               if (this.onRendered) this.onRendered(wrap);
-              // เลื่อนไปที่ส่วน backlinks
               const bl = wrap.querySelector('.wiki-backlinks');
               if (bl) bl.scrollIntoView({ behavior: 'smooth' });
             }

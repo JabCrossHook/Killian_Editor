@@ -26,29 +26,56 @@ const ALIAS = {
 export const panelId = (id) => ALIAS[id] || id;
 
 // ทะเบียนหน้าตาของแผง (registry ของ PanelManager เก็บแค่บางฟิลด์ จึงแยกเก็บที่นี่)
+// [alpha.60r3 ข้อ 8] `desc` = คำอธิบายภาษาไทยของแผง — โผล่ในเมนูคลิกขวาบนหัวแผง ("❔ นี่คืออะไร")
+// เขียนให้ตอบคำถามเดียว: "แผงนี้ใช้ทำอะไร และเปิดไว้ตอนไหน"
 export const PANEL_DEFS = [
-  { id: 'toolbar',   title: 'แถบเครื่องมือ', icon: 'layout',       adopt: '#toolbar',       fixed: true, noHead: true, closable: false, floatable: false },
-  { id: 'tree',      title: 'โปรเจกต์',      icon: 'book-content', adopt: '#tree-panel',    defaultSide: 'left',  i18n: 'panel.project' },
-  { id: 'outline',   title: 'Navigation',    icon: 'list-ul',      adopt: '#outline-panel', defaultSide: 'left',  i18n: 'panel.navigation' },
+  { id: 'toolbar',   title: 'แถบเครื่องมือ', icon: 'layout',       adopt: '#toolbar',       fixed: true, noHead: true, closable: false, floatable: false,
+    desc: 'ปุ่มจัดรูปแบบและสวิตช์โหมดทั้งหมด — ตัวหนา/เอียง · จัดหน้า · โหมดอ่าน/โฟกัส · เปิด-ปิดแผงอื่น' },
+  { id: 'tree',      title: 'โปรเจกต์',      icon: 'book-content', adopt: '#tree-panel',    defaultSide: 'left',  i18n: 'panel.project',
+    desc: 'สารบัญของผลงานทั้งเล่ม — เล่ม → บท → ฉาก พร้อม Wiki คลังรูป และถังขยะ · ลากสลับลำดับได้ · ช่องค้นหาด้านบนกรองได้ทั้งชื่อ แท็ก และสถานะ' },
+  { id: 'outline',   title: 'Navigation',    icon: 'list-ul',      adopt: '#outline-panel', defaultSide: 'left',  i18n: 'panel.navigation',
+    desc: 'เค้าโครงหัวข้อของ "ไฟล์ที่เปิดอยู่" — คลิกหัวข้อเพื่อกระโดดไปตำแหน่งนั้นในเอกสาร' },
   // แผงเอกสารไม่มีหัวแผง (พื้นที่ทำงานหลัก — แถบแท็บเอกสาร #tabs ทำหน้าที่นั้นอยู่แล้ว)
-  { id: 'docs',      title: 'เอกสาร',         icon: 'file',         adopt: '#content',       noHead: true, closable: false, floatable: false },
-  { id: 'props',     title: 'คุณสมบัติ',      icon: 'clipboard',    adopt: '#props-panel',   defaultSide: 'right', i18n: 'panel.properties' },
-  { id: 'statusbar', title: 'แถบสถานะ',      icon: 'grid',         adopt: '#statusbar',     fixed: true, noHead: true, closable: false, floatable: false },
-  { id: 'log',       title: 'บันทึก',         icon: 'history',      adopt: '#log-panel',     defaultSide: 'right', closable: true, floatable: true, i18n: 'panel.logTitle' },
-  { id: 'search',    title: 'ค้นหา',          icon: 'search',       adopt: '#search-panel',  defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.searchTitle' },
-  { id: 'notes',     title: 'สมุดโน้ตด่วน',    icon: 'note',         adopt: '#notes-panel',   defaultSide: 'right', closable: true, floatable: true, i18n: 'panel.notesTitle' },
-  { id: 'comments',  title: 'คอมเมนต์',        icon: 'chat',         adopt: '#comments-panel', defaultSide: 'right', closable: true, floatable: true, i18n: 'panel.commentsTitle' },
+  { id: 'docs',      title: 'เอกสาร',         icon: 'file',         adopt: '#content',       noHead: true, closable: false, floatable: false,
+    desc: 'พื้นที่เขียนหลัก — แท็บทุกใบที่เปิดอยู่ ทั้งฉาก บทภาพยนตร์ และหน้า Wiki (ปิดไม่ได้)' },
+  { id: 'props',     title: 'คุณสมบัติ',      icon: 'clipboard',    adopt: '#props-panel',   defaultSide: 'right', i18n: 'panel.properties',
+    desc: 'คุณสมบัติของฉากที่เลือก — เรื่องย่อ · มุมมอง · อารมณ์ · ความขัดแย้ง · สถานะ · สี · แท็ก · บันทึกอัตโนมัติขณะพิมพ์' },
+  { id: 'statusbar', title: 'แถบสถานะ',      icon: 'grid',         adopt: '#statusbar',     fixed: true, noHead: true, closable: false, floatable: false,
+    desc: 'ข้อมูลย่อของงานที่เปิดอยู่ — จำนวนคำ/หน้า · ข้อผิดพลาดในบท · แถบซูมหน้ากระดาษ' },
+  { id: 'log',       title: 'บันทึก',         icon: 'history',      adopt: '#log-panel',     defaultSide: 'right', closable: true, floatable: true, i18n: 'panel.logTitle',
+    desc: 'บันทึกการทำงานของโปรแกรม — ใช้ตอนหาสาเหตุเมื่อมีอะไรไม่เป็นอย่างที่คาด' },
+  { id: 'search',    title: 'ค้นหา',          icon: 'search',       adopt: '#search-panel',  defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.searchTitle',
+    desc: 'ค้นข้อความทั้งโปรเจกต์ — ทุกฉาก ทุกเล่ม และหน้า Wiki · คลิกผลลัพธ์เพื่อเปิดไฟล์ที่บรรทัดนั้น' },
+  { id: 'notes',     title: 'สมุดโน้ตด่วน',    icon: 'note',         adopt: '#notes-panel',   defaultSide: 'right', closable: true, floatable: true, i18n: 'panel.notesTitle',
+    desc: 'ที่จดความคิดชั่วคราวโดยไม่ปนต้นฉบับ — โน้ตผูกกับฉากที่เปิดอยู่ตอนจด' },
+  { id: 'comments',  title: 'คอมเมนต์',        icon: 'chat',         adopt: '#comments-panel', defaultSide: 'right', closable: true, floatable: true, i18n: 'panel.commentsTitle',
+    desc: 'คอมเมนต์ของฉากที่เปิดอยู่ — ตอบกลับเป็นเธรด ปิดงานได้ · เก็บท้ายไฟล์ .md จึงติดไปกับไฟล์เสมอ' },
   // ── บั๊ก #18: ฟีเจอร์ที่ไม่ใช่เอกสาร เป็นแผง ไม่ใช่แท็บ ──
-  { id: 'dashboard', title: 'แดชบอร์ด',        icon: 'grid',         adopt: '#dash-panel',    defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.dashboardTitle' },
-  { id: 'kanban',    title: 'Kanban',          icon: 'grid',         adopt: '#kanban-panel',  defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.kanbanTitle' },
-  { id: 'books',     title: 'จัดการเล่ม',       icon: 'book-content', adopt: '#books-panel',   defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.booksTitle' },
-  { id: 'timeline',  title: 'เส้นเวลา',         icon: 'history',      adopt: '#tl-panel',      defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.timelineTitle' },
-  { id: 'maps',      title: 'แผนที่',           icon: 'layout',       adopt: '#maps-panel',    defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.mapsTitle' },
+  { id: 'dashboard', title: 'แดชบอร์ด',        icon: 'grid',         adopt: '#dash-panel',    defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.dashboardTitle',
+    desc: 'ภาพรวมความคืบหน้า — จำนวนคำเทียบเป้าหมาย · สัดส่วนฉากตามสถานะ · ความยาวของแต่ละบท' },
+  { id: 'kanban',    title: 'Kanban',          icon: 'grid',         adopt: '#kanban-panel',  defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.kanbanTitle',
+    desc: 'กระดานฉากเรียงตามสถานะ — ลากการ์ดข้ามคอลัมน์เพื่อเปลี่ยนสถานะฉากนั้นทันที' },
+  { id: 'books',     title: 'จัดการเล่ม',       icon: 'book-content', adopt: '#books-panel',   defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.booksTitle',
+    desc: 'จัดการเล่มและฉบับร่าง — ปก · คำโปรย · สถานะ · สถิติรายเล่ม · ลากสลับลำดับเล่ม' },
+  { id: 'timeline',  title: 'เส้นเวลา',         icon: 'history',      adopt: '#tl-panel',      defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.timelineTitle',
+    desc: 'ลำดับเหตุการณ์ตาม "เวลาในเรื่อง" — สลับมุมมองการ์ด/Gantt ได้ · ฉากที่ตั้ง storyDate ไว้จะขึ้นเอง' },
+  { id: 'maps',      title: 'แผนที่',           icon: 'layout',       adopt: '#maps-panel',    defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.mapsTitle',
+    desc: 'แผนที่ของโลกในเรื่อง — ปักหมุดบนรูป เชื่อมหมุดเข้ากับฉาก/สถานที่ · หมุดประตูพาลงไปแผนที่ย่อยได้' },
   // [alpha.60r1 ข้อ 21] คลังรูปภาพ — ย้ายจากแท็บเอกสารมาเป็นแผงเหมือนฟีเจอร์อื่น
-  { id: 'gallery',   title: 'คลังรูปภาพ',       icon: 'image',        adopt: '#gal-panel',     defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.galleryTitle' },
+  { id: 'gallery',   title: 'คลังรูปภาพ',       icon: 'image',        adopt: '#gal-panel',     defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.galleryTitle',
+    desc: 'รูปทั้งหมดในโฟลเดอร์ Images ของโปรเจกต์ — ลากลงเอกสารเพื่อแทรก หรือเลือกเป็นปก/รูปประจำตัวใน Wiki' },
+  // [alpha.60r3 ข้อ 5] แผงวิเคราะห์ด้วย AI (ตัวอย่างหน้าตา)
+  { id: 'ai-analyzer', title: '🧠 AI วิเคราะห์',  icon: 'brain',       adopt: '#ai-analyzer-panel', defaultSide: 'right', closable: true, floatable: true, i18n: 'panel.aiAnalyzerTitle',
+    desc: 'ชุดเครื่องมือวิเคราะห์ต้นฉบับด้วย AI — จังหวะเรื่อง · ส่วนโค้งตัวละคร · คำซ้ำ · ความขัดแย้ง · ความยาวฉาก (ยังเป็นตัวอย่างหน้าตา)' },
 ];
 // ชื่อแผงตามภาษาที่โหลดอยู่ (fallback = ชื่อไทยในตาราง) — เรียกใหม่ทุกครั้งที่ render
 function titleOf(d) { return d.i18n ? t(d.i18n, d.title) : d.title; }
+// [alpha.60r3 ข้อ 8] คำอธิบายแผง — i18n key `panel.desc_<id>` (fallback = ข้อความไทยในตาราง)
+export function panelDesc(id) {
+  const d = PANEL_DEFS.find((x) => x.id === panelId(id));
+  if (!d) return '';
+  return t('panel.desc_' + d.id.replace(/-/g, '_'), d.desc || '');
+}
 
 let pm = null;
 let started = false;
@@ -78,7 +105,7 @@ function srcHolder() {
 export function registerPanels() {
   const m = getPanelManager();
   for (const d of PANEL_DEFS) {
-    meta.set(d.id, { title: d.title, icon: d.icon, fixed: !!d.fixed, noHead: !!d.noHead });
+    meta.set(d.id, { title: d.title, icon: d.icon, fixed: !!d.fixed, noHead: !!d.noHead, desc: d.desc || '' });
     const node = d.adopt ? $(d.adopt) : null;
     if (node) adopted.set(d.id, node);
     m.registerPanel(d.id, {
@@ -109,7 +136,7 @@ export function defaultLayout() {
 function renderOpts() {
   for (const d of PANEL_DEFS) {                 // รีเฟรชชื่อตามภาษาปัจจุบัน
     const m = meta.get(d.id) || {};
-    meta.set(d.id, { ...m, title: titleOf(d) });
+    meta.set(d.id, { ...m, title: titleOf(d), desc: panelDesc(d.id) });
   }
   return {
     meta,

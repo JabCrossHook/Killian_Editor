@@ -1,6 +1,13 @@
 // section-ops.js — จัดการเล่ม (section): เพิ่ม/แก้ชื่อ/ลบ/เรียง/สถิติ/บันทึก meta
 import { buildTree, closeTab, guid, safeName } from './app.js';
-import { setStatus, state } from './core.js';
+import { el, setStatus, state } from './core.js';
+
+// [alpha.60r3 ข้อ 3] สถานะเล่ม — ต้องตรงกับ SECTION_STATUSES ใน app.js
+// (คัดลอกคู่ key/label มาไว้ที่นี่เพื่อไม่ต้อง import วนกลับไปหา app.js เพิ่มอีกตัว)
+const SECTION_STATUS_OPTS = [
+  ['outline', 'โครงเรื่อง'], ['drafting', 'กำลังเขียน'], ['revising', 'กำลังแก้'],
+  ['done', 'เขียนจบ'], ['published', 'ตีพิมพ์แล้ว'],
+];
 import { ask, confirmBox } from './ui.js';
 import { countWords, parseMdFile } from './md.js';
 
@@ -93,6 +100,82 @@ export async function renameSection(secPath, sec) {
   const d = await kapi.readJson(sf); d.title = title;
   await kapi.writeFile(sf, JSON.stringify(d, null, 2));
   await buildTree(); setStatus('เปลี่ยนชื่อเล่มเป็น: ' + title);
+}
+
+/**
+ * [alpha.60r3 ข้อ 3] คุณสมบัติของ "เล่ม" — ปก/คำโปรย/สถานะ เคยแก้ได้เฉพาะในหน้าจัดการเล่ม
+ * (ผู้ใช้ที่ทำงานอยู่ใน Explorer ต้องเปิดหน้าใหญ่ทั้งหน้าเพื่อแก้คำโปรยบรรทัดเดียว)
+ * ปกเก็บเป็น path สัมพัทธ์ `../Images/<ไฟล์>` แบบเดียวกับ Book Manager — ห้ามเก็บ path เต็ม
+ * @returns {Promise<boolean>} true = บันทึกจริง
+ */
+export async function sectionProps(secPath, sec) {
+  const sf = await kapi.join(secPath, 'section.json');
+  let d = {};
+  try { d = await kapi.readJson(sf); } catch { setStatus('อ่าน section.json ไม่ได้'); return false; }
+
+  const ov = el('div', 'k-overlay');
+  const box = el('div', 'k-dialog k-section-props');
+  box.append(el('div', 'k-dlg-title', 'คุณสมบัติเล่ม — ' + (d.title || sec?.title || '')));
+  const mk = (label, val, tag = 'input') => {
+    const r = el('div', 'wiki-row'); r.append(el('label', null, label));
+    const i = el(tag, 'wiki-input'); i.value = val == null ? '' : String(val);
+    r.append(i); box.append(r); return { row: r, input: i };
+  };
+  const iTitle = mk('ชื่อเล่ม', d.title || sec?.title || '').input;
+  const rStatus = el('div', 'wiki-row'); rStatus.append(el('label', null, 'สถานะ'));
+  const iStatus = el('select', 'wiki-input k-dlg-select');
+  for (const [k, label] of SECTION_STATUS_OPTS) {
+    const o = el('option', null, label); o.value = k;
+    if (k === (d.status || 'outline')) o.selected = true;
+    iStatus.append(o);
+  }
+  rStatus.append(iStatus); box.append(rStatus);
+  const iBlurb = mk('คำโปรย (Blurb)', d.blurb || '', 'textarea').input;
+  iBlurb.placeholder = 'ข้อความสั้น ๆ ที่ใช้แนะนำเล่มนี้';
+  const iOrder = mk('ลำดับเล่ม', d.order || '').input;
+  iOrder.type = 'number'; iOrder.min = '1';
+
+  // ---- ปก ----
+  const coverRow = el('div', 'wiki-row');
+  coverRow.append(el('label', null, 'ปก'));
+  const coverName = el('span', 'k-sec-cover-name', d.cover || '(ยังไม่มีปก)');
+  const pickBtn = el('button', null, '🖼 เลือกรูป…'); pickBtn.type = 'button';
+  const clrBtn = el('button', null, '✕ เอาปกออก'); clrBtn.type = 'button';
+  coverRow.append(coverName, pickBtn, clrBtn); box.append(coverRow);
+  let cover = d.cover || '';
+  pickBtn.onclick = async () => {
+    const { pickImage } = await import('./gallery.js');
+    const f = await pickImage(state.root);
+    if (!f) return;
+    cover = '../Images/' + String(f).split(/[\\/]/).pop();
+    coverName.textContent = cover;
+  };
+  clrBtn.onclick = () => { cover = ''; coverName.textContent = '(ยังไม่มีปก)'; };
+
+  return new Promise((resolve) => {
+    const btns = el('div', 'k-dlg-btns');
+    const cB = el('button', null, 'ยกเลิก');
+    const okB = el('button', 'k-ok', 'บันทึก');
+    btns.append(cB, okB); box.append(btns); ov.append(box); document.body.append(ov);
+    const close = (v) => { ov.remove(); resolve(v); };
+    cB.onclick = () => close(false);
+    ov.onclick = (e) => { if (e.target === ov) close(false); };
+    box.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(false); });
+    okB.onclick = async () => {
+      const title = iTitle.value.trim();
+      if (title) d.title = title;
+      d.status = iStatus.value;
+      const blurb = iBlurb.value.trim();
+      if (blurb) d.blurb = blurb; else delete d.blurb;
+      if (cover) d.cover = cover; else delete d.cover;
+      const ord = parseInt(iOrder.value, 10);
+      if (Number.isFinite(ord) && ord > 0) d.order = ord;
+      await kapi.writeFile(sf, JSON.stringify(d, null, 2));
+      await buildTree();
+      setStatus('บันทึกคุณสมบัติเล่มแล้ว: ' + (d.title || ''));
+      close(true);
+    };
+  });
 }
 
 export async function deleteSection(secPath, sec) {

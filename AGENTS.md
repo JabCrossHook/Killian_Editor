@@ -20,7 +20,7 @@ export KILLIAN_TEST=1 KILLIAN_TEST_PROJECT=/tmp/k2proj
 xvfb-run -a --server-args="-screen 0 1500x950x24" ./node_modules/.bin/electron . --no-sandbox --disable-gpu
 # ผลอยู่ /tmp/k2result.txt — บรรทัดสุดท้ายต้องเป็น "ALL OK"
 ```
-ปัจจุบัน **1,471 checks · ALL OK** — ห้ามทำให้จำนวนลดลง (unit `npm run test:unit` = **1,014 checks**)
+ปัจจุบัน **1,706 checks · ALL OK** — ห้ามทำให้จำนวนลดลง (unit `npm run test:unit` = **1,913 checks**)
 (บน Windows: `node test/fixture.js C:\tmp\k2proj` แล้วตั้ง `KILLIAN_TEST_PROJECT=C:\tmp\k2proj`
  ผลออกที่ `C:\tmp\k2result.txt` · unit test `.cjs` ใช้ `os.tmpdir()` แล้วรันได้ทั้งสองระบบ)
 
@@ -45,6 +45,15 @@ xvfb-run -a --server-args="-screen 0 1500x950x24" ./node_modules/.bin/electron .
 - **wiki-images.js** (alpha.60r2, บริสุทธิ์) — เมทาดาทารูปของ entity · `migrateImages()` แปลง
   `string[]` เก่า → object ให้อัตโนมัติ · **ทุกที่ที่อ่าน `entity.images` ต้องผ่าน `migrateImages`/`imageFile`**
 - **margin-presets.js/.json** (alpha.60r2, บริสุทธิ์) — ชุดระยะขอบสำเร็จรูป (ตารางอยู่ใน `.json` แก้เองได้)
+- **i18n-csv.js** (alpha.60r3, บริสุทธิ์ 100%) — ไฟล์ภาษา ↔ CSV 3 คอลัมน์ `key,th,en`
+  `jsonToCsv`/`csvToJson`/`mergeStrings` · **ใส่ BOM เสมอ** (Excel บน Windows) · `parseCsv` เป็น state machine
+  · **`mergeStrings` รวมทับ ไม่ลบคีย์ที่ไม่มีในตาราง** — ห้ามเอา CSV ไปทับทั้งไฟล์
+- **markdown-code-toggle.js** (alpha.60r3) — ซ่อนรหัสนำหน้าบรรทัด (`. @ > $shot # …`) ด้วย decoration
+  `MD_PREFIXES` **ต้องเรียงยาวก่อนสั้น** · `prefixLen`/`suffixLen` เป็น pure (เทสได้ไม่ต้องมี ProseMirror)
+  · **ไฟล์ .md ไม่ถูกแก้เลย** — ปิดสวิตช์แล้วรหัสกลับมาครบ
+- **ai-synopsis.js** (alpha.60r3) — ปุ่ม ✨ ให้ AI เติมคุณสมบัติฉาก (synopsis/pov/emotion/conflict)
+  **`attachAiFieldButton()` = จุดเดียวที่ทั้งกล่อง (`scene-props.js`) และแผง (`renderPropsPanel`) เรียก**
+- **ai-analyzer-ui.js** (alpha.60r3) — แผง "🧠 AI วิเคราะห์" (**ตัวอย่างหน้าตา** มีป้ายกำกับ ไม่หลอกว่าเป็นผลจริง)
 - **core.js** — `$`, `el`, `state`, `smart`, `log`, `setStatus`, ค่าคงที่ (`DEFAULT_SETTINGS`, `SCENE_STATUSES`, `SCENE_COLORS`, `BUILTIN_CATS`, `CAT_ICON`, `BASE_ED_FS`, ...) — **ทุกโมดูลใหม่ import จากที่นี่**
 - **app.js** (~5,300 บรรทัด) — orchestrator: bootstrap, explorer (buildTree/tree), tabs, toolbar (floatBar), commands, shortcuts, zoom, **selftest ทั้งหมด**
 
@@ -116,7 +125,7 @@ editor.js · screenplay.js · md.js (⚠️ CommonJS) · smart.js · spell.js ·
 **กฎของโมดูล AI**: ไม่ยิงเน็ตเอง (รับ `client`/`http` เข้ามา) · ไม่ throw (คืน `{ok:false,error,code}` ภาษาไทย) ·
 `buildXPrompt`/`parseX` เป็น pure เสมอ · คีย์อยู่ `ai-key.json` เท่านั้น · ฟีเจอร์ตรวจสอบมีชั้นออฟไลน์ก่อน
 
-ทุกตัวไม่แตะ DOM/fs (ต่อไฟล์ผ่าน `io` adapter = `kapi`) · `npm run test:unit` = **1,014 checks**
+ทุกตัวไม่แตะ DOM/fs (ต่อไฟล์ผ่าน `io` adapter = `kapi`) · `npm run test:unit` = **1,913 checks**
 UI ที่ต้องทำต่อ: `panels/panel-ui.js` · `layout/split-ui.js` · `kanban/kanban-ui.js` · แผง "ฉากที่กล่าวถึง" ในหน้า Wiki ·
 แผง AI (ผู้ช่วยเขียน/ตรวจปม/บทสนทนา/สร้างโลก/แชท) · หน้านำเข้า Scrivener · แถบคอมเมนต์ข้างฉาก
 แล้วค่อยต่อ entry point ตามกฎข้อ 7 (เมนู main.js + `case` ใน `handleCommand`)

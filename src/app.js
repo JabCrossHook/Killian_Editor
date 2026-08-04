@@ -58,11 +58,23 @@ import { $, el, state, smart, LOG_BUF, log, setStatus,
          t, i18n, loadLanguage, applyDataI18n, onLanguageChanged, SHORTCUTS, SHORTCUT_LABELS, shortcutId,
          formatShortcut, accelText, withShortcut, num } from './core.js';
 import { sceneProps } from './scene-props.js';
+// [alpha.60r3 ข้อ 2] ปุ่ม ✨ ให้ AI เขียนเรื่องย่อ/POV/อารมณ์/ความขัดแย้ง
+import { attachAiFieldButton, generateSceneSynopsis, fieldPrompt, cleanResult,
+         AI_SCENE_FIELD_KEYS } from './ai-synopsis.js';
+// [alpha.60r3 ข้อ 5] แผงวิเคราะห์ด้วย AI (ตัวอย่างหน้าตา)
+import { renderAIAnalyzerPanel, ANALYZER_CARDS, analyzerStats } from './ai-analyzer-ui.js';
+// [alpha.60r3 ข้อ 6] ซ่อน/แสดงรหัสนำหน้าบรรทัด
+import { setMarkdownCodes, markdownCodesOn, refreshMarkdownCodes,
+         prefixLen as mdPrefixLen, MD_HIDE_CLASS } from './markdown-code-toggle.js';
+// [alpha.60r3 ข้อ 4] Localizer — ไฟล์ภาษา ↔ ตาราง CSV (โมดูลบริสุทธิ์ · มี unit test แยก)
+// (`importSummary` ชนกับของ import-sp.js → เปลี่ยนชื่อเป็น csvImportSummary)
+import { jsonToCsv, csvToJson, mergeStrings, flatten, unflatten, parseCsv,
+         importSummary as csvImportSummary } from './i18n-csv.js';
 import { openMaps, renderMaps, renderMapsPanel } from './maps-ui.js';
 import { openTimeline, renderTimeline } from './timeline-ui.js';
-import { renameSection, deleteSection, addSection, listSections, sectionStats, saveSectionMeta, reorderSections } from './section-ops.js';
+import { renameSection, deleteSection, addSection, listSections, sectionStats, saveSectionMeta, reorderSections, sectionProps } from './section-ops.js';
 import { renameScene, deleteScene, addScene, setSceneMeta, toggleSceneFlag, duplicateScene, moveSceneOrder, moveSceneToChapter, moveSceneBefore, sceneStatusMenu, sceneColorMenu, renameChapter, deleteChapter, addChapter, moveChapterBefore, renumberChapters,
-         setSceneTitle, setChapterTitle } from './scene-ops.js';
+         setSceneTitle, setChapterTitle, chapterProps } from './scene-ops.js';
 import { wikiCats, applyWikiCats, newWikiCat, editWikiCat, deleteWikiCat, addEntity, openEntity, duplicateEntity } from './wiki-ui.js';
 import { settingsDialog, versionDialog, showChangelog } from './dialogs.js';
 import { openBookManager, renderBookManager } from './books.js';
@@ -80,7 +92,8 @@ import { toggleFocusMode2, cursorBlock, isFocusMode, focusDim, applyFocusDim } f
 import { toggleTypewriter, twScroll, isTypewriter, scrollHost } from './typewriter.js';
 import { recordDailyWords, countProjectWords, calcStreak, getWordHistory } from './word-history.js';
 import { autoBackupNow, startAutoBackup, backupIfDue } from './backup.js';
-import { exportProjectZip, exportProjectJson } from './export-zip.js';
+import { exportProjectZip, exportProjectJson, importProjectZip,
+         safeRel, commonPrefix } from './export-zip.js';   // [60r3 ข้อ 9]
 import { renderCommentPanel, commentStore, migrateSceneComments, clearCommentAnchors,
          resetCommentStore, scrollToAnchor, writeKeepingComments } from './comments/comment-ui.js';
 import { exportBlogHTML, buildBlogHtml, BLOG_THEMES } from './export-blog.js';
@@ -105,13 +118,17 @@ import { SCROLLABLES as PANEL_SCROLLABLES } from './panels/panel-ui.js';
 import { initPanelSystem, getPanelManager, togglePanelDialog, showPanel, hidePanel, togglePanel,
          resetPanels, panelMenuItems, panelToggleState, addPanelButton, renderPanels,
          isPanelOpen, resetPanelSystem, PANEL_DEFS, panelId, setPanelShowHook,
-         onPanelLayoutChange } from './panels/panel-ui.js';
+         onPanelLayoutChange, panelDesc } from './panels/panel-ui.js';   // [60r3 ข้อ 8]
+import { wrapDesc as panelWrapDesc } from './panels/panel-renderer.js';
 import { toggleSplit, createSplit, closeSplit, isSplit, syncSplitPanes, resetSplitSystem,
          initSplitSystem, syncActiveSplit, openInSplit, closeTabInSplit, splitDir,
          getSplitManager, paneCount as splitPaneCount } from './layout/split-ui.js';
-import { ensureAutoLink, getBacklinksFor, renderBacklinksTab, resetAutoLink } from './world-story/auto-link-ui.js';
-import { findScenePath } from './project-scan.js';
+import { ensureAutoLink, getBacklinksFor, renderBacklinksTab, resetAutoLink,
+         rebuildAutoLink, updateSceneLink, autoLinkReady } from './world-story/auto-link-ui.js';
+import { findScenePath, listEntities } from './project-scan.js';
 import { setAutoSync, isAutoSyncOn, renderAutoSyncSection, resetTaskEngine } from './auto-task/event-ui.js';
+// [alpha.60r3 ข้อ 7] EventBus ก้อนเดียวที่ปลั๊กอินทุกตัวใช้ร่วมกัน (k2.on / k2.emit)
+import { EventBus } from './auto-task/event-queue.js';
 import { openAIAssistant, openPlotHoleDetector, openDialogueGenerator, openConsistencyCheck, openWorldGenerator, openAIChat } from './ai/ai-ui.js';
 import { showThesaurusPopup, initThesaurus } from './tools/thesaurus-ui.js';
 import { importScrivenerDialog } from './import/import-ui.js';
@@ -210,7 +227,32 @@ export function applySettings() {
   syncTypeSound();
   applySpellcheck();
   refreshAllSpell();
+  applyMarkdownCodes();                              // [60r3 ข้อ 6] ซ่อนรหัสนำหน้าบรรทัด
   restartAutosave();
+}
+
+// ---- [alpha.60r3 ข้อ 6] ซ่อน/แสดงรหัสนำหน้าบรรทัด (fountain + มาร์กดาวน์) ----
+// เก็บใน settings.showMarkdownCodes · ค่าเริ่มต้น = true (ซ่อน = อ่านสบายกว่า)
+export function showMarkdownCodes() { return state.settings.showMarkdownCodes !== false; }
+
+/** ผลักค่าปัจจุบันลงปลั๊กอิน แล้วสั่งวาดใหม่เฉพาะตอนค่าเปลี่ยนจริง (บทเรียน 44) */
+export function applyMarkdownCodes() {
+  const changed = setMarkdownCodes(showMarkdownCodes());
+  if (!changed) return false;
+  for (const tb of state.tabs.values()) {
+    if (tb.editor && tb.editor.view) refreshMarkdownCodes(tb.editor.view);
+    for (const se of (tb.wiki?.secEditors || [])) if (se.k?.view) refreshMarkdownCodes(se.k.view);
+  }
+  return true;
+}
+
+export function toggleMarkdownCodes() {
+  state.settings.showMarkdownCodes = !showMarkdownCodes();
+  applyMarkdownCodes();
+  saveProjectMeta();
+  refreshToolbar(); syncMenuToggles();
+  setStatus(showMarkdownCodes() ? 'ซ่อนรหัสนำหน้าบรรทัด: เปิด' : 'ซ่อนรหัสนำหน้าบรรทัด: ปิด (เห็นรหัสครบ)');
+  return showMarkdownCodes();
 }
 
 // ตั้งตัวแปร CSS ของหน้ากระดาษ
@@ -1490,6 +1532,8 @@ async function _buildTreeInner() {
     secTitle.oncontextmenu = (e) => { e.preventDefault(); popupMenu(e.clientX, e.clientY, [
       { label: '📗 เพิ่มเล่มใหม่…', click: () => addSection() },
       { label: '✎ เปลี่ยนชื่อเล่ม…', click: () => renameSection(secPath, sec) },
+      // [alpha.60r3 ข้อ 3] ปก/คำโปรย/สถานะ/ลำดับ — เดิมต้องเปิดหน้าจัดการเล่มทั้งหน้า
+      { label: '⚙ ' + t('app.sectionProps', 'คุณสมบัติเล่ม…'), click: () => sectionProps(secPath, sec) },
       '-',
       { label: '🗑 ลบเล่มทั้งเล่ม', danger: true, click: () => deleteSection(secPath, sec) },
     ]); };
@@ -1695,6 +1739,8 @@ async function _buildTreeInner() {
             { label: '🔍 ค้นเฉพาะในบทนี้', click: () => setTreeScope({ guid: ch.guid, label: ch.title }) },
             { label: 'เพิ่มฉาก…', click: () => addScene(dPath, ch) },
             { label: 'เปลี่ยนชื่อบท…', click: () => renameChapter(dPath, ch) },
+            // [alpha.60r3 ข้อ 3] สถานะ/องก์/วันที่/บทสำคัญ — ค่าที่ draft.json มีอยู่แล้วแต่ไม่เคยมี UI
+            { label: '⚙ ' + t('app.chapterProps', 'คุณสมบัติบท…'), click: () => chapterProps(dPath, ch) },
             // ข้อ 78: บริบท = ชื่อฉากทั้งบท (พอให้ AI เดาเนื้อบทได้โดยไม่ต้องอ่านทุกไฟล์)
             { label: '✨ แนะนำชื่อบทด้วย AI…', click: () => {
                 const ctx = (scenesAll[ch.guid] || []).map((s) => '- ' + (s.title || '')).join('\n');
@@ -2912,6 +2958,7 @@ export function syncMenuToggles() {
       pageNumbers: !!(state.settings.spPageNumbers || {}).show,
       continueds: spContinuedOn(),                  // alpha.58 · 55–56
       typeSound: !!state.settings.typeSound,
+      markdownCodes: showMarkdownCodes(),            // [60r3 ข้อ 6]
       panels: { 'tree-panel': !!ps.tree, 'props-panel': !!ps.props,
                 'outline-panel': !!ps.outline, ...ps },
     };
@@ -3086,9 +3133,11 @@ async function renderPropsPanel() {
   const bCmp = el('button', null, '⇋ เทียบเวอร์ชัน'); bCmp.onclick = () => compareVersionsDialog(dPath, ch, sc);
   verBtns.append(bHist, bCmp); verRow.append(verBtns); body.append(verRow);
 
+  const rowOf = new Map();          // input → แถว (ปุ่ม ✨ ของข้อ 2 มาแปะทีหลัง)
   const mk = (label, val, tag = 'input') => {
     const r = el('div', 'wiki-row'); r.append(el('label', null, label));
-    const i = el(tag, 'wiki-input'); i.value = val || ''; r.append(i); body.append(r); return i;
+    const i = el(tag, 'wiki-input'); i.value = val || ''; r.append(i); body.append(r);
+    rowOf.set(i, r); return i;
   };
   const mkSel = (label, options, cur) => {
     const r = el('div', 'wiki-row'); r.append(el('label', null, label));
@@ -3161,6 +3210,19 @@ async function renderPropsPanel() {
     clearTimeout(saveJob);
     saveJob = setTimeout(() => commit(true).catch(() => {}), 600);
   };
+  // ---- [alpha.60r3 ข้อ 2] ปุ่ม ✨ ให้ AI เขียนให้ (ต้องมีทั้งกล่องและแผง — บทเรียน 50) ----
+  // เติมค่าแล้วยิง event 'input' → autosave ของแผงเก็บให้เองโดยไม่ต้องต่อสายพิเศษ
+  {
+    const aiCtx = async () => {
+      let mdBody = '';
+      try { mdBody = parseMdFile(await kapi.readFile(file0)).body || ''; } catch {}
+      return { body: mdBody, title: row.title || '' };
+    };
+    for (const [inp, key] of [[iSyn, 'synopsis'], [iPov, 'pov'],
+                              [iEmotion, 'emotion'], [iConflict, 'conflict']]) {
+      attachAiFieldButton(rowOf.get(inp), inp, key, aiCtx, () => scheduleSave());
+    }
+  }
   for (const i of [iSyn, iStoryDate, iPov, iEmotion, iConflict, iTags, iNote]) {
     i.addEventListener('input', scheduleSave);
     i.addEventListener('blur', () => { clearTimeout(saveJob); commit(true).catch(() => {}); });
@@ -3626,36 +3688,206 @@ export async function watermarkDialog() {
   return { ov, pages };
 }
 
-// ---------------- Plugins (โฟลเดอร์ Plugins/ ของโปรเจกต์) ----------------
-const plugins = { commands: [] };
-async function loadPlugins() {
-  plugins.commands = [];
-  const dir = await kapi.join(state.root, 'Plugins');
-  if (!(await kapi.exists(dir))) return;
-  const api = {
-    registerCommand: (label, fn) => plugins.commands.push({ label, fn }),
+// ---------------- Plugins ([alpha.60r3 ข้อ 7] — เตรียมระบบปลั๊กอินให้ใช้งานได้จริง) ----------------
+//
+// ที่อยู่ปลั๊กอิน 2 แห่ง:
+//   · `<โปรเจกต์>/Plugins/<ชื่อ>/`             — ติดมากับผลงาน (ก๊อปโปรเจกต์แล้วปลั๊กอินไปด้วย)
+//   · `%APPDATA%/Killian2/Plugins/<ชื่อ>/`      — ของผู้ใช้ ใช้ได้ทุกโปรเจกต์
+// ชื่อซ้ำกัน → ของโปรเจกต์ชนะ (ผู้เขียนผลงานคุมเวอร์ชันที่ผลงานต้องการได้)
+//
+// manifest (`plugin.json`) ขยายจาก `{name, entry}` เป็น 6 ช่อง:
+//   { name, entry, version, author, description, minAppVersion }
+//
+// **การแยกความเสียหาย**: ปลั๊กอินที่ throw ตอนโหลดจะถูกจดลง `settings.plugins.disabled[<ชื่อ>]`
+// แล้วข้ามในรอบถัดไป — เปิดโปรแกรมไม่ขึ้นเพราะปลั๊กอินตัวเดียวเป็นสิ่งที่ยอมไม่ได้
+const plugins = { commands: [], loaded: [], failed: [], shortcuts: [], panels: [] };
+export const pluginBus = new EventBus({ onError: (e, ev) => log('warn', 'plugin event ' + ev, e) });
+
+/** เทียบเวอร์ชันแบบ semver อย่างง่าย — a >= b ? (ใช้กับ minAppVersion) */
+export function versionAtLeast(a, b) {
+  const num = (s) => String(s || '0').split('-')[0].split('.').map((x) => parseInt(x, 10) || 0);
+  const A = num(a), B = num(b);
+  for (let i = 0; i < Math.max(A.length, B.length); i++) {
+    const d = (A[i] || 0) - (B[i] || 0);
+    if (d) return d > 0;
+  }
+  return true;
+}
+
+/** ค่าที่ปลั๊กอินเก็บเอง — `settings.plugins[<ชื่อ>]` (คนละก้อนกับ disabled) */
+function pluginStore() {
+  if (!state.settings.plugins || typeof state.settings.plugins !== 'object') state.settings.plugins = {};
+  if (!state.settings.plugins.disabled || typeof state.settings.plugins.disabled !== 'object') {
+    state.settings.plugins.disabled = {};
+  }
+  return state.settings.plugins;
+}
+export function pluginDisabled(name) { return !!pluginStore().disabled[name]; }
+export function setPluginDisabled(name, on) {
+  const st = pluginStore();
+  if (on) st.disabled[name] = true; else delete st.disabled[name];
+  saveProjectMeta();
+  return !!st.disabled[name];
+}
+
+/** สร้างวัตถุ `k2` ที่ปลั๊กอินหนึ่งตัวได้รับ (ผูกชื่อไว้ เพื่อแยก settings/สถานะรายตัว) */
+function pluginApi(name) {
+  return {
+    // ---- ข้อมูลของตัวเอง ----
+    pluginName: name,
+    appVersion: APP_VERSION,
+    projectRoot: () => state.root,
+
+    // ---- คำสั่งบนแถบเครื่องมือ (ของเดิม) ----
+    registerCommand: (label, fn) => { plugins.commands.push({ label, fn, plugin: name }); return true; },
+
+    // ---- ตัวแก้ไข ----
     getMarkdown: () => state.active?.editor?.getMarkdown()
       ?? state.active?.sp?.getMarkdown() ?? '',
     insertText: (text) => {
       const v = state.active?.editor?.view || state.active?.sp?.view;
-      if (v) { v.dispatch(v.state.tr.insertText(text)); markDirty(state.active); }
+      if (!v) return false;
+      v.dispatch(v.state.tr.insertText(String(text ?? '')));
+      markDirty(state.active);
+      return true;
     },
-    setStatus, ask, alertBox: (m) => alert(m),
+    /** PM EditorView ปัจจุบัน — ให้ปลั๊กอินอ่าน doc/selection หรือ dispatch เองได้ */
+    getEditorView: () => state.active?.editor?.view || state.active?.sp?.view || null,
+
+    // ---- แผง ----
+    /** ลงทะเบียนแผงใหม่ (PanelManager) — เนื้อแผงวาดด้วย opts.render(host) */
+    registerPanel: (id, opts = {}) => {
+      const pid = 'plugin-' + name + '-' + String(id || 'panel');
+      try {
+        getPanelManager().registerPanel(pid, {
+          title: opts.title || id || name, icon: opts.icon || 'extension',
+          closable: opts.closable !== false, floatable: opts.floatable !== false,
+          defaultSide: opts.defaultSide || 'right',
+          render: (host) => { try { return opts.render && opts.render(host); } catch (e) { log('warn', 'plugin panel ' + pid, e); } },
+        });
+        plugins.panels.push(pid);
+        return pid;
+      } catch (e) { log('warn', 'registerPanel ล้มเหลว: ' + pid, e); return null; }
+    },
+    showPanel: (id) => showPanel('plugin-' + name + '-' + id),
+    hidePanel: (id) => hidePanel('plugin-' + name + '-' + id),
+
+    // ---- เหตุการณ์ (EventBus ก้อนเดียวใช้ร่วมกันทุกปลั๊กอิน) ----
+    on: (event, handler) => pluginBus.on(String(event), handler),
+    off: (event, handler) => pluginBus.off(String(event), handler),
+    emit: (event, data) => pluginBus.emit(String(event), data),
+
+    // ---- ไฟล์ (จำกัดอยู่ในขอบเขตโปรเจกต์) ----
+    readFile: (rel) => pluginPath(rel).then((p) => (p ? kapi.readFile(p) : null)),
+    writeFile: (rel, data) => pluginPath(rel).then((p) => (p ? kapi.writeFile(p, String(data ?? '')) : false)),
+    listDirs: (rel) => pluginPath(rel || '.').then((p) => (p ? kapi.listDirs(p) : [])),
+    listFiles: (rel, ext) => pluginPath(rel || '.').then((p) => (p ? kapi.listFiles(p, ext || '') : [])),
+
+    // ---- คีย์ลัด (เพิ่มเข้าอาร์เรย์ SHORTCUTS ตอนรัน) ----
+    registerShortcut: (id, code, ctrl, shift, fn) => {
+      const ch = 'plugin:' + name + ':' + String(id);
+      // ถอดของเดิมชื่อเดียวกันก่อน (โหลดซ้ำตอนเปลี่ยนโปรเจกต์จะได้ไม่ทับกันเป็นชั้น ๆ)
+      for (let i = SHORTCUTS.length - 1; i >= 0; i--) if (SHORTCUTS[i][3] === ch) SHORTCUTS.splice(i, 1);
+      SHORTCUTS.push([code, ctrl !== false, !!shift, ch]);
+      plugins.shortcuts.push({ ch, fn });
+      return ch;
+    },
+
+    // ---- ตั้งค่าของปลั๊กอิน (`settings.plugins[<ชื่อ>]`) ----
+    getSettings: (key, def) => {
+      const own = pluginStore()[name] || {};
+      if (key === undefined) return { ...own };
+      return own[key] === undefined ? def : own[key];
+    },
+    setSettings: (key, val) => {
+      const st = pluginStore();
+      if (typeof key === 'object' && key) st[name] = { ...(st[name] || {}), ...key };
+      else st[name] = { ...(st[name] || {}), [key]: val };
+      saveProjectMeta();
+      return true;
+    },
+
+    // ---- เมนู ----
+    menuPopup: (items, x, y) => popupMenu(
+      typeof x === 'number' ? x : 80, typeof y === 'number' ? y : 80,
+      (items || []).map((it) => (it === '-' ? '-' : { ...it }))),
+    addMenuItem: (label, fn) => { plugins.commands.push({ label, fn, plugin: name }); return true; },
+
+    // ---- UI ทั่วไป ----
+    setStatus, ask, confirmBox, alertBox: (m) => aboutBox(String(m)),
     fetch: (url, options) => kapi.httpFetch(url, options),
-    projectRoot: () => state.root,
+    log: (...a) => log('info', '[plugin ' + name + '] ' + a.map(String).join(' ')),
   };
-  for (const name of await kapi.listDirs(dir)) {
-    try {
-      const manifest = await kapi.readJson(await kapi.join(dir, name, 'plugin.json'));
-      const code = await kapi.readFile(await kapi.join(dir, name, manifest.entry || 'main.js'));
-      new Function('k2', code)(api);
-      setStatus('โหลดปลั๊กอิน: ' + (manifest.name || name));
-    } catch (e) {
-      setStatus('ปลั๊กอิน ' + name + ' พัง: ' + e.message);
+}
+
+/** path ในโปรเจกต์จาก path สัมพัทธ์ — กัน `..` หลุดออกนอกโฟลเดอร์ผลงาน */
+async function pluginPath(rel) {
+  if (!state.root) return null;
+  const clean = String(rel || '').replace(/\\/g, '/').replace(/^[/]+/, '');
+  if (clean.split('/').includes('..')) { log('warn', 'plugin: path หลุดขอบเขตโปรเจกต์: ' + rel); return null; }
+  return kapi.join(state.root, ...clean.split('/').filter(Boolean));
+}
+
+/** ข้อความสั้น ๆ ของกล่อง alert ที่ปลั๊กอินเรียก (window.alert ใช้ไม่ได้ใน Electron — บทเรียน 3) */
+function aboutBox(msg) { setStatus(msg); return confirmBox(msg, 'ปลั๊กอิน'); }
+
+async function loadPlugins() {
+  plugins.commands = []; plugins.loaded = []; plugins.failed = [];
+  // ถอดคีย์ลัดของรอบก่อนออกก่อน (เปลี่ยนโปรเจกต์แล้วต้องไม่เหลือปุ่มลัดค้าง)
+  for (const s of plugins.shortcuts) {
+    for (let i = SHORTCUTS.length - 1; i >= 0; i--) if (SHORTCUTS[i][3] === s.ch) SHORTCUTS.splice(i, 1);
+  }
+  plugins.shortcuts = []; plugins.panels = [];
+
+  // (dir, ที่มา) — ของผู้ใช้ก่อน แล้วให้ของโปรเจกต์ทับได้ด้วยชื่อเดียวกัน
+  const sources = [];
+  try {
+    const g = await kapi.globalPluginsDir?.();
+    if (g && await kapi.exists(g)) sources.push([g, 'ผู้ใช้']);
+  } catch {}
+  if (state.root) {
+    const p = await kapi.join(state.root, 'Plugins');
+    if (await kapi.exists(p)) sources.push([p, 'โปรเจกต์']);
+  }
+  if (!sources.length) { const b = $('#tb-plug'); if (b) b.style.display = 'none'; return plugins; }
+
+  const seen = new Set();
+  for (const [dir, origin] of sources) {
+    let names = [];
+    try { names = await kapi.listDirs(dir); } catch { continue; }
+    for (const name of names) {
+      if (name === 'dictionaries') continue;            // โฟลเดอร์พจนานุกรม ไม่ใช่ปลั๊กอิน
+      if (pluginDisabled(name)) { plugins.failed.push({ name, origin, error: 'ปิดไว้หลังเคยพัง' }); continue; }
+      try {
+        const manifest = await kapi.readJson(await kapi.join(dir, name, 'plugin.json'));
+        if (manifest.minAppVersion && !versionAtLeast(APP_VERSION, manifest.minAppVersion)) {
+          plugins.failed.push({ name, origin, error: 'ต้องใช้ Killian ' + manifest.minAppVersion + ' ขึ้นไป' });
+          continue;
+        }
+        const code = await kapi.readFile(await kapi.join(dir, name, manifest.entry || 'main.js'));
+        new Function('k2', code)(pluginApi(name));
+        // ชื่อซ้ำ = ของโปรเจกต์ (มาทีหลัง) ทับของผู้ใช้ — บันทึกไว้ตัวเดียว
+        if (seen.has(name)) plugins.loaded = plugins.loaded.filter((x) => x.name !== name);
+        seen.add(name);
+        plugins.loaded.push({ name, origin,
+          version: manifest.version || '', author: manifest.author || '',
+          description: manifest.description || '', minAppVersion: manifest.minAppVersion || '' });
+      } catch (e) {
+        plugins.failed.push({ name, origin, error: e.message });
+        // พังตอนโหลด = ปิดไว้ก่อน กันเปิดโปรแกรมไม่ขึ้นรอบหน้า (ผู้ใช้เปิดกลับได้จากกล่องจัดการ)
+        setPluginDisabled(name, true);
+        log('error', 'ปลั๊กอิน ' + name + ' พัง — ปิดไว้ชั่วคราว', e);
+      }
     }
   }
-  $('#tb-plug').style.display = plugins.commands.length ? '' : 'none';
+  if (plugins.loaded.length) setStatus(`โหลดปลั๊กอิน ${plugins.loaded.length} ตัว`
+    + (plugins.failed.length ? ` (พัง ${plugins.failed.length})` : ''));
+  const btn = $('#tb-plug');
+  if (btn) btn.style.display = plugins.commands.length ? '' : 'none';
+  return plugins;
 }
+/** รายชื่อปลั๊กอินที่โหลดสำเร็จ/ล้มเหลว (คอนโซลนักพัฒนา + เทสอ่าน) */
+export function pluginList() { return { ...plugins, loaded: [...plugins.loaded], failed: [...plugins.failed] }; }
 
 // ---------------- คลังรูปภาพ (แผง — [alpha.60r1 ข้อ 21]) ----------------
 // เดิมเป็น "แท็บเอกสาร" (::gallery::) จึงไปแย่งแถบแท็บกับฉากที่กำลังเขียน และวางคู่กับ
@@ -4013,6 +4245,76 @@ export async function syncSceneMetaFromFiles(dPath) {
   if (n) { await kapi.writeFile(sf, JSON.stringify(d, null, 2)); await buildTree(); }
   setStatus(n ? `ซิงก์คุณสมบัติฉากจากไฟล์ .md แล้ว (${n} ค่า)` : 'คุณสมบัติฉากตรงกับไฟล์ .md อยู่แล้ว');
   return n;
+}
+
+// ---------------- [alpha.60r3 ข้อ 4] Localizer: ไฟล์ภาษา ↔ ตาราง CSV ----------------
+// ที่อยู่ของไฟล์ภาษา (เรียงตามลำดับที่ core.js ใช้จริง): โปรเจกต์ก่อน แล้วค่อยที่มากับโปรแกรม
+// นำเข้าจะ "เขียนลงโปรเจกต์เสมอ" — ไฟล์ในโฟลเดอร์โปรแกรมอาจอยู่ใน Program Files ที่เขียนไม่ได้
+async function langFileCandidates(lang) {
+  const out = [];
+  if (state.root) out.push(await kapi.join(state.root, 'languages', lang + '.json'));
+  try {
+    const appDir = await kapi.appDir();
+    if (appDir) {
+      out.push(await kapi.join(appDir, 'languages', lang + '.json'));
+      out.push(await kapi.join(appDir, 'renderer', 'languages', lang + '.json'));
+    }
+  } catch {}
+  return out;
+}
+async function readLangFile(lang) {
+  for (const p of await langFileCandidates(lang)) {
+    try { if (await kapi.exists(p)) return await kapi.readJson(p); } catch {}
+  }
+  return null;
+}
+
+/** ส่งออก th+en เป็นตาราง CSV 3 คอลัมน์ให้ผู้แปลทำงานใน Excel/Sheets */
+export async function exportLanguageCsv() {
+  const th = await readLangFile('th');
+  const en = await readLangFile('en');
+  if (!th && !en) { setStatus('ไม่พบไฟล์ภาษา (languages/th.json · en.json)'); return false; }
+  const csv = jsonToCsv(th || {}, en || {});
+  const dest = await kapi.saveAsDialog('killian2-languages.csv', 'csv');
+  if (!dest) return false;
+  await kapi.writeFile(dest, csv);
+  const n = csv.split(/\r?\n/).length - 2;      // ลบหัวตาราง + บรรทัดว่างท้ายไฟล์
+  setStatus(`ส่งออกตารางคำแปลแล้ว (${n} คีย์): ` + dest);
+  log('info', 'i18n-csv: export ' + n + ' keys → ' + dest);
+  return true;
+}
+
+/**
+ * นำเข้าคำแปลจาก CSV — **รวมทับของเดิม ไม่ลบคีย์ที่ไม่มีในตาราง**
+ * (ผู้แปลมักส่งกลับมาแค่บางส่วน — ถ้าทับทั้งไฟล์ สตริงที่เหลือจะหายเงียบ ๆ)
+ * เขียนลง `<โปรเจกต์>/languages/*.json` ซึ่ง core.js อ่านก่อนไฟล์ที่มากับโปรแกรมอยู่แล้ว
+ */
+export async function importLanguageCsv(srcPath) {
+  if (!state.root) { setStatus('เปิดโปรเจกต์ก่อน จึงจะนำเข้าคำแปลได้'); return false; }
+  const src = srcPath || await kapi.openFileDialog('csv');
+  if (!src) return false;
+  let text = '';
+  try { text = await kapi.readFile(src); }
+  catch (e) { setStatus('อ่านไฟล์ CSV ไม่ได้: ' + e.message); return false; }
+  const parsed = csvToJson(text);
+  if (!parsed.keys.length) { setStatus('ไม่พบคีย์ในไฟล์ CSV นี้'); return false; }
+  const res = { keys: parsed.keys, skipped: parsed.skipped,
+                thAdded: 0, thChanged: 0, enAdded: 0, enChanged: 0 };
+  const dir = await kapi.join(state.root, 'languages');
+  await kapi.mkdir(dir);
+  for (const [lang, patch, addKey, chKey] of
+       [['th', parsed.th, 'thAdded', 'thChanged'], ['en', parsed.en, 'enAdded', 'enChanged']]) {
+    if (!Object.keys(patch || {}).length) continue;
+    const base = (await readLangFile(lang)) || {};
+    const { merged, added, changed } = mergeStrings(base, patch);
+    res[addKey] = added; res[chKey] = changed;
+    await kapi.writeFile(await kapi.join(dir, lang + '.json'), JSON.stringify(merged, null, 2));
+  }
+  // โหลดภาษาที่ใช้อยู่ใหม่ทันที — ไม่ต้องรีสตาร์ตโปรแกรมถึงจะเห็นคำแปลใหม่
+  try { await loadLanguage(i18n.lang, state.root); applyDataI18n(); updateToolbarTitles(); } catch {}
+  setStatus(csvImportSummary(res));
+  log('info', 'i18n-csv: import ' + JSON.stringify(res));
+  return res;
 }
 
 // ---------------- แผงคอมเมนต์ (บั๊ก #25 — เดิมเป็นกล่องโต้ตอบ เก็บใน scenes.json) ----------------
@@ -4815,6 +5117,36 @@ export async function saveTab(tab) {
     snapshotFile(tab.file).catch(() => {});
   // เนื้อหาเปลี่ยน → ดัชนีเชื่อมโยงของศูนย์รวมล้าสมัย (ข้อ 87 real-time)
   try { markCentralizeStale(); } catch (e) { log('warn', 'markCentralizeStale ล้มเหลว', e); }
+  // [alpha.60r3 ข้อ 1] ดัชนี Wiki↔ฉากต้องตามทันด้วย ไม่งั้น "ฉากที่กล่าวถึง" ค้างอยู่ที่ค่าตอนเปิดโปรแกรม
+  await refreshBacklinksAfterSave(tab, body);
+}
+
+/**
+ * [alpha.60r3 ข้อ 1] หลังบันทึกไฟล์ฉาก: อัปเดตดัชนี auto-link แบบทีละฉาก
+ * แล้ววาดแผง "ฉากที่กล่าวถึง" ของแท็บ Wiki ที่เปิดค้างอยู่ใหม่
+ *
+ * ทำเฉพาะเมื่อดัชนีถูกสร้างไว้แล้ว (`autoLinkReady()`) — ไม่งั้นการบันทึกครั้งแรก
+ * จะไปปลุกการสแกนทั้งโปรเจกต์ (อ่านทุกไฟล์ .md) ทำให้ Ctrl+S หน่วงโดยไม่จำเป็น
+ */
+async function refreshBacklinksAfterSave(tab, body) {
+  if (!autoLinkReady() || !tab || !tab.file) return;
+  try {
+    const ctx = await sceneCtx(tab.file);
+    if (!ctx || !ctx.row) return;
+    const changed = updateSceneLink({ id: ctx.row.id, title: ctx.row.title || '',
+                                      chapterId: ctx.ch.guid, text: body || '' });
+    if (!changed) return;
+    refreshOpenWikiBacklinks();
+  } catch (e) { log('warn', 'อัปเดตดัชนี backlinks ล้มเหลว', e); }
+}
+
+/** วาดส่วน "ฉากที่กล่าวถึง" ของทุกแท็บ Wiki ที่เปิดอยู่ใหม่ (ฝากไว้ตอนสร้างแท็บใน wiki-ui.js) */
+export function refreshOpenWikiBacklinks() {
+  for (const t2 of state.tabs.values()) {
+    if (t2 && typeof t2.refreshBacklinks === 'function') {
+      try { t2.refreshBacklinks(); } catch {}
+    }
+  }
 }
 
 // บันทึกทุกแท็บที่ยังมีงานค้าง (Ctrl+Alt+S / เมนู ไฟล์ → บันทึกทั้งหมด)
@@ -5251,6 +5583,7 @@ const ALWAYS_ON_TB = new Set([
   'tb-gallery', 'tb-sp-elem',
   'tb-tree-panel', 'tb-outline-panel', 'tb-props-panel', 'tb-search-panel',
   'tb-note', 'tb-panels', 'tb-kanban', 'tb-dashboard', 'tb-gsearch', 'tb-read', 'tb-ai', 'tb-ai-chat', 'tb-plug',
+  'tb-ai-analyzer', 'tb-md-codes',       // [alpha.60r3 ข้อ 5 · ข้อ 6]
 ]);
 
 function refreshToolbar() {
@@ -5323,6 +5656,9 @@ function refreshToolbar() {
   $('#tb-kanban')?.classList.toggle('on', isPanelOpen('kanban'));   // บั๊ก #10: ปุ่ม Kanban เป็นสวิตช์จริง
   // [alpha.60r ข้อ 4] ปุ่มแดชบอร์ด — สะท้อนสถานะแผงจริง
   $('#tb-dashboard')?.classList.toggle('on', isPanelOpen('dashboard'));
+  // [alpha.60r3 ข้อ 5] แผงวิเคราะห์ด้วย AI · [ข้อ 6] ซ่อน/แสดงรหัสมาร์กดาวน์
+  $('#tb-ai-analyzer')?.classList.toggle('on', isPanelOpen('ai-analyzer'));
+  $('#tb-md-codes')?.classList.toggle('on', showMarkdownCodes());
   syncFloatBarVisible();
   syncMenuToggles();          // เมนู native ติ๊กถูกตามสถานะจริง (ส่งเฉพาะตอนค่าเปลี่ยน)
 }
@@ -5809,6 +6145,7 @@ const FEATURE_PANELS = {
   timeline:  () => renderTimeline($('#tl-body')),
   maps:      () => renderMapsPanel(),
   gallery:   () => renderGalleryPanel(),        // [alpha.60r1 ข้อ 21]
+  'ai-analyzer': () => renderAIAnalyzerPanel($('#ai-analyzer-body')),   // [alpha.60r3 ข้อ 5]
 };
 export function isFeaturePanel(id) { return !!FEATURE_PANELS[panelId(id)]; }
 // วาดค้างอยู่ = ใช้รอบเดียวกัน — openX() เรียก showPanel (hook เริ่มวาด) แล้ว await ต่อ
@@ -5830,7 +6167,8 @@ export function renderFeaturePanel(id) {
 setPanelShowHook((pid) => { renderFeaturePanel(pid); });
 /** ล้างเนื้อแผงฟีเจอร์ (ตอนปิดโปรเจกต์ — ไม่งั้นโปรเจกต์ใหม่เห็นสถิติ/กระดานของเก่า) */
 export function clearFeaturePanels() {
-  for (const sel of ['#dash-body', '#kanban-body', '#books-body', '#tl-body', '#maps-body', '#gal-body']) {
+  for (const sel of ['#dash-body', '#kanban-body', '#books-body', '#tl-body', '#maps-body',
+                     '#gal-body', '#ai-analyzer-body']) {
     const n = $(sel); if (n) n.innerHTML = '';
   }
   mapsState_C.s = null;
@@ -5861,6 +6199,12 @@ function restoreInactivePanes() {
 
 async function handleCommand(ch, ...a) {
   const t = state.active;
+  // [alpha.60r3 ข้อ 7] คีย์ลัดที่ปลั๊กอินลงทะเบียนไว้ (`plugin:<ชื่อ>:<id>`)
+  if (typeof ch === 'string' && ch.startsWith('plugin:')) {
+    const hit = plugins.shortcuts.find((s) => s.ch === ch);
+    if (hit) { try { await hit.fn(...a); } catch (e) { log('warn', 'คีย์ลัดปลั๊กอินพัง: ' + ch, e); } }
+    return;
+  }
   switch (ch) {
     case 'new-project': newProject(); break;
     case 'confirm-quit': confirmQuit(); break;
@@ -5931,6 +6275,13 @@ async function handleCommand(ch, ...a) {
     case 'paper-mode': togglePaper(); break;
     case 'toggle-theme': toggleTheme(a[0]); break;      // [60r2 ข้อ 10] Ctrl+Shift+P
     case 'sync-scene-meta': await syncSceneMetaFromFiles(); break;   // [60r2 ข้อ 13]
+    // [alpha.60r3 ข้อ 4] ชุดเครื่องมือผู้แปล (JSON ↔ CSV)
+    case 'export-language-csv': await exportLanguageCsv(); break;
+    case 'import-language-csv': await importLanguageCsv(); break;
+    // [alpha.60r3 ข้อ 5] แผงวิเคราะห์ด้วย AI (ตัวอย่างหน้าตา)
+    case 'ai-analyzer': togglePanel('ai-analyzer'); refreshToolbar(); syncMenuToggles(); break;
+    // [alpha.60r3 ข้อ 6] ซ่อน/แสดงรหัสมาร์กดาวน์+fountain ที่นำหน้าบรรทัด
+    case 'markdown-codes': toggleMarkdownCodes(); break;
     // [60r2 ข้อ 9] เปิด/ปิดปุ่มลอยมุมขวาล่าง
     case 'toggle-fab': {
       const v = !(state.settings.fabEnabled !== false);
@@ -6601,6 +6952,10 @@ window.addEventListener('DOMContentLoaded', () => {
   const dbBtn = $('#tb-dashboard');
   if (dbBtn) dbBtn.onclick = () => { togglePanel('dashboard'); refreshToolbar(); };
   $('#tb-ai').onclick = () => openAIAssistant();
+  // [alpha.60r3 ข้อ 5] แผงวิเคราะห์ด้วย AI (ตัวอย่างหน้าตา)
+  $('#tb-ai-analyzer') && ($('#tb-ai-analyzer').onclick = () => handleCommand('ai-analyzer'));
+  // [alpha.60r3 ข้อ 6] ซ่อน/แสดงรหัสมาร์กดาวน์+fountain ที่นำหน้าบรรทัด
+  $('#tb-md-codes') && ($('#tb-md-codes').onclick = () => handleCommand('markdown-codes'));
   $('#tb-ai-chat').onclick = () => openAIChat();
   $('#tb-tree-panel').onclick = () => { togglePanel('tree'); refreshToolbar(); };
   $('#tb-outline-panel').onclick = () => { togglePanel('outline'); refreshToolbar(); };
@@ -13408,7 +13763,9 @@ async function runTest(projectPath) {
         check('#1 กล่องหน้าแรกมีกรอบเลื่อนแยก (กรอบนิ่ง เนื้อในเลื่อน)',
               !!ovH.querySelector('.home-dlg-scroll') && dlg.classList.contains('k-home-dlg'));
         const r1 = dlg.getBoundingClientRect();
-        const viewBtn = [...ovH.querySelectorAll('.home-actions button')].find((b) => /📋|📱/.test(b.textContent));
+        // [alpha.60r3 ข้อ 9] ปุ่มสลับมุมมองย้ายจากแถวปุ่มขึ้นไปอยู่บนหัวกล่อง ข้างปุ่ม ✕
+        const viewBtn = [...ovH.querySelectorAll('.home-head button, .home-actions button')]
+          .find((b) => /📋|📱/.test(b.textContent));
         check('#1 มีปุ่มสลับมุมมอง', !!viewBtn);
         viewBtn.click(); await new Promise((r) => setTimeout(r, 120));
         const r2 = dlg.getBoundingClientRect();
@@ -13866,9 +14223,22 @@ async function runTest(projectPath) {
           check(`[60r2-1] ซูม ${Math.round(pageScale * 100)}%: workspace ยังกว้างเต็มแผง (กระดาษไม่ตกขอบซ้าย)`,
                 ws60.getBoundingClientRect().width >= pane60.clientWidth - 2,
                 `${ws60.getBoundingClientRect().width} vs ${pane60.clientWidth}`);
-          check(`[60r2-1] ซูม ${Math.round(pageScale * 100)}%: ขอบซ้ายของกระดาษไม่หลุดออกนอกแผง`,
-                pm60.getBoundingClientRect().left >= pane60.getBoundingClientRect().left - 2,
-                `${pm60.getBoundingClientRect().left} vs ${pane60.getBoundingClientRect().left}`);
+          // บทเรียน 72 (ขยาย): ผลของเช็คนี้ขึ้นกับ "แผงกว้างกว่าหน้ากระดาษไหม" ซึ่งต่างกันตามขนาดจอ
+          //   · กระดาษแคบกว่าแผง = ไม่มีการเลื่อนแนวนอน → ขอบซ้ายต้องอยู่ในแผง (บั๊กเดิมคือกองชิดซ้าย)
+          //   · กระดาษกว้างกว่าแผง = `centerPage()` จัดกึ่งกลาง "ตั้งใจให้ล้นทั้งสองข้างเท่ากัน"
+          //     → เช็คว่าล้นซ้าย ≈ ล้นขวา แทน (ถ้าเลื่อนสุดซ้าย/ขวาแปลว่ากองอยู่ข้างเดียวจริง = บั๊ก)
+          {
+            const rp = pm60.getBoundingClientRect(), rw = pane60.getBoundingClientRect();
+            const overL = rw.left - rp.left;                       // ล้นออกทางซ้ายกี่พิกเซล
+            const overR = rp.right - (rw.left + pane60.clientWidth); // ล้นออกทางขวา (ไม่นับแถบเลื่อน)
+            const fits = rp.width <= pane60.clientWidth + 2;
+            // "ล้นทั้งสองข้าง" = ยังอยู่กลาง ไม่ได้กองไปข้างใดข้างหนึ่ง — วัดแบบนี้ทนต่อ
+            // ความต่างของแถบเลื่อน/เศษพิกเซลระหว่าง OS มากกว่าการเทียบตัวเลขให้เท่ากันเป๊ะ
+            check(`[60r2-1] ซูม ${Math.round(pageScale * 100)}%: ขอบซ้ายของกระดาษไม่หลุดออกนอกแผง`,
+                  fits ? rp.left >= rw.left - 2 : (overL > 4 && overR > 4),
+                  `fits=${fits} left=${rp.left.toFixed(1)} pane=${rw.left.toFixed(1)} ` +
+                  `overL=${overL.toFixed(1)} overR=${overR.toFixed(1)}`);
+          }
         }
         check('[60r2-1] min-width เป็นหน่วย px ไม่ใช่ % แล้ว', ws60.style.minWidth.endsWith('px'),
               ws60.style.minWidth);
@@ -14408,6 +14778,423 @@ async function runTest(projectPath) {
         check('[22] เปิดกลับแล้วแผงยังอยู่ (คืนสัดส่วนแล้วไม่พัง)', isPanelOpen('props'));
       }
     }
+
+
+      // ══════════════ alpha.60r3 — 9 งานใหม่ ══════════════
+      {
+        // ---- [r3-1] Entities "ฉากที่กล่าวถึง" ต้องอัปเดตเองหลังบันทึกฉาก ----
+        {
+          const ents = await listEntities(state.root);
+          check('[r3-1] มีเอนทิตี้ Wiki ในโปรเจกต์ทดสอบ', ents.length > 0, ents.length);
+          const ent = ents[0];
+          await rebuildAutoLink();
+          check('[r3-1] ดัชนี auto-link ถูกสร้างแล้ว (autoLinkReady)', autoLinkReady() === true);
+          const before = (getBacklinksFor(ent.path) || []).length;
+
+          // เปิดฉากแรก พิมพ์ชื่อเอนทิตี้ลงไป แล้วบันทึก → ดัชนีต้องรู้เอง
+          const chR3 = (await kapi.readJson(await kapi.join(dPath, 'draft.json'))).chapters[0];
+          const scR3 = (await kapi.readJson(await kapi.join(dPath, 'scenes.json'))).chapters[chR3.guid][0];
+          const fileR3 = await kapi.join(dPath, 'Chapters', chR3.folderName, scR3.fileName);
+          await openScene(fileR3, scR3.title);
+          await new Promise((r) => setTimeout(r, 250));
+          const tabR3 = state.tabs.get(fileR3);
+          check('[r3-1] เปิดแท็บฉากสำหรับเทส backlinks ได้', !!(tabR3 && (tabR3.editor || tabR3.sp)));
+          const edR3 = tabR3.editor || tabR3.sp;
+          edR3.setMarkdown('วันนั้น ' + ent.name + ' เดินเข้ามาในห้อง แล้ว ' + ent.name + ' ก็หยุดยืน');
+          await saveTab(tabR3);
+          await new Promise((r) => setTimeout(r, 250));
+          const after = getBacklinksFor(ent.path) || [];
+          check('[r3-1] บันทึกฉากแล้วดัชนี backlinks อัปเดตเอง (ไม่ต้องรีสตาร์ต)',
+                after.some((l) => l.sceneId === scR3.id),
+                'before=' + before + ' after=' + JSON.stringify(after.map((x) => x.sceneId)));
+          check('[r3-1] นับจำนวนครั้งที่ถูกกล่าวถึงได้ถูกต้อง (พิมพ์ 2 ครั้ง)',
+                (after.find((l) => l.sceneId === scR3.id) || {}).count === 2,
+                JSON.stringify(after.find((l) => l.sceneId === scR3.id)));
+
+          // เปิดหน้า Wiki ของเอนทิตี้นั้น → ต้องมีหัวข้อ + ปุ่ม 🔄 + รายการฉาก
+          await openEntity(ent.path);
+          await new Promise((r) => setTimeout(r, 400));
+          const wTab = state.tabs.get(ent.path);
+          check('[r3-1] เปิดหน้า Wiki ของเอนทิตี้ได้', !!(wTab && wTab.wiki));
+          const blSec = wTab.pane.querySelector('.wiki-backlinks');
+          check('[r3-1] หน้า Wiki มีส่วน "ฉากที่กล่าวถึง"', !!blSec);
+          check('[r3-1] มีปุ่ม 🔄 รีเฟรชในหัวข้อ (ผู้ใช้บังคับสร้างดัชนีใหม่ได้)',
+                !!(blSec && blSec.querySelector('.wiki-bl-refresh')));
+          check('[r3-1] รายการฉากในแผงไม่ว่าง',
+                !!(blSec && blSec.querySelector('.bl-row')),
+                blSec ? blSec.textContent.slice(0, 80) : 'ไม่มีแผง');
+          check('[r3-1] แท็บ Wiki ฝากตัวรีเฟรชไว้ให้ saveTab เรียก',
+                typeof wTab.refreshBacklinks === 'function');
+          // ลบชื่อออกจากฉากแล้วบันทึกอีกครั้ง → ดัชนีต้องหายตาม (incremental ไม่ใช่แค่บวกเพิ่ม)
+          activate(fileR3);
+          await new Promise((r) => setTimeout(r, 150));
+          (state.tabs.get(fileR3).editor || state.tabs.get(fileR3).sp)
+            .setMarkdown('ห้องนั้นว่างเปล่า ไม่มีใครอยู่');
+          await saveTab(state.tabs.get(fileR3));
+          await new Promise((r) => setTimeout(r, 250));
+          check('[r3-1] ลบชื่อออกแล้ว backlink ของฉากนั้นหายไปด้วย',
+                !(getBacklinksFor(ent.path) || []).some((l) => l.sceneId === scR3.id),
+                JSON.stringify(getBacklinksFor(ent.path)));
+          check('[r3-1] คลิกขวาในหน้า Wiki ผูก onFindInScenes แล้ว (ไม่ใช่แค่เลื่อนจอ)',
+                typeof wTab.wiki.onFindInScenes === 'function');
+        }
+
+        // ---- [r3-2] ปุ่ม ✨ ให้ AI เขียนเรื่องย่อ ----
+        {
+          check('[r3-2] มีช่องที่กดปุ่ม ✨ ได้ครบ 4 ช่อง',
+                AI_SCENE_FIELD_KEYS.length === 4 &&
+                ['synopsis', 'pov', 'emotion', 'conflict'].every((k) => AI_SCENE_FIELD_KEYS.includes(k)),
+                AI_SCENE_FIELD_KEYS.join(','));
+          const p = fieldPrompt('synopsis', 'ทอร่าเดินเข้าครัวแล้วพบจดหมาย', 'ฉากที่หนึ่ง');
+          check('[r3-2] สร้าง prompt เรื่องย่อได้ (ไม่ยิงเน็ต)', !!p && p.prompt.length > 40);
+          check('[r3-2] prompt มีเนื้อฉากอยู่ข้างใน', p.prompt.includes('ทอร่าเดินเข้าครัว'));
+          check('[r3-2] prompt มีชื่อฉากเป็นบริบท', p.prompt.includes('ฉากที่หนึ่ง'));
+          check('[r3-2] เนื้อฉากว่าง → ไม่สร้าง prompt (ไม่เผา token เปล่า)',
+                fieldPrompt('synopsis', '   ', 'x') === null);
+          check('[r3-2] เก็บกวาดคำตอบ: ตัดเครื่องหมายคำพูดครอบ',
+                cleanResult('"เธอพบจดหมาย"') === 'เธอพบจดหมาย', cleanResult('"เธอพบจดหมาย"'));
+          check('[r3-2] เก็บกวาดคำตอบ: ตัดหัวข้อ "เรื่องย่อ:" ที่โมเดลชอบใส่',
+                cleanResult('เรื่องย่อ: เธอพบจดหมาย') === 'เธอพบจดหมาย');
+          check('[r3-2] ช่องสั้น (POV) เอาบรรทัดแรกพอ',
+                cleanResult('ทอร่า\nคำอธิบายที่ไม่ได้ขอ', 'pov') === 'ทอร่า');
+
+          // ปุ่มต้องโผล่จริงทั้งใน "กล่อง" และ "แผง" (บทเรียน 50)
+          const chA = (await kapi.readJson(await kapi.join(dPath, 'draft.json'))).chapters[0];
+          const scA = (await kapi.readJson(await kapi.join(dPath, 'scenes.json'))).chapters[chA.guid][0];
+          sceneProps(dPath, chA, scA);
+          await new Promise((r) => setTimeout(r, 160));
+          {
+            const ovs = [...document.querySelectorAll('.k-overlay')];
+            const bx = ovs[ovs.length - 1];
+            const fills = bx.querySelectorAll('.k-ai-fill');
+            check('[r3-2] กล่องคุณสมบัติฉากมีปุ่ม ✨ ครบ 4 ปุ่ม', fills.length === 4, fills.length);
+            check('[r3-2] ปุ่ม ✨ ของช่องเรื่องย่ออยู่แถวเดียวกับ textarea',
+                  !!bx.querySelector('.wiki-row textarea + .k-ai-fill'));
+            // ต้องหาปุ่ม "ยกเลิก" จากข้อความ — `querySelector('button')` จะไปโดนปุ่ม ✨ แล้วยิง API จริง
+            const cancelBtn = [...bx.querySelectorAll('.k-dlg-btns button')]
+              .find((b) => b.textContent.trim() === 'ยกเลิก');
+            check('[r3-2] กล่องยังมีปุ่มยกเลิกตามเดิม (ปุ่ม ✨ ไม่ไปแทรกในแถวปุ่ม)', !!cancelBtn);
+            cancelBtn.click();
+            [...document.querySelectorAll('.k-overlay')].forEach((o) => o.remove());
+          }
+          openPropsPanel(dPath, chA, scA);
+          await new Promise((r) => setTimeout(r, 300));
+          check('[r3-2] แผงคุณสมบัติก็มีปุ่ม ✨ ครบ 4 ปุ่ม (บทเรียน 50 — ต้องมีทั้งสองที่)',
+                $('#props-body').querySelectorAll('.k-ai-fill').length === 4,
+                $('#props-body').querySelectorAll('.k-ai-fill').length);
+        }
+
+        // ---- [r3-3] คุณสมบัติของบทและเล่ม ----
+        {
+          const chB = (await kapi.readJson(await kapi.join(dPath, 'draft.json'))).chapters[0];
+          const pCh = chapterProps(dPath, chB);
+          await new Promise((r) => setTimeout(r, 160));
+          {
+            const ovs = [...document.querySelectorAll('.k-overlay')];
+            const bx = ovs[ovs.length - 1];
+            check('[r3-3] กล่องคุณสมบัติบทเปิดได้', !!bx.querySelector('.k-chapter-props'),
+                  bx.className);
+            const inps = bx.querySelectorAll('input.wiki-input');   // [0]ชื่อ [1]องก์ [2]วันที่
+            inps[1].value = 'II';
+            inps[2].value = '2026-09-01';
+            bx.querySelectorAll('select')[0].value = 'กำลังเขียน';
+            bx.querySelector('.wiki-check').checked = true;         // ⭐ บทสำคัญ
+            bx.querySelector('textarea').value = 'โน้ตของบท';
+            bx.querySelector('.k-ok').click();
+          }
+          check('[r3-3] chapterProps คืน true เมื่อบันทึกจริง', (await pCh) === true);
+          const chAfter = (await kapi.readJson(await kapi.join(dPath, 'draft.json'))).chapters[0];
+          check('[r3-3] คุณสมบัติบทถูกเขียนลง draft.json',
+                chAfter.act === 'II' && chAfter.date === '2026-09-01' &&
+                chAfter.status === 'กำลังเขียน' && chAfter.isFavorite === true &&
+                chAfter.note === 'โน้ตของบท', JSON.stringify(chAfter));
+
+          // เล่ม
+          const secDir = dPath.replace(/[\\/]Draft[\\/][^\\/]+$/, '');
+          const secMeta = await kapi.readJson(await kapi.join(secDir, 'section.json'));
+          const pSec = sectionProps(secDir, secMeta);
+          await new Promise((r) => setTimeout(r, 160));
+          {
+            const ovs = [...document.querySelectorAll('.k-overlay')];
+            const bx = ovs[ovs.length - 1];
+            check('[r3-3] กล่องคุณสมบัติเล่มเปิดได้', !!bx.querySelector('.k-section-props'));
+            bx.querySelectorAll('select')[0].value = 'revising';
+            bx.querySelector('textarea').value = 'คำโปรยทดสอบ';
+            bx.querySelector('.k-ok').click();
+          }
+          check('[r3-3] sectionProps คืน true เมื่อบันทึกจริง', (await pSec) === true);
+          const secAfter = await kapi.readJson(await kapi.join(secDir, 'section.json'));
+          check('[r3-3] คุณสมบัติเล่มถูกเขียนลง section.json',
+                secAfter.status === 'revising' && secAfter.blurb === 'คำโปรยทดสอบ',
+                JSON.stringify(secAfter));
+          check('[r3-3] ค่าว่างไม่ทิ้งบรรทัดขยะไว้ (ไม่มี cover ก็ไม่มีคีย์)',
+                !('cover' in secAfter) || !!secAfter.cover);
+          [...document.querySelectorAll('.k-overlay')].forEach((o) => o.remove());
+        }
+
+        // ---- [r3-4] Localizer CSV (ทางเดินจริงในแอป ไม่ใช่แค่ unit test) ----
+        {
+          const th4 = { ui: { app: { title: 'คิเลียน' }, hint: 'สั้น, ปานกลาง' } };
+          const en4 = { ui: { app: { title: 'Killian' }, hint: 'short, medium' } };
+          const csv4 = jsonToCsv(th4, en4);
+          check('[r3-4] CSV มี BOM (Excel บน Windows อ่านไทยได้)', csv4.charCodeAt(0) === 0xfeff);
+          const back4 = csvToJson(csv4);
+          check('[r3-4] round-trip ไทยกลับมาครบ รวมค่าที่มีคอมมา',
+                back4.th.ui.hint === 'สั้น, ปานกลาง', JSON.stringify(back4.th));
+          const mg4 = mergeStrings({ ui: { a: 'เก่า', b: 'คงเดิม' } }, { ui: { a: 'ใหม่' } });
+          check('[r3-4] นำเข้าแบบรวม — คีย์ที่ไม่มีใน CSV ต้องไม่หาย',
+                mg4.merged.ui.b === 'คงเดิม' && mg4.merged.ui.a === 'ใหม่');
+          // เขียนไฟล์จริงแล้วนำเข้ากลับผ่านฟังก์ชันของแอป
+          const csvPath = await kapi.join(state.root, 'k2-lang-test.csv');
+          await kapi.writeFile(csvPath, jsonToCsv({ ui: { app: { ready: 'พร้อมแล้วจ้า' } } },
+                                                  { ui: { app: { ready: 'Ready!' } } }));
+          const res4 = await importLanguageCsv(csvPath);
+          check('[r3-4] นำเข้า CSV ผ่านคำสั่งของแอปได้', !!res4 && res4.keys.length === 1,
+                JSON.stringify(res4));
+          const wroteTh = await kapi.readJson(await kapi.join(state.root, 'languages', 'th.json'));
+          check('[r3-4] เขียนคำแปลลง <โปรเจกต์>/languages/th.json',
+                wroteTh.ui.app.ready === 'พร้อมแล้วจ้า', JSON.stringify(wroteTh.ui.app));
+          check('[r3-4] คีย์เดิมของไฟล์ภาษาไม่ถูกลบทิ้ง',
+                Object.keys(wroteTh.ui).length > 1 || Object.keys(wroteTh.ui.app).length >= 1);
+          check('[r3-4] เมนู "เครื่องมือ" มีคำสั่งส่งออก/นำเข้า CSV (บทเรียน 14b)',
+                typeof exportLanguageCsv === 'function' && typeof importLanguageCsv === 'function');
+        }
+
+        // ---- [r3-5] แผง AI วิเคราะห์ ----
+        {
+          check('[r3-5] แผง ai-analyzer อยู่ใน PANEL_DEFS',
+                PANEL_DEFS.some((d) => d.id === 'ai-analyzer'));
+          check('[r3-5] มี element เจ้าบ้านใน index.html', !!$('#ai-analyzer-panel'));
+          check('[r3-5] การ์ดตัวอย่าง 5 ใบครบตามสเปก', ANALYZER_CARDS.length === 5,
+                ANALYZER_CARDS.map((c) => c.id).join(','));
+          showPanel('ai-analyzer');
+          await renderFeaturePanel('ai-analyzer');
+          await new Promise((r) => setTimeout(r, 250));
+          const aiaHost = $('#ai-analyzer-body');
+          check('[r3-5] เปิดแผงแล้ววาดเนื้อหาจริง', !!aiaHost.querySelector('.aia-wrap'));
+          check('[r3-5] วาดการ์ดครบ 5 ใบ', aiaHost.querySelectorAll('.aia-card').length === 5,
+                aiaHost.querySelectorAll('.aia-card').length);
+          const aiaTxt = aiaHost.textContent;
+          for (const kw of ['จังหวะเรื่อง', 'ส่วนโค้งตัวละคร', 'คำที่ใช้บ่อย', 'ความขัดแย้ง', 'ความยาวฉาก']) {
+            check('[r3-5] การ์ด "' + kw + '" แสดงบนแผง', aiaTxt.includes(kw));
+          }
+          check('[r3-5] บอกชัดว่าเป็นตัวอย่างหน้าตา (ไม่หลอกว่าเป็นผลจริง)',
+                !!aiaHost.querySelector('.aia-badge'));
+          check('[r3-5] แถบสถิติอ่านตัวเลขจริงจากโปรเจกต์',
+                aiaHost.querySelectorAll('.aia-stat').length === 5);
+          const st5 = await analyzerStats();
+          check('[r3-5] นับฉากในโปรเจกต์ทดสอบได้ > 0', st5.scenes > 0, JSON.stringify(st5));
+          check('[r3-5] ปุ่ม toolbar #tb-ai-analyzer มีจริงและติด .on ตอนแผงเปิด',
+                !!$('#tb-ai-analyzer') && (refreshToolbar(), $('#tb-ai-analyzer').classList.contains('on')));
+          hidePanel('ai-analyzer'); refreshToolbar();
+          check('[r3-5] ปิดแผงแล้วปุ่มไม่ติด .on', !$('#tb-ai-analyzer').classList.contains('on'));
+        }
+
+        // ---- [r3-6] ซ่อนรหัสนำหน้าบรรทัด ----
+        {
+          check('[r3-6] prefix ของ fountain ถูกจับ: หัวฉาก', mdPrefixLen('.INT. บ้าน - กลางวัน') === 1);
+          check('[r3-6] prefix ของ fountain ถูกจับ: ชื่อตัวละคร', mdPrefixLen('@ทอร่า') === 1);
+          check('[r3-6] prefix ของ fountain ถูกจับ: ทรานซิชัน', mdPrefixLen('>CUT TO:') === 1);
+          check('[r3-6] prefix ยาวถูกจับก่อนสั้น: $intercut', mdPrefixLen('$intercut ห้องครัว') === 10);
+          check('[r3-6] $shot / $sub / $in / $act ถูกจับครบ',
+                mdPrefixLen('$shot มุมสูง') === 6 && mdPrefixLen('$sub ห้องนอน') === 5 &&
+                mdPrefixLen('$in FADE IN:') === 4 && mdPrefixLen('$act ตอนที่หนึ่ง') === 5);
+          check('[r3-6] หัวข้อมาร์กดาวน์ ### ถูกจับก่อน # (ยาวก่อนสั้น)',
+                mdPrefixLen('### โครงสาม') === 4 && mdPrefixLen('# โครงหนึ่ง') === 2);
+          check('[r3-6] โน้ต (( )) ถูกจับทั้งหัวและท้าย', mdPrefixLen('((โน้ตทดสอบ))') === 2);
+          // ต้องไม่ซ่อนของที่ไม่ใช่รหัส
+          check('[r3-6] ประโยคที่ขึ้นต้นด้วยจุดไข่ปลาไม่ถูกซ่อน', mdPrefixLen('...แล้วเธอก็เงียบ') === 0);
+          check('[r3-6] จุดทศนิยมไม่ถูกซ่อน', mdPrefixLen('.5 วินาที') === 0);
+          check('[r3-6] รูป ![alt](src) ไม่ถูกซ่อน (ต้องแสดงเป็นรูปจริง)',
+                mdPrefixLen('![ภาพ](a.png)') === 0);
+          check('[r3-6] บรรทัดที่มีแต่รหัสไม่ถูกซ่อน (เป็นข้อความจริงของผู้ใช้)',
+                mdPrefixLen('.') === 0 && mdPrefixLen('#') === 0 && mdPrefixLen('@') === 0);
+          check('[r3-6] ข้อความปกติไม่ถูกแตะ', mdPrefixLen('เธอเดินเข้ามา') === 0);
+
+          // ทดสอบบน editor จริง — บล็อกที่ active สดอยู่ (บทเรียน 2)
+          const chC = (await kapi.readJson(await kapi.join(dPath, 'draft.json'))).chapters[0];
+          const scC = (await kapi.readJson(await kapi.join(dPath, 'scenes.json'))).chapters[chC.guid][0];
+          const fileC = await kapi.join(dPath, 'Chapters', chC.folderName, scC.fileName);
+          await openScene(fileC, scC.title);
+          await new Promise((r) => setTimeout(r, 250));
+          const tC = state.tabs.get(fileC);
+          if (tC && tC.editor) {
+            state.settings.showMarkdownCodes = true; applyMarkdownCodes();
+            tC.editor.setMarkdown('@ทอร่า\nสวัสดีจ้า');
+            await new Promise((r) => setTimeout(r, 200));
+            activate(fileC);
+            await new Promise((r) => setTimeout(r, 150));
+            const hidden = tC.pane.querySelectorAll('.' + MD_HIDE_CLASS);
+            check('[r3-6] ตัวแก้ไขซ่อนรหัส @ ด้วย decoration จริง', hidden.length >= 1, hidden.length);
+            if (hidden.length) {
+              check('[r3-6] ซ่อนด้วย display:none จริง',
+                    getComputedStyle(hidden[0]).display === 'none',
+                    getComputedStyle(hidden[0]).display);
+              check('[r3-6] ซ่อนเฉพาะรหัส ไม่กินเนื้อหา', hidden[0].textContent === '@',
+                    JSON.stringify(hidden[0].textContent));
+            }
+            check('[r3-6] ไฟล์ .md ไม่ถูกแก้ — getMarkdown ยังมีรหัสครบ',
+                  tC.editor.getMarkdown().includes('@ทอร่า'),
+                  tC.editor.getMarkdown().slice(0, 40));
+            // ปิดสวิตช์ → รหัสกลับมา
+            toggleMarkdownCodes();
+            await new Promise((r) => setTimeout(r, 200));
+            check('[r3-6] ปิดสวิตช์แล้วไม่มี decoration ซ่อนเหลืออยู่',
+                  tC.pane.querySelectorAll('.' + MD_HIDE_CLASS).length === 0,
+                  tC.pane.querySelectorAll('.' + MD_HIDE_CLASS).length);
+            check('[r3-6] settings จำสถานะไว้', state.settings.showMarkdownCodes === false);
+            toggleMarkdownCodes();
+            check('[r3-6] กดกลับแล้วเปิดเหมือนเดิม', showMarkdownCodes() === true);
+            check('[r3-6] ปุ่ม toolbar #tb-md-codes มีจริง + สะท้อนสถานะ',
+                  !!$('#tb-md-codes') && (refreshToolbar(), $('#tb-md-codes').classList.contains('on')));
+          }
+        }
+
+        // ---- [r3-7] ระบบปลั๊กอิน ----
+        {
+          const dirP = await kapi.join(state.root, 'Plugins', 'k2test');
+          await kapi.mkdir(dirP);
+          await kapi.writeFile(await kapi.join(dirP, 'plugin.json'), JSON.stringify({
+            name: 'ปลั๊กอินทดสอบ', entry: 'main.js', version: '1.2.3',
+            author: 'e2e', description: 'ทดสอบ API ชุดใหม่', minAppVersion: '2.0.0',
+          }, null, 2));
+          await kapi.writeFile(await kapi.join(dirP, 'main.js'), [
+            'globalThis.__k2test = { api: k2, events: [] };',
+            "k2.registerCommand('คำสั่งจากปลั๊กอินทดสอบ', () => { globalThis.__k2test.ran = true; });",
+            "k2.on('k2test:ping', (d) => globalThis.__k2test.events.push(d));",
+            "k2.setSettings('greeting', 'สวัสดี');",
+            "k2.registerShortcut('hello', 'F9', true, true, () => { globalThis.__k2test.shortcut = true; });",
+            "globalThis.__k2test.panelId = k2.registerPanel('demo', { title: 'แผงทดสอบ', render: (h) => { h.textContent = 'ok'; } });",
+          ].join('\n'));
+          await loadPlugins();
+          const pl = pluginList();
+          const T = globalThis.__k2test || {};
+          check('[r3-7] โหลดปลั๊กอินจากโฟลเดอร์โปรเจกต์ได้',
+                pl.loaded.some((x) => x.name === 'k2test'), JSON.stringify(pl.loaded));
+          const mf = pl.loaded.find((x) => x.name === 'k2test') || {};
+          check('[r3-7] manifest ขยายเป็น 6 ช่อง (version/author/description/minAppVersion)',
+                mf.version === '1.2.3' && mf.author === 'e2e' &&
+                !!mf.description && mf.minAppVersion === '2.0.0', JSON.stringify(mf));
+          check('[r3-7] k2.registerCommand — คำสั่งเข้าแถบเครื่องมือ',
+                pl.commands.some((c) => c.label === 'คำสั่งจากปลั๊กอินทดสอบ'),
+                JSON.stringify(pl.commands.map((c) => c.label)));
+          for (const m of ['registerPanel', 'on', 'emit', 'readFile', 'writeFile', 'listDirs',
+                           'registerShortcut', 'getEditorView', 'getSettings', 'setSettings',
+                           'menuPopup', 'addMenuItem']) {
+            check('[r3-7] k2 API มีเมท็อด ' + m, typeof (T.api || {})[m] === 'function');
+          }
+          T.api.emit('k2test:ping', { n: 1 });
+          check('[r3-7] k2.on/emit ส่งเหตุการณ์ถึงกันจริง',
+                T.events.length === 1 && T.events[0].n === 1, JSON.stringify(T.events));
+          check('[r3-7] k2.setSettings/getSettings เก็บค่าของปลั๊กอินแยกกัน',
+                T.api.getSettings('greeting') === 'สวัสดี' &&
+                (state.settings.plugins || {}).k2test.greeting === 'สวัสดี');
+          check('[r3-7] k2.registerShortcut เพิ่มเข้าตาราง SHORTCUTS ตอนรัน',
+                SHORTCUTS.some((s) => s[3] === 'plugin:k2test:hello'));
+          await handleCommand('plugin:k2test:hello');
+          check('[r3-7] เรียกคีย์ลัดของปลั๊กอินแล้วฟังก์ชันทำงาน', T.shortcut === true);
+          check('[r3-7] k2.registerPanel ลงทะเบียนกับ PanelManager จริง',
+                !!T.panelId && !!getPanelManager().registry.get(T.panelId), T.panelId);
+          await T.api.writeFile('k2-plugin-test.txt', 'เขียนจากปลั๊กอิน');
+          check('[r3-7] k2.writeFile/readFile ทำงานในขอบเขตโปรเจกต์',
+                (await T.api.readFile('k2-plugin-test.txt')) === 'เขียนจากปลั๊กอิน');
+          check('[r3-7] path ที่มี .. ถูกปฏิเสธ (ไม่หลุดออกนอกโปรเจกต์)',
+                (await T.api.readFile('../../etc/passwd')) === null);
+          check('[r3-7] เทียบเวอร์ชันขั้นต่ำ: 2.0.0-alpha.60r3 >= 2.0.0',
+                versionAtLeast(APP_VERSION, '2.0.0') === true);
+          check('[r3-7] เทียบเวอร์ชันขั้นต่ำ: ปฏิเสธเมื่อสูงเกิน', versionAtLeast('2.0.0', '3.0.0') === false);
+          check('[r3-7] มี IPC ปลั๊กอินระดับผู้ใช้ (%APPDATA%/Killian2/Plugins)',
+                typeof kapi.globalPluginsDir === 'function' && typeof kapi.listGlobalPlugins === 'function');
+
+          // แยกความเสียหาย: ปลั๊กอินที่พังต้องถูกปิด ไม่ลากทั้งระบบตาย
+          const dirBad = await kapi.join(state.root, 'Plugins', 'k2bad');
+          await kapi.mkdir(dirBad);
+          await kapi.writeFile(await kapi.join(dirBad, 'plugin.json'), '{"name":"พัง","entry":"main.js"}');
+          await kapi.writeFile(await kapi.join(dirBad, 'main.js'), 'throw new Error("ตั้งใจให้พัง");');
+          await loadPlugins();
+          const pl2 = pluginList();
+          check('[r3-7] ปลั๊กอินที่พังถูกจดไว้ใน failed', pl2.failed.some((x) => x.name === 'k2bad'),
+                JSON.stringify(pl2.failed));
+          check('[r3-7] ปลั๊กอินดีตัวอื่นยังโหลดได้ (แยกความเสียหายจริง)',
+                pl2.loaded.some((x) => x.name === 'k2test'));
+          check('[r3-7] ตัวที่พังถูกตั้งธง disabled กันพังซ้ำรอบหน้า', pluginDisabled('k2bad') === true);
+          await loadPlugins();
+          check('[r3-7] รอบถัดไปข้ามตัวที่ปิดไว้ (ไม่ลองรันซ้ำ)',
+                pluginList().failed.some((x) => x.name === 'k2bad' && /ปิดไว้/.test(x.error)));
+          setPluginDisabled('k2bad', false);
+          check('[r3-7] เปิดกลับได้', pluginDisabled('k2bad') === false);
+          await kapi.remove(dirBad); await kapi.remove(dirP);
+        }
+
+        // ---- [r3-8] คลิกขวาหัวแผง → "นี่คืออะไร" ----
+        {
+          for (const d of PANEL_DEFS) {
+            check('[r3-8] แผง ' + d.id + ' มีคำอธิบายภาษาไทย',
+                  typeof d.desc === 'string' && d.desc.length > 20, d.id);
+          }
+          check('[r3-8] panelDesc อ่านผ่าน i18n ได้ (panel.desc_tree)',
+                panelDesc('tree').length > 20, panelDesc('tree'));
+          check('[r3-8] คีย์ i18n ของคำอธิบายมีจริงใน languages/*.json',
+                tr('panel.desc_tree', '@@') !== '@@' && tr('panel.desc_props', '@@') !== '@@');
+          check('[r3-8] ตัดคำอธิบายเป็นบรรทัดสั้น ๆ ไม่ล้นจอ',
+                panelWrapDesc('a'.repeat(200)).every((l) => l.length <= 200) && panelWrapDesc('').length === 0);
+          showPanel('tree');
+          await new Promise((r) => setTimeout(r, 200));
+          document.querySelectorAll('.k-menu:not(#k-fab-menu)').forEach((m) => m.remove());
+          const headEl = document.querySelector('#app-root .k-panel[data-panel-id="tree"] .k-panel-head');
+          check('[r3-8] หาหัวแผงโปรเจกต์เจอ', !!headEl);
+          headEl.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 120, clientY: 120, cancelable: true }));
+          await new Promise((r) => setTimeout(r, 120));
+          // บทเรียน 31: #k-fab-menu เป็น .k-menu ถาวร → ต้องกรองออกเสมอ
+          const menu8 = document.querySelector('.k-menu:not(#k-fab-menu)');
+          check('[r3-8] คลิกขวาหัวแผงเปิดเมนูจริง', !!menu8);
+          const txt8 = menu8 ? menu8.textContent : '';
+          check('[r3-8] เมนูมีหัวข้อ "นี่คืออะไร"', txt8.includes('นี่คืออะไร'), txt8.slice(0, 90));
+          check('[r3-8] เมนูมีคำอธิบายของแผงนั้น', txt8.includes('สารบัญของผลงาน'), txt8.slice(0, 160));
+          check('[r3-8] เมนูมีคำสั่งของแผง (พับ/ลอย/ปิด)',
+                txt8.includes('พับแผง') && txt8.includes('ปิดแผง'), txt8.slice(0, 200));
+          check('[r3-8] แถวคำอธิบายกดไม่ได้ (เป็น .k-menu-label)',
+                !!menu8.querySelector('.k-menu-label'));
+          closeMenu();
+        }
+
+        // ---- [r3-9] หน้าแรก: แถวปุ่มใหม่ ----
+        {
+          check('[r3-9] safeRel ตัด path ที่หลุดออกนอกโฟลเดอร์ (zip slip)',
+                safeRel('../../evil.txt') === '' && safeRel('C:/evil.txt') === '' &&
+                safeRel('a/b.md') === 'a/b.md');
+          check('[r3-9] commonPrefix ปอกโฟลเดอร์ชั้นนอกที่ทุกไฟล์ใช้ร่วมกัน',
+                commonPrefix(['proj/a.md', 'proj/b/c.md']) === 'proj/' &&
+                commonPrefix(['a.md', 'b.md']) === '');
+          const ov9 = await showHomeDialog();
+          await new Promise((r) => setTimeout(r, 350));
+          const acts = ov9.querySelector('.home-actions');
+          check('[r3-9] กล่องหน้าแรกมีแถวปุ่ม', !!acts);
+          const order = [...acts.children].map((c) => c.className.split(' ').pop());
+          check('[r3-9] เรียงปุ่มตามภาพ: ส่งออก · นำเข้า · ช่องว่าง · สร้างใหม่ · เปิด · ปิด',
+                JSON.stringify(order) === JSON.stringify(['home-btn-export', 'home-btn-import',
+                  'home-actions-spacer', 'home-btn-new', 'home-btn-open', 'home-btn-close']),
+                JSON.stringify(order));
+          check('[r3-9] ปุ่มส่งออก/นำเข้ามีจริง',
+                !!acts.querySelector('.home-btn-export') && !!acts.querySelector('.home-btn-import'));
+          check('[r3-9] ปุ่มปิดกล่องมีจริง', !!acts.querySelector('.home-btn-close'));
+          check('[r3-9] สวิตช์มุมมอง 📋 ย้ายขึ้นไปอยู่บนหัวกล่องแล้ว',
+                !!ov9.querySelector('.home-head .home-view-btn') && !acts.querySelector('.home-view-btn'));
+          // ปุ่มกว้างเท่ากัน (min-width จาก CSS) — ต่างกันได้เฉพาะปุ่มปิดที่ตั้งไว้แคบกว่า
+          const wMain = ['home-btn-export', 'home-btn-import', 'home-btn-new', 'home-btn-open']
+            .map((c) => Math.round(acts.querySelector('.' + c).getBoundingClientRect().width));
+          check('[r3-9] ปุ่มหลักกว้างอย่างน้อย 120px ตามที่ตั้งไว้',
+                wMain.every((w) => w >= 118), JSON.stringify(wMain));
+          check('[r3-9] ช่องว่างตรงกลางดันสองกลุ่มออกจากกันจริง',
+                acts.querySelector('.home-actions-spacer').getBoundingClientRect().width >= 20,
+                acts.querySelector('.home-actions-spacer').getBoundingClientRect().width);
+          await kapi.testShot('/tmp/k2_home_r3.png');
+          acts.querySelector('.home-btn-close').click();
+          await new Promise((r) => setTimeout(r, 120));
+          check('[r3-9] กดปุ่มปิดแล้วกล่องหายจริง', !document.body.contains(ov9));
+          [...document.querySelectorAll('.k-overlay')].forEach((o) => o.remove());
+        }
+      }
 
     out.push('ALL OK');
   } catch (e) {

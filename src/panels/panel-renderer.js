@@ -9,6 +9,7 @@
 //   · ลาก resize/float ไม่ยิง re-render ระหว่างลาก (จะทำให้ ProseMirror ถูกถอด-ใส่ 60 ครั้ง/วินาที)
 //     → ปรับ style สดตอนลาก แล้ว commit ลง store ครั้งเดียวตอนปล่อย
 import { el } from '../core.js';
+import { popupMenu } from '../ui.js';        // [60r3 ข้อ 8] เมนูคลิกขวาบนหัวแผง
 import { iconHtml, hasIcon } from '../icons.js';
 import * as PL from './panel-layout.js';
 import { makePanelDraggable, makeTabDraggable, makeFloatDraggable, createDropOverlay,
@@ -194,7 +195,58 @@ function buildHead(node, pm, opts, md, floating) {
     btns.appendChild(btn);
   }
   head.appendChild(btns);
+  // [alpha.60r3 ข้อ 8] คลิกขวาบนหัวแผง → "❔ นี่คืออะไร" + คำสั่งของแผงนั้น
+  head.oncontextmenu = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    popupMenu(e.clientX, e.clientY, headMenuItems(node, pm, opts, md, floating));
+  };
   return head;
+}
+
+/**
+ * [alpha.60r3 ข้อ 8] รายการเมนูคลิกขวาของหัวแผง
+ * แถวคำอธิบายเป็น `{disabled:true}` — popupMenu รองรับแถวที่กดไม่ได้อยู่แล้ว (alpha.48)
+ * ตัดเป็นบรรทัดสั้น ๆ เพราะเมนู native-like ไม่ตัดคำเอง คำอธิบายยาวจะล้นออกนอกจอ
+ */
+export function headMenuItems(node, pm, opts, md, floating) {
+  const def = pm.registry.get(node.id) || {};
+  const title = md.title || node.title || node.id;
+  const items = [{ label: '❔ นี่คืออะไร — <b>' + escapeHtml(title) + '</b>', disabled: true }];
+  for (const line of wrapDesc(md.desc || '')) items.push({ label: '<span class="dim">' + escapeHtml(line) + '</span>', disabled: true });
+  items.push('-');
+  if (def.closable !== false) {
+    items.push({ label: (node.collapsed ? '▸ คลี่แผง' : '▾ พับแผง'), click: () => pm.collapsePanel(node.id) });
+  }
+  if (def.floatable !== false) {
+    items.push({ label: floating ? '⊡ ผนึกกลับเข้าหน้าต่าง' : '⧉ ลอยแผงออกมา',
+      click: () => {
+        if (floating) { const a = pm.isDocked('docs') ? 'docs' : undefined; pm.dockPanel(node.id, def.defaultSide || 'left', a); return; }
+        pm.floatPanel(node.id, clampFloat({ x: 90, y: 90, w: 340, h: 320 }));
+      } });
+  }
+  if (def.closable !== false) {
+    items.push('-');
+    items.push({ label: '✕ ปิดแผง (เปิดกลับที่ มุมมอง → แผง)', click: () => pm.hidePanel(node.id) });
+  }
+  return items;
+}
+
+/** ตัดคำอธิบายเป็นบรรทัดละไม่เกิน ~52 ตัวอักษร โดยไม่ตัดกลางคำอังกฤษ */
+export function wrapDesc(desc, width = 52) {
+  const s = String(desc || '').trim();
+  if (!s) return [];
+  const out = [];
+  let line = '';
+  for (const w of s.split(' ')) {
+    if (!line) { line = w; continue; }
+    if ((line + ' ' + w).length > width) { out.push(line); line = w; } else line += ' ' + w;
+  }
+  if (line) out.push(line);
+  return out.slice(0, 6);                    // ยาวเกินนี้เมนูจะสูงเกินจอ
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
 function buildBody(node, opts) {

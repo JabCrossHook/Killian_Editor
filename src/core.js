@@ -74,6 +74,8 @@ export const GLOBAL_DEFAULTS = {
   shortcuts: {},
   // [alpha.60r ข้อ 1] แสดงหน้าแรกเมื่อเปิดโปรเจกต์ — ปิดแล้วเปิดโปรเจกต์ล่าสุดทันที
   showHomeOnStartup: true,
+  // [alpha.60r3 ข้อ 6] ซ่อนรหัสนำหน้าบรรทัด (. @ > $shot # …) ในตัวแก้ไขนิยาย — เปิดไว้เป็นค่าเริ่มต้น
+  showMarkdownCodes: true,
 };
 export const PROJECT_DEFAULTS = {
   // หน้ากระดาษ

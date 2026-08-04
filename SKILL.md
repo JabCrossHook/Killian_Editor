@@ -129,6 +129,22 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
     ชุดระยะขอบสำเร็จรูป 8 ชุด · `marginPreset(key)`/`marginPresetOptions()`/`matchMarginPreset(m)`
     (คืน `''` = ผู้ใช้ตั้งเอง · ยอมคลาดเคลื่อนทศนิยม < 0.005) · **unit test 45 ข้อ**
     · ตารางค่าอยู่ใน `.json` — ผู้ใช้แก้เองได้ไม่ต้องแตะโค้ด
+  - **`i18n-csv.js`** (alpha.60r3 · **ข้อ 4**, บริสุทธิ์ 100%) — ไฟล์ภาษา ↔ ตาราง CSV 3 คอลัมน์ `key,th,en`:
+    `flatten`/`unflatten` (dot-path) · `csvCell` (quote ตาม RFC 4180) · `jsonToCsv` (**ใส่ BOM เสมอ** —
+    Excel บน Windows อ่าน UTF-8 ไม่มี BOM เป็น ANSI แล้วไทยกลายเป็นขยะ) · `parseCsv` (state machine
+    ตัวต่อตัว — regex ทำ `""` ข้างใน quoted field ไม่ได้ · รับ CRLF ของ Excel) · `csvToJson` ·
+    **`mergeStrings` = รวมทับ ไม่ลบคีย์ที่ไม่มีในตาราง** (ผู้แปลส่งกลับมาแค่บางส่วนเสมอ) · **unit test 61 ข้อ**
+  - **`ai-synopsis.js`** (alpha.60r3 · **ข้อ 2**) — ปุ่ม ✨ ให้ AI เติมคุณสมบัติฉาก:
+    `AI_SCENE_FIELDS` 4 ช่อง (synopsis/pov/emotion/conflict) · `fieldPrompt()` **pure** (ต่อยอด
+    `buildPrompt('summarize')` ของ ai-assistant.js) · `cleanResult()` เก็บกวาดคำตอบ ·
+    **`attachAiFieldButton(row, input, field, ctx, onFilled)` = จุดเดียวที่ทั้งกล่องและแผงเรียก** (บทเรียน 50)
+  - **`ai-analyzer-ui.js`** (alpha.60r3 · **ข้อ 5**) — แผง "🧠 AI วิเคราะห์" **ตัวอย่างหน้าตา**:
+    `ANALYZER_CARDS` 5 ใบ + `analyzerStats()` (นับเล่ม/บท/ฉาก/คำ/เอนทิตี้จากดัชนีในเครื่อง ไม่ยิง AI)
+    · มีป้าย "ยังไม่เปิดใช้งาน" กำกับ — **อย่าให้ mockup ดูเหมือนผลจริง**
+  - **`markdown-code-toggle.js`** (alpha.60r3 · **ข้อ 6**) — ซ่อนรหัสนำหน้าบรรทัดในตัวแก้ไขนิยาย:
+    `MD_PREFIXES` (**เรียงยาวก่อนสั้น** — `#` จะกิน `###` และ `$in ` ไม่มีวันถูกจับถ้าเรียงผิด) ·
+    `prefixLen`/`suffixLen` **pure** · `markdownCodePlugin(decoState)` รับ `incrementalDecoState`
+    ของ editor.js เข้ามา · ซ่อนด้วย `.k-md-hide-prefix{display:none}` — **ไฟล์ .md ไม่ถูกแก้เลย**
   - **`wiki-images.js`** (alpha.60r2 · **ข้อ 12**, บริสุทธิ์) — เมทาดาทาของรูปใน entity:
     `entity.images[]` จาก `string[]` → `{file,caption,alt,title,width,height}[]` ·
     `migrateImages`/`needsImageMigration`/`normalizeImage` (รับ `name`/`url` ของโค้ดเก่าด้วย) ·
@@ -197,7 +213,7 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
 
 ## E2E test workflow (สำคัญ — ทำทุกครั้งก่อนเชื่อว่าแก้สำเร็จ)
 
-Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **1,567 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
+Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **1,706 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
 
 **Unit test โมดูลบริสุทธิ์ (alpha.39, รันเร็ว ไม่ต้องเปิด electron):**
 ```bash
@@ -221,8 +237,9 @@ node test/text-case.test.cjs       # 62 checks — 7 โหมด/ไทยไ�
 node test/wiki-images.test.cjs     # 43 checks — migrate string→object/caption/alt/ลำดับรูป (alpha.60r2 · 12)
 node test/scene-meta.test.cjs      # 56 checks — frontmatter ชนะ index/bool จากสตริง/ลบคีย์ว่าง (alpha.60r2 · 13)
 node test/margin-presets.test.cjs  # 45 checks — 8 ชุด/จับคู่กลับ/ค่าที่ผู้ใช้ตั้งเอง (alpha.60r2 · 6)
+node test/i18n-csv.test.cjs      # 61 checks — flatten/CSV quote+BOM/round-trip ไฟล์ภาษาจริง (alpha.60r3 · 4)
 ```
-`npm run test:unit` รันชุดบริสุทธิ์ทั้งหมดรวดเดียว (**1,852 checks**)
+`npm run test:unit` รันชุดบริสุทธิ์ทั้งหมดรวดเดียว (**1,913 checks**)
 · **ตรวจ PDF ที่สร้างขึ้นในเทส**: pdf-lib **บีบอัด content stream (FlateDecode)** และเขียนข้อความเป็น
 **hex string** (`<48656C…> Tj`) ทั้งฟอนต์มาตรฐานและฟอนต์ที่ฝัง → ค้นข้อความจากไบต์ดิบไม่เจอเลย
 ต้อง `zlib.inflateSync` ก่อน **แล้วถอด hex** (ดู `streamsText`/`drawnText` ใน `pdf-generator.test.cjs`)
@@ -618,7 +635,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ---
 
-## เวอร์ชัน (ล่าสุด alpha.60r2 · e2e 1,567 + unit 1,852)
+## เวอร์ชัน (ล่าสุด alpha.60r3 · e2e 1,706 + unit 1,913)
 
 .13–.22 (v1→v2 พื้นฐาน): snapshot, line numbers, spellcheck ไทย+Chromium, ปุ่มลัดตั้งเอง, mac build, บทหนัง Ctrl+arrow, relationship sync, floating format bar, sidebar resize, SmartType Final Draft, wiki gallery/lightbox, explorer search+tags, panel docking, tree float+snap
 .24 batch 8 (drag-move explorer, panel snap, split compare, version tracking, scene lock, screenplay Final Draft look, screenplay images, wiki links) · .25–.27 **Planner board** (fabric.js) · .28 **floating windows** · .29 memo-in-chapter + scoped search
@@ -882,6 +899,46 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
   **[13] คุณสมบัติฉาก** — `scene-meta.js` เป็นจุดเดียว · frontmatter ชนะ `scenes.json` เสมอ
     · `sceneProps` + `setSceneMeta` เดินผ่านทั้งคู่ · เมนู เครื่องมือ → 🔄 ซิงก์คุณสมบัติฉากจากไฟล์ .md
   **แพ็กเกจ**: `npm run dist:mac` → DMG macOS Intel (x64) · `build.mac` ตั้ง `identity:null` (ยังไม่มีใบรับรอง)
+
+.60r3 **รอบเก็บงาน 9 ข้อ — เชื่อมโลก · AI ช่วยกรอก · คุณสมบัติบท/เล่ม · Localizer · ปลั๊กอิน · หน้าแรกใหม่**
+  โมดูลใหม่ 4 ตัว (`i18n-csv` · `ai-synopsis` · `ai-analyzer-ui` · `markdown-code-toggle`)
+  **[1] "ฉากที่กล่าวถึง" ใช้ไม่ได้** — 2 ต้นเหตุ: (ก) `ensureAutoLink()` สร้างดัชนีครั้งเดียวแล้วไม่อัปเดตอีกเลย
+    (ข) ตั้ง `autoLink` **ก่อน** อ่านไฟล์เสร็จ → ผู้เรียกคนที่สองได้ instance ว่างกลับไป
+    **แก้**: ทุกคนรอ Promise ก้อนเดียว (`building`) · `saveTab` เรียก `updateSceneLink()` (O(1)/บันทึก)
+    แล้ววาดแผง Wiki ที่เปิดค้างใหม่ผ่าน `tab.refreshBacklinks` · ปุ่ม 🔄 `rebuildAutoLink()` ·
+    คลิกขวาในหน้า Wiki → `onFindInScenes` (เมนูรายชื่อฉากจริง ไม่ใช่เลื่อนจอ)
+    · ทำเฉพาะเมื่อ `autoLinkReady()` — Ctrl+S ครั้งแรกจะได้ไม่ปลุกการสแกนทั้งโปรเจกต์
+  **[2] ปุ่ม ✨ AI เติมช่องคุณสมบัติฉาก** — `ai-synopsis.js`: `generateSceneSynopsis/generateSceneField` ·
+    `AI_SCENE_FIELDS` 4 ช่อง (synopsis/pov/emotion/conflict) · `fieldPrompt()` เป็น pure (เทสได้ไม่ต้องยิงเน็ต) ·
+    **`attachAiFieldButton()` = ตัวเดียวที่ทั้งกล่องและแผงเรียก** (บทเรียน 50)
+    · เติมค่าแล้วยิง event `input` → autosave ของแผงเก็บให้เอง
+  **[3] คุณสมบัติบท/เล่ม** — `chapterProps()` (scene-ops) เขียน `draft.json` (status/act/date/note/isFavorite) ·
+    `sectionProps()` (section-ops) เขียน `section.json` (status/blurb/cover/order) · คลิกขวาหัวบท/หัวเล่ม
+    · ค่าเหล่านี้มีในไฟล์มาตั้งแต่ v1 แต่ไม่เคยมี UI แก้
+  **[4] Localizer CSV** — `i18n-csv.js` (บริสุทธิ์ · **unit test 61 ข้อ**): `flatten/unflatten` ·
+    `jsonToCsv(th,en)` (BOM + CRLF + quote ตาม RFC 4180) · `parseCsv` (state machine — regex ทำ `""` ไม่ได้) ·
+    `csvToJson` (หัวตารางสลับลำดับได้) · **`mergeStrings` = รวมทับ ไม่ลบคีย์ที่ไม่มีในตาราง**
+    · เมนู เครื่องมือ → ส่งออก/นำเข้า · เขียนลง `<โปรเจกต์>/languages/*.json` แล้วโหลดใหม่ทันที
+  **[5] แผง 🧠 AI วิเคราะห์** — `ai-analyzer-ui.js` · `ANALYZER_CARDS` 5 ใบ + `analyzerStats()` (ตัวเลขจริง)
+    · **ตัวอย่างหน้าตา** มีป้ายกำกับชัด ไม่หลอกว่าเป็นผลจริง · แผง `ai-analyzer` + `#tb-ai-analyzer` + เมนู
+  **[6] ซ่อนรหัสนำหน้าบรรทัด** — `markdown-code-toggle.js`: `MD_PREFIXES` (**เรียงยาวก่อนสั้น** ไม่งั้น
+    `#` กิน `###` และ `$in ` ไม่ถูกจับ) · `prefixLen`/`suffixLen` เป็น pure · `markdownCodePlugin(decoState)`
+    รับ `incrementalDecoState` จาก editor.js เข้ามา (คิดจากบล็อกเดียว = เข้าเงื่อนไขบทเรียน 52)
+    · ซ่อนด้วย `.k-md-hide-prefix{display:none}` — **ไฟล์ .md ไม่ถูกแก้เลย**
+    · กติกากันซ่อนผิด: ต้องมีเนื้อตามหลัง · `.` ห้ามซ่อนเมื่อตามด้วยจุด/เลข/ช่องว่าง · `!` ห้ามซ่อนถ้าเป็น `![](…)`
+    · `settings.showMarkdownCodes` (เริ่มต้น true) · ปุ่ม `#tb-md-codes` + เมนู รูปแบบ · ไอคอน `eye`/`eye-off` ใหม่
+  **[7] ระบบปลั๊กอิน** — `k2` API 8 → **20 เมท็อด** · `pluginApi(name)` ผูกชื่อไว้ (settings/สถานะแยกรายตัว)
+    · manifest 6 ช่อง + `versionAtLeast()` · **2 ที่อยู่**: `<โปรเจกต์>/Plugins/` + `%APPDATA%/Killian2/Plugins/`
+    (IPC ใหม่ `plugins:globalDir` / `plugins:listGlobal` · ชื่อซ้ำ → ของโปรเจกต์ชนะ)
+    · **แยกความเสียหาย**: throw ตอนโหลด → `settings.plugins.disabled[<ชื่อ>]` แล้วข้ามรอบถัดไป
+    · `k2.readFile/writeFile` กัน path ที่มี `..` · คีย์ลัดเข้า `SHORTCUTS` ตอนรัน (ช่อง `plugin:<ชื่อ>:<id>`)
+    · `pluginBus` = EventBus ก้อนเดียวที่ทุกปลั๊กอินใช้ร่วม
+  **[8] คลิกขวาหัวแผง → "นี่คืออะไร"** — `desc` ใน `PANEL_DEFS` ทุกแผง (i18n `panel.desc_<id>`) ·
+    `panelDesc()` · `buildHead()` ผูก `oncontextmenu` → `headMenuItems()` · `wrapDesc()` ตัดบรรทัด ≤52 ตัว
+  **[9] หน้าแรกเรียงปุ่มใหม่** — **`buildHomeActions()` = ตัวเดียวที่ทั้ง 3 โหมดการวาดใช้**
+    (กล่อง overlay · แท็บหน้าแรก · แผงหน้าแรก) · ลำดับ: ส่งออก · นำเข้า · spacer · สร้างใหม่ · เปิด · ปิด
+    · สวิตช์มุมมอง 📋 ย้ายขึ้นหัวกล่อง · **`importProjectZip()`** ใหม่ (`safeRel` กัน zip slip ·
+    `commonPrefix` ปอกโฟลเดอร์ชั้นนอก · ไบนารีผ่าน `writeBytes`)
 
 **ยังเหลือ**: `search-engine.js` ยังเป็น orphan — Global Search (`global-search.js`) ยังสแกนไฟล์ตรง ๆ ไม่ได้ใช้ inverted index (ควรสลับมาใช้เพื่อความเร็ว) · multiple-drafts-per-book UI (โครงรองรับแล้ว), screenplay align persistence, Campaign/D&D mode, electron-builder + code signing, .icns/.ico icon, native arm64 build. Top เคยบอก paper/indent "อาจต้องปรับปรุง ไว้ก่อน"
 

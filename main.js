@@ -38,6 +38,8 @@ const toggles = {
   // [alpha.58r บั๊ก 7] ค่าเริ่มต้นของ "ข้อความต่อเนื่อง" คือ "เปิด" (CONTINUED_DEFAULTS.enabled = true)
   // เดิมไม่มีคีย์นี้เลย → เมนูขึ้นเป็นไม่ติ๊กชั่วขณะจนกว่า renderer จะส่ง syncMenuToggles ครั้งแรก
   continueds: true,
+  // [alpha.60r3 ข้อ 6] ซ่อนรหัสนำหน้าบรรทัด — ค่าเริ่มต้น "เปิด" (ตรงกับ DEFAULT_SETTINGS)
+  markdownCodes: true,
   panels: { 'tree-panel': true, 'props-panel': true, 'outline-panel': true },
 };
 // ตัวช่วยสร้างรายการสวิตช์ — ผู้ใช้เห็นชัดว่ากดแล้วเปิด/ปิด ไม่ใช่คำสั่งครั้งเดียว
@@ -169,6 +171,9 @@ function buildMenu() {
       ] },
       chk('โหมดหน้ากระดาษ', toggles.paperMode, () => send('paper-mode')),
       chk('แสดงเลขบรรทัด (รางซ้ายของแผง)', toggles.lineNumbers, () => send('line-numbers')),
+      // [alpha.60r3 ข้อ 6] ซ่อนรหัสนำหน้าบรรทัด (. @ > $shot $sub $in $act $intercut (( )) = # ! )
+      chk('ซ่อนรหัสนำหน้าบรรทัด (. @ > $shot # …)', toggles.markdownCodes,
+          () => send('markdown-codes')),
       // [alpha.60r2 ข้อ 9] ปุ่มลอยมุมขวาล่าง
       chk('ปุ่มลอยมุมขวาล่าง (FAB)', toggles.fabEnabled, () => send('toggle-fab')),
       { type: 'separator' },
@@ -256,6 +261,10 @@ function buildMenu() {
       // [alpha.60r2 ข้อ 13] frontmatter ของ .md = แหล่งความจริงของคุณสมบัติฉาก
       { label: '🔄 ซิงก์คุณสมบัติฉากจากไฟล์ .md (แก้ไฟล์นอกโปรแกรมแล้วใช้)',
         click: () => send('sync-scene-meta') },
+      { type: 'separator' },
+      // [alpha.60r3 ข้อ 4] ชุดเครื่องมือผู้แปล — ทำงานใน Excel/Sheets แล้วนำเข้ากลับ
+      { label: '🌐 ส่งออกภาษาเป็น CSV (key · ไทย · อังกฤษ)…', click: () => send('export-language-csv') },
+      { label: '🌐 นำเข้าภาษาจาก CSV…', click: () => send('import-language-csv') },
     ] },
     { id: 'View', label: 'มุมมอง', submenu: [
       { label: 'แดชบอร์ด', click: () => send('dashboard') },
@@ -265,6 +274,8 @@ function buildMenu() {
       { label: 'Story Network (แผนผังความสัมพันธ์)', click: () => send('network') },
       { label: 'Planner (กระดานวางแผน)', click: () => send('planner') },
       { label: 'Kanban (กระดานตามสถานะ)', click: () => send('kanban') },
+      // [alpha.60r3 ข้อ 5] แผงวิเคราะห์ด้วย AI (ตัวอย่างหน้าตา)
+      { label: '🧠 AI วิเคราะห์ (จังหวะเรื่อง · ตัวละคร · คำซ้ำ)', click: () => send('ai-analyzer') },
       { label: `🖼 คลังรูปภาพ (Gallery) (${C}+${S}+G)`, click: () => send('gallery') },
       { label: 'แยกหน้าจอ (Split View)', submenu: [
         chk(`แยกซ้าย-ขวา (${C}+${S}+\\)`, toggles.splitView === 'right', () => send('split-view', 'right')),
@@ -301,6 +312,7 @@ function buildMenu() {
         chk('แผนที่', toggles.panels['maps'], () => send('toggle-panel', 'maps')),
         // [alpha.60r1 ข้อ 21] คลังรูปย้ายจากแท็บมาเป็นแผงเช่นกัน
         chk(`คลังรูปภาพ (${C}+${S}+G)`, toggles.panels['gallery'], () => send('toggle-panel', 'gallery')),
+        chk('🧠 AI วิเคราะห์', toggles.panels['ai-analyzer'], () => send('toggle-panel', 'ai-analyzer')),
         { type: 'separator' },
         { label: '📐 จัดการแผง (แสดง/ซ่อน)…', click: () => send('panel-system') },
         { label: 'รีเซ็ตการจัดวางแผงทั้งหมด', click: () => send('reset-panels') },
@@ -531,6 +543,8 @@ const SAVE_FILTERS = {
   json: { name: 'JSON', extensions: ['json'] },
   txt: { name: 'ข้อความ', extensions: ['txt'] },
   zip: { name: 'ZIP', extensions: ['zip'] },
+  // [alpha.60r3 ข้อ 4] ตารางคำแปลสำหรับผู้แปล (Excel / Google Sheets)
+  csv: { name: 'ตาราง CSV', extensions: ['csv'] },
   fdx: { name: 'Final Draft', extensions: ['fdx'] },
   rtf: { name: 'Rich Text', extensions: ['rtf'] },
   // alpha.57a — นำเข้าไฟล์ฟอนต์เข้าโปรเจกต์ (ฟอนต์ตามภาษา)
@@ -574,6 +588,20 @@ H('settings:readGlobal', () => {
     if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf-8'));
     return {};
   } catch { return {}; }
+});
+// [alpha.60r3 ข้อ 7] ปลั๊กอินระดับผู้ใช้ — %APPDATA%/Killian2/Plugins/ (ใช้ได้ทุกโปรเจกต์)
+// คืน "path" ให้ renderer เดินต่อด้วย fs:* ที่มีอยู่แล้ว — ไม่ต้องเพิ่ม API อ่านไฟล์ชุดที่สอง
+function globalPluginsDir() { return path.join(app.getPath('userData'), 'Plugins'); }
+H('plugins:globalDir', () => {
+  const p = globalPluginsDir();
+  try { fs.mkdirSync(p, { recursive: true }); } catch {}
+  return p;
+});
+H('plugins:listGlobal', () => {
+  try {
+    return fs.readdirSync(globalPluginsDir(), { withFileTypes: true })
+      .filter((d) => d.isDirectory()).map((d) => d.name);
+  } catch { return []; }
 });
 H('settings:writeGlobal', (obj) => {
   try {

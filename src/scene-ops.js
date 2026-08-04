@@ -1,6 +1,6 @@
 // scene-ops.js — จัดการฉากและบท: เพิ่ม/แก้ชื่อ/ลบ/ทำสำเนา/ย้าย/เมนูสถานะ·สี
 import { buildTree, closeTab, guid, openScene, safeName, saveTab, uniqueSceneFileName } from './app.js';
-import { SCENE_COLORS, SCENE_STATUSES, setStatus, state } from './core.js';
+import { SCENE_COLORS, SCENE_STATUSES, el, setStatus, state } from './core.js';
 import { allStatuses } from './custom-status.js';
 import { deleteToTrash } from './recycle.js';
 import { ask, confirmBox, popupMenu } from './ui.js';
@@ -41,6 +41,84 @@ export async function setChapterTitle(dPath, ch, title) {
   for (const c of d.chapters || []) if (c.guid === ch.guid) c.title = title;
   await kapi.writeFile(df, JSON.stringify(d, null, 2));
   await buildTree();
+}
+
+/**
+ * [alpha.60r3 ข้อ 3] คุณสมบัติของ "บท" — เดิมคลิกขวาบททำได้แค่เปลี่ยนชื่อ
+ * ทั้งที่ `draft.json` เก็บ status/act/date/isFavorite มาตั้งแต่ v1 แล้ว (addChapter เขียนให้ทุกครั้ง)
+ * แต่ไม่มี UI ไหนแก้ได้เลย → ค่าเหล่านั้นค้างเป็นค่าตั้งต้นตลอดชีพของโปรเจกต์
+ * @returns {Promise<boolean>} true = บันทึกจริง
+ */
+export async function chapterProps(dPath, ch) {
+  const df = await kapi.join(dPath, 'draft.json');
+  let d;
+  try { d = await kapi.readJson(df); } catch { setStatus('อ่าน draft.json ไม่ได้'); return false; }
+  const cur = (d.chapters || []).find((c) => c.guid === ch.guid);
+  if (!cur) { setStatus('ไม่พบบทนี้ใน draft.json'); return false; }
+
+  const ov = el('div', 'k-overlay');
+  const box = el('div', 'k-dialog k-chapter-props');
+  box.append(el('div', 'k-dlg-title', 'คุณสมบัติบท — ' + (cur.title || '')));
+  const mk = (label, val, tag = 'input') => {
+    const r = el('div', 'wiki-row'); r.append(el('label', null, label));
+    const i = el(tag, 'wiki-input'); i.value = val == null ? '' : String(val);
+    r.append(i); box.append(r); return i;
+  };
+  const mkSel = (label, options, curVal) => {
+    const r = el('div', 'wiki-row'); r.append(el('label', null, label));
+    const s = el('select', 'wiki-input k-dlg-select');
+    for (const [v, txt] of options) {
+      const o = el('option', null, txt); o.value = v;
+      if (v === curVal) o.selected = true;
+      s.append(o);
+    }
+    r.append(s); box.append(r); return s;
+  };
+  const mkChk = (label, checked) => {
+    const r = el('div', 'wiki-row'); r.append(el('label', null, label));
+    const c = el('input', 'wiki-check'); c.type = 'checkbox'; c.checked = !!checked;
+    r.append(c); box.append(r); return c;
+  };
+
+  const iTitle = mk('ชื่อบท', cur.title || '');
+  const statuses = allStatuses();
+  const iStatus = mkSel('สถานะ', [['Outline', '— ยังไม่ตั้ง —'], ...statuses.map((s) => [s, s])],
+                        statuses.includes(cur.status) ? cur.status : 'Outline');
+  // องก์ (Act) — ตัวเลขโรมันแบบ v1 · เลือก "อื่น ๆ" ไม่ได้ จึงใช้ช่องพิมพ์เพื่อไม่ปิดกั้นโครงเรื่องแบบอื่น
+  const iAct = mk('องก์ (Act)', cur.act || '');
+  iAct.placeholder = 'I · II · III · หรือชื่อองก์ที่ตั้งเอง';
+  const iDate = mk('วันที่ / กำหนดส่ง', cur.date || '');
+  iDate.placeholder = 'เช่น 2026-09-01 หรือ "สัปดาห์หน้า"';
+  const iNote = mk('โน้ตของบท', cur.note || '', 'textarea');
+  const iFav = mkChk('⭐ บทสำคัญ (Favorite)', cur.isFavorite);
+
+  return new Promise((resolve) => {
+    const btns = el('div', 'k-dlg-btns');
+    const cB = el('button', null, 'ยกเลิก');
+    const okB = el('button', 'k-ok', 'บันทึก');
+    btns.append(cB, okB); box.append(btns); ov.append(box); document.body.append(ov);
+    const close = (v) => { ov.remove(); resolve(v); };
+    cB.onclick = () => close(false);
+    ov.onclick = (e) => { if (e.target === ov) close(false); };
+    box.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(false); });
+    okB.onclick = async () => {
+      const title = iTitle.value.trim();
+      if (title) cur.title = title;
+      cur.status = iStatus.value;
+      cur.act = iAct.value.trim();
+      cur.date = iDate.value.trim();
+      cur.isFavorite = iFav.checked;
+      // ค่าว่างอย่าทิ้งบรรทัดขยะไว้ในไฟล์ (บทเรียน 26)
+      const note = iNote.value.trim();
+      if (note) cur.note = note; else delete cur.note;
+      if (!cur.act) delete cur.act;
+      if (!cur.date) delete cur.date;
+      await kapi.writeFile(df, JSON.stringify(d, null, 2));
+      await buildTree();
+      setStatus('บันทึกคุณสมบัติบทแล้ว: ' + (cur.title || ''));
+      close(true);
+    };
+  });
 }
 
 export async function deleteScene(dPath, ch, sc) {

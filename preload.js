@@ -19,6 +19,9 @@ contextBridge.exposeInMainWorld('kapi', {
   openFileDialog: call('dialog:openFile'),   // เลือกไฟล์เดียว (นำเข้าสถานะฉาก ฯลฯ)
   openDirDialog: call('dialog:openDir'),     // [70] เลือกโฟลเดอร์ปลายทางของ PDF ลายน้ำ
   openScreenplayFile: call('dialog:openScreenplay'), // [alpha.60 ข้อ 62-66] เลือกไฟล์บททุกฟอร์แมต
+  // [alpha.60r3 ข้อ 7] ปลั๊กอินระดับผู้ใช้ (%APPDATA%/Killian2/Plugins/) — คืน path ให้ใช้ fs:* ต่อ
+  globalPluginsDir: call('plugins:globalDir'),
+  listGlobalPlugins: call('plugins:listGlobal'),
   readGlobalSettings: call('settings:readGlobal'),    // [alpha.60 ข้อ 94] อ่าน global settings จาก userData
   writeGlobalSettings: call('settings:writeGlobal'),  // [alpha.60 ข้อ 94] เขียน global settings ไป userData
   print: call('win:print'), printToPdf: call('win:printToPdf'),

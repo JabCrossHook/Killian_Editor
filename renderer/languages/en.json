@@ -18,7 +18,9 @@
       "saving": "Saving...",
       "saved": "Saved",
       "loading": "Loading...",
-      "searching": "Searching..."
+      "searching": "Searching...",
+      "chapterProps": "Chapter Properties...",
+      "sectionProps": "Book Properties..."
     },
     "menu": {
       "file": "File",
@@ -304,7 +306,26 @@
       "trayRestorePost": "\" panel",
       "layoutReset": "Panel layout reset",
       "resetAll": "⟲ Reset all panel layout",
-      "manage": "📐 Manage panels"
+      "manage": "📐 Manage panels",
+      "aiAnalyzerTitle": "🧠 AI Analyzer",
+      "whatIsThis": "❔ What is this?",
+      "desc_toolbar": "All formatting buttons and mode switches - bold/italic, alignment, reading/focus mode, show/hide other panels.",
+      "desc_tree": "The table of contents of the whole work - book, chapter, scene, plus Wiki, gallery and trash. Drag to reorder. The search box filters by title, tag and status.",
+      "desc_outline": "Heading outline of the file you have open - click a heading to jump there.",
+      "desc_docs": "The main writing area - every open tab: scenes, screenplays and Wiki pages (cannot be closed).",
+      "desc_props": "Properties of the selected scene - synopsis, POV, emotion, conflict, status, color, tags. Saves automatically as you type.",
+      "desc_statusbar": "A summary of the open document - word/page count, screenplay errors, and the page zoom slider.",
+      "desc_log": "The application log - use it when something does not behave the way you expect.",
+      "desc_search": "Full-text search across the project - every scene, book and Wiki page. Click a result to open the file at that line.",
+      "desc_notes": "A scratch pad for thoughts that should not go into the manuscript - notes attach to the scene open at the time.",
+      "desc_comments": "Comments on the open scene - threaded replies, resolvable. Stored at the end of the .md file so they travel with it.",
+      "desc_dashboard": "Progress at a glance - word count against your goal, scene status breakdown, and chapter lengths.",
+      "desc_kanban": "Scenes as cards grouped by status - drag a card to another column to change that scene status.",
+      "desc_books": "Manage books and drafts - cover, blurb, status, per-book statistics, drag to reorder.",
+      "desc_timeline": "Events ordered by in-story time - switch between card and Gantt views. Scenes with a storyDate appear automatically.",
+      "desc_maps": "Maps of your story world - drop pins on an image and link them to scenes or locations. Portal pins lead to sub-maps.",
+      "desc_gallery": "Every image in the project Images folder - drag one into a document to insert it, or pick it as a cover or Wiki portrait.",
+      "desc_ai_analyzer": "AI manuscript analysis - pacing, character arcs, repeated words, conflict and scene length (mockup for now)."
     },
     "scenes": "scenes",
     "words": "words",
@@ -467,7 +488,7 @@
       "worldPrompt": "Describe what to build (e.g. \"a magic system that costs blood\")",
       "kindLabel": "Kind: ",
       "detailLabel": "Details:",
-      "generating": "Generating…",
+      "generating": "AI is writing...",
       "freeform": "Freeform",
       "description": "Description",
       "savedToWiki": "Saved to the Wiki: ",
@@ -479,7 +500,45 @@
       "sample1": "Who are the characters in this story?",
       "sample2": "Summarize the fight scenes for me",
       "greeting": "Hi! Ask me anything about your story, e.g.",
-      "orWord": "or"
+      "orWord": "or",
+      "genSynopsis": "Let AI write it"
+    },
+    "wiki": {
+      "backlinksTitle": "Scenes mentioning this",
+      "backlinksRefresh": "Rebuild the link index for the whole project",
+      "backlinksScanning": "Scanning every scene in the project...",
+      "backlinksDone": "Backlink index updated",
+      "backlinksEmpty": "(No scene mentions this entity yet)"
+    },
+    "aia": {
+      "mockup": "Mockup - not enabled yet",
+      "lead": "A set of AI manuscript analysis tools that are on the way. This is a mockup so you can see what each report will tell you.",
+      "run": "Analyze",
+      "foot": "Meanwhile, these already work: Tools -> Word History - AI -> Plot Hole Detector - AI -> Consistency Check"
+    },
+    "csv": {
+      "exportTitle": "Export language as CSV",
+      "importTitle": "Import language from CSV",
+      "noLangFiles": "No language files found (languages/th.json, en.json)",
+      "noKeys": "No keys found in this CSV file"
+    },
+    "home": {
+      "export": "📤 Export",
+      "import": "📥 Import",
+      "newProject": "➕ New Project",
+      "openProject": "📂 Open Project",
+      "close": "✕ Close",
+      "importDone": "Project imported"
+    },
+    "plugin": {
+      "loaded": "Plugins loaded",
+      "failed": "Plugin crashed - disabled for now",
+      "needsNewer": "Requires a newer version of Killian"
+    },
+    "md": {
+      "codesOn": "Hide line prefixes: ON",
+      "codesOff": "Hide line prefixes: OFF (all codes visible)",
+      "codesTitle": "Hide line prefixes (. @ > $shot # ...)"
     }
   }
 }

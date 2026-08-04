@@ -17,6 +17,8 @@ import { searchPlugin } from './search.js';
 import { caseTransform } from './text-case.js';
 // [alpha.58r บั๊ก 20] เส้นคั่นหน้าของนิยาย — คนละคีย์กับของบทภาพยนตร์
 import { prosePageBreakPlugin } from './prose-view.js';
+// [alpha.60r3 ข้อ 6] ซ่อนรหัสนำหน้าบรรทัด (`.` `@` `>` `$shot` `#` …) โดยไม่แตะไฟล์
+import { markdownCodePlugin } from './markdown-code-toggle.js';
 import { Plugin as PMPlugin, PluginKey as PMKey } from 'prosemirror-state';
 import { Decoration as Deco, DecorationSet as DecoSet } from 'prosemirror-view';
 
@@ -347,6 +349,8 @@ export class KEditor {
         focusLinePlugin(),
         commentAnchorPlugin(),
         prosePageBreakPlugin(),          // [20] เส้นคั่นหน้าของนิยาย
+        // [alpha.60r3 ข้อ 6] ซ่อนรหัสนำหน้าบรรทัด (fountain/มาร์กดาวน์) — ไม่แตะไฟล์
+        markdownCodePlugin(incrementalDecoState),
         buildRules(schema),
         keymap({
           // ขึ้นบรรทัดใหม่แล้วรูปแบบตัวอักษร (หนา/เอียง/ขีด) ต้องติดไปด้วย — แบบ Word

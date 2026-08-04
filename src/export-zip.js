@@ -47,6 +47,90 @@ export async function exportProjectZip() {
   }
 }
 
+/**
+ * [alpha.60r3 ข้อ 9] นำเข้าโปรเจกต์จากไฟล์ .zip ที่ `exportProjectZip()` สร้างไว้
+ *
+ * ขั้นตอน: เลือกไฟล์ .zip → เลือกโฟลเดอร์ปลายทาง → แตกลงโฟลเดอร์ย่อยชื่อเดียวกับไฟล์ → เปิดโปรเจกต์
+ *
+ * เรื่องที่ต้องระวัง:
+ *   · **ไบนารีต้องผ่าน `writeBytes`** — `writeFile` เขียน utf-8 แล้วรูป/ฟอนต์บวมเสียหมด (บทเรียน 14d)
+ *   · **zip slip** — path ใน zip ที่มี `..` ต้องถูกทิ้ง ไม่งั้นเขียนไฟล์นอกโฟลเดอร์ปลายทางได้
+ *   · zip บางไฟล์ห่อทุกอย่างไว้ในโฟลเดอร์ชั้นเดียว → ตรวจแล้วปอกออกให้ ไม่งั้นได้ path ซ้อนสองชั้น
+ * @param {string} [srcZip] ข้ามกล่องเลือกไฟล์ (ใช้ในเทส)
+ * @param {string} [dstParent] ข้ามกล่องเลือกโฟลเดอร์ (ใช้ในเทส)
+ * @returns {Promise<string|false>} path ของโปรเจกต์ที่แตกออกมา
+ */
+export async function importProjectZip(srcZip, dstParent) {
+  const src = srcZip || await kapi.openFileDialog('zip');
+  if (!src) return false;
+  const parent = dstParent || await kapi.openDirDialog();
+  if (!parent) return false;
+  setStatus('กำลังแตกไฟล์ ZIP…');
+  try {
+    const bytes = await kapi.readBytes(src);
+    const zip = await JSZip.loadAsync(new Uint8Array(bytes));
+    const entries = Object.keys(zip.files).filter((k) => !zip.files[k].dir);
+    if (!entries.length) { setStatus('ไฟล์ ZIP นี้ว่างเปล่า'); return false; }
+
+    // zip ที่ห่อทุกอย่างไว้ในโฟลเดอร์เดียว → ปอกชั้นนอกออก
+    const strip = commonPrefix(entries);
+    const base = String(src).split(/[\\/]/).pop().replace(/\.zip$/i, '') || 'project';
+    let dest = await kapi.join(parent, base);
+    if (await kapi.exists(dest)) dest += '-' + Date.now().toString(36).slice(-4);
+    await kapi.mkdir(dest);
+
+    let n = 0;
+    for (const name of entries) {
+      const rel = safeRel(strip ? name.slice(strip.length) : name);
+      if (!rel) continue;
+      const parts = rel.split('/');
+      const file = await kapi.join(dest, ...parts);
+      if (parts.length > 1) await kapi.mkdir(await kapi.join(dest, ...parts.slice(0, -1)));
+      if (BIN_EXT.test(rel)) {
+        const buf = await zip.files[name].async('uint8array');
+        await kapi.writeBytes(file, Array.from(buf));
+      } else {
+        await kapi.writeFile(file, await zip.files[name].async('string'));
+      }
+      n++;
+    }
+    if (!(await kapi.exists(await kapi.join(dest, 'project.khn.json')))) {
+      setStatus(`แตกไฟล์แล้ว (${n} ไฟล์) แต่ไม่พบ project.khn.json — ไม่ใช่โปรเจกต์ Killian`);
+      log('warn', 'import-zip: ไม่มี project.khn.json ที่ ' + dest);
+      return dest;
+    }
+    setStatus(`นำเข้าโปรเจกต์แล้ว (${n} ไฟล์): ` + dest);
+    log('info', 'import-zip: done ' + n + ' files → ' + dest);
+    const { loadProject } = await import('./app.js');
+    await loadProject(dest);
+    return dest;
+  } catch (e) {
+    log('error', 'import-zip failed', e);
+    setStatus('นำเข้า ZIP ล้มเหลว: ' + e.message);
+    return false;
+  }
+}
+
+/** โฟลเดอร์ชั้นนอกที่ทุกไฟล์ใช้ร่วมกัน (คืน '' เมื่อไม่มี) */
+export function commonPrefix(names) {
+  if (!names.length) return '';
+  const first = names[0];
+  const slash = first.indexOf('/');
+  if (slash < 0) return '';
+  const p = first.slice(0, slash + 1);
+  return names.every((n) => n.startsWith(p)) ? p : '';
+}
+
+/** ตัด path ที่หลุดออกนอกโฟลเดอร์ปลายทาง (zip slip) */
+export function safeRel(name) {
+  const clean = String(name || '').replace(/\\/g, '/').replace(/^[/]+/, '');
+  if (!clean || clean.endsWith('/')) return '';
+  const parts = clean.split('/').filter((x) => x && x !== '.');
+  if (parts.includes('..')) return '';
+  if (/^[a-zA-Z]:/.test(parts[0] || '')) return '';       // path แบบ C:\… ใน zip
+  return parts.join('/');
+}
+
 // export-json — ส่งออกเมทาดาทาทั้งหมดเป็น JSON ก้อนเดียว
 export async function exportProjectJson() {
   if (!state.root) { setStatus('ยังไม่ได้เปิดโปรเจกต์'); return false; }
