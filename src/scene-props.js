@@ -3,13 +3,19 @@ import { buildTree, guid, updatePageNumberHint, refreshSpView } from './app.js';
 import { SCENE_COLORS, SCENE_STATUSES, el, setStatus, state } from './core.js';
 import { allStatuses } from './custom-status.js';
 import * as spell from './spell.js';
-import { dumpMdFile, parseMdFile } from './md.js';
+// [alpha.60r2 ข้อ 13] คุณสมบัติฉากอยู่ใน frontmatter ของ .md เป็นหลัก — scenes.json เป็นดัชนี/แคช
+// ทุกทางอ่าน-เขียนผ่าน readSceneMeta/writeSceneMeta ที่เดียว
+import { readSceneMeta, writeSceneMeta, SCENE_HEAVY_KEYS } from './scene-meta.js';
 
 export async function sceneProps(dPath, ch, sc) {
   const sf = await kapi.join(dPath, 'scenes.json');
   const d = await kapi.readJson(sf);
   const row = (d.chapters[ch.guid] || []).find((x) => x.id === sc.id);
   if (!row) return;
+  // [alpha.60r2 ข้อ 13] ค่าที่โชว์ = frontmatter ของไฟล์จริงก่อน แล้วค่อยตกมาที่ดัชนี
+  // → แก้ .md นอกโปรแกรมแล้วเปิดกล่องนี้ ต้องเห็นค่าที่แก้ไว้ ไม่ใช่ค่าค้างใน scenes.json
+  const file = await kapi.join(dPath, 'Chapters', ch.folderName, row.fileName);
+  const M = await readSceneMeta(file, row);
   const ov = el('div', 'k-overlay');
   const box = el('div', 'k-dialog');
   box.append(el('div', 'k-dlg-title', 'คุณสมบัติฉาก — ' + row.title));
@@ -40,29 +46,29 @@ export async function sceneProps(dPath, ch, sc) {
     r.append(c); box.append(r); return c;
   };
 
-  const iSyn = mk('เรื่องย่อ', row.synopsis, 'textarea');
-  const iStoryDate = mk('เวลาในเรื่อง (เส้นเวลา)', row.storyDate);
+  const iSyn = mk('เรื่องย่อ', M.synopsis, 'textarea');
+  const iStoryDate = mk('เวลาในเรื่อง (เส้นเวลา)', M.storyDate);
   iStoryDate.placeholder = 'เช่น วันที่ 3 · ปีที่ 1024 · เช้าวันจันทร์';
   // [alpha.57a ข้อ 2] เลขหน้าเริ่มต้นของไฟล์ฉากนี้ — เลขหน้าบนกระดาษนับต่อจากค่านี้
   const iStartPage = mk('เลขหน้าเริ่มต้น (บทภาพยนตร์)', row.startPage || '');
   iStartPage.type = 'number'; iStartPage.min = '1';
   iStartPage.placeholder = '1 — ใช้เมื่อเปิด "เลขหน้า" ในตั้งค่าโปรเจกต์';
-  const iPov = mk('มุมมอง (POV)', row.pov);
-  const iEmotion = mk('อารมณ์', row.emotion);
-  const iConflict = mk('ความขัดแย้ง', row.conflict);
+  const iPov = mk('มุมมอง (POV)', M.pov);
+  const iEmotion = mk('อารมณ์', M.emotion);
+  const iConflict = mk('ความขัดแย้ง', M.conflict);
   const iStatus = mkSelect('สถานะ',
     [['Outline', '— ยังไม่ตั้ง —'], ...allStatuses().map((s) => [s, s])],
     allStatuses().includes(row.status) ? row.status : 'Outline');
   const iColor = mkSelect('สี',
     [['', '— ไม่มี —'], ...SCENE_COLORS.map(([n, hex]) => [hex, '● ' + n])], row.color || '');
   const iFlag = mkCheck('ปักหมุด', row.flag);
-  const iTags = mk('แท็ก (คั่น , )', (row.tags || []).join(', '));
-  const iNote = mk('โน้ต', row.note, 'textarea');
-  const iFuture = mk('Future Note (หมายเหตุนักเขียน)', row.futureNote || '', 'textarea');
+  const iTags = mk('แท็ก (คั่น , )', (M.tags || []).join(', '));
+  const iNote = mk('โน้ต', M.note, 'textarea');
+  const iFuture = mk('Future Note (หมายเหตุนักเขียน)', M.futureNote || '', 'textarea');
   iFuture.placeholder = 'โน้ตสำหรับนักเขียน — แสดงเฉพาะที่นี่และ Planner ไม่แสดงในฉากปกติ';
   // ป้ายเล่าเรื่อง (Narrative Markers) — ฉากนี้อยู่นอกลำดับเวลาหลัก
-  const iFb = mkCheck('⏪ ย้อนอดีต (Flashback)', row.isFlashback);
-  const iFf = mkCheck('⏩ ล่วงหน้า (Flashforward)', row.isFlashforward);
+  const iFb = mkCheck('⏪ ย้อนอดีต (Flashback)', M.isFlashback);
+  const iFf = mkCheck('⏩ ล่วงหน้า (Flashforward)', M.isFlashforward);
   // เลือกได้อย่างละหนึ่ง — ติ๊กตัวหนึ่งแล้วอีกตัวหลุดเอง
   iFb.addEventListener('change', () => { if (iFb.checked) iFf.checked = false; });
   iFf.addEventListener('change', () => { if (iFf.checked) iFb.checked = false; });
@@ -84,17 +90,12 @@ export async function sceneProps(dPath, ch, sc) {
     if (iFb.checked && iFf.checked) iFf.checked = false;   // กันติ๊กพร้อมกัน (เผื่อถูกตั้งค่าจากโค้ด/เทส)
     row.isFlashback = iFb.checked; row.isFlashforward = iFf.checked;
     row.tags = iTags.value.split(',').map((x) => x.trim()).filter(Boolean);
+    // [alpha.60r2 ข้อ 13] เขียน frontmatter ก่อน (แหล่งความจริง) แล้วค่อยอัปเดตดัชนี
+    // ทำผ่าน writeSceneMeta ที่เดียว — ค่าว่าง/เท็จถูก delete ให้เอง ไม่เหลือบรรทัดรกในไฟล์
+    const props = {};
+    for (const k of SCENE_HEAVY_KEYS) props[k] = row[k];
+    await writeSceneMeta(file, props);
     await kapi.writeFile(sf, JSON.stringify(d, null, 2));
-    const file = await kapi.join(dPath, 'Chapters', ch.folderName, row.fileName);
-    try {
-      const { meta, body } = parseMdFile(await kapi.readFile(file));
-      meta.pov = row.pov; meta.tags = row.tags;
-      meta.emotion = row.emotion; meta.conflict = row.conflict; meta.note = row.note;
-      // frontmatter เป็นข้อความล้วน (โครง v1) → เขียนเฉพาะตอนติ๊ก ไม่งั้นลบทิ้ง (กันบรรทัด false รกทุกไฟล์)
-      if (row.isFlashback) meta.isFlashback = true; else delete meta.isFlashback;
-      if (row.isFlashforward) meta.isFlashforward = true; else delete meta.isFlashforward;
-      await kapi.writeFile(file, dumpMdFile(meta, body));
-    } catch {}
     await buildTree();                 // สี/สถานะที่เพิ่งตั้งเห็นผลใน tree ทันที
     // เลขหน้าเริ่มต้นเปลี่ยน → แท็บที่เปิดไฟล์นี้อยู่ต้องวาดเลขหน้าใหม่ทันที
     const openTab = state.tabs.get(file);

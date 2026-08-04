@@ -37,7 +37,9 @@
   <button id="home-btn" title="หน้าแรก" data-icon="home"></button>
 </div>
 <div id="toolbar">
-  <button id="tb-paper" class="tb tb-toggle" title="โหมดหน้ากระดาษ (กระดาษขาว · Ctrl+Shift+P)" data-icon="file"></button>
+  <button id="tb-paper" class="tb tb-toggle" title="โหมดหน้ากระดาษ (กระดาษขาว)" data-icon="file"></button>
+  <!-- [alpha.60r2 ข้อ 10] ธีมของโปรแกรม (มืด/สว่าง) — Ctrl+Shift+P · ไม่แตะหน้ากระดาษ -->
+  <button id="tb-theme" class="tb tb-toggle" title="ธีมมืด — คลิกเพื่อไปธีมสว่าง (Ctrl+Shift+P)" data-icon="sun"></button>
   <button id="tb-mode" title="สลับโหมดเอกสาร นิยาย ↔ บทหนัง (Ctrl+Shift+M)" style="display:none">📖 นิยาย ▾</button>
   <select id="tb-sp-elem" class="tb" style="display:none">
     <option value="action">บรรยาย</option>
@@ -55,8 +57,8 @@
   </select>
   <!-- alpha.57a ข้อ 2: ส่วนเสริมท้ายชื่อตัวละคร (V.O./O.S./cont'd) — เว้นจากชื่อ 1 วรรค -->
   <button id="tb-sp-ext" class="tb" style="display:none" title="ส่วนเสริมท้ายชื่อตัวละคร (Extension)">( )</button>
-  <!-- alpha.57 [57][59][60] มุมมองบท — โผล่เฉพาะแท็บบทภาพยนตร์ -->
-  <select id="sp-view-select" class="tb" style="display:none" title="มุมมองบทภาพยนตร์">
+  <!-- alpha.57 [57][59][60] มุมมองหน้ากระดาษ — [60r2 ข้อ 5] ใช้ได้ทั้งนิยายและบทภาพยนตร์ -->
+  <select id="sp-view-select" class="tb" style="display:none" title="มุมมองหน้ากระดาษ">
     <option value="normal">ปกติ (หน้ากระดาษ)</option>
     <option value="layout">จัดหน้า (Layout)</option>
     <option value="draft">ร่าง — ข้อความล้วน</option>
@@ -74,6 +76,17 @@
     <option value="h5" data-i18n="toolbar.heading5">หัวข้อ 5</option>
     <option value="h6" data-i18n="toolbar.heading6">หัวข้อ 6</option>
     <option value="quote" data-i18n="toolbar.quote">คำพูดยกมา</option>
+  </select>
+  <!-- [alpha.60r2 ข้อ 2] สลับรูปตัวพิมพ์ของช่วงที่เลือก — เลือกแล้วเด้งกลับหัวข้อเสมอ -->
+  <select id="tb-case" class="tb" title="สลับรูปตัวพิมพ์ของข้อความที่เลือก">
+    <option value="">Aa ▾</option>
+    <option value="SC">Sentence case</option>
+    <option value="lc">lower case</option>
+    <option value="UC">UPPER CASE</option>
+    <option value="CC">Capitalize Case</option>
+    <option value="aC">aLtErNaTe cAsE</option>
+    <option value="TC">Title Case</option>
+    <option value="iC">iNVERSE cASE</option>
   </select>
   <span class="sep"></span>
   <button id="tb-bold" class="tb" title="ตัวหนา (Ctrl+B)" data-icon="bold"></button>

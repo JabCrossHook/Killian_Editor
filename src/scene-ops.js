@@ -5,6 +5,8 @@ import { allStatuses } from './custom-status.js';
 import { deleteToTrash } from './recycle.js';
 import { ask, confirmBox, popupMenu } from './ui.js';
 import { dumpMdFile, parseMdFile } from './md.js';
+// [alpha.60r2 ข้อ 13] คุณสมบัติหนักของฉากอยู่ใน frontmatter — เขียนผ่านที่นี่ที่เดียว
+import { SCENE_HEAVY_KEYS, writeSceneMeta } from './scene-meta.js';
 
 export async function renameScene(dPath, ch, sc) {
   const title = await ask('ชื่อฉากใหม่', { value: sc.title }); if (!title) return;
@@ -110,6 +112,14 @@ export async function setSceneMeta(dPath, ch, sc, patch) {
   if (!row) return;
   Object.assign(row, patch);
   await kapi.writeFile(sf, JSON.stringify(d, null, 2));
+  // [alpha.60r2 ข้อ 13] คุณสมบัติที่เป็นของ "เนื้อฉาก" ต้องลง frontmatter ของ .md ด้วย
+  // ไม่งั้นแก้จากเมนูคลิกขวาแล้วไฟล์จริงไม่รู้เรื่อง (เปิดนอกโปรแกรมก็ไม่เห็น)
+  const heavy = {};
+  for (const k of SCENE_HEAVY_KEYS) if (k in (patch || {})) heavy[k] = patch[k];
+  if (Object.keys(heavy).length) {
+    try { await writeSceneMeta(await kapi.join(dPath, 'Chapters', ch.folderName, row.fileName), heavy); }
+    catch {}
+  }
   await buildTree();
 }
 

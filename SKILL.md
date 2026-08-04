@@ -118,6 +118,29 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
     ใช้ **คลาส pane ชุดเดียวกับบท** (`sp-view-layout/draft/side/overview*`) เพื่อไม่ต้องซ้ำ CSS ·
     `prosePageBreakPlugin()`+`setProsePageBreaks()` (คีย์แยกจาก sp — เปิดพร้อมกันคนละแท็บได้) ·
     `renderProsePageView` (บล็อก `.ed-page` + `[data-pos]` คลิกกระโดดได้)
+  - **`text-case.js`** (alpha.60r2 · **ข้อ 2**, บริสุทธิ์ 100% — ไม่ import prosemirror เลย) —
+    สลับรูปตัวพิมพ์: `CASE_MODES` 7 โหมด (`SC`/`lc`/`UC`/`CC`/`aC`/`TC`/`iC`) · `applyCase(text,mode)` ·
+    `sentenceCase`/`capitalizeCase`/`titleCase`/`alternateCase`/`inverseCase` ·
+    **`caseTransform(state, mode)`** สร้าง transaction จาก `state.tr`/`state.schema.text` ที่ส่งเข้ามา
+    (แปลงจาก "ข้อความรวมทั้งช่วง" ก่อนแล้วตัดกลับตามช่วง → Sentence/Title case ข้ามรอยต่อของ mark ได้
+    · ถ้าความยาวเปลี่ยน เช่น ß→SS ก็ถอยไปแปลงทีละช่วง) · แทนที่ทีละ text node **พร้อม marks เดิม**
+    → ตัวหนา/เอียง/ลิงก์/mention ไม่หาย · **unit test 62 ข้อ** (ทดสอบด้วย state ปลอม)
+  - **`margin-presets.js` + `margin-presets.json`** (alpha.60r2 · **ข้อ 6**, บริสุทธิ์) —
+    ชุดระยะขอบสำเร็จรูป 8 ชุด · `marginPreset(key)`/`marginPresetOptions()`/`matchMarginPreset(m)`
+    (คืน `''` = ผู้ใช้ตั้งเอง · ยอมคลาดเคลื่อนทศนิยม < 0.005) · **unit test 45 ข้อ**
+    · ตารางค่าอยู่ใน `.json` — ผู้ใช้แก้เองได้ไม่ต้องแตะโค้ด
+  - **`wiki-images.js`** (alpha.60r2 · **ข้อ 12**, บริสุทธิ์) — เมทาดาทาของรูปใน entity:
+    `entity.images[]` จาก `string[]` → `{file,caption,alt,title,width,height}[]` ·
+    `migrateImages`/`needsImageMigration`/`normalizeImage` (รับ `name`/`url` ของโค้ดเก่าด้วย) ·
+    `imageFile`/`imageFiles`/`imageLabel`/`imageAlt` · `setImageMeta`/`makePrimary`/`removeImage`/`addImage`
+    (ทุกตัวคืนอาร์เรย์ใหม่ ไม่แก้ของเดิม) · **เข้ากันได้ย้อนหลัง 100%** · **unit test 43 ข้อ**
+  - **`scene-meta.js`** (alpha.60r2 · **ข้อ 13**) — **แหล่งความจริงเดียวของคุณสมบัติฉาก**:
+    `SCENE_HEAVY_KEYS` (synopsis·pov·emotion·conflict·note·futureNote·tags·storyDate·isFlashback·isFlashforward)
+    → เก็บใน **frontmatter ของ .md** · `SCENE_INDEX_KEYS` → `scenes.json` เป็นแค่ดัชนี/แคช ·
+    `readSceneMeta(file,row)` (**frontmatter ชนะ row เสมอ** · ค่าว่างใน frontmatter ไม่กลบ row) ·
+    `writeSceneMeta(file,props)` · `applySceneMetaToFrontmatter` (**ลบคีย์ที่ค่าว่าง/เท็จ** — บทเรียน 26) ·
+    `asBool`/`asList`/`coerceSceneMeta`/`mergeSceneMeta`/`stripHeavyFromRow` · **unit test 56 ข้อ**
+    · ฝั่ง app.js: `syncSceneMetaFromFiles(dPath)` = เมนู เครื่องมือ → 🔄 ซิงก์คุณสมบัติฉากจากไฟล์ .md
   - **`pdf-generator.js`** (alpha.59, **ข้อ 69/87/89** · ใช้ pdf-lib + @pdf-lib/fontkit) —
     เขียน PDF เองแทนที่จะพึ่ง `printToPDF` ของ Chromium (สองทางอยู่ร่วมกัน):
     `generatePdf({blocks,fmt,titlePages,headers,fonts,meta,opts})` → `{bytes,pageCount,titleCount,scriptPages,bookmarks}` ·
@@ -174,7 +197,7 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
 
 ## E2E test workflow (สำคัญ — ทำทุกครั้งก่อนเชื่อว่าแก้สำเร็จ)
 
-Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **1,471 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
+Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **1,567 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
 
 **Unit test โมดูลบริสุทธิ์ (alpha.39, รันเร็ว ไม่ต้องเปิด electron):**
 ```bash
@@ -194,8 +217,12 @@ node test/sp-title-pages.test.cjs  # 62 checks — TitlePageEditor/หน้า�
 node test/pdf-generator.test.cjs   # 103 checks — สร้าง PDF จริง/Outlines/OpenAction/ฟอนต์ (alpha.59 · 69/87/89)
 node test/compile-omit.test.cjs    # 32 checks — ตัด element ตอนส่งออก (alpha.59 · 88)
 node test/sp-export.test.cjs       # 101 checks — FDX/RTF/ลายน้ำ + หน้าปก/เลขฉาก/fontPt (alpha.60r1)
+node test/text-case.test.cjs       # 62 checks — 7 โหมด/ไทยไม่ถูกแตะ/caseTransform+marks (alpha.60r2 · 2)
+node test/wiki-images.test.cjs     # 43 checks — migrate string→object/caption/alt/ลำดับรูป (alpha.60r2 · 12)
+node test/scene-meta.test.cjs      # 56 checks — frontmatter ชนะ index/bool จากสตริง/ลบคีย์ว่าง (alpha.60r2 · 13)
+node test/margin-presets.test.cjs  # 45 checks — 8 ชุด/จับคู่กลับ/ค่าที่ผู้ใช้ตั้งเอง (alpha.60r2 · 6)
 ```
-`npm run test:unit` รันชุดบริสุทธิ์ทั้งหมดรวดเดียว (**1,014 checks**)
+`npm run test:unit` รันชุดบริสุทธิ์ทั้งหมดรวดเดียว (**1,852 checks**)
 · **ตรวจ PDF ที่สร้างขึ้นในเทส**: pdf-lib **บีบอัด content stream (FlateDecode)** และเขียนข้อความเป็น
 **hex string** (`<48656C…> Tj`) ทั้งฟอนต์มาตรฐานและฟอนต์ที่ฝัง → ค้นข้อความจากไบต์ดิบไม่เจอเลย
 ต้อง `zlib.inflateSync` ก่อน **แล้วถอด hex** (ดู `streamsText`/`drawnText` ใน `pdf-generator.test.cjs`)
@@ -476,6 +503,28 @@ grep -E "FAIL|STOP" /tmp/k2result.txt | head -3
 69. **`splitCharacter()` ตัดเฉพาะวงเล็บ "ท้ายบรรทัด"** — `text.split('(')[0]` ตัดผิดเมื่อชื่อมีวงเล็บในตัว
    ("ดร. (ปรายฟ้า) (V.O.)" → `split` ได้ "ดร." · `splitCharacter` ได้ "ดร. (ปรายฟ้า)")
    · ข้อจำกัดที่แก้ไม่ได้: "ดร. (ปรายฟ้า)" เดี่ยว ๆ แยกไม่ออกว่าเป็นชื่อหรือชื่อ+ส่วนเสริม — ยอมรับ
+70. **การคืนตำแหน่งเลื่อนต้อง "ตั้งซ้ำจนถึงเป้า" แต่ "ห้ามลากกลับ"** (alpha.60r2 ข้อ 7 — เผา 3 รอบ e2e)
+   ใส่ DOM กลับหลังวาดแผงใหม่ → layout ยังไม่เสร็จ เบราว์เซอร์ **หนีบ** ค่าที่ตั้งให้เตี้ยลงตาม `scrollHeight`
+   ที่ยังไม่โต (ขอ 210 ได้ 178) → ต้องตั้งซ้ำหลายรอบ · แต่ถ้าตั้งซ้ำแบบ "ยังไม่ตรงก็ตั้งใหม่"
+   แล้วมีใครเลื่อนไปที่อื่นระหว่างนั้น รอบหลังจะ **ลากกลับ** (ตั้ง 240 แล้ว 60ms ต่อมากลายเป็น 43 ของรอบก่อน)
+   **แก้: จำ "ค่าที่เราเขียนไปครั้งล่าสุด"** — ค่าปัจจุบัน == ของเรา (หรือ 0 = เพิ่งถูกล้างจากการย้าย DOM)
+   → เป็นของเรา ตั้งต่อได้ · ต่างจากนั้น → มีเจ้าของใหม่ หยุดทันที (`rAF` + 0/30/60/120/250ms แล้วหยุดเองเมื่อถึงเป้า)
+71. **`scroll-behavior:smooth` ทำให้ `el.scrollTop = N` แล้วอ่านกลับทันทีได้ค่าเก่า** (alpha.60r2 — เผา 2 รอบ e2e)
+   `style.css` ตั้ง `scroll-behavior:smooth` ที่ `html,body,.k-panel-body,.pane,#panes`
+   → การกำหนดค่าเป็น **อนิเมชัน** ไม่ใช่การตั้งค่าทันที · เทสที่เขียน `pane.scrollTop=120; const v=pane.scrollTop;`
+   ได้ 0 เสมอ (ดูเหมือน "เลื่อนไม่ได้" ทั้งที่ `scrollHeight` ใหญ่กว่า `clientHeight` ตั้ง 16,000px)
+   **แก้: รอจนค่าถึงเป้าก่อนวัด** (หรือ `scrollTo({behavior:'instant'})`) — แนวนอนกับแนวตั้งพังไม่พร้อมกัน จึงหลอกตา
+72. **ตัวแก้ไขที่มี "โฟกัสจริง" จะดึงจอกลับไปหาเคอร์เซอร์** — e2e บน Linux/xvfb ไม่เจอ เพราะหน้าต่างไม่เคยได้โฟกัส
+   แต่บน **macOS เจอทุกครั้ง**: ตั้ง `scrollTop=240` แล้วเด้งกลับ 44 (= ตำแหน่งเคอร์เซอร์ต้นเอกสาร)
+   ทุกครั้งที่ ProseMirror เขียน DOM selection ใหม่ · **แก้ในเทส: `document.activeElement.blur()` ก่อนวัด**
+   → บทเรียนกว้างกว่านั้น: **เทสที่วัดตำแหน่งเลื่อน/โฟกัส ผลต่างกันตาม OS** อย่าฮาร์ดโค้ดสมมติฐานของ Linux
+73. **e2e ที่ฮาร์ดโค้ดรูปแบบคีย์ลัดของ Windows พังบน macOS** (alpha.60r2)
+   `formatShortcut()` ตั้งใจคืน `⌘⇧B` บน mac ตามธรรมเนียมระบบ แต่เทสเช็ค `=== 'Ctrl+Shift+B'`
+   → FAIL ตั้งแต่ check ที่ 420 ทั้งที่โค้ดถูกทุกบรรทัด · **รับทั้งสองแบบ** (`['Ctrl+Shift+B','⌘⇧B'].includes(...)`)
+74. **`await` แบบ "รอตายตัว" หลังงาน async = FAIL ปลอมบนเครื่องช้า** (alpha.60r2)
+   `saveAllTabs` เขียนไฟล์แบบ async · เทสรอ 250ms แล้วเช็คว่าไม่เหลือแท็บค้าง → พังเมื่อไฟล์เยอะ/เครื่องช้า
+   **แก้: วนรอ "เงื่อนไขจริง" พร้อมเพดาน** (`for (let i=0;i<40 && ยังมี dirty;i++) await 50ms`)
+   ใช้แนวนี้กับทุกที่ที่รอ layout ของ ProseMirror ด้วย (รอ `scrollHeight` โตจริงก่อนวัด)
 
 ---
 
@@ -484,6 +533,16 @@ grep -E "FAIL|STOP" /tmp/k2result.txt | head -3
 Electron **43.1.1**. github (allowlist: github.com + release-assets.githubusercontent.com):
 `https://github.com/electron/electron/releases/download/v43.1.1/electron-v43.1.1-<PLATFORM>.zip`
 PLATFORM = `win32-x64` / `darwin-arm64` / `darwin-x64`
+
+**macOS Intel DMG** (alpha.60r2 — ทำได้ในเครื่องเดียวจบ):
+```bash
+npm run dist:mac        # = node build.js && electron-builder --mac dmg --x64
+# ผลลัพธ์: dist/Killian2-<version>-mac-intel.dmg (~127MB) + dist/mac/Killian 2.app
+file "dist/mac/Killian 2.app/Contents/MacOS/Killian 2"   # ต้องเห็น "Mach-O 64-bit executable x86_64"
+```
+`build.mac` ใน package.json ตั้ง `identity:null` + `hardenedRuntime:false` + `gatekeeperAssess:false`
+(ยังไม่มีใบรับรองนักพัฒนา) → **ผู้ใช้ต้องคลิกขวา → Open ครั้งแรก** ไม่งั้น Gatekeeper บล็อก
+ยังไม่มีไอคอน `.icns` — electron-builder ใช้ไอคอนมาตรฐานของ Electron ไปก่อน
 
 **Windows portable** (~139MB, top folder K2WIN/) — electron runtime cache ที่ `/home/claude/work/build_win/K2WIN` ใช้ซ้ำได้ (แค่รีเฟรช resources/app):
 ```bash
@@ -559,7 +618,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ---
 
-## เวอร์ชัน (ล่าสุด alpha.60r1 · e2e 1,471 + unit 1,014)
+## เวอร์ชัน (ล่าสุด alpha.60r2 · e2e 1,567 + unit 1,852)
 
 .13–.22 (v1→v2 พื้นฐาน): snapshot, line numbers, spellcheck ไทย+Chromium, ปุ่มลัดตั้งเอง, mac build, บทหนัง Ctrl+arrow, relationship sync, floating format bar, sidebar resize, SmartType Final Draft, wiki gallery/lightbox, explorer search+tags, panel docking, tree float+snap
 .24 batch 8 (drag-move explorer, panel snap, split compare, version tracking, scene lock, screenplay Final Draft look, screenplay images, wiki links) · .25–.27 **Planner board** (fabric.js) · .28 **floating windows** · .29 memo-in-chapter + scoped search
@@ -797,6 +856,32 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
   เก็บงานเล็ก: `popupMenu` ใน panel-ui (เดิม import จาก app.js ได้ undefined ตลอด) · `flushBuf` dead code ·
   `SP_PREFIX` derive จาก `SP_ELEMS` · `usageOf` นับ token 0 ถูกต้อง · `SEVERITY` รวมที่ ai-core ·
   import-sp รองรับ round-trip ครบทุก element + `splitCharacter` · ถอด import ที่ไม่ได้ใช้ 9 ตัว
+
+.60r2 **รอบแก้ 13 ข้อ — UI/หน้ากระดาษ · ชั้นข้อมูล** (ดู CHANGELOG เต็มใน `renderer/CHANGELOG.md`)
+  **กฎเหล็กของรอบ**: แก้ UI ห้ามกระทบตัวแก้ไข/หน้ากระดาษทุกรูปแบบ → ทุกข้อที่แตะ UI มีเทสยืนยัน
+  สีกระดาษ · สีหมึก · ความกว้างหน้ากระดาษ ไม่ขยับ (`[10][กฎเหล็ก]` 3 ข้อ)
+  **[1] ซูมตกขอบซ้าย** — `syncWorkspaceWidths()` วัด `min-width = พื้นที่แผง ÷ อัตราซูม` เป็น **พิกเซล**
+    (เดิม `(pageScale*100)%` พึ่งการตีความ % ใต้ CSS `zoom` ซึ่งต่างกันตามเวอร์ชันเบราว์เซอร์)
+  **[2] รูปตัวพิมพ์** — `text-case.js` + `#tb-case` + เมนู รูปแบบ → รูปตัวพิมพ์ + `cmd('case', mode)` ทั้ง KEditor/SPEditor
+  **[3] เส้นคั่นหน้าไม่หน่วง** — `heavyDelay` 300→100ms · `repaginateFast()`/`repaginateOnEnter()` ยิงทันทีตอน Enter
+    · แยก `repaginateProseNow(tab)` ออกจาก `scheduleCount`
+  **[4] เสียงพิมพ์ดีด** — `typeSoundMode: 'always'|'typewriter'` (เดิมต้องเปิด 2 สวิตช์ ค่าเริ่มต้นตัวที่สอง = false → เงียบ)
+  **[5] มุมมองหน้ากระดาษของนิยาย** — `#sp-view-select` โผล่เมื่อมี `ed` ด้วย (เดิม `sp` อย่างเดียว) — เอนจินพร้อมมาตั้งแต่ .58r
+  **[6] ระยะขอบสำเร็จรูป** — `margin-presets.json` 8 ชุด + `<select id="st-mg-preset">` · `settings.marginPreset`
+  **[7] ขยับแผงแล้วตำแหน่งเลื่อนหาย** — `SCROLLABLES` เพิ่ม `.sp-pageview`/`#panes`/`.roster-wrap`/`.k-float-body`/`.pane-content`
+    · `restoreScroll()` เขียนใหม่ (ดูบทเรียน 68)
+  **[8] เลย์เอาต์แผง v2** — `LAYOUT_VERSION 1→2` + `splitRatios` + `validRoot()` (พัง → ตกกลับค่าตั้งต้น)
+    · `rememberRatio/savedRatio` · จด home ทุกครั้งที่วาดใหม่ (debounce 250ms) ไม่ใช่ตอนปิดอย่างเดียว
+  **[9] ปิด FAB ได้** — `fabEnabled` → `body.k-fab-off` (ซ่อนทั้งปุ่มและเมนู) + คำสั่ง `toggle-fab`
+  **[10] Ctrl+Shift+P = ธีม** — `theme:'dark'|'light'` · `applyTheme()`/`toggleTheme()` · `body.theme-light`
+    ทับเฉพาะตัวแปรเปลือกโปรแกรม **ไม่แตะ `--paper-*`** · โหมดหน้ากระดาษยังอยู่ที่ปุ่ม 📄 + เมนู
+  **[11] เลขบรรทัด = UI** — ราง `#k-ln-gutter` เป็นลูกของ `#panes` (นอกกล่องที่ถูก zoom)
+    · `refreshLineGutter()` วาดเฉพาะบรรทัดในสายตา · ทาบแผงที่ active · ปิดเองในมุมมองหน้ากระดาษ
+    · **เลิกใช้ `::before` บนบล็อก** (เลขเคยเลื่อน/ย่อขยายไปกับกระดาษ และติดไปกับงานพิมพ์)
+  **[12] เมทาดาทารูป Wiki** — `wiki-images.js` · `ask()` รับ `allowEmpty` (ลบคำบรรยายให้ว่างได้)
+  **[13] คุณสมบัติฉาก** — `scene-meta.js` เป็นจุดเดียว · frontmatter ชนะ `scenes.json` เสมอ
+    · `sceneProps` + `setSceneMeta` เดินผ่านทั้งคู่ · เมนู เครื่องมือ → 🔄 ซิงก์คุณสมบัติฉากจากไฟล์ .md
+  **แพ็กเกจ**: `npm run dist:mac` → DMG macOS Intel (x64) · `build.mac` ตั้ง `identity:null` (ยังไม่มีใบรับรอง)
 
 **ยังเหลือ**: `search-engine.js` ยังเป็น orphan — Global Search (`global-search.js`) ยังสแกนไฟล์ตรง ๆ ไม่ได้ใช้ inverted index (ควรสลับมาใช้เพื่อความเร็ว) · multiple-drafts-per-book UI (โครงรองรับแล้ว), screenplay align persistence, Campaign/D&D mode, electron-builder + code signing, .icns/.ico icon, native arm64 build. Top เคยบอก paper/indent "อาจต้องปรับปรุง ไว้ก่อน"
 

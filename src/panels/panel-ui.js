@@ -142,7 +142,14 @@ function ensureDocsVisible() {
 // 0.56a #3: วาดต้นไม้ใหม่ = ย้าย #content/#tree ออกจาก DOM แล้วใส่กลับ → ตำแหน่งเลื่อนถูกล้างเป็น 0
 // ผู้ใช้เลื่อนหน้ากระดาษอยู่ดี ๆ พอขยับแผงทีก็เด้งกลับซ้ายบนทุกครั้ง
 // → จำตำแหน่งเลื่อนของทุกกล่องที่เลื่อนได้ก่อนวาด แล้วคืนหลังวาด (ทั้งทันทีและหลัง layout รอบถัดไป)
-const SCROLLABLES = '.pane, #tree, #outline, #props-body, .k-panel-body, .k-tab-content, .home-dlg-scroll';
+// [alpha.60r2 ข้อ 7] รายการเดิมตกกล่องที่เลื่อนได้ไปหลายตัว — ที่เจ็บที่สุดคือ `.sp-pageview`
+// (มุมมองเรียงหน้า/ภาพรวม) กับ `#panes` · ขยับ/ปรับขนาดแผงทีเดียวแล้วหน้ากระดาษเด้งกลับหน้าแรก
+export const SCROLLABLES = [
+  '.pane', '#panes', '.sp-pageview', '.roster-wrap',
+  '#tree', '#outline', '#props-body',
+  '.k-panel-body', '.k-tab-content', '.k-float-body', '.pane-content',
+  '.home-dlg-scroll',
+].join(', ');
 function captureScroll() {
   const out = [];
   for (const e of document.querySelectorAll(SCROLLABLES)) {
@@ -150,14 +157,39 @@ function captureScroll() {
   }
   return out;
 }
+/**
+ * คืนตำแหน่งเลื่อนหลังวาดแผงใหม่
+ *
+ * ต้องทำสองอย่างที่ขัดกันเองให้ได้พร้อมกัน:
+ *   (ก) ตั้งซ้ำหลายรอบ — ตอนใส่ DOM กลับ layout ยังไม่เสร็จ ค่าที่ตั้งจะถูกหนีบให้เตี้ยลง
+ *       (เจอจริง: ขอ 210 ได้ 178 เพราะ scrollHeight ยังไม่โต) ต้องตั้งซ้ำจนถึงค่าที่ขอ
+ *   (ข) ห้ามลากกลับ — ถ้าโปรแกรม/ผู้ใช้เลื่อนไปที่อื่นระหว่างนั้น การตั้งซ้ำจะดึงกลับมาที่เดิม
+ *
+ * แยกสองกรณีด้วย "ค่าที่เราเขียนไปครั้งล่าสุด": ค่าปัจจุบันยังเท่ากับของเรา (หรือ 0 = เพิ่งถูกล้าง
+ * จากการย้าย DOM) → เป็นของเรา ตั้งต่อได้ · ต่างไปจากนั้น → มีเจ้าของใหม่ หยุดทันที
+ */
 function restoreScroll(saved) {
-  const put = () => { for (const [e, top, left] of saved) {
-    if (!e.isConnected) continue;
-    if (top && e.scrollTop !== top) e.scrollTop = top;
-    if (left && e.scrollLeft !== left) e.scrollLeft = left;
-  } };
+  if (!saved.length) return;
+  const jobs = saved.map(([e, top, left]) => ({ e, top, left, lastTop: 0, lastLeft: 0, done: false }));
+  const put = () => {
+    for (const j of jobs) {
+      if (j.done || !j.e.isConnected) continue;
+      const curTop = j.e.scrollTop, curLeft = j.e.scrollLeft;
+      if ((curTop !== 0 && curTop !== j.lastTop) || (curLeft !== 0 && curLeft !== j.lastLeft)) {
+        j.done = true; continue;                    // มีคนอื่นเลื่อนไปแล้ว — ปล่อยเขาไป
+      }
+      if (j.top && curTop !== j.top) { j.e.scrollTop = j.top; j.lastTop = j.e.scrollTop; }
+      if (j.left && curLeft !== j.left) { j.e.scrollLeft = j.left; j.lastLeft = j.e.scrollLeft; }
+      if (j.e.scrollTop === j.top && j.e.scrollLeft === j.left) j.done = true;
+    }
+  };
   put();
-  requestAnimationFrame(put);        // เผื่อ layout ยังไม่เสร็จตอนใส่กลับ (scrollHeight ยังเป็น 0)
+  // บทเรียนข้อ 14i-2: Chromium หยุดยิง rAF เมื่อหน้าต่างถูกบัง → ต้องมี timer สำรองด้วย
+  requestAnimationFrame(put);
+  // เอกสารยาว ๆ (ProseMirror หลายร้อยย่อหน้า) กว่า layout จะเสร็จใช้เวลาเกิน 60ms บนบางเครื่อง
+  // ระหว่างนั้นเบราว์เซอร์หนีบค่าที่ตั้งให้เตี้ยลงตาม scrollHeight ที่ยังไม่โต → ต้องตามไปตั้งอีก
+  // (หยุดเองทันทีที่ถึงค่าที่ขอ หรือมีคนอื่นเลื่อนไปที่อื่น)
+  for (const ms of [0, 30, 60, 120, 250]) setTimeout(put, ms);
 }
 
 export function renderPanels(force) {
@@ -172,7 +204,30 @@ export function renderPanels(force) {
   // เนื้อแผงที่ไม่ได้ถูกวาง → เก็บกลับที่พัก (ต้องอยู่ใน DOM เสมอ ไม่งั้น $('#props-body') คืน null)
   const h = host(), holder = srcHolder();
   for (const [, node] of adopted) if (!h.contains(node)) holder.appendChild(node);
+  scheduleRemember();                  // [ข้อ 8] จดตำแหน่ง+สัดส่วนล่าสุดของแผงที่เปิดอยู่
   if (_onLayoutChange) _onLayoutChange();
+}
+
+// [alpha.60r2 ข้อ 8] เดิมจดตำแหน่งเดิมของแผง ("home") เฉพาะตอน "ปิดแผง"
+// → ย้าย/ปรับขนาดแผงแล้วปิดโปรแกรม รอบหน้าได้ตำแหน่งเก่าที่ค้างจากการปิดครั้งก่อนโน้น
+// ตอนนี้จดหลังวาดทุกครั้ง (หน่วงไว้กันจดถี่ระหว่างลาก) — ทั้ง home และสัดส่วนใน dock
+let _rememberJob = null;
+function scheduleRemember() {
+  clearTimeout(_rememberJob);
+  _rememberJob = setTimeout(rememberOpenPanels, 250);
+}
+function rememberOpenPanels() {
+  if (!pm) return;
+  let dirty = false;
+  for (const d of PANEL_DEFS) {
+    if (d.closable === false) continue;
+    if (!pm.isOpen(d.id)) continue;
+    try {
+      rememberHome(d.id);                                     // ตำแหน่ง/เพื่อนบ้าน/กล่องลอย
+      if (pm.rememberRatio(d.id, currentRatio(d.id))) dirty = true;   // สัดส่วนใน dock แม่
+    } catch {}
+  }
+  return dirty;
 }
 
 // alpha.50: เลิก chip ▣ มุมจอ → ปุ่ม .tb-toggle บน toolbar แทน
@@ -370,8 +425,10 @@ export function showPanel(id, opts = {}) {
       // ผนึกซ้าย/ขวาเทียบแผงที่อยู่ในกลุ่มแท็บ = ยัด dock ซ้อนในกลุ่มแท็บ (โครงเพี้ยน) → ยึดแผงเอกสารแทน
       if (o.side !== 'center' && PL.tabGroupOf(m.root, o.targetId) && m.isDocked('docs')) o.targetId = 'docs';
       ok = m.showPanel(pid, o);
-      // [ข้อ 22] คืนสัดส่วนที่ผู้ใช้เคยลากไว้ ไม่ใช่แบ่งเท่ากันใหม่ทุกครั้ง
-      if (ok && home && home.ratio > 0) { try { applyRatio(pid, home.ratio); } catch {} }
+      // [ข้อ 22 · ขยายใน 60r2 ข้อ 8] คืนสัดส่วนที่ผู้ใช้เคยลากไว้ ไม่ใช่แบ่งเท่ากันใหม่ทุกครั้ง
+      // ลำดับ: สัดส่วนที่จดตอนปิด → สัดส่วนที่จดไว้ใน layout store (รอดข้ามการเปิด-ปิดโปรแกรม)
+      const ratio = (home && home.ratio > 0) ? home.ratio : m.savedRatio(pid);
+      if (ok && ratio > 0) { try { applyRatio(pid, ratio); } catch {} }
     }
   }
   if (ok && onShowHook) { try { onShowHook(pid); } catch {} }
