@@ -56,10 +56,19 @@ export function setStatus(s) { $('#status').textContent = s; }
 //   project      — เก็บใน project.khn.json · ต่อโปรเจกต์
 export const GLOBAL_DEFAULTS = {
   autoSaveMinutes: 5, maxBackups: 10, autoBackup: true, lineNumbers: false,
+  // [alpha.60r2 ข้อ 9] ปุ่มลอยมุมขวาล่าง — ปิดได้ (บางคนบอกว่ามันบังงาน)
+  fabEnabled: true,
+  // [alpha.60r2 ข้อ 10] ธีมของโปรแกรม — Ctrl+Shift+P สลับ dark ↔ light
+  // (คนละเรื่องกับ paperMode ซึ่งเป็น "หน้าตาของกระดาษ" ไม่ใช่ของ UI)
+  theme: 'dark',
   uiFontSize: 0, uiScale: 1, spellCheck: true, spellCheckDict: true, autoMention: true, recycleDays: 30,
   paperMode: true, fontFamily: '', language: 'th', spFontFamily: '',
   autoSync: false, thesaurus: false, focusDim: 0.3,
-  typeSound: false, typeSoundVolume: 0.5, typeSoundAlways: false,
+  // [alpha.60r2 ข้อ 4] เสียงพิมพ์ดีด — เดิมต้องเปิดสองสวิตช์ (typeSound + typeSoundAlways)
+  // ผู้ใช้เปิด "เสียงพิมพ์ดีด" แล้วเงียบสนิท เพราะ typeSoundAlways ค่าเริ่มต้นเป็น false
+  // ตอนนี้เป็นสวิตช์เดียว + โหมด: 'always' = ดังตลอด (ค่าเริ่มต้น) · 'typewriter' = เฉพาะโหมดเครื่องพิมพ์ดีด
+  typeSound: false, typeSoundVolume: 0.5, typeSoundMode: 'always',
+  typeSoundAlways: true,           // (เก่า — เก็บไว้ให้โปรเจกต์รุ่นก่อนอ่านได้ ค่าใหม่อยู่ที่ typeSoundMode)
   homeThumb: 190, smartLearnMin: 2, heavyDocBlocks: 400, mdAlignStyle: 'frontmatter',
   // ปุ่มลัดตั้งเอง — อยู่กับผู้ใช้
   shortcuts: {},
@@ -236,7 +245,7 @@ const BUILTIN_EN = {
     },
     "errors": { "noProject": "No project open", "noFile": "File not found", "saveFailed": "Save failed", "loadFailed": "Load failed", "aiNoKey": "Please set AI API key", "aiFailed": "AI request failed", "openProjectFirst": "Open a project first", "notKillianProject": "This folder is not a Killian project", "needScene": "Open a scene first", "moveCrossDraft": "Moving across drafts not supported", "requiresCtrl": "Ctrl/⌘ required", "pressShortcut": "Press shortcut..." },
     "status": { "ready": "Ready", "saving": "Saving...", "saved": "Saved", "loading": "Loading...", "searching": "Searching...", "settingsSaved": "Settings saved", "zoom": "Zoom", "zoomReset": "Zoom reset to 100%", "uiScale": "UI size", "copied": "Markdown copied", "movedScene": "Moved scene to", "typewriterOn": "Typewriter: ON", "typewriterOff": "Typewriter: OFF", "focusOn": "Focus mode: ON", "focusOff": "Focus mode: OFF", "paperOn": "Paper mode: ON", "paperOff": "Paper mode: OFF", "dirtyClose": "tabs with unsaved changes", "saveAllAndClose": "Save all and close", "closeWithoutSaving": "Close without saving" },
-    "shortcuts": { "save": "Save", "saveAll": "Save All", "saveAs": "Save As...", "newProject": "New Project", "openProject": "Open Project", "print": "Print", "closeTab": "Close Tab", "find": "Find", "settings": "Settings", "undo": "Undo", "redo": "Redo", "bold": "Bold", "italic": "Italic", "underline": "Underline", "strikethrough": "Strikethrough", "heading1": "Heading 1", "heading2": "Heading 2", "heading3": "Heading 3", "bodyText": "Body Text", "bulletList": "Bullet List", "numberedList": "Numbered List", "clearFormatting": "Clear Formatting", "alignLeft": "Align Left", "alignCenter": "Align Center", "alignRight": "Align Right", "justify": "Justify", "toggleFormat": "Toggle Mode", "paperMode": "Paper Mode", "globalSearch": "Search Project", "focusMode": "Focus Mode", "quickOpen": "Quick Open", "typewriter": "Typewriter Mode", "compile": "Compile", "splitView": "Split View", "kanban": "Kanban Board", "exportBlog": "Export as Blog HTML", "gallery": "Gallery", "spScene": "SP: Scene", "spAction": "SP: Action", "spCharacter": "SP: Character", "spParenthetical": "SP: Parenthetical", "spDialogue": "SP: Dialogue", "spTransition": "SP: Transition", "spShot": "SP: Shot", "spActBreak": "SP: Act Break", "spNote": "SP: Note", "selectScene": "Select Scene", "nbsp": "Non-Breaking Space", "goto": "Go to Page/Scene", "findError": "Find Next Error", "devConsole": "Developer Console" }
+    "shortcuts": { "save": "Save", "saveAll": "Save All", "saveAs": "Save As...", "newProject": "New Project", "openProject": "Open Project", "print": "Print", "closeTab": "Close Tab", "find": "Find", "settings": "Settings", "undo": "Undo", "redo": "Redo", "bold": "Bold", "italic": "Italic", "underline": "Underline", "strikethrough": "Strikethrough", "heading1": "Heading 1", "heading2": "Heading 2", "heading3": "Heading 3", "bodyText": "Body Text", "bulletList": "Bullet List", "numberedList": "Numbered List", "clearFormatting": "Clear Formatting", "alignLeft": "Align Left", "alignCenter": "Align Center", "alignRight": "Align Right", "justify": "Justify", "toggleFormat": "Toggle Mode", "paperMode": "Paper Mode", "toggleTheme": "Dark / Light Theme", "globalSearch": "Search Project", "focusMode": "Focus Mode", "quickOpen": "Quick Open", "typewriter": "Typewriter Mode", "compile": "Compile", "splitView": "Split View", "kanban": "Kanban Board", "exportBlog": "Export as Blog HTML", "gallery": "Gallery", "spScene": "SP: Scene", "spAction": "SP: Action", "spCharacter": "SP: Character", "spParenthetical": "SP: Parenthetical", "spDialogue": "SP: Dialogue", "spTransition": "SP: Transition", "spShot": "SP: Shot", "spActBreak": "SP: Act Break", "spNote": "SP: Note", "selectScene": "Select Scene", "nbsp": "Non-Breaking Space", "goto": "Go to Page/Scene", "findError": "Find Next Error", "devConsole": "Developer Console" }
   }
 };
 
@@ -360,7 +369,9 @@ export const SHORTCUTS = [
   ['KeyR', true, true, 'fmt', 'align', 'right'],
   ['KeyJ', true, true, 'fmt', 'align', 'justify'],
   ['KeyM', true, true, 'toggle-format'],
-  ['KeyP', true, true, 'paper-mode'],
+  // [alpha.60r2 ข้อ 10] Ctrl+Shift+P เดิมสลับ "โหมดหน้ากระดาษ" (ซ้ำกับปุ่ม 📄 บนแถบอยู่แล้ว)
+  // ตอนนี้ใช้สลับธีมสว่าง/มืดของโปรแกรม — โหมดหน้ากระดาษยังกดได้ที่ปุ่มและเมนู มุมมอง
+  ['KeyP', true, true, 'toggle-theme'],
   ['KeyF', true, true, 'global-search'],
   ['KeyD', true, true, 'focus-mode'],
   ['KeyO', true, true, 'quick-open'],
@@ -397,7 +408,8 @@ export const SHORTCUT_LABELS = {
   'fmt:heading:1': 'shortcuts.heading1', 'fmt:heading:2': 'shortcuts.heading2', 'fmt:heading:3': 'shortcuts.heading3',
   'fmt:paragraph': 'shortcuts.bodyText', 'fmt:ul': 'shortcuts.bulletList', 'fmt:ol': 'shortcuts.numberedList',
   'fmt:clear': 'shortcuts.clearFormatting', 'toggle-format': 'shortcuts.toggleFormat', 'focus-mode': 'shortcuts.focusMode',
-  'paper-mode': 'shortcuts.paperMode', 'global-search': 'shortcuts.globalSearch',
+  'paper-mode': 'shortcuts.paperMode', 'toggle-theme': 'shortcuts.toggleTheme',
+  'global-search': 'shortcuts.globalSearch',
   'quick-open': 'shortcuts.quickOpen', 'typewriter': 'shortcuts.typewriter',
   'fmt:align:left': 'shortcuts.alignLeft', 'fmt:align:center': 'shortcuts.alignCenter',
   'fmt:align:right': 'shortcuts.alignRight', 'fmt:align:justify': 'shortcuts.justify',

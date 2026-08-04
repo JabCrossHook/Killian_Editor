@@ -12,6 +12,8 @@ import { $, BASE_ED_FS, LOG_BUF, el, log, setStatus, state, i18n, loadLanguage, 
          LANG_FAMILY, SCRIPT_PRESETS, BUILTIN_FONT_FILES, defaultLangFonts, normalizeLangFonts,
          normalizeRange, buildLangFontCss, applyLangFonts } from './core.js';
 import { setTypeVolume, playType } from './typewriter-sound.js';
+// [alpha.60r2 ข้อ 6] ชุดระยะขอบสำเร็จรูป (ตารางอยู่ใน margin-presets.json)
+import { marginPreset, marginPresetOptions, matchMarginPreset } from './margin-presets.js';
 import { SP_ELEMS, TAB_CYCLE } from './fountain.js';
 import { refreshDashboardIfOpen } from './dashboard.js';
 // refreshDashboardIfOpen — ใช้ต่อเมื่อ dashboard.js export ฟังก์ชันนี้
@@ -85,6 +87,7 @@ export function settingsDialog(openTab) {
       <div class="k-row"><label>ขนาดตัวอักษรของ UI<span class="k-hint">[บั๊ก 14] ปรับจากค่าเริ่มต้น 14px — มีผลกับเปลือกโปรแกรมเท่านั้น ไม่แตะเอกสาร</span></label><input type="number" id="st-font" min="-6" max="16" step="1"></div>
       <div class="k-row"><label>ขนาดการ์ดหน้าแรก (px)<span class="k-hint">ความกว้างการ์ด 4 คอลัมน์บนหน้าแรก</span></label><input type="number" id="st-homethumb" class="k-narrow" min="120" max="400" step="10"></div>
       <div class="k-row"><label>${t('settings.lineNumbers')}<span class="k-hint">${t('settings.lineNumbersHint')}</span></label><input type="checkbox" id="st-ln"></div>
+      <div class="k-row"><label>ปุ่มลอยมุมขวาล่าง (FAB)<span class="k-hint">[60r2 ข้อ 9] ปิดแล้วปุ่ม + และเมนูของมันจะหายไปทั้งชุด</span></label><input type="checkbox" id="st-fab"></div>
       <div class="k-row"><label>${t('settings.spellCheck')}<span class="k-hint">${t('settings.spellCheckHint')}</span></label><input type="checkbox" id="st-spell"></div>
       <div class="k-row"><label>${t('settings.spellCheckDict')}<span class="k-hint">${t('settings.spellCheckDictHint')}</span></label><input type="checkbox" id="st-spelldict"></div>
       <div class="k-row"><label>${t('settings.autoMention')}<span class="k-hint">${t('settings.autoMentionHint')}</span></label><input type="checkbox" id="st-mention"></div>
@@ -93,7 +96,7 @@ export function settingsDialog(openTab) {
       <div class="k-row"><label>${t('settings.uiScale', 'ขนาด UI')}<span class="k-hint">${t('settings.uiScaleHint', 'ย่อ/ขยายแถบเครื่องมือ แผง แท็บ และกล่องโต้ตอบ (75–200%)')}</span></label><input type="range" id="st-uiscale" min="0.75" max="2" step="0.05"><span id="st-uiscale-lbl" class="k-hint"></span></div>
       <div class="k-set-sub k-full">🔊 เสียงเครื่องพิมพ์ดีด</div>
       <div class="k-row"><label>เปิดเสียงขณะพิมพ์<span class="k-hint">เคาะแป้น · วรรค · ลบ · กระดิ่งตอนขึ้นบรรทัด</span></label><input type="checkbox" id="st-typesnd"></div>
-      <div class="k-row"><label>เล่นแม้ไม่ได้เปิดโหมดเครื่องพิมพ์ดีด<span class="k-hint">ปิด = ได้ยินเฉพาะตอนเปิดโหมด (Ctrl+Shift+T)</span></label><input type="checkbox" id="st-typesnd-always"></div>
+      <div class="k-row"><label>เล่นเมื่อไร<span class="k-hint">[60r2 ข้อ 4] ค่าเริ่มต้น = ดังตลอด · เดิมต้องเปิดสวิตช์ที่สองด้วยจึงจะได้ยิน</span></label><select id="st-typesnd-mode" class="k-dlg-select"><option value="always">ดังตลอดเวลาที่พิมพ์</option><option value="typewriter">เฉพาะโหมดเครื่องพิมพ์ดีด (Ctrl+Shift+T)</option></select></div>
       <div class="k-row"><label>ระดับเสียง</label><input type="range" id="st-typesnd-vol" min="0" max="1" step="0.05"><span id="st-typesnd-lbl" class="k-hint"></span></div>
       <div class="k-row"><label>ลองฟัง</label><span><button id="st-typesnd-test" class="k-key-btn">เคาะ</button> <button id="st-typesnd-test2" class="k-key-btn">ขึ้นบรรทัด</button></span></div>
     </div>
@@ -128,6 +131,8 @@ export function settingsDialog(openTab) {
         <span><input type="number" id="st-paper-w" class="k-narrow" min="3" max="30" step="0.01">
         × <input type="number" id="st-paper-h" class="k-narrow" min="3" max="40" step="0.01"></span></div>
       <div class="k-set-sub">ระยะขอบ (นิ้ว)</div>
+      <!-- [alpha.60r2 ข้อ 6] ชุดสำเร็จรูป — เลือกแล้วเติมช่องทั้งสี่ให้ทันที (ค่าอยู่ใน src/margin-presets.json) -->
+      <div class="k-row k-full"><label>ชุดสำเร็จรูป<span class="k-hint">เลือกแล้วเติมค่าทั้งสี่ด้านให้ · แก้ตัวเลขเองได้ต่อ</span></label><select id="st-mg-preset" class="k-dlg-select"></select></div>
       <div class="k-set-grid2">
         <div class="k-row"><label>บน (Top)</label><input type="number" id="st-mg-top" class="k-narrow" min="0" max="5" step="0.05"></div>
         <div class="k-row"><label>ล่าง (Bottom)</label><input type="number" id="st-mg-bottom" class="k-narrow" min="0" max="5" step="0.05"></div>
@@ -324,6 +329,7 @@ export function settingsDialog(openTab) {
   q('#st-proj').value = g.projectWords ?? 50000;
   q('#st-font').value = origFont;
   q('#st-ln').checked = !!s.lineNumbers;
+  q('#st-fab').checked = s.fabEnabled !== false;      // [60r2 ข้อ 9]
   q('#st-spell').checked = s.spellCheck !== false;
   q('#st-spelldict').checked = s.spellCheckDict !== false;
   q('#st-mention').checked = s.autoMention !== false;
@@ -547,7 +553,25 @@ export function settingsDialog(openTab) {
   numIn('#st-paper-w', () => W.customPaper.width, (v) => { W.customPaper.width = v; });
   numIn('#st-paper-h', () => W.customPaper.height, (v) => { W.customPaper.height = v; });
   for (const side of ['top', 'bottom', 'left', 'right'])
-    numIn('#st-mg-' + side, () => W.margins[side], (v) => { W.margins[side] = v; });
+    numIn('#st-mg-' + side, () => W.margins[side], (v) => { W.margins[side] = v; syncMarginPreset(); });
+  // ---- [alpha.60r2 ข้อ 6] ชุดระยะขอบสำเร็จรูป ----
+  const mgPreset = q('#st-mg-preset');
+  mgPreset.append(el('option', '', '— ตั้งเอง (Custom) —'));
+  for (const [key, label] of marginPresetOptions()) {
+    const o = el('option', '', label); o.value = key; mgPreset.append(o);
+  }
+  /** ให้ <select> สะท้อนตัวเลขในช่องจริงเสมอ — แก้มือแล้วต้องกลายเป็น "ตั้งเอง" */
+  function syncMarginPreset() { mgPreset.value = matchMarginPreset(W.margins); }
+  mgPreset.onchange = () => {
+    const p = marginPreset(mgPreset.value);
+    if (!p) return;                       // เลือก "ตั้งเอง" = ไม่แตะตัวเลข
+    W.margins = { ...p };
+    W.marginPreset = mgPreset.value;
+    for (const side of ['top', 'bottom', 'left', 'right']) q('#st-mg-' + side).value = W.margins[side];
+    W.marginPreset = matchMarginPreset(W.margins); syncMarginPreset();
+    pageInfo(); previewPage();
+  };
+  syncMarginPreset();
   const RULE_MAP = { '#st-pb-ab': 'minActionLinesAtBottom', '#st-pb-at': 'minActionLinesAtTop',
     '#st-pb-db': 'minDialogueLinesAtBottom', '#st-pb-dt': 'minDialogueLinesAtTop',
     '#st-pb-hy': 'maxConsecutiveHyphens', '#st-pb-ks': 'keepSceneWithNext' };
@@ -726,9 +750,12 @@ export function settingsDialog(openTab) {
     renderSpCycle();
   };
   // ---- [alpha.57a ข้อ 1] เสียงเครื่องพิมพ์ดีด ----
-  const origSnd = { on: !!s.typeSound, always: !!s.typeSoundAlways, vol: s.typeSoundVolume ?? 0.5 };
+  const origSnd = { on: !!s.typeSound, vol: s.typeSoundVolume ?? 0.5,
+    // [60r2 ข้อ 4] โหมดใหม่ · แปลงค่าจาก typeSoundAlways ของโปรเจกต์รุ่นก่อนให้เอง
+    mode: (s.typeSoundMode === 'typewriter' || s.typeSoundMode === 'always')
+      ? s.typeSoundMode : (s.typeSoundAlways === false ? 'typewriter' : 'always') };
   q('#st-typesnd').checked = origSnd.on;
-  q('#st-typesnd-always').checked = origSnd.always;
+  q('#st-typesnd-mode').value = origSnd.mode;
   q('#st-typesnd-vol').value = String(origSnd.vol);
   q('#st-typesnd-lbl').textContent = Math.round(origSnd.vol * 100) + '%';
   q('#st-typesnd-vol').oninput = () => {
@@ -943,6 +970,7 @@ export function settingsDialog(openTab) {
     s.fontFamily = q('#st-fontfamily')?.value || '';
     s.spFontFamily = q('#st-spfontfamily')?.value || '';
     s.lineNumbers = q('#st-ln').checked;
+    s.fabEnabled = q('#st-fab').checked;               // [60r2 ข้อ 9]
     s.spellCheck = q('#st-spell').checked;
     s.spellCheckDict = q('#st-spelldict').checked;
     s.autoMention = q('#st-mention').checked;
@@ -969,6 +997,7 @@ export function settingsDialog(openTab) {
     s.paperSize = W.paperSize;
     s.customPaper = { ...W.customPaper };
     s.pageMargins = { ...W.margins };
+    s.marginPreset = matchMarginPreset(W.margins);     // [60r2 ข้อ 6] '' = ผู้ใช้ตั้งเอง
     s.spElements = JSON.parse(JSON.stringify(W.elements));
     s.spStyles = JSON.parse(JSON.stringify(W.styles));
     s.spPageRules = { ...W.rules };
@@ -979,7 +1008,8 @@ export function settingsDialog(openTab) {
     s.spLineHeight = W.spLineHeight;              // [alpha.58r บั๊ก 5]
     s.spPageGap = W.spPageGap;
     s.typeSound = q('#st-typesnd').checked;
-    s.typeSoundAlways = q('#st-typesnd-always').checked;
+    s.typeSoundMode = q('#st-typesnd-mode').value === 'typewriter' ? 'typewriter' : 'always';
+    s.typeSoundAlways = s.typeSoundMode === 'always';   // คีย์เก่า — ให้รุ่นก่อนอ่านต่อได้
     s.typeSoundVolume = Math.min(1, Math.max(0, parseFloat(q('#st-typesnd-vol').value) || 0));
     s.langFonts = JSON.parse(JSON.stringify(W.langFonts));
     // [alpha.58r บั๊ก 16–24] รูปแบบนิยายทั้งชุด (เก็บก้อนเดียวที่ settings.prose)
@@ -993,9 +1023,9 @@ export function settingsDialog(openTab) {
       await saveProjectMeta();
       // [alpha.60 ข้อ 94] บันทึก global settings ลง userData/settings.json
       try {
-        const globalKeys = ['autoSaveMinutes','maxBackups','autoBackup','lineNumbers','uiFontSize','uiScale',
+        const globalKeys = ['autoSaveMinutes','maxBackups','autoBackup','lineNumbers','fabEnabled','uiFontSize','uiScale',
           'spellCheck','spellCheckDict','autoMention','recycleDays','paperMode','fontFamily','spFontFamily',
-          'language','autoSync','thesaurus','focusDim','typeSound','typeSoundVolume','typeSoundAlways',
+          'language','autoSync','thesaurus','focusDim','typeSound','typeSoundVolume','typeSoundAlways','typeSoundMode',
           'homeThumb','smartLearnMin','heavyDocBlocks','mdAlignStyle','shortcuts','showHomeOnStartup'];
         const globals = {};
         for (const k of globalKeys) { if (k in s) globals[k] = s[k]; }

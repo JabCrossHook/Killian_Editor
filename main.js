@@ -30,6 +30,7 @@ const S = 'Shift';
 const toggles = {
   paperMode: true, readingMode: false, focusMode: false, typewriter: false,
   lineNumbers: false, splitView: false, format: 'prose',
+  theme: 'dark', fabEnabled: true,          // [alpha.60r2 ข้อ 9 + 10]
   // alpha.57 — โหมดมุมมองบท (normal/draft/side/overview1/overview4) + สวิตช์ของเมนู "บท"
   spView: 'normal', showFormat: false, checkBeforeExport: true,
   // alpha.57a — เลขฉาก/เลขหน้า/เสียงพิมพ์
@@ -159,14 +160,34 @@ function buildMenu() {
         { label: 'ภาพรวม 4px/ตัวอักษร', type: 'radio', checked: toggles.spView === 'overview4',
           click: () => send('sp-view', 'overview4') },
       ] },
-      chk(`โหมดหน้ากระดาษ (${C}+${S}+P)`, toggles.paperMode, () => send('paper-mode')),
-      chk('แสดงเลขบรรทัด', toggles.lineNumbers, () => send('line-numbers')),
+      // [alpha.60r2 ข้อ 10] Ctrl+Shift+P ย้ายมาสลับธีมของโปรแกรม — โหมดหน้ากระดาษยังกดที่นี่/ปุ่ม 📄 ได้
+      { label: `ธีม: สว่าง / มืด (${C}+${S}+P)`, submenu: [
+        { label: 'มืด (Dark)', type: 'radio', checked: toggles.theme !== 'light',
+          click: () => send('toggle-theme', 'dark') },
+        { label: 'สว่าง (Light)', type: 'radio', checked: toggles.theme === 'light',
+          click: () => send('toggle-theme', 'light') },
+      ] },
+      chk('โหมดหน้ากระดาษ', toggles.paperMode, () => send('paper-mode')),
+      chk('แสดงเลขบรรทัด (รางซ้ายของแผง)', toggles.lineNumbers, () => send('line-numbers')),
+      // [alpha.60r2 ข้อ 9] ปุ่มลอยมุมขวาล่าง
+      chk('ปุ่มลอยมุมขวาล่าง (FAB)', toggles.fabEnabled, () => send('toggle-fab')),
       { type: 'separator' },
       // [alpha.58r บั๊ก 16–24] รูปแบบของนิยาย (ย่อหน้า/ช่วงบรรทัด/หัวข้อ/ยกคำพูด/ฟอนต์)
       { label: '📖 รูปแบบนิยาย (ย่อหน้า · ช่วงบรรทัด · หัวข้อ)…', click: () => send('prose-setup') },
       // [alpha.58r บั๊ก 22] คนเขียนนิยายเห็นแต่เมนู "รูปแบบ" — ปุ่มหน้ากระดาษต้องอยู่ตรงนี้ด้วย
       { label: '📐 หน้ากระดาษ · ระยะขอบ…', click: () => send('page-setup') },
       { label: `📄 ไปที่หน้า/บท… (${C}+G)`, click: () => send('goto') },
+      { type: 'separator' },
+      // [alpha.60r2 ข้อ 2] สลับรูปตัวพิมพ์ของช่วงที่เลือก
+      { label: 'รูปตัวพิมพ์ (Change Case)', submenu: [
+        { label: 'Sentence case', click: () => send('text-case', 'SC') },
+        { label: 'lower case', click: () => send('text-case', 'lc') },
+        { label: 'UPPER CASE', click: () => send('text-case', 'UC') },
+        { label: 'Capitalize Case', click: () => send('text-case', 'CC') },
+        { label: 'aLtErNaTe cAsE', click: () => send('text-case', 'aC') },
+        { label: 'Title Case', click: () => send('text-case', 'TC') },
+        { label: 'iNVERSE cASE', click: () => send('text-case', 'iC') },
+      ] },
       { type: 'separator' },
       { label: 'แทรกรูป…', click: () => send('insert-image') },
       { label: 'แทรกเส้นคั่น (---)', click: () => send('fmt', 'hr') },
@@ -232,6 +253,9 @@ function buildMenu() {
     { id: 'Tools', label: 'เครื่องมือ', submenu: [
       { label: '📊 เปรียบเทียบบท / สคริปต์…', click: () => send('sp-compare') },
       { label: 'ตรวจหาคำซ้ำ · สถิติการใช้คำ (Word History)…', click: () => send('word-history') },
+      // [alpha.60r2 ข้อ 13] frontmatter ของ .md = แหล่งความจริงของคุณสมบัติฉาก
+      { label: '🔄 ซิงก์คุณสมบัติฉากจากไฟล์ .md (แก้ไฟล์นอกโปรแกรมแล้วใช้)',
+        click: () => send('sync-scene-meta') },
     ] },
     { id: 'View', label: 'มุมมอง', submenu: [
       { label: 'แดชบอร์ด', click: () => send('dashboard') },

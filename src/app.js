@@ -11,6 +11,18 @@ import { PROSE_DEFAULTS, DEFAULT_PROSE_FONT, HEADING_DEFAULTS, QUOTE_DEFAULTS,
 import { PROSE_VIEWS, PROSE_VIEW_LABELS, isProsePageView, isProseEditView, isValidProseView,
          proseLayoutCssVars, prosePagesOf, setProsePageBreaks, prosePageBreaks,
          refreshProsePageBreaks, renderProsePageView, proseViewStatusText } from './prose-view.js';
+// [alpha.60r2 ข้อ 2] สลับรูปตัวพิมพ์ · [ข้อ 6] ระยะขอบสำเร็จรูป
+import { CASE_MODES, CASE_SHORT } from './text-case.js';
+// [alpha.60r2 ข้อ 13] คุณสมบัติฉาก: frontmatter = แหล่งความจริง · scenes.json = ดัชนี
+import { readSceneMeta, writeSceneMeta, SCENE_HEAVY_KEYS } from './scene-meta.js';
+// [alpha.60r2 ข้อ 6 · 12] ระยะขอบสำเร็จรูป · เมทาดาทาของรูปใน Wiki (ใช้ใน selftest ด้วย)
+import { marginPreset, matchMarginPreset } from './margin-presets.js';
+import { migrateImages, setImageMeta } from './wiki-images.js';
+// [alpha.60r2 ข้อ 8] เวอร์ชัน schema ของเลย์เอาต์แผง (selftest ตรวจการตกกลับค่าตั้งต้น)
+import { LAYOUT_VERSION as PANEL_LAYOUT_VERSION,
+         deserializeLayout as deserializePanelLayout } from './panels/panel-store.js';
+// [alpha.60r2 ข้อ 2] selftest ต้องตั้ง selection เองก่อนสั่งเปลี่ยนรูปตัวพิมพ์
+import { TextSelection as PMTextSelection } from 'prosemirror-state';
 import { setQuery, gotoMatch, replaceCurrent, replaceAll } from './search.js';
 import { ask, confirmBox, popupMenu, choose, closeMenu, saveAllDialog } from './ui.js';
 import { WikiEditor, CAT_TH, imageLightbox } from './wiki.js';
@@ -88,6 +100,8 @@ import { openCentralizeUI, markCentralizeStale, onCentralizeShown, resetCentrali
 import { openKanban, resetKanban, renderKanbanPanel } from './kanban/kanban-ui.js';
 import * as PL from './panels/panel-layout.js';
 import { inGroupHandle, snapToEdges, clampFloat, FLOAT_MIN_W, FLOAT_MIN_H } from './panels/panel-drag.js';
+// [alpha.60r2 ข้อ 7] รายชื่อกล่องที่เลื่อนได้ — selftest ตรวจว่าครอบคลุมครบ
+import { SCROLLABLES as PANEL_SCROLLABLES } from './panels/panel-ui.js';
 import { initPanelSystem, getPanelManager, togglePanelDialog, showPanel, hidePanel, togglePanel,
          resetPanels, panelMenuItems, panelToggleState, addPanelButton, renderPanels,
          isPanelOpen, resetPanelSystem, PANEL_DEFS, panelId, setPanelShowHook,
@@ -176,7 +190,10 @@ export function applySettings() {
   document.documentElement.style.setProperty('--home-thumb',
     Math.max(120, Math.min(400, parseInt(state.settings.homeThumb, 10) || 190)) + 'px');
   document.body.classList.toggle('k-ln', !!state.settings.lineNumbers);
+  scheduleLineGutter();                              // [60r2 ข้อ 11] รางเลขบรรทัดฝั่ง UI
   document.body.classList.toggle('paper-mode', state.settings.paperMode !== false);
+  document.body.classList.toggle('k-fab-off', state.settings.fabEnabled === false);   // [60r2 ข้อ 9]
+  applyTheme();                                      // [60r2 ข้อ 10] ธีมสว่าง/มืดของ UI
   // [alpha.57a ข้อ 5] ฟอนต์ตามภาษา — ต้องมาก่อนตั้ง --ed-font/--sp-font เพราะจะเอา "K2 Lang" ไปนำหน้า
   const nLang = applyProjectLangFonts();
   // [alpha.58r บั๊ก 18] ฟอนต์เริ่มต้นของ "นิยาย" = ตัวพิมพ์แบบสัดส่วน ไม่ใช่ Courier (ฟอนต์บท)
@@ -223,11 +240,102 @@ export function applyZoomVars(uiOff) {
   R.setProperty('--ed-fs', edfs + 'px');
   R.setProperty('--sp-fs', spfs + 'px');
   R.setProperty('--page-scale', pageScale.toFixed(3));
-  document.querySelectorAll('.pane > .workspace, .roster-wrap > .workspace').forEach(ws => {
-    ws.style.minWidth = (pageScale * 100) + '%';
-  });
+  syncWorkspaceWidths();
   const slider = $('#zoom-slider'); if (slider) slider.value = String(Math.round(pageScale * 100));
   const lbl = $('#zoom-label'); if (lbl) lbl.textContent = Math.round(pageScale * 100) + '%';
+}
+
+// ═════════ [alpha.60r2 ข้อ 11] เลขบรรทัด = UI ไม่ใช่หมึกบนกระดาษ ═════════
+// เดิมวาดด้วย `::before` ของบล็อกใน ProseMirror → เลขอยู่ "ในระยะขอบของกระดาษ"
+// จึงเลื่อนตามกระดาษ ย่อ/ขยายตามซูม และไปโผล่บนหน้าที่พิมพ์ออกมาได้
+// ตอนนี้เป็นรางซ้ายของแผงแบบ VS Code: อยู่นอกกล่องที่ถูก zoom · ไม่เลื่อนตามแนวนอน
+// · ไม่กินความกว้างของข้อความเลย (absolute + pointer-events:none)
+const LN_GUTTER_ID = 'k-ln-gutter';
+let _lnJob = 0;
+/** ขอวาดรางเลขบรรทัดใหม่ในเฟรมถัดไป (รวบหลายเหตุการณ์ให้เหลือครั้งเดียว) */
+export function scheduleLineGutter() {
+  if (_lnJob) return;
+  _lnJob = requestAnimationFrame(() => { _lnJob = 0; try { refreshLineGutter(); } catch {} });
+}
+function lnGutterEl(make) {
+  let g = document.getElementById(LN_GUTTER_ID);
+  if (!g && make) {
+    const box = $('#panes');
+    if (!box) return null;
+    g = el('div', 'k-ln-gutter'); g.id = LN_GUTTER_ID;
+    box.appendChild(g);
+  }
+  return g || null;
+}
+/**
+ * วาดเลขบรรทัดของแท็บที่กำลังใช้งาน — คืนจำนวนเลขที่วาดจริง (0 = ปิด/ไม่มีอะไรให้นับ)
+ * วาดเฉพาะบล็อกที่อยู่ในสายตา (เอกสารยาวหลายพันย่อหน้าจึงไม่หน่วง)
+ */
+export function refreshLineGutter() {
+  const t = state.active;
+  const pane = t && t.pane;
+  // wiki ใช้ตัวแก้ไขหลายกล่องในหน้าเดียว — นับบรรทัดรวมไม่มีความหมาย จึงไม่วาดราง
+  const pmEl = pane && !pane.classList.contains('wiki-pane')
+    ? pane.querySelector(':scope > .workspace > .ProseMirror') : null;
+  // มุมมองเรียงหน้า/ภาพรวม = อ่านอย่างเดียว ไม่มีเคอร์เซอร์ → ปิดเลขบรรทัดอัตโนมัติ
+  const show = !!state.settings.lineNumbers && !!pmEl && !isPageView(currentSpView());
+  const g = lnGutterEl(show);
+  if (!g) return 0;
+  g.classList.toggle('on', show);
+  if (!show) { g.textContent = ''; return 0; }
+  const box = g.parentElement;
+  const hr = box.getBoundingClientRect();
+  const pr = pane.getBoundingClientRect();
+  if (!pr.height) { g.textContent = ''; return 0; }
+  // รางทาบบน "แผงที่ใช้งานอยู่" — แยกหน้าจอแล้วเลขต้องไปอยู่กับช่องที่กำลังพิมพ์ ไม่ใช่ขอบซ้ายสุด
+  g.style.left = Math.round(pr.left - hr.left) + 'px';
+  g.style.top = Math.round(pr.top - hr.top) + 'px';
+  g.style.height = Math.round(pr.height) + 'px';
+  const kids = pmEl.children;
+  const frag = document.createDocumentFragment();
+  let n = 0;
+  for (let i = 0; i < kids.length; i++) {
+    const r = kids[i].getBoundingClientRect();
+    if (!r.height) continue;
+    const top = r.top - pr.top;
+    if (top > pr.height + 60) break;              // เลยขอบล่างของแผงแล้ว — ที่เหลือไม่ต้องดู
+    if (top + r.height < -60) continue;           // ยังอยู่เหนือขอบบน
+    const d = el('div', 'k-ln-no', String(i + 1));
+    d.style.top = Math.round(top) + 'px';
+    frag.appendChild(d); n++;
+  }
+  g.textContent = '';
+  g.appendChild(frag);
+  return n;
+}
+/** ผูกเหตุการณ์ที่ทำให้เลขบรรทัดต้องขยับ (เลื่อนจอ/พิมพ์/สลับแท็บ) — เรียกครั้งเดียวตอนเริ่มโปรแกรม */
+let _lnBound = false;
+export function initLineGutter() {
+  if (_lnBound) return false;
+  const box = $('#panes');
+  if (!box) return false;
+  // capture — เหตุการณ์ scroll ไม่ bubble ต้องดักขาลง
+  box.addEventListener('scroll', scheduleLineGutter, true);
+  _lnBound = true;
+  scheduleLineGutter();
+  return true;
+}
+
+/**
+ * [alpha.60r2 ข้อ 1] "ซูมแล้วหน้ากระดาษตกขอบซ้าย"
+ * `.workspace` ถูกย่อ/ขยายด้วย CSS `zoom` → 1 หน่วยข้างในเท่ากับ pageScale พิกเซลจริงบนจอ
+ * เดิมตั้ง `min-width:(pageScale*100)%` ซึ่งพึ่งการตีความ % ใต้ `zoom` — ต่างกันตามเวอร์ชันเบราว์เซอร์
+ * ผลที่ผู้ใช้เจอ: ซูมออกแล้ว workspace แคบกว่าแผง → หน้ากระดาษ (margin:auto) ไปกองชิดขอบซ้าย
+ * ตอนนี้วัดเป็นพิกเซลตรง ๆ: กว้าง = พื้นที่แผง ÷ อัตราซูม → บนจอเท่ากับความกว้างแผงพอดีทุกระดับซูม
+ * ⚠ ตั้งเฉพาะ min-width — `width:max-content` ของหน้ากระดาษยังชนะเสมอเมื่อกระดาษกว้างกว่าแผง
+ */
+export function syncWorkspaceWidths() {
+  const z = pageScale > 0 ? pageScale : 1;
+  for (const ws of document.querySelectorAll('.pane > .workspace, .roster-wrap > .workspace')) {
+    const box = ws.parentElement;
+    const w = box ? box.clientWidth : 0;
+    ws.style.minWidth = w > 0 ? Math.round(w / z) + 'px' : '';
+  }
 }
 
 // ---------------- [85] หน้ากระดาษ: ขนาด + ระยะขอบ + รูปแบบ element บทหนัง ----------------
@@ -332,9 +440,16 @@ function onTypeKey(ev) {
   if (kind) playType(kind);
 }
 /** ให้สถานะเสียงตรงกับ settings + โหมดเครื่องพิมพ์ดีดปัจจุบัน */
+export function typeSoundMode() {
+  const s = state.settings || {};
+  if (s.typeSoundMode === 'typewriter' || s.typeSoundMode === 'always') return s.typeSoundMode;
+  // โปรเจกต์รุ่นก่อนมีแค่ typeSoundAlways (ค่าเริ่มต้น false) → แปลงเป็นโหมดใหม่
+  return s.typeSoundAlways === false ? 'typewriter' : 'always';
+}
 export function syncTypeSound() {
   const s = state.settings || {};
-  const want = !!s.typeSound && (s.typeSoundAlways || isTypewriter());
+  // [alpha.60r2 ข้อ 4] เปิด "เสียงพิมพ์ดีด" แล้วต้องได้ยินทันที ไม่ต้องไปเปิดสวิตช์ที่สองอีก
+  const want = !!s.typeSound && (typeSoundMode() === 'always' || isTypewriter());
   setTypeSound(want);
   if (want && !_typeSoundBound) {
     document.addEventListener('keydown', onTypeKey, true);
@@ -519,6 +634,8 @@ export function setSpView(mode, quiet) {
   }
   const sel = $('#sp-view-select'); if (sel) sel.value = m;
   syncMenuToggles();
+  syncWorkspaceWidths();
+  scheduleLineGutter();          // [60r2 ข้อ 11] มุมมองหน้ากระดาษ = ปิดเลขบรรทัดเอง
   if (!quiet) setStatus(viewStatusText(m, pages ?? undefined));
   return m;
 }
@@ -533,6 +650,9 @@ export function refreshSpView() {
 // ย่อ/ขยายหน้าต่าง → จำนวนหน้าต่อแถวและสเกลเปลี่ยน (หน่วงไว้กันวาดถี่ระหว่างลาก)
 let _spViewJob = null;
 window.addEventListener('resize', () => {
+  // [60r2 ข้อ 1] แผงเปลี่ยนขนาด = พื้นที่กระดาษเปลี่ยน → ความกว้างขั้นต่ำของ workspace ต้องตามทันที
+  syncWorkspaceWidths();
+  scheduleLineGutter();
   if (!isPageView(spViewMode)) return;
   clearTimeout(_spViewJob);
   _spViewJob = setTimeout(refreshSpView, 150);
@@ -1189,7 +1309,8 @@ export async function loadProject(root) {
   warmInverse(); loadPlugins();
   // ---- เริ่มระบบใหม่ (Part 1+2) ----
   initPanelSystem();                                 // Panel System
-  onPanelLayoutChange(refreshToolbar);               // sync toolbar toggle .on states
+  // sync toolbar toggle .on states + [60r2 ข้อ 1/11] ความกว้าง workspace และรางเลขบรรทัด
+  onPanelLayoutChange(() => { refreshToolbar(); syncWorkspaceWidths(); scheduleLineGutter(); });
   // แผงฟีเจอร์ (บั๊ก #18) ต้องเรียกหลัง initPanelSystem ไม่งั้น showPanel ยังไม่รู้จักแผง
   await renderOpenFeaturePanels();                   // เลย์เอาต์ที่กู้มาอาจมีแผงเปิดค้าง = กล่องเปล่า
   // [alpha.60r ข้อ 2] กู้คืนแท็บที่เปิดค้างจากเซสชันก่อน
@@ -2774,6 +2895,8 @@ export function syncMenuToggles() {
     const ps = panelToggleState();
     const payload = {
       paperMode: state.settings.paperMode !== false,
+      theme: currentTheme(),                        // [60r2 ข้อ 10]
+      fabEnabled: state.settings.fabEnabled !== false,   // [60r2 ข้อ 9]
       readingMode: document.body.classList.contains('reading-mode'),
       focusMode: document.body.classList.contains('focus-mode'),
       typewriter: isTypewriter(),
@@ -2810,6 +2933,33 @@ function togglePaper(on) {
   const btn = $('#tb-paper'); if (btn) btn.classList.toggle('on', v);
   syncMenuToggles();
   setStatus(v ? 'โหมดหน้ากระดาษ: เปิด (กระดาษขาว)' : 'โหมดหน้ากระดาษ: ปิด (พื้นมืด)');
+}
+
+// ---------------- [alpha.60r2 ข้อ 10] ธีมของโปรแกรม (Dark / Light) ----------------
+// ⚠ ธีมสลับเฉพาะ "เปลือกโปรแกรม" (แถบเครื่องมือ · แผง · แท็บ · กล่อง) ผ่านตัวแปร CSS ชุด --bg/--fg/…
+// ไม่แตะ --paper-* จึงไม่กระทบหน้ากระดาษ/มุมมองหน้ากระดาษ/งานที่พิมพ์ออกมาแม้แต่นิดเดียว
+// (คนละเรื่องกับ "โหมดหน้ากระดาษ" ซึ่งยังเปิด/ปิดได้ที่ปุ่ม 📄 และเมนู มุมมอง ตามเดิม)
+export function currentTheme() { return state.settings.theme === 'light' ? 'light' : 'dark'; }
+export function applyTheme() {
+  const th = currentTheme();
+  document.body.classList.toggle('theme-light', th === 'light');
+  document.body.classList.toggle('theme-dark', th === 'dark');
+  const btn = $('#tb-theme');
+  if (btn) {
+    btn.classList.toggle('on', th === 'light');
+    btn.title = th === 'light' ? 'ธีมสว่าง — คลิกเพื่อไปธีมมืด (Ctrl+Shift+P)'
+                               : 'ธีมมืด — คลิกเพื่อไปธีมสว่าง (Ctrl+Shift+P)';
+  }
+  return th;
+}
+export function toggleTheme(mode) {
+  const th = mode === 'light' || mode === 'dark' ? mode : (currentTheme() === 'dark' ? 'light' : 'dark');
+  state.settings.theme = th;
+  applyTheme();
+  saveProjectMeta();
+  syncMenuToggles();
+  setStatus(th === 'light' ? 'ธีม: สว่าง (Light)' : 'ธีม: มืด (Dark)');
+  return th;
 }
 
 // ---------------- โหมดอ่าน (📖) — เต็มจอ, ปิด cursor, ซ่อน UI ----------------
@@ -3837,6 +3987,34 @@ export async function sceneCtx(file) {
   return null;
 }
 
+/**
+ * [alpha.60r2 ข้อ 13] ดึงคุณสมบัติฉากจาก frontmatter ของ .md ทุกไฟล์ มาอัปเดตดัชนี scenes.json
+ * ใช้เมื่อผู้ใช้ไปแก้ไฟล์ .md นอกโปรแกรม (หลักการของโปรเจกต์: "ไฟล์แก้นอกโปรแกรมได้")
+ * frontmatter = แหล่งความจริง · scenes.json = ดัชนี/แคชที่ explorer, ตารางฉาก, Planner อ่านเร็ว ๆ
+ * @returns {Promise<number>} จำนวนฉากที่ค่าถูกอัปเดตจริง
+ */
+export async function syncSceneMetaFromFiles(dPath) {
+  const dir = dPath || (await sceneCtx())?.dPath;
+  if (!dir) { setStatus('เปิดฉากในฉบับร่างก่อน จึงจะซิงก์คุณสมบัติได้'); return 0; }
+  const sf = await kapi.join(dir, 'scenes.json');
+  const d = await kapi.readJson(sf);
+  const draft = await kapi.readJson(await kapi.join(dir, 'draft.json'));
+  let n = 0;
+  for (const ch of (draft.chapters || [])) {
+    for (const row of ((d.chapters || {})[ch.guid] || [])) {
+      const file = await kapi.join(dir, 'Chapters', ch.folderName, row.fileName);
+      const m = await readSceneMeta(file, row);
+      for (const k of SCENE_HEAVY_KEYS) {
+        const before = JSON.stringify(row[k] ?? null), after = JSON.stringify(m[k] ?? null);
+        if (before !== after) { row[k] = m[k]; n++; }
+      }
+    }
+  }
+  if (n) { await kapi.writeFile(sf, JSON.stringify(d, null, 2)); await buildTree(); }
+  setStatus(n ? `ซิงก์คุณสมบัติฉากจากไฟล์ .md แล้ว (${n} ค่า)` : 'คุณสมบัติฉากตรงกับไฟล์ .md อยู่แล้ว');
+  return n;
+}
+
 // ---------------- แผงคอมเมนต์ (บั๊ก #25 — เดิมเป็นกล่องโต้ตอบ เก็บใน scenes.json) ----------------
 let _cmMigrated = new Set();                       // ฉบับร่างที่ย้ายคอมเมนต์เก่ามาแล้ว (ครั้งเดียวต่อ session)
 
@@ -4152,7 +4330,8 @@ function mountEditor(tab, dir, body) {
       markdown: body,
       onChange: () => { markDirty(tab); scheduleCount(); scheduleOutline();
                         scheduleSpSmart(tab); scheduleRepaginate(); },
-      onKeyDown: (ev) => smart.onKey(ev),
+      // [alpha.60r2 ข้อ 3] Enter = จัดหน้าใหม่ทันที ไม่รอ debounce (เส้นคั่นหน้าไม่กระตุก)
+      onKeyDown: (ev) => { repaginateOnEnter(tab, ev); return smart.onKey(ev); },
       onElement: (elName) => setElementBadge(elName),
       getChecker: spellChecker,
       resolveSrc: (p) => resolveImg(dir, p),                       // รูปในบทหนัง render จริง
@@ -4172,7 +4351,8 @@ function mountEditor(tab, dir, body) {
       onChange: () => { markDirty(tab); scheduleCount(); scheduleOutline();
                         setTimeout(() => smart.check(tab.editor.view), 0); },
       resolveSrc: (p) => resolveImg(dir, p),
-      onKeyDown: (ev) => smart.onKey(ev),
+      // [alpha.60r2 ข้อ 3] Enter = จัดหน้าใหม่ทันที ไม่รอ debounce
+      onKeyDown: (ev) => { repaginateOnEnter(tab, ev); return smart.onKey(ev); },
       getNames: () => state.settings.autoMention !== false ? smart.names : [],
       onMention: (name) => { if (smart.fileOf[name]) openEntity(smart.fileOf[name]); },
       getChecker: spellChecker,
@@ -4185,8 +4365,7 @@ function mountEditor(tab, dir, body) {
   pane.classList.toggle('sp-pane', !!tab.sp);            // หน้ากระดาษบทหนัง (Final Draft)
   // บั๊ก #6: workspace ต้องกว้างอย่างน้อยเท่าพื้นที่ของแผง ณ ระดับซูมปัจจุบัน
   // บั๊ก #7: แล้วเลื่อนหน้ากระดาษมากึ่งกลางเป็นมุมมองเริ่มต้น
-  const ws = pane.querySelector('.workspace');
-  if (ws) ws.style.minWidth = (pageScale * 100) + '%';
+  syncWorkspaceWidths();                     // [60r2 ข้อ 1] วัดเป็นพิกเซล ไม่ใช่ % ใต้ zoom
   // [alpha.57a ข้อ 2] เลขหน้าเริ่มต้นของไฟล์นี้ (ตั้งในคุณสมบัติฉาก) — อ่านทีหลังได้ ไม่บล็อกการเปิด
   if (tab.sp && tab.startPage === undefined) {
     sceneCtx(tab.file).then((c) => {
@@ -5049,7 +5228,9 @@ function updateToolbarTitles() {
   $('#tb-align-right').title = withShortcut('toolbar.alignRight', 'KeyR', true, true);
   $('#tb-align-justify').title = withShortcut('toolbar.alignJustify', 'KeyJ', true, true);
   // ปุ่มโหมด
-  $('#tb-paper').title = withShortcut('toolbar.paperMode', 'KeyP', true, true);
+  // [alpha.60r2 ข้อ 10] Ctrl+Shift+P ย้ายไปเป็น "ธีมสว่าง/มืด" — ปุ่มกระดาษไม่มีคีย์ลัดแล้ว
+  $('#tb-paper').title = t('toolbar.paperMode');
+  applyTheme();                       // ตั้ง title/สถานะของปุ่มธีมตามภาษาปัจจุบัน
   $('#tb-mode').title = t('toolbar.toggleMode') + ' (Ctrl+Shift+M)';
   // ปุ่มเครื่องมือ
   $('#tb-img').title = t('toolbar.insertImage');
@@ -5096,14 +5277,16 @@ function refreshToolbar() {
     spElem.style.display = sp ? '' : 'none';
     if (sp) { try { spElem.value = sp.curElement(); } catch {} }
   }
-  // alpha.57 — ตัวเลือกมุมมองบท (โผล่คู่กับตัวเลือก element)
+  // alpha.57 — ตัวเลือกมุมมองหน้ากระดาษ
+  // [alpha.60r2 ข้อ 5] เดิมโผล่เฉพาะแท็บบทภาพยนตร์ → คนเขียนนิยายเข้าถึงมุมมองหน้ากระดาษไม่ได้เลย
+  // ทั้งที่เอนจินฝั่งนิยาย (drawProsePageView) ทำงานได้ครบตั้งแต่ alpha.58r แล้ว
   const spView = $('#sp-view-select');
   if (spView) {
-    spView.style.display = sp ? '' : 'none';
+    spView.style.display = (sp || ed) ? '' : 'none';
     spView.value = currentSpView();
   }
   document.querySelectorAll('.tb').forEach((b) => {
-    if (b.id === 'tb-paper') return;   // ปุ่มโหมดหน้ากระดาษใช้ได้ตลอด
+    if (b.id === 'tb-paper' || b.id === 'tb-theme') return;   // โหมดหน้ากระดาษ/ธีม ใช้ได้ตลอด
     // บั๊ก #1: ปุ่มแยกหน้าจอเคยถูกปิดไปด้วยตอนแท็บที่เปิดอยู่ไม่ใช่เอดิเตอร์ (แดชบอร์ด/ผัง/คลังรูป)
     // ทั้งที่แยกจอใช้กับแท็บพวกนั้นได้ → ใช้ได้ตราบใดที่มีแท็บเปิดอยู่อย่างน้อยหนึ่ง
     if (b.id === 'tb-split') { b.classList.toggle('dis', state.tabs.size === 0); return; }
@@ -5126,6 +5309,7 @@ function refreshToolbar() {
                          : 'วางเคอร์เซอร์ในบรรทัด "ตัวละคร" ก่อน';
   }
   $('#tb-paper').classList.toggle('on', state.settings.paperMode !== false);
+  applyTheme();                       // [60r2 ข้อ 10] ปุ่มธีมสะท้อนสถานะจริง
   // ปุ่มสวิตช์อื่น ๆ ต้องสะท้อนสถานะจริงด้วย ไม่งั้นจุดบอกสถานะโกหก
   $('#tb-read')?.classList.toggle('on', document.body.classList.contains('reading-mode'));
   $('#tb-split')?.classList.toggle('on', isSplit());
@@ -5160,8 +5344,11 @@ function heavyDelay(tab) {
   let n = 0;
   try { n = tab.sp ? tab.sp.view.state.doc.childCount : (tab.editor ? tab.editor.view.state.doc.childCount : 0); }
   catch { n = 0; }
-  if (n <= limit) return 300;
-  return Math.min(1200, 300 + Math.ceil((n - limit) / limit) * 300);
+  // [alpha.60r2 ข้อ 3] เดิมหน่วงขั้นต่ำ 300ms → เส้นคั่นหน้า/จำนวนหน้ามาช้าจนรู้สึกว่า "โปรแกรมหน่วง"
+  // เอกสารสั้น (ส่วนใหญ่) คำนวณเสร็จในไม่กี่มิลลิวินาที จึงลดเหลือ 100ms ได้โดยไม่กระทบความลื่น
+  // เอกสารยาวยังยืดตามเดิม (ทีละ 300ms ต่อทุก ๆ heavyDocBlocks บล็อกที่เกิน)
+  if (n <= limit) return 100;
+  return Math.min(1200, 100 + Math.ceil((n - limit) / limit) * 300);
 }
 
 let countJob = null;
@@ -5210,6 +5397,49 @@ function repaginateNow(t) {
     return _spPageText;
   } catch (e) { log('warn', 'นับหน้าบทไม่สำเร็จ', e); return _spPageText; }
 }
+/**
+ * [alpha.58r บั๊ก 20 · แยกออกมาใน alpha.60r2 ข้อ 3] จัดหน้าเอกสาร "นิยาย" + วาดเส้นคั่นหน้า
+ * @returns {number} จำนวนหน้า (0 = คำนวณไม่ได้)
+ */
+function repaginateProseNow(t) {
+  if (!t || !t.editor) return 0;
+  try {
+    const spf = spFormat(), pf = proseFormat();
+    const pblocks = proseBlocksFromDoc(t.editor.view.state.doc);
+    const ppg = prosePagesOf(pblocks, pf, spf.paper, spf.margins);
+    const base = currentStartPage(t) - 1;
+    const changed = setProsePageBreaks(
+      prosePageStarts(ppg).map((pos, i) => ({ pos, page: base + i + 1 })).slice(1)
+        .filter((x) => Number.isFinite(x.pos)));
+    if (changed) refreshProsePageBreaks(t.editor.view);
+    refreshSpView();
+    return ppg.count;
+  } catch (e) { log('warn', 'นับหน้านิยายไม่สำเร็จ', e); return 0; }
+}
+
+/**
+ * [alpha.60r2 ข้อ 3] จัดหน้า **ทันที** ไม่รอ debounce — ใช้ตอนกด Enter
+ * ขึ้นบรรทัดใหม่คือจังหวะเดียวที่ "เส้นคั่นหน้าอาจเลื่อน" แบบที่ตาเห็นชัดที่สุด
+ * รอ 100–300ms ตรงนี้แล้วผู้ใช้รู้สึกว่าเส้นกระตุก จึงยิงตรงเลยเฉพาะกรณีนี้
+ * (งานหนักอื่น — นับคำ/ตรวจบท — ยังเดินตาม scheduleCount เหมือนเดิม)
+ */
+export function repaginateFast(tab) {
+  const t = tab || state.active;
+  if (!t) return 0;
+  if (t.sp) { repaginateNow(t); return 1; }
+  if (t.editor) return repaginateProseNow(t);
+  return 0;
+}
+
+// กด Enter = ขึ้นบล็อกใหม่ → จัดหน้าใหม่ทันทีในรอบถัดไปของ event loop (หลัง doc เปลี่ยนจริง)
+// ป้องกันการยิงถี่ตอนกด Enter ค้าง ด้วยธงรอบเดียว
+let _fastPageJob = 0;
+function repaginateOnEnter(tab, ev) {
+  if (!ev || ev.key !== 'Enter' || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  if (_fastPageJob) return;
+  _fastPageJob = setTimeout(() => { _fastPageJob = 0; try { repaginateFast(tab); } catch {} }, 0);
+}
+
 // จำนวนหน้าที่คำนวณไว้ล่าสุด — ตอนเปิด "ปรับหน้าตามช่วงเวลา" แถบสถานะยังโชว์ค่าเดิมได้
 let _spPageText = '';
 function scheduleCount() {
@@ -5240,25 +5470,16 @@ function scheduleCount() {
     }
     // [alpha.58r บั๊ก 20] นิยายก็ต้องรู้ว่าอยู่หน้าไหน/ขึ้นหน้าใหม่ตรงไหน
     if (t.editor) {
-      try {
-        const spf = spFormat(), pf = proseFormat();
-        const pblocks = proseBlocksFromDoc(t.editor.view.state.doc);
-        const ppg = prosePagesOf(pblocks, pf, spf.paper, spf.margins);
-        txt += ` · ${ppg.count} หน้า`;
-        const base = currentStartPage(t) - 1;
-        const changed = setProsePageBreaks(
-          prosePageStarts(ppg).map((pos, i) => ({ pos, page: base + i + 1 })).slice(1)
-            .filter((x) => Number.isFinite(x.pos)));
-        if (changed) refreshProsePageBreaks(t.editor.view);
-        refreshSpView();
-      } catch (e) { log('warn', 'นับหน้านิยายไม่สำเร็จ', e); }
+      const n = repaginateProseNow(t);
+      if (n) txt += ` · ${n} หน้า`;
     } else {
       setProsePageBreaks([]);
     }
     $('#wc').textContent = txt;
     updateErrorBadge();
     updateProgressBar();
-  }, t0 ? heavyDelay(t0) : 300);
+    scheduleLineGutter();                 // [60r2 ข้อ 11] เนื้อหาเปลี่ยน = เลขบรรทัดเปลี่ยนตาม
+  }, t0 ? heavyDelay(t0) : 100);
 }
 
 
@@ -5686,6 +5907,15 @@ async function handleCommand(ch, ...a) {
       }
       refreshToolbar(); if (t) markDirty(t); break;
     }
+    // [alpha.60r2 ข้อ 2] สลับรูปตัวพิมพ์ของช่วงที่เลือก (เมนู "รูปแบบ → รูปตัวพิมพ์")
+    case 'text-case': {
+      const ed2 = getActiveEditor();
+      if (!ed2) { setStatus('เปิดฉากก่อนจึงจะเปลี่ยนรูปตัวพิมพ์ได้'); break; }
+      const ok = ed2.cmd('case', a[0]);
+      if (ok) { if (t) markDirty(t); setStatus('เปลี่ยนรูปตัวพิมพ์: ' + (CASE_SHORT[a[0]] || a[0])); }
+      else setStatus('เลือกข้อความก่อน แล้วค่อยเปลี่ยนรูปตัวพิมพ์');
+      refreshToolbar(); break;
+    }
     case 'editor-undo': getActiveEditor()?.cmd('undo'); refreshToolbar(); break;
     case 'editor-redo': getActiveEditor()?.cmd('redo'); refreshToolbar(); break;
     case 'insert-image': insertImage(); break;
@@ -5699,6 +5929,17 @@ async function handleCommand(ch, ...a) {
     case 'planner': openPlanner(); break;
     case 'focus-mode': toggleFocus(); break;
     case 'paper-mode': togglePaper(); break;
+    case 'toggle-theme': toggleTheme(a[0]); break;      // [60r2 ข้อ 10] Ctrl+Shift+P
+    case 'sync-scene-meta': await syncSceneMetaFromFiles(); break;   // [60r2 ข้อ 13]
+    // [60r2 ข้อ 9] เปิด/ปิดปุ่มลอยมุมขวาล่าง
+    case 'toggle-fab': {
+      const v = !(state.settings.fabEnabled !== false);
+      state.settings.fabEnabled = v;
+      document.body.classList.toggle('k-fab-off', !v);
+      saveProjectMeta(); syncMenuToggles();
+      setStatus(v ? 'ปุ่มลอย (FAB): เปิด' : 'ปุ่มลอย (FAB): ปิด');
+      break;
+    }
     case 'reading-mode': toggleReading(); break;
     case 'line-numbers':
       state.settings.lineNumbers = !state.settings.lineNumbers;
@@ -6039,7 +6280,7 @@ const TB_SC_MAP = {
   'tb-strike': 'fmt:strike', 'tb-ul': 'fmt:ul', 'tb-ol': 'fmt:ol',
   'tb-align-left': 'fmt:align:left', 'tb-align-center': 'fmt:align:center',
   'tb-align-right': 'fmt:align:right', 'tb-align-justify': 'fmt:align:justify',
-  'tb-paper': 'paper-mode', 'tb-gsearch': 'global-search', 'tb-mode': 'toggle-format',
+  'tb-paper': 'paper-mode', 'tb-theme': 'toggle-theme', 'tb-gsearch': 'global-search', 'tb-mode': 'toggle-format',
   'tb-close': 'close-tab', 'tb-focus': 'focus-mode',
   'tb-typewriter': 'typewriter', 'tb-quickopen': 'quick-open',
   'tb-gallery': 'gallery',
@@ -6095,7 +6336,8 @@ function setupFloatingFormatBar() {
   bar.append(handle);
   // ลำดับปุ่มตามภาพ: [grip] 📄กระดาษ · 📖โหมด · สไตล์ · B I U S · •≣ 1≣ · ❝ · ← ↔ → ☰ · 🖼 · </>
   // ลำดับปุ่มตาม Layout ใหม่: [📄] [📖▾] | [style] | [B I U S] | [•≡ 1≡ ❝] | [⬅ ⬌ ➡ ☰] | [🖼 </> 📖 🔍]
-  ['#tb-sp-elem', '#sp-view-select', '#tb-paper', '#tb-mode', '#tb-style', '#tb-bold', '#tb-italic', '#tb-underline', '#tb-strike',
+  ['#tb-sp-elem', '#sp-view-select', '#tb-paper', '#tb-mode', '#tb-style', '#tb-case',
+   '#tb-bold', '#tb-italic', '#tb-underline', '#tb-strike',
    '#tb-ul', '#tb-ol', '#tb-quote',
    '#tb-align-left', '#tb-align-center', '#tb-align-right', '#tb-align-justify',
    '#tb-img', '#tb-source', '#tb-read', '#tb-gsearch'].forEach((sel) => {
@@ -6286,6 +6528,19 @@ window.addEventListener('DOMContentLoaded', () => {
     else ed.cmd('heading', +v.slice(1));
     if (state.active) markDirty(state.active);
   };
+  // [alpha.60r2 ข้อ 2] สลับรูปตัวพิมพ์ของช่วงที่เลือก — เลือกแล้วเด้งกลับหัวข้อ (ไม่ใช่สถานะค้าง)
+  const caseSel = $('#tb-case');
+  if (caseSel) caseSel.onchange = (e) => {
+    const mode = e.target.value;
+    e.target.value = '';
+    if (!mode) return;
+    const ed = getActiveEditor();
+    if (!ed) { setStatus('เปิดฉากก่อนจึงจะเปลี่ยนรูปตัวพิมพ์ได้'); return; }
+    const ok = ed.cmd('case', mode);
+    if (ok) { if (state.active) markDirty(state.active); setStatus('เปลี่ยนรูปตัวพิมพ์: ' + CASE_SHORT[mode]); }
+    else setStatus('เลือกข้อความก่อน แล้วค่อยเปลี่ยนรูปตัวพิมพ์');
+    refreshToolbar();
+  };
   $('#tb-sp-elem').onchange = (e) => {
     const sp = state.active?.sp; if (!sp) return;
     sp.setElement(e.target.value);
@@ -6330,6 +6585,7 @@ window.addEventListener('DOMContentLoaded', () => {
     m.onclick = () => { const r = m.getBoundingClientRect(); kapi.menuPopup(m.dataset.m, r.left, r.bottom); };
   });
   $('#tb-source').onclick = () => showSourceView();
+  $('#tb-theme') && ($('#tb-theme').onclick = () => toggleTheme());   // [60r2 ข้อ 10]
   $('#tb-paper').onclick = () => togglePaper();
   $('#tb-paper').classList.toggle('on', state.settings.paperMode !== false);
   // ---- ปุ่มโหมดอ่าน + ค้นหาทั้งโปรเจกต์ ----
@@ -6407,9 +6663,11 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // ---- แถบรูปแบบอักษรแบบลอย (ลากย้ายได้ · จำตำแหน่ง) ----
   setupFloatingFormatBar();
+  initLineGutter();                  // [60r2 ข้อ 11] รางเลขบรรทัดฝั่ง UI (ผูก scroll ครั้งเดียว)
   // ---- Panel System (Photoshop-style) — วาดทุกแผงลง #app-root ----
   initPanelSystem();
-  onPanelLayoutChange(refreshToolbar);
+  // [60r2 ข้อ 1 + 11] ขยับ/ปรับขนาดแผง = พื้นที่กระดาษเปลี่ยน → กว้าง workspace + รางเลขบรรทัดต้องตาม
+  onPanelLayoutChange(() => { refreshToolbar(); syncWorkspaceWidths(); scheduleLineGutter(); });
   startLogAutoRefresh();
   // ---- Split View — ผูก SplitManager เข้ากับ #panes + ลากหัวแท็บไปวางในช่องได้ ----
   // closeTab: บั๊ก #12 — × บนแท็บย่อยของช่อง เอาแท็บออกจากช่องนั้น
@@ -6938,8 +7196,9 @@ function showShortcutsDialog() {
     'shortcutCategories.edit': ['fmt:bold', 'fmt:italic', 'fmt:underline', 'fmt:strike', 'find', 'editor-undo', 'editor-redo'],
     'shortcutCategories.format': ['fmt:heading:1', 'fmt:heading:2', 'fmt:heading:3', 'fmt:paragraph',
       'fmt:ul', 'fmt:ol', 'fmt:align:left', 'fmt:align:center', 'fmt:align:right', 'fmt:align:justify',
-      'toggle-format', 'paper-mode'],
-    'shortcutCategories.view': ['focus-mode', 'quick-open', 'typewriter', 'settings'],
+      'toggle-format'],
+    // [alpha.60r2 ข้อ 10] paper-mode ไม่มีคีย์ลัดแล้ว — Ctrl+Shift+P = สลับธีม
+    'shortcutCategories.view': ['toggle-theme', 'focus-mode', 'quick-open', 'typewriter', 'settings'],
     'shortcutCategories.navigation': ['toggle-format', 'close-tab', 'compile'],
   };
   // รวบรวมคีย์ลัดทั้งหมดพร้อม accel text
@@ -8997,24 +9256,66 @@ async function runTest(projectPath) {
           !(await kapi.readFile(await kapi.join(dPath, 'Chapters', chP.folderName, scClear.fileName)))
             .includes('isFlash'));
 
-    // ---- เลขบรรทัด (settings.lineNumbers → body.k-ln + padding ProseMirror) ----
-    state.settings.lineNumbers = true; applySettings();
-    await new Promise((r) => setTimeout(r, 120));
-    await kapi.testShot('/tmp/k2_ln.png');                  // ภาพเลขบรรทัดของจริง
+    // ---- [alpha.60r2 ข้อ 11] เลขบรรทัด = UI (รางซ้ายของแผงแบบ VS Code) ----
+    // เดิมวาดด้วย ::before ในระยะขอบของกระดาษ — เลขเลื่อน/ย่อขยายไปกับกระดาษ และติดไปกับงานพิมพ์
     const pmLnEl = document.querySelector('.pane.on .ProseMirror');
+    const lnPadOff = getComputedStyle(pmLnEl).paddingLeft;
+    const lnW0 = pmLnEl.getBoundingClientRect().width;
+    state.settings.lineNumbers = true; applySettings();
+    await new Promise((r) => setTimeout(r, 160));
+    await kapi.testShot('/tmp/k2_ln.png');                  // ภาพเลขบรรทัดของจริง
     const pmPadOn = getComputedStyle(pmLnEl).paddingLeft;
     check('เปิดเลขบรรทัด → body มี k-ln', document.body.classList.contains('k-ln'));
-    // [alpha.58r บั๊ก 2] เลขบรรทัดวางในระยะขอบซ้ายของกระดาษ ห้ามดัน padding จนข้อความ reflow
+    // [alpha.58r บั๊ก 2] ห้ามดัน padding จนข้อความ reflow
     check('[2] เปิดเลขบรรทัดแล้ว padding-left ยังเท่าระยะขอบกระดาษ (1.5in = 144px)',
           Math.abs(parseFloat(pmPadOn) - 144) < 2, pmPadOn);
-    const lnW0 = pmLnEl.getBoundingClientRect().width;
-    const lnNo = getComputedStyle(pmLnEl.firstElementChild, '::before');
-    check('[2] เลขบรรทัดวาดจริง (::before มี content)',
-          lnNo.content && lnNo.content !== 'none', lnNo.content);
-    check('[2] เลขบรรทัดเป็น absolute (ไม่กินพื้นที่ข้อความ)', lnNo.position === 'absolute', lnNo.position);
+    check('[2] เปิดเลขบรรทัดแล้ว padding-left ไม่เปลี่ยนจากตอนปิด',
+          Math.abs(parseFloat(pmPadOn) - parseFloat(lnPadOff)) < 1, `${lnPadOff} → ${pmPadOn}`);
+    const lnG = document.getElementById('k-ln-gutter');
+    check('[11] มีรางเลขบรรทัดใน DOM', !!lnG);
+    check('[11] รางเป็นลูกของ #panes (อยู่นอกกล่องที่ถูก CSS zoom)',
+          !!lnG && lnG.parentElement && lnG.parentElement.id === 'panes',
+          lnG && lnG.parentElement && lnG.parentElement.id);
+    check('[11] รางแสดงอยู่จริง (คลาส on + display ไม่ใช่ none)',
+          !!lnG && lnG.classList.contains('on') && getComputedStyle(lnG).display !== 'none',
+          lnG && getComputedStyle(lnG).display);
+    const lnNos = lnG ? lnG.querySelectorAll('.k-ln-no') : [];
+    check('[11] วาดเลขบรรทัดออกมาจริง (อย่างน้อย 1 ตัว)', lnNos.length > 0, lnNos.length);
+    check('[11] เลขตัวแรกคือ "1"', lnNos.length > 0 && lnNos[0].textContent === '1',
+          lnNos[0] && lnNos[0].textContent);
+    check('[11] เลขเรียงเพิ่มทีละ 1',
+          lnNos.length < 2 || (+lnNos[1].textContent === +lnNos[0].textContent + 1),
+          lnNos.length > 1 ? lnNos[0].textContent + ',' + lnNos[1].textContent : 'n/a');
+    check('[11] รางไม่รับคลิก (ไม่บังตัวแก้ไข)',
+          !!lnG && getComputedStyle(lnG).pointerEvents === 'none',
+          lnG && getComputedStyle(lnG).pointerEvents);
+    // เลขบรรทัดต้องอยู่ "ซ้ายสุดของแผง" ไม่ใช่ในระยะขอบของกระดาษที่เลื่อนไปมาได้
+    {
+      const gr = lnG.getBoundingClientRect(), pr = $('.pane.on').getBoundingClientRect();
+      check('[11] รางทาบขอบซ้ายของแผงที่ใช้งานอยู่', Math.abs(gr.left - pr.left) < 2,
+            `${gr.left} vs ${pr.left}`);
+      check('[11] รางไม่กว้างเกิน 60px (ไม่กินพื้นที่เขียน)', gr.width <= 60, gr.width);
+    }
+    check('[11] เลิกใช้ ::before บนบล็อกแล้ว (เลขไม่อยู่บนกระดาษ)',
+          getComputedStyle(pmLnEl.firstElementChild, '::before').content === 'none',
+          getComputedStyle(pmLnEl.firstElementChild, '::before').content);
+    check('[2] เปิดเลขบรรทัดแล้วความกว้างเนื้อหาเท่าเดิม',
+          Math.abs(pmLnEl.getBoundingClientRect().width - lnW0) < 1.5,
+          `${lnW0} → ${pmLnEl.getBoundingClientRect().width}`);
+    // [11] มุมมองหน้ากระดาษ (อ่านอย่างเดียว) ต้องปิดเลขบรรทัดให้เอง
+    setSpView('side', true);
+    await new Promise((r) => setTimeout(r, 160));
+    refreshLineGutter();
+    check('[11] มุมมองเรียงหน้า → รางปิดอัตโนมัติ', !lnG.classList.contains('on'));
+    check('[11] มุมมองเรียงหน้า → ไม่เหลือเลขค้าง', lnG.querySelectorAll('.k-ln-no').length === 0);
+    setSpView('normal', true);
+    await new Promise((r) => setTimeout(r, 160));
+    check('[11] กลับมุมมองปกติ → รางกลับมา', refreshLineGutter() > 0 && lnG.classList.contains('on'));
     state.settings.lineNumbers = false; applySettings();
-    await new Promise((r) => setTimeout(r, 60));
+    await new Promise((r) => setTimeout(r, 120));
     check('ปิดเลขบรรทัด → เอา k-ln ออก', !document.body.classList.contains('k-ln'));
+    check('[11] ปิดเลขบรรทัด → รางหายไป (ไม่เหลือแถบเปล่า)',
+          !lnG.classList.contains('on') && lnG.querySelectorAll('.k-ln-no').length === 0);
     check('[2] ปิด/เปิดเลขบรรทัดแล้วความกว้างเนื้อหาเท่าเดิม',
           Math.abs(pmLnEl.getBoundingClientRect().width - lnW0) < 1.5,
           `${lnW0} → ${pmLnEl.getBoundingClientRect().width}`);
@@ -9221,8 +9522,11 @@ async function runTest(projectPath) {
     }
 
     // ---- ปุ่มลัดตั้งเอง (configurable shortcuts) ----
+    // [alpha.60r2] เดิมฮาร์ดโค้ดรูปแบบของ Windows/Linux → รัน e2e บน macOS แล้ว FAIL ทั้งที่โค้ดถูก
+    // (formatShortcut ตั้งใจใช้ ⌘⇧ บน mac ตามธรรมเนียมของระบบ) — รับได้ทั้งสองแบบ
     check('accelText แปลงคีย์เป็นข้อความถูก',
-          accelText('KeyB', true, true) === 'Ctrl+Shift+B', accelText('KeyB', true, true));
+          ['Ctrl+Shift+B', '⌘⇧B'].includes(accelText('KeyB', true, true)),
+          accelText('KeyB', true, true));
     state.settings.shortcuts = { 'save': { code: 'KeyE', ctrl: true, shift: false } };
     const effSave = effectiveShortcuts().find((x) => x[3] === 'save');
     check('override เปลี่ยนปุ่มลัดของคำสั่งบันทึกได้', effSave[0] === 'KeyE', JSON.stringify(effSave));
@@ -9620,7 +9924,12 @@ async function runTest(projectPath) {
       const scDlg = document.querySelector('.k-dialog.k-saveall');
       check('Ctrl+Shift+S → ขึ้นกล่องรายการไฟล์ที่ยังไม่บันทึก', !!scDlg);
       scDlg.querySelector('.k-dlg-btns .k-ok').click();
-      await new Promise((r) => setTimeout(r, 250));
+      // [alpha.60r2] เดิมรอตายตัว 250ms — saveAllTabs เขียนไฟล์แบบ async
+      // เครื่องช้า/ไฟล์เยอะแล้วรอไม่ทัน = FAIL ปลอม (ไม่ใช่บั๊กของโปรแกรม)
+      // → รอจน "ไม่เหลือแท็บค้าง" จริง ๆ แล้วค่อยตัดสิน (มีเพดานกันค้าง)
+      for (let i = 0; i < 40 && [...state.tabs.values()].some((x) => x.dirty); i++) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
       check('Ctrl+Shift+S → บันทึกทั้งหมด (ไม่มีแท็บ dirty)',
             [...state.tabs.values()].every((t) => !t.dirty),
             [...state.tabs.values()].filter((t) => t.dirty).map((t) => t.title).join('|'));
@@ -10642,6 +10951,64 @@ async function runTest(projectPath) {
       togglePaper();
       check('togglePaper: กดอีกครั้งกลับมาเปิด',
             state.settings.paperMode === true && document.body.classList.contains('paper-mode'));
+
+      // ══ [alpha.60r2 ข้อ 10] ธีมสว่าง/มืด — Ctrl+Shift+P ไม่ใช่โหมดหน้ากระดาษแล้ว ══
+      {
+        const sc = SHORTCUTS.find((x) => x[0] === 'KeyP' && x[1] === true && x[2] === true);
+        check('[10] Ctrl+Shift+P ผูกกับ toggle-theme แล้ว', !!sc && sc[3] === 'toggle-theme',
+              sc && sc[3]);
+        check('[10] ไม่มีคีย์ลัดไหนผูกกับ paper-mode อีก',
+              !SHORTCUTS.some((x) => x[3] === 'paper-mode'));
+        check('[10] มีปุ่มธีมบนแถบเครื่องมือ', !!$('#tb-theme'));
+        check('[10] ปุ่มโหมดหน้ากระดาษยังอยู่ (ปิดฟีเจอร์ไม่ได้ แค่ย้ายคีย์ลัด)', !!$('#tb-paper'));
+        // จำค่ากระดาษไว้ก่อน — ธีมต้องไม่ไปแตะมัน
+        const paperBefore = document.body.classList.contains('paper-mode');
+        const pmPaper = document.querySelector('.pane.on > .workspace > .ProseMirror');
+        const paperBg0 = pmPaper ? getComputedStyle(pmPaper).backgroundColor : '';
+        const paperInk0 = pmPaper ? getComputedStyle(pmPaper).color : '';
+        const paperW0 = pmPaper ? pmPaper.getBoundingClientRect().width : 0;
+        const bg0 = getComputedStyle(document.body).backgroundColor;
+        toggleTheme('light');
+        await new Promise((r) => setTimeout(r, 80));
+        check('[10] สลับเป็นธีมสว่าง → body มีคลาส theme-light',
+              document.body.classList.contains('theme-light') && state.settings.theme === 'light');
+        check('[10] ธีมสว่างเปลี่ยนพื้นหลังของ UI จริง',
+              getComputedStyle(document.body).backgroundColor !== bg0,
+              bg0 + ' → ' + getComputedStyle(document.body).backgroundColor);
+        // ── กฎเหล็ก: แก้ UI ต้องไม่กระทบหน้ากระดาษ ──
+        check('[10][กฎเหล็ก] ธีมไม่แตะสีกระดาษ',
+              !pmPaper || getComputedStyle(pmPaper).backgroundColor === paperBg0,
+              paperBg0 + ' → ' + (pmPaper && getComputedStyle(pmPaper).backgroundColor));
+        check('[10][กฎเหล็ก] ธีมไม่แตะสีหมึกบนกระดาษ',
+              !pmPaper || getComputedStyle(pmPaper).color === paperInk0,
+              paperInk0 + ' → ' + (pmPaper && getComputedStyle(pmPaper).color));
+        check('[10][กฎเหล็ก] ธีมไม่แตะความกว้างหน้ากระดาษ',
+              !pmPaper || Math.abs(pmPaper.getBoundingClientRect().width - paperW0) < 0.5,
+              paperW0 + ' → ' + (pmPaper && pmPaper.getBoundingClientRect().width));
+        check('[10] ธีมไม่ไปสลับโหมดหน้ากระดาษ',
+              document.body.classList.contains('paper-mode') === paperBefore);
+        handleCommand('toggle-theme');                 // สลับผ่านคำสั่งเหมือนคีย์ลัดจริง
+        await new Promise((r) => setTimeout(r, 60));
+        check('[10] คำสั่ง toggle-theme สลับกลับเป็นธีมมืด',
+              state.settings.theme === 'dark' && !document.body.classList.contains('theme-light'));
+        check('[10] ธีมมืดมีคลาส theme-dark', document.body.classList.contains('theme-dark'));
+      }
+
+      // ══ [alpha.60r2 ข้อ 9] ปุ่มลอย (FAB) ปิดได้จากตั้งค่า ══
+      {
+        state.settings.fabEnabled = false; applySettings();
+        await new Promise((r) => setTimeout(r, 60));
+        check('[9] ปิด FAB → body มีคลาส k-fab-off', document.body.classList.contains('k-fab-off'));
+        check('[9] ปิด FAB → ปุ่มลอยหายจริง', getComputedStyle($('#k-fab')).display === 'none',
+              getComputedStyle($('#k-fab')).display);
+        check('[9] ปิด FAB → เมนูของมันหายด้วย (ไม่ลอยค้าง)',
+              getComputedStyle($('#k-fab-menu')).display === 'none');
+        handleCommand('toggle-fab');
+        await new Promise((r) => setTimeout(r, 60));
+        check('[9] คำสั่ง toggle-fab เปิดกลับได้',
+              state.settings.fabEnabled === true && !document.body.classList.contains('k-fab-off'));
+        check('[9] เปิดกลับ → ปุ่มลอยกลับมา', getComputedStyle($('#k-fab')).display !== 'none');
+      }
 
       // ---- ข้อ 3: เมนู native มีเครื่องหมายสวิตช์ + ปุ่ม toolbar มีจุดบอกสถานะ ----
       check('มีสะพาน kapi.menuToggles ไว้ติ๊กถูกในเมนู native', typeof kapi.menuToggles === 'function');
@@ -12105,18 +12472,28 @@ async function runTest(projectPath) {
           // สวิตช์: ปิดเสียง = ไม่เล่น · เปิดแล้วต้องผูกกับโหมดเครื่องพิมพ์ดีดตามที่ตั้งไว้
           state.settings.typeSound = false; syncTypeSound();
           check('[57a-1] ปิดเสียงในตั้งค่า → เสียงไม่ทำงาน', !isTypeSound());
-          state.settings.typeSound = true; state.settings.typeSoundAlways = false;
+          // [alpha.60r2 ข้อ 4] เดิมต้องเปิดสองสวิตช์จึงจะได้ยิน (typeSound + typeSoundAlways)
+          // ค่าเริ่มต้นของสวิตช์ที่สองเป็น false → ผู้ใช้เปิด "เสียงพิมพ์ดีด" แล้วเงียบสนิท
+          // ตอนนี้เป็นสวิตช์เดียว + โหมด (always = ค่าเริ่มต้น · typewriter = เฉพาะตอนเปิดโหมด)
+          state.settings.typeSound = true; state.settings.typeSoundMode = 'typewriter';
           toggleTypewriter(false); syncTypeSound();
-          check('[57a-1] เปิดเสียงแต่ไม่ได้เปิดโหมดเครื่องพิมพ์ดีด → ยังเงียบ', !isTypeSound());
+          check('[60r2-4] โหมด "เฉพาะเครื่องพิมพ์ดีด" + ยังไม่เปิดโหมด → ยังเงียบ', !isTypeSound());
           toggleTypewriter(true); syncTypeSound();
           check('[57a-1] เปิดโหมดเครื่องพิมพ์ดีดแล้วเสียงทำงาน', isTypeSound());
           toggleTypewriter(false);
-          state.settings.typeSoundAlways = true; syncTypeSound();
-          check('[57a-1] ตั้ง "เล่นตลอด" → ไม่ต้องเปิดโหมดก็มีเสียง', isTypeSound());
+          state.settings.typeSoundMode = 'always'; syncTypeSound();
+          check('[60r2-4] โหมด "ดังตลอด" → ไม่ต้องเปิดโหมดก็มีเสียง', isTypeSound());
+          delete state.settings.typeSoundMode;
+          state.settings.typeSoundAlways = false;
+          check('[60r2-4] โปรเจกต์เก่า (typeSoundAlways=false) → แปลงเป็นโหมด typewriter',
+                typeSoundMode() === 'typewriter', typeSoundMode());
+          delete state.settings.typeSoundAlways;
+          check('[60r2-4] ไม่เคยตั้งค่าเลย → ค่าเริ่มต้นคือ "ดังตลอด" (เปิดสวิตช์เดียวพอ)',
+                typeSoundMode() === 'always' && syncTypeSound() === true, typeSoundMode());
           check('[57a-1] ตั้งระดับเสียงได้ 0–1 (หนีบค่านอกช่วง)',
                 setTypeVolume(0.35) === 0.35 && setTypeVolume(9) === 1 && setTypeVolume(-1) === 0);
           setTypeVolume(0.5);
-          state.settings.typeSound = false; state.settings.typeSoundAlways = false; syncTypeSound();
+          state.settings.typeSound = false; state.settings.typeSoundMode = 'always'; syncTypeSound();
           check('[57a-1] ปิดกลับแล้วเงียบ', !isTypeSound());
         }
 
@@ -13060,12 +13437,31 @@ async function runTest(projectPath) {
             tScroll.editor.setMarkdown(Array.from({ length: 120 }, (_, i) => 'บรรทัดทดสอบเลื่อน ' + i).join('\n\n'));
             await new Promise((r) => setTimeout(r, 150));
           }
-          pane.scrollTop = 240;
+          // [alpha.60r2] เดิมตั้ง scrollTop=240 ทันทีแล้วเชื่อว่าเลื่อนได้
+          // (1) ProseMirror ยังวาด/จัดหน้าไม่เสร็จใน 150ms บนบางเครื่อง → ยังไม่มีอะไรให้เลื่อน
+          // (2) **ตัวแก้ไขที่มีโฟกัสจริงจะดึงจอกลับไปหาเคอร์เซอร์** ทุกครั้งที่ PM เขียน DOM selection ใหม่
+          //     บน Linux/xvfb หน้าต่างเทสไม่มีโฟกัสจริง อาการนี้จึงไม่โผล่ · บน macOS โผล่ทุกครั้ง
+          //     (ตั้ง scrollTop=240 แล้ว 60ms ต่อมาเด้งกลับ 44 = ตำแหน่งเคอร์เซอร์ต้นเอกสาร)
+          //     → ถอดโฟกัสก่อนวัด เพราะเทสนี้ตรวจ "ขยับแผงแล้วตำแหน่งเลื่อนหาย" ไม่ใช่พฤติกรรมเคอร์เซอร์
+          for (let i = 0; i < 30 && (pane.scrollHeight - pane.clientHeight) < 200; i++) {
+            await new Promise((r) => setTimeout(r, 50));
+          }
+          try { document.activeElement && document.activeElement.blur(); } catch {}
+          await new Promise((r) => setTimeout(r, 60));
+          const maxScroll = pane.scrollHeight - pane.clientHeight;
+          pane.scrollTop = Math.min(240, Math.max(0, maxScroll - 10));
+          const trace = [pane.scrollTop];
+          for (let i = 0; i < 6; i++) { await new Promise((r) => setTimeout(r, 10)); trace.push(pane.scrollTop); }
+          // ถ้ามีอะไรลากจอกลับ ให้ตั้งใหม่แล้ววัดอีกที (บันทึกร่องรอยไว้ในข้อความ FAIL)
+          if (pane.scrollTop < 100) { pane.scrollTop = Math.min(240, Math.max(0, maxScroll - 10)); }
           await new Promise((r) => setTimeout(r, 60));
           const before = pane.scrollTop;
-          check('#3 เลื่อนหน้ากระดาษลงมาได้จริงก่อนทดสอบ', before > 100, String(before));
+          check('#3 เลื่อนหน้ากระดาษลงมาได้จริงก่อนทดสอบ', before > 100,
+                `scrollTop=${before} · trace=${trace.join('>')} · เลื่อนได้สูงสุด=${maxScroll} · sh=${pane.scrollHeight} ch=${pane.clientHeight}`);
           renderPanels(true);                       // จำลอง "ขยับแผง" (วาดต้นไม้ใหม่ทั้งชุด)
-          await new Promise((r) => setTimeout(r, 120));
+          // [alpha.60r2] เดิมรอ 120ms — เอกสาร 120 ย่อหน้าใช้เวลา layout นานกว่านั้นบนบางเครื่อง
+          // ระหว่างที่ scrollHeight ยังไม่โต ค่าที่คืนจะถูกหนีบให้เตี้ยลง (198 → 171)
+          await new Promise((r) => setTimeout(r, 400));
           check('#3 วาดแผงใหม่แล้วหน้ากระดาษไม่เด้งกลับซ้ายบน',
                 Math.abs(pane.scrollTop - before) < 8, `${before} → ${pane.scrollTop}`);
           // ลากที่จับปรับสัดส่วนจริง ๆ ก็ต้องไม่รีเซ็ต
@@ -13075,7 +13471,7 @@ async function runTest(projectPath) {
             h.dispatchEvent(new MouseEvent('mousedown', { clientX: hr.left + 2, clientY: hr.top + 20, button: 0, bubbles: true }));
             document.dispatchEvent(new MouseEvent('mousemove', { clientX: hr.left + 60, clientY: hr.top + 20, bubbles: true }));
             document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-            await new Promise((r) => setTimeout(r, 150));
+            await new Promise((r) => setTimeout(r, 400));
             check('#3 ลากปรับสัดส่วนแผงแล้วตำแหน่งเลื่อนยังอยู่ที่เดิม',
                   Math.abs(pane.scrollTop - before) < 8, `${before} → ${pane.scrollTop}`);
           }
@@ -13442,6 +13838,233 @@ async function runTest(projectPath) {
             Math.abs(frac(t.pane) - f0) < 0.08, frac(t.pane).toFixed(3));
       resetPageScale();
       await new Promise((r) => setTimeout(r, 120));
+
+      // ════════════════ alpha.60r2 · รอบแก้ 13 ข้อ ════════════════
+      {
+        // แท็บนิยายต้อง active จริง ๆ ก่อน — แผงที่ซ่อนอยู่มี clientWidth = 0 วัดอะไรไม่ได้เลย
+        // (เทสก่อนหน้าอาจ resetPanels/ปิดแท็บไปแล้ว → เปิดฉากจากต้นไม้ใหม่เสมอ)
+        {
+          const sc60 = document.querySelector('#tree .scene:not(.add-row)');
+          if (sc60) { sc60.click(); await new Promise((r) => setTimeout(r, 500)); }
+        }
+        const t = state.active;
+        const pane60 = t && t.pane;
+        const ws60 = pane60.querySelector(':scope > .workspace');
+        const pm60 = pane60.querySelector(':scope > .workspace > .ProseMirror');
+        check('[60r2] แท็บนิยายเปิดอยู่จริงก่อนวัด (แผงมีความกว้าง)',
+              pane60.clientWidth > 100 && !!ws60 && !!pm60, pane60.clientWidth);
+
+        // ---- [1] ความกว้าง workspace วัดเป็นพิกเซล ไม่ใช่ % ใต้ CSS zoom ----
+        check('[60r2-1] มีฟังก์ชัน syncWorkspaceWidths', typeof syncWorkspaceWidths === 'function');
+        for (const z of [0.6, 1, 1.8]) {
+          setPageScale(z);
+          await new Promise((r) => setTimeout(r, 120));
+          const want = Math.round(pane60.clientWidth / pageScale);
+          check(`[60r2-1] ซูม ${Math.round(pageScale * 100)}%: min-width ของ workspace = พื้นที่แผง ÷ ซูม`,
+                Math.abs(parseFloat(ws60.style.minWidth) - want) <= 2,
+                `${ws60.style.minWidth} vs ${want}px`);
+          check(`[60r2-1] ซูม ${Math.round(pageScale * 100)}%: workspace ยังกว้างเต็มแผง (กระดาษไม่ตกขอบซ้าย)`,
+                ws60.getBoundingClientRect().width >= pane60.clientWidth - 2,
+                `${ws60.getBoundingClientRect().width} vs ${pane60.clientWidth}`);
+          check(`[60r2-1] ซูม ${Math.round(pageScale * 100)}%: ขอบซ้ายของกระดาษไม่หลุดออกนอกแผง`,
+                pm60.getBoundingClientRect().left >= pane60.getBoundingClientRect().left - 2,
+                `${pm60.getBoundingClientRect().left} vs ${pane60.getBoundingClientRect().left}`);
+        }
+        check('[60r2-1] min-width เป็นหน่วย px ไม่ใช่ % แล้ว', ws60.style.minWidth.endsWith('px'),
+              ws60.style.minWidth);
+        resetPageScale();
+        await new Promise((r) => setTimeout(r, 120));
+
+        // ---- [3] เส้นคั่นหน้าไม่หน่วง: debounce ขั้นต่ำ 100ms + จัดหน้าทันทีตอน Enter ----
+        check('[60r2-3] มีทางจัดหน้าทันที (repaginateFast)', typeof repaginateFast === 'function');
+        check('[60r2-3] เอกสารสั้นหน่วงแค่ 100ms (เดิม 300ms)', heavyDelay(t) === 100, heavyDelay(t));
+        {
+          const many = { editor: { view: { state: { doc: { childCount: 5000 } } } } };
+          check('[60r2-3] เอกสารยาวยังยืดเวลาให้ (ไม่กระตุก)', heavyDelay(many) > 100, heavyDelay(many));
+          check('[60r2-3] เพดานหน่วงยังไม่เกิน 1200ms', heavyDelay(many) <= 1200, heavyDelay(many));
+        }
+        check('[60r2-3] จัดหน้าทันทีคืนจำนวนหน้าของนิยาย', repaginateFast(t) >= 1, repaginateFast(t));
+
+        // ---- [5] มุมมองหน้ากระดาษใช้ได้กับนิยาย ไม่ใช่เฉพาะบทภาพยนตร์ ----
+        refreshToolbar();
+        check('[60r2-5] แท็บนิยายเห็นตัวเลือกมุมมองหน้ากระดาษ',
+              getComputedStyle($('#sp-view-select')).display !== 'none',
+              getComputedStyle($('#sp-view-select')).display);
+        check('[60r2-5] ชื่อตัวเลือกไม่ผูกกับ "บทภาพยนตร์" แล้ว',
+              !$('#sp-view-select').title.includes('บทภาพยนตร์'), $('#sp-view-select').title);
+        setSpView('side', true);
+        await new Promise((r) => setTimeout(r, 200));
+        {
+          const host60 = t.pane.querySelector(':scope > .sp-pageview');
+          check('[60r2-5] นิยาย: มุมมองเรียงหน้าวาดหน้ากระดาษจริง',
+                !!host60 && host60.querySelectorAll('.sp-page.ed-page').length > 0,
+                host60 && host60.querySelectorAll('.sp-page').length);
+          check('[60r2-5] นิยาย: หน้าที่วาดคลิกกระโดดได้ (มี data-pos)',
+                !!host60 && host60.querySelectorAll('[data-pos]').length > 0);
+        }
+        setSpView('normal', true);
+        await new Promise((r) => setTimeout(r, 160));
+
+        // ---- [2] สลับรูปตัวพิมพ์ของช่วงที่เลือก ----
+        check('[60r2-2] มีปุ่มเลือกรูปตัวพิมพ์บนแถบรูปแบบ', !!$('#tb-case'));
+        check('[60r2-2] มีครบ 7 โหมด + ตัวเลือกหัวข้อ',
+              $('#tb-case').options.length === CASE_MODES.length + 1, $('#tb-case').options.length);
+        check('[60r2-2] ทุกโหมดในเมนูตรงกับ CASE_MODES',
+              [...$('#tb-case').options].slice(1).every((o) => CASE_MODES.includes(o.value)));
+        {
+          const ed60 = t.editor;
+          ed60.setMarkdown('hello world. how are you\n');
+          await new Promise((r) => setTimeout(r, 80));
+          const size = ed60.view.state.doc.content.size;
+          const selAll = () => ed60.view.dispatch(
+            ed60.view.state.tr.setSelection(
+              PMTextSelection.create(ed60.view.state.doc, 1, size - 1)));
+          selAll(); ed60.cmd('case', 'UC');
+          check('[60r2-2] UPPER CASE ทำงาน', ed60.getText().includes('HELLO WORLD'), ed60.getText());
+          selAll(); ed60.cmd('case', 'lc');
+          check('[60r2-2] lower case ทำงาน', ed60.getText().includes('hello world'), ed60.getText());
+          selAll(); ed60.cmd('case', 'CC');
+          check('[60r2-2] Capitalize Case ทำงาน', ed60.getText().includes('Hello World'), ed60.getText());
+          selAll(); ed60.cmd('case', 'SC');
+          check('[60r2-2] Sentence case ขึ้นต้นประโยคใหม่หลังจุด',
+                ed60.getText().includes('Hello world. How are you'), ed60.getText());
+          // ไม่ได้เลือกอะไร = ต้องไม่แก้เอกสาร
+          const before2 = ed60.getText();
+          ed60.view.dispatch(ed60.view.state.tr.setSelection(
+            PMTextSelection.create(ed60.view.state.doc, 1, 1)));
+          check('[60r2-2] ไม่ได้เลือกข้อความ → ไม่แก้เอกสาร',
+                ed60.cmd('case', 'UC') === false && ed60.getText() === before2);
+          ed60.setMarkdown('ย่อหน้าทดสอบ\n');
+          await new Promise((r) => setTimeout(r, 80));
+        }
+
+        // ---- [4] เสียงพิมพ์ดีด: เปิดสวิตช์เดียวแล้วต้องดังเลย ----
+        {
+          const keepSnd = { on: state.settings.typeSound, mode: state.settings.typeSoundMode };
+          delete state.settings.typeSoundMode;
+          state.settings.typeSound = true; state.settings.typeSoundAlways = false;
+          check('[60r2-4] โปรเจกต์เก่าที่ปิด typeSoundAlways → โหมด "เฉพาะเครื่องพิมพ์ดีด"',
+                typeSoundMode() === 'typewriter', typeSoundMode());
+          state.settings.typeSoundMode = 'always';
+          check('[60r2-4] โหมด always: เปิดเสียงแล้วดังทันทีโดยไม่ต้องเปิดโหมดเครื่องพิมพ์ดีด',
+                syncTypeSound() === true);
+          state.settings.typeSoundMode = 'typewriter';
+          check('[60r2-4] โหมด typewriter: ไม่ได้เปิดโหมด → เงียบ',
+                isTypewriter() ? true : syncTypeSound() === false);
+          state.settings.typeSound = false;
+          check('[60r2-4] ปิดสวิตช์หลัก → เงียบเสมอไม่ว่าโหมดไหน', syncTypeSound() === false);
+          state.settings.typeSound = keepSnd.on; state.settings.typeSoundMode = keepSnd.mode || 'always';
+          syncTypeSound();
+        }
+
+        // ---- [6] ชุดระยะขอบสำเร็จรูป ----
+        check('[60r2-6] มีพรีเซ็ตครบตามที่ระบุ',
+              ['normal', 'narrow', 'wide', 'screenplay', 'a4-narrow']
+                .every((k) => !!marginPreset(k)));
+        check('[60r2-6] พรีเซ็ตบทภาพยนตร์ตรงมาตรฐาน Final Draft',
+              marginPreset('screenplay').left === 1.5 && marginPreset('screenplay').right === 1);
+        check('[60r2-6] ระยะขอบปัจจุบันจับคู่พรีเซ็ตได้',
+              matchMarginPreset(spFormat().margins) !== undefined);
+
+        // ---- [7] แผงขยับ/ปรับขนาดแล้วตำแหน่งเลื่อนของกระดาษไม่รีเซ็ต ----
+        // พฤติกรรมจริงถูกตรวจไปแล้วที่เทส "#3 วาดแผงใหม่แล้วหน้ากระดาษไม่เด้งกลับซ้ายบน"
+        // ตรงนี้ตรวจ "ขอบเขต" ของระบบคืนตำแหน่ง — กล่องที่เลื่อนได้ต้องถูกจดครบ
+        // (บั๊กเดิม: รายชื่อตกหล่น .sp-pageview และ #panes → มุมมองเรียงหน้าเด้งกลับหน้าแรกทุกครั้งที่ขยับแผง)
+        {
+          check('[60r2-7] รายชื่อกล่องที่เลื่อนได้ครอบคลุมแผงเอกสาร', PANEL_SCROLLABLES.includes('.pane'));
+          check('[60r2-7] ครอบคลุมมุมมองหน้ากระดาษ (.sp-pageview)',
+                PANEL_SCROLLABLES.includes('.sp-pageview'), PANEL_SCROLLABLES);
+          check('[60r2-7] ครอบคลุมกล่องรวมของแผงเอกสาร (#panes)',
+                PANEL_SCROLLABLES.includes('#panes'), PANEL_SCROLLABLES);
+          check('[60r2-7] ครอบคลุมหน้ารายชื่อตัวละคร (.roster-wrap)',
+                PANEL_SCROLLABLES.includes('.roster-wrap'));
+          check('[60r2-7] ครอบคลุมเนื้อแผงลอย (.k-float-body)',
+                PANEL_SCROLLABLES.includes('.k-float-body'));
+          check('[60r2-7] ทุก selector ในรายชื่อใช้ได้จริง (querySelectorAll ไม่ throw)',
+                (() => { try { document.querySelectorAll(PANEL_SCROLLABLES); return true; }
+                         catch { return false; } })());
+          // เปิด/ปิดแผงจริงต้องไม่ทำให้แท็บที่เปิดอยู่หลุด (เลย์เอาต์ยังครบ)
+          const paneWas = state.active && state.active.pane;
+          togglePanel('log');
+          await new Promise((r) => setTimeout(r, 400));
+          togglePanel('log');
+          await new Promise((r) => setTimeout(r, 400));
+          check('[60r2-7] เปิด-ปิดแผงแล้วแท็บเอกสารยังอยู่ที่เดิม',
+                !!paneWas && state.active && state.active.pane === paneWas);
+          check('[60r2-7] เปิด-ปิดแผงแล้วหน้ากระดาษยังกว้างเท่าเดิม (ไม่ถูกบีบ)',
+                !!paneWas && paneWas.clientWidth > 100, paneWas && paneWas.clientWidth);
+        }
+
+        // ---- [8] เลย์เอาต์แผง: schema v2 + จำสัดส่วน ----
+        {
+          const pmgr = getPanelManager();
+          check('[60r2-8] เลย์เอาต์แผงเป็น schema v2', PANEL_LAYOUT_VERSION === 2, PANEL_LAYOUT_VERSION);
+          check('[60r2-8] store มีตารางสัดส่วน', !!pmgr.splitRatios && typeof pmgr.splitRatios === 'object');
+          check('[60r2-8] จดสัดส่วนของแผงได้', pmgr.rememberRatio('tree', 0.3) === true);
+          check('[60r2-8] อ่านสัดส่วนกลับได้', pmgr.savedRatio('tree') === 0.3, pmgr.savedRatio('tree'));
+          const raw8 = localStorage.getItem('k2-panel-layout');
+          check('[60r2-8] สัดส่วนถูกบันทึกลง localStorage จริง',
+                !!raw8 && JSON.parse(raw8).version === 2 && !!JSON.parse(raw8).splitRatios);
+          check('[60r2-8] เลย์เอาต์พัง → ตกกลับค่าตั้งต้น (ไม่พาโปรแกรมล่ม)',
+                deserializePanelLayout('{"version":2,"root":{"type":"dock","children":[]}}') === null);
+          check('[60r2-8] เลย์เอาต์ v1 เดิมยังอ่านได้ (ไม่รีเซ็ตแผงของผู้ใช้)',
+                !!deserializePanelLayout('{"version":1,"root":{"type":"panel","id":"docs"},"floats":[]}'));
+        }
+
+        // ---- [12] เมทาดาทาของรูปใน Wiki ----
+        check('[60r2-12] รูปแบบเก่า (string) แปลงเป็นออบเจกต์ได้',
+              migrateImages(['a.png'])[0].file === 'a.png' && migrateImages(['a.png'])[0].caption === '');
+        check('[60r2-12] เก็บคำบรรยาย/alt ได้',
+              setImageMeta(['a.png'], 0, { caption: 'คำบรรยาย', alt: 'ทดสอบ' })[0].caption === 'คำบรรยาย');
+        {
+          const entFile = (await kapi.listFiles(await kapi.join(state.root, 'Wiki', 'characters')))
+            .filter((f) => /\.json$/i.test(f))[0];
+          if (entFile) {
+            const p12 = await kapi.join(state.root, 'Wiki', 'characters', entFile);
+            const ent = await kapi.readJson(p12);
+            ent.images = ['ทดสอบ.png'];                       // จำลองไฟล์รุ่นเก่า
+            await kapi.writeFile(p12, JSON.stringify(ent, null, 2));
+            const back12 = migrateImages((await kapi.readJson(p12)).images);
+            check('[60r2-12] entity รุ่นเก่าเปิดได้ ไม่ทำรูปหาย',
+                  back12.length === 1 && back12[0].file === 'ทดสอบ.png', JSON.stringify(back12));
+            ent.images = [];
+            await kapi.writeFile(p12, JSON.stringify(ent, null, 2));
+          } else {
+            check('[60r2-12] entity รุ่นเก่าเปิดได้ ไม่ทำรูปหาย (ข้าม — ไม่มี entity)', true);
+          }
+        }
+
+        // ---- [13] คุณสมบัติฉาก: frontmatter = แหล่งความจริง ----
+        {
+          const dP13 = t.file.replace(/[\\/]Chapters[\\/].*$/, '');
+          const meta13 = await readSceneMeta(t.file, { synopsis: 'ค่าในดัชนี', pov: 'ทอร่า' });
+          check('[60r2-13] readSceneMeta คืนคีย์ครบทุกตัว',
+                SCENE_HEAVY_KEYS.every((k) => k in meta13), JSON.stringify(Object.keys(meta13)));
+          check('[60r2-13] ค่าที่ไฟล์ไม่มี ตกไปใช้ดัชนี', meta13.pov === 'ทอร่า', meta13.pov);
+          await writeSceneMeta(t.file, { synopsis: 'เขียนลง frontmatter', emotion: 'เศร้า',
+                                         tags: ['ทดสอบ'], isFlashback: true, isFlashforward: false });
+          const raw13 = await kapi.readFile(t.file);
+          check('[60r2-13] เขียนลง frontmatter ของ .md จริง', raw13.includes('เขียนลง frontmatter'));
+          check('[60r2-13] ป้ายที่เป็นเท็จไม่ถูกเขียน (ไม่มีบรรทัดรก)',
+                !raw13.includes('isFlashforward'));
+          const m13b = await readSceneMeta(t.file, { synopsis: 'ค่าเก่าในดัชนี' });
+          check('[60r2-13] frontmatter ชนะดัชนีเสมอ', m13b.synopsis === 'เขียนลง frontmatter', m13b.synopsis);
+          check('[60r2-13] boolean จาก frontmatter ถูกแปลงเป็น true จริง (ไม่ใช่สตริง)',
+                m13b.isFlashback === true, typeof m13b.isFlashback);
+          check('[60r2-13] แท็กกลับมาเป็นอาร์เรย์', Array.isArray(m13b.tags) && m13b.tags[0] === 'ทดสอบ');
+          const n13 = await syncSceneMetaFromFiles(dP13);
+          check('[60r2-13] ซิงก์ดัชนีจากไฟล์ .md ได้ (ไม่ throw)', Number.isFinite(n13), n13);
+          {
+            const sj13 = await kapi.readJson(await kapi.join(dP13, 'scenes.json'));
+            const found = Object.values(sj13.chapters || {}).flat()
+              .find((r) => t.file.endsWith(r.fileName));
+            check('[60r2-13] ดัชนีถูกอัปเดตตาม frontmatter',
+                  !!found && found.synopsis === 'เขียนลง frontmatter', found && found.synopsis);
+          }
+          // เก็บกวาด: เอาค่าทดสอบออกจากไฟล์ฉาก
+          await writeSceneMeta(t.file, { synopsis: '', emotion: '', tags: [], isFlashback: false });
+        }
+      }
 
       // ---- [19] ส่งออก HTML ใช้รูปแบบเดียวกับบนจอ ----
       {

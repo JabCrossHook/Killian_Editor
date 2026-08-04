@@ -26,6 +26,18 @@
   --accent:#c15f3c; --accent-hi:#d97757; --link:#7aa8d8; --sel:#7a4a2e;
   --orange:#d9955f; --curline:#2d2c29;
 }
+/* [alpha.60r2 ข้อ 10] ธีมสว่าง — Ctrl+Shift+P สลับ dark ↔ light
+   สลับเฉพาะ "เปลือกโปรแกรม" ผ่านตัวแปรชุดเดียวกัน · ไม่แตะ --paper-* เลย
+   → หน้ากระดาษ (สีกระดาษ/หมึก/ขอบ/เงา) และทุกมุมมองหน้ากระดาษเหมือนเดิมทุกประการ
+   ปุ่ม 📄 "โหมดหน้ากระดาษ" ยังทำงานแยกของมันตามเดิม (แค่ไม่ผูกกับคีย์ลัดนี้แล้ว) */
+body.theme-light {
+  --bg:#faf9f5; --side:#f0eee7; --bar:#e9e7df; --border:#d5d2c7;
+  --fg:#2b2a26; --bright:#131210; --dim:#6d6a61;
+  --accent:#b8532f; --accent-hi:#c15f3c; --link:#2f6ba8; --sel:#f0cdb8;
+  --orange:#a86b32; --curline:#efece2;
+  --paper-surround:#cfccc2;                 /* พื้นรอบกระดาษ — ตัวกระดาษเองไม่เปลี่ยน */
+}
+body.theme-light button:hover { background:#dcd9cf; }
 * { box-sizing:border-box; }
 html,body { height:100%; margin:0; }
 /* --ui-scale (บั๊ก #9) = ขนาด UI ทั้งแอป — ตั้งจาก settings.uiScale ผ่าน applyUIScale()
@@ -256,20 +268,23 @@ body.k-panel-dragging, body.k-resizing { user-select:none; }
 .ProseMirror figure.ProseMirror-selectednode img { outline:3px solid var(--accent-hi); }
 .ProseMirror u { text-underline-offset:3px; }
 
-/* เลขบรรทัด (นับตามย่อหน้า/บล็อกระดับบน) — เปิดด้วย body.k-ln · ใช้ CSS counter จึงไม่ต้องวัดพิกเซล
+/* เลขบรรทัด (นับตามย่อหน้า/บล็อกระดับบน) — เปิดด้วย body.k-ln
    [alpha.58r บั๊ก 2] "เปิดเลขบรรทัดแล้วข้อความต้องไม่ขยับ"
-   เดิมกฎนี้ตั้ง padding-left:64px ทับ --mg-left (1.5in=144px) → ระยะขอบซ้ายหด ข้อความ reflow ทั้งหน้า
-   ตอนนี้ไม่แตะ padding เลย — เลขไปวางใน "ระยะขอบซ้ายของกระดาษ" ที่ว่างอยู่แล้ว (absolute ไม่กินที่)
-   เฉพาะบริบทที่ระยะขอบซ้ายแคบจริง ๆ (โหมดร่าง/ฟิลด์วิกิ) จึงค่อยเว้นที่ให้ */
-body.k-ln .ProseMirror { counter-reset:kln; }
-body.k-ln .ProseMirror > * { position:relative; }
-body.k-ln .ProseMirror > *::before {
-  counter-increment:kln; content:counter(kln);
-  position:absolute; left:-52px; width:40px; text-align:right;
-  top:0; font-size:12px; line-height:inherit; color:var(--dim); opacity:.55;
-  font-variant-numeric:tabular-nums; user-select:none; pointer-events:none; }
+   [alpha.60r2 ข้อ 11] **เลขบรรทัดคือ UI** — เลิกวาดด้วย ::before ในระยะขอบของกระดาษ
+   (เลขนั้นเลื่อนตามกระดาษ · ย่อ/ขยายตามซูม · ติดไปกับงานพิมพ์)
+   ตอนนี้เป็น "ราง" ซ้ายของแผงแบบ VS Code: เป็นลูกของ #panes จึงอยู่นอกกล่องที่ถูก CSS zoom
+   → ไม่เลื่อนตามแนวนอน · ขนาดคงที่ทุกระดับซูม · ไม่กินความกว้างของข้อความเลย
+   ตำแหน่ง/ความสูงถูกตั้งจาก JS (refreshLineGutter) ให้ทาบแผงที่กำลังใช้งาน */
+.k-ln-gutter { position:absolute; left:0; top:0; width:46px; z-index:6;
+  display:none; overflow:hidden; pointer-events:none; user-select:none;
+  background:var(--bar); border-right:1px solid var(--border); }
+.k-ln-gutter.on { display:block; }
+.k-ln-no { position:absolute; right:8px; width:32px; text-align:right;
+  font-size:calc(11px * var(--ui-scale, 1)); line-height:1.35;
+  font-family:ui-monospace, Consolas, "Courier New", monospace;
+  color:var(--dim); opacity:.75; font-variant-numeric:tabular-nums; }
+/* โหมดร่าง = ข้อความชิดซ้ายจริง ๆ → ต้องเว้นที่ให้รางไม่ทับตัวหนังสือ */
 body.k-ln .pane.sp-view-draft > .workspace > .ProseMirror { padding-left:64px !important; }
-body.k-ln .wiki-sec-ed .ProseMirror { padding-left:64px; }
 .plain-md { width:100%; height:100%; background:var(--bg); color:var(--fg); border:0;
   resize:none; outline:none; padding:24px 48px; font:15px/1.8 Consolas, monospace; }
 
@@ -806,6 +821,10 @@ body.sp-page-numbers .pane.sp-pane:not(.sp-view-draft) .ProseMirror::before {
 /* ดาว = เลือกว่ารูปไหนขึ้นในวงกลมโปรไฟล์ (ข้อ 2) */
 .wiki-img-star { position:absolute; top:4px; left:4px; background:rgba(0,0,0,.55); }
 .wiki-img-star.on { color:var(--accent-hi); }
+/* [alpha.60r2 ข้อ 12] เมทาดาทาของรูป — ปุ่มแก้ + คำบรรยายใต้รูป */
+.wiki-img-edit { position:absolute; bottom:4px; right:4px; background:rgba(0,0,0,.55); }
+.wiki-img-cap { max-width:180px; margin-top:4px; font-size:calc(11.5px * var(--ui-scale, 1));
+  color:var(--dim); line-height:1.35; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .wiki-img-miss { color:var(--warn); font-size:calc(12px * var(--ui-scale, 1)); padding:8px;
   border:1px dashed var(--border); border-radius:8px; }
 
@@ -1157,8 +1176,8 @@ body.paper-mode .pane:not(.wiki-pane) > .workspace > .ProseMirror .k-mention,
 body.paper-mode .pane.sp-pane .k-mention { color:#1b5fa8; background:#e8eef7; }
 body.paper-mode .pane:not(.wiki-pane) > .workspace > .ProseMirror ::selection,
 body.paper-mode .pane.sp-pane > .workspace > .ProseMirror ::selection { background:#c9dcf2; color:#000; }
-body.paper-mode.k-ln .pane:not(.wiki-pane) > .workspace > .ProseMirror > *::before,
-body.paper-mode.k-ln .pane.sp-pane > .workspace > .ProseMirror > *::before { color:#b0a992; }
+/* [alpha.60r2 ข้อ 11] รางเลขบรรทัดเป็น UI — สีตามธีมของโปรแกรม ไม่ใช่หมึกบนกระดาษ
+   (เดิมกฎนี้เปลี่ยนสีเลขให้กลืนกับกระดาษครีม ตอนนี้ไม่จำเป็นแล้ว) */
 /* (เดิมมี padding-left:64px ตรงนี้ — เอาออกตามบั๊ก 2: เลขบรรทัดต้องไม่ดันข้อความ) */
 
 /* บทหนัง: ธาตุต่าง ๆ เป็นหมึกดำแบบสคริปต์จริง */
@@ -1380,6 +1399,8 @@ body.reading-mode .k-tab-group .k-tab-bar { display:none !important; }
 body.reading-mode #statusbar { display:none !important; }
 body.reading-mode #topbar { display:none !important; }
 body.reading-mode #k-fab { display:none; }
+/* [alpha.60r2 ข้อ 9] ปิดปุ่มลอยได้จากตั้งค่า — ต้องซ่อนเมนูของมันด้วย ไม่งั้นเมนูค้างลอยอยู่ */
+body.k-fab-off #k-fab, body.k-fab-off #k-fab-menu { display:none !important; }
 /* [alpha.58r บั๊ก 3] โหมดอ่าน — ต้องมีระยะขอบเสมอ และหมึกต้องเข้ากับพื้นเสมอ
    ทุก property ที่นี่เป็น !important เพราะโหมดมุมมองบท (sp-view-layout / sp-view-draft)
    ก็ใช้ !important เหมือนกัน — ถ้าไม่ใส่ กฎพวกนั้นจะชนะแล้วได้พื้นขาว/ดำปนกับหมึกผิดสี */

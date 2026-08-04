@@ -35,6 +35,16 @@ xvfb-run -a --server-args="-screen 0 1500x950x24" ./node_modules/.bin/electron .
 - **page-break-plugin.js** (alpha.60r1) — `createPageBreakPlugin({key, cls, decoKey})` คืน
   `{setBreaks, breaks, plugin, refresh}` · `sp-format-guide.js` (บท) กับ `prose-view.js` (นิยาย)
   ใช้โรงงานเดียวกันแต่ **สถานะแยกกันคนละชุด** (เปิดบท+นิยายพร้อมกันคนละแท็บได้)
+- **scene-meta.js** (alpha.60r2) — **แหล่งความจริงเดียวของคุณสมบัติฉาก**: `readSceneMeta(file,row)` /
+  `writeSceneMeta(file,props)` · คุณสมบัติหนัก (`SCENE_HEAVY_KEYS`) อยู่ใน **frontmatter ของ .md**
+  · `scenes.json` เหลือเป็น **ดัชนี/แคช** · **ห้ามอ่าน/เขียน synopsis·pov·emotion·conflict·note·tags·
+  storyDate·isFlashback·isFlashforward จาก row ตรง ๆ ในโค้ดใหม่** — เรียกสองฟังก์ชันนี้เท่านั้น
+- **text-case.js** (alpha.60r2, บริสุทธิ์ 100%) — `applyCase(text,mode)` 7 โหมด + `caseTransform(state,mode)`
+  (รับ `state` เข้ามาแล้วใช้แค่ `selection`/`doc.nodesBetween`/`tr`/`schema.text` → **ไม่ import prosemirror**
+  จึง unit test ด้วย state ปลอมได้ · โมดูลใหม่ที่ต้องแตะ doc ควรทำแบบนี้)
+- **wiki-images.js** (alpha.60r2, บริสุทธิ์) — เมทาดาทารูปของ entity · `migrateImages()` แปลง
+  `string[]` เก่า → object ให้อัตโนมัติ · **ทุกที่ที่อ่าน `entity.images` ต้องผ่าน `migrateImages`/`imageFile`**
+- **margin-presets.js/.json** (alpha.60r2, บริสุทธิ์) — ชุดระยะขอบสำเร็จรูป (ตารางอยู่ใน `.json` แก้เองได้)
 - **core.js** — `$`, `el`, `state`, `smart`, `log`, `setStatus`, ค่าคงที่ (`DEFAULT_SETTINGS`, `SCENE_STATUSES`, `SCENE_COLORS`, `BUILTIN_CATS`, `CAT_ICON`, `BASE_ED_FS`, ...) — **ทุกโมดูลใหม่ import จากที่นี่**
 - **app.js** (~5,300 บรรทัด) — orchestrator: bootstrap, explorer (buildTree/tree), tabs, toolbar (floatBar), commands, shortcuts, zoom, **selftest ทั้งหมด**
 
@@ -224,6 +234,31 @@ UI ที่ต้องทำต่อ: `panels/panel-ui.js` · `layout/split-u
 29. **สตริง UI ของโมดูลใหม่ต้องเข้า `languages/*.json`** ในรูป `t('ns.key', 'ไทย')`
     (ไม่มีคีย์ = ได้ไทยเหมือนเดิม ไม่พัง) · `languages/` กับ `renderer/languages/` เป็นไฟล์ hardlink
     เดียวกัน — แก้ที่เดียวได้ทั้งคู่ แต่ต้องเช็คว่ายังเป็น JSON ที่อ่านได้
+
+---
+
+## 🚧 กฎเพิ่มหลังรอบ alpha.60r2 (รอบแก้ 13 ข้อ)
+
+30. **กฎเหล็กของผู้ใช้: แก้ UI ต้องไม่กระทบตัวแก้ไขหรือหน้ากระดาษทุกรูปแบบ**
+    ตัวแปร CSS แยกกันอยู่แล้ว — เปลือกโปรแกรมใช้ `--bg/--side/--bar/--border/--fg/--dim/--curline`
+    หน้ากระดาษใช้ `--paper/--paper-ink/--paper-edge/--paper-surround` · **ห้ามให้ธีม/โหมดใด ๆ ข้ามฝั่ง**
+    ทุก PR ที่แตะ UI ต้องมี check ยืนยัน สีกระดาษ · สีหมึก · ความกว้างหน้ากระดาษ ไม่ขยับ
+31. **อะไรที่ "เป็น UI" ห้ามวาดลงบนกระดาษ** — เลขบรรทัดเคยเป็น `::before` ของบล็อกใน ProseMirror
+    จึงเลื่อนตามกระดาษ ย่อ/ขยายตามซูม และติดไปกับงานที่พิมพ์
+    **แก้: วาดนอกกล่องที่ถูก CSS `zoom`** (ลูกของ `#panes`) แล้วคำนวณตำแหน่งจาก `getBoundingClientRect`
+32. **ห้ามใช้ `%` กับความกว้าง/สูงของลูกที่อยู่ใต้ CSS `zoom`** — การตีความ % ใต้ `zoom` ต่างกันตาม
+    เวอร์ชันเบราว์เซอร์ · วัดเป็นพิกเซลใน JS แล้วหารด้วยอัตราซูมแทน (`syncWorkspaceWidths()`)
+33. **โมดูลใหม่ที่ต้องแตะ ProseMirror doc: รับ `state` เป็นพารามิเตอร์ อย่า import prosemirror**
+    ใช้แค่ `state.selection` / `state.doc.nodesBetween` / `state.tr` / `state.schema.text`
+    → ยังคงเป็น "โมดูลบริสุทธิ์" ที่ unit test ด้วย state ปลอมได้ (ดู `text-case.js`)
+34. **เปลี่ยนโครงข้อมูลที่มีไฟล์เก่าอยู่ = ต้องมี `migrate*()` + `needs*Migration()`**
+    อ่านของเก่าได้เสมอ · เขียนกลับเป็นรูปแบบใหม่ตอนแตะครั้งแรก · มี unit test ยืนยัน idempotent
+    (`wiki-images.migrateImages` · `panel-store.migrate` v1→v2)
+35. **schema ที่บันทึกลง localStorage ต้องตรวจโครงก่อนใช้** — `deserializeLayout` เรียก `validRoot()`
+    แล้ว **คืน `null` เพื่อให้ตกกลับค่าตั้งต้น** ดีกว่าปล่อยต้นไม้เสียเข้าไปวาดจนโปรแกรมล่ม
+36. **เทสที่วัดตำแหน่งเลื่อน/โฟกัส/คีย์ลัด ให้ผลต่างกันตาม OS** — `scroll-behavior:smooth` ทำให้
+    `scrollTop=` เป็นอนิเมชัน · ตัวแก้ไขที่มีโฟกัสจริงดึงจอกลับหาเคอร์เซอร์ (เจอบน macOS ไม่เจอบน xvfb) ·
+    `formatShortcut` คืน `⌘⇧` บน mac · **วนรอเงื่อนไขจริงพร้อมเพดาน อย่ารอเวลาตายตัว**
 
 ---
 

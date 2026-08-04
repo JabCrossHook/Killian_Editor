@@ -266,6 +266,63 @@ check('เปิดใหม่หลังปิดหมด → กลับ�
         pmG.togglePanel('docs') === false && pmG.isDocked('docs'));
 }
 
+
+// ══ [alpha.60r2 ข้อ 8] schema v2 — จำสัดส่วนของแผง + ตกกลับค่าตั้งต้นเมื่อเลย์เอาต์พัง ══
+check('[60r2] LAYOUT_VERSION = 2', PS.LAYOUT_VERSION === 2, PS.LAYOUT_VERSION);
+{
+  const lay = { root: PL.dockPanel(PL.panel('A'), 'A', 'right', PL.panel('B')), floats: [],
+                splitRatios: { A: 0.24, B: 0.76 } };
+  const back2 = PS.deserializeLayout(PS.serializeLayout(lay));
+  check('[60r2] splitRatios รอด round-trip',
+        back2 && back2.splitRatios.A === 0.24 && back2.splitRatios.B === 0.76,
+        JSON.stringify(back2 && back2.splitRatios));
+}
+{
+  // v1 ที่บันทึกไว้ก่อนอัปเดต ต้องอ่านได้ ไม่ใช่ถูกทิ้งจนแผงรีเซ็ตทั้งชุด
+  const v1 = JSON.stringify({ version: 1, root: PL.panel('OLD'), floats: [] });
+  const m1 = PS.deserializeLayout(v1);
+  check('[60r2] migrate v1 → v2 (ไม่ทิ้งเลย์เอาต์เดิม)', m1 && m1.root.id === 'OLD');
+  check('[60r2] migrate v1 → v2 เติม splitRatios ว่าง',
+        m1 && m1.splitRatios && Object.keys(m1.splitRatios).length === 0);
+}
+{
+  // สัดส่วนเพี้ยน (ถูกแก้มือ/ไฟล์เสีย) ต้องถูกกรองทิ้ง ไม่ใช่พาเลย์เอาต์เพี้ยนตาม
+  const bad = PS.deserializeLayout(JSON.stringify({ version: 2, root: PL.panel('A'), floats: [],
+    splitRatios: { A: 5, B: -1, C: 'x', D: 0.5 } }));
+  check('[60r2] กรองสัดส่วนที่ใช้ไม่ได้ทิ้ง',
+        bad && Object.keys(bad.splitRatios).join() === 'D', JSON.stringify(bad && bad.splitRatios));
+}
+{
+  // เลย์เอาต์ที่โครงพัง = ตกกลับ null (UI จะสร้าง defaultLayout ให้) ไม่ใช่วาดต้นไม้เสีย
+  check('[60r2] dock ที่ไม่มีลูก → null',
+        PS.deserializeLayout(JSON.stringify({ version: 2, root: { type: 'dock', children: [] } })) === null);
+  check('[60r2] panel ที่ไม่มี id → null',
+        PS.deserializeLayout(JSON.stringify({ version: 2, root: { type: 'panel' } })) === null);
+  check('[60r2] ชนิดโหนดที่ไม่รู้จัก → null',
+        PS.deserializeLayout(JSON.stringify({ version: 2, root: { type: 'ufo' } })) === null);
+  check('[60r2] root = null ยังใช้ได้ (ยังไม่เคยมีเลย์เอาต์)',
+        PS.deserializeLayout(JSON.stringify({ version: 2, root: null })) !== null);
+  check('[60r2] floats ที่ไม่มี panel.id ถูกกรองทิ้ง',
+        PS.deserializeLayout(JSON.stringify({ version: 2, root: PL.panel('A'),
+          floats: [{ x: 1 }, { panel: { id: 'B' } }] })).floats.length === 1);
+}
+{
+  const { pm: pmR, storage: stR } = mkMgr();
+  pmR.registerPanel('tree', { title: 'โปรเจกต์' });
+  pmR.showPanel('tree');
+  check('[60r2] rememberRatio เก็บค่าที่ลากไว้', pmR.rememberRatio('tree', 0.24) === true);
+  check('[60r2] savedRatio อ่านกลับได้', pmR.savedRatio('tree') === 0.24, pmR.savedRatio('tree'));
+  check('[60r2] ค่าเดิมซ้ำ → ไม่บันทึกใหม่ (ไม่เขียน storage ทุกเฟรม)',
+        pmR.rememberRatio('tree', 0.24) === false);
+  check('[60r2] สัดส่วนนอกช่วง → ปฏิเสธ',
+        pmR.rememberRatio('tree', 0) === false && pmR.rememberRatio('tree', 1.5) === false &&
+        pmR.rememberRatio('tree', NaN) === false);
+  check('[60r2] สัดส่วนถูกบันทึกลง storage จริง',
+        JSON.parse(stR.getItem('pm-test')).splitRatios.tree === 0.24);
+  pmR.reset();
+  check('[60r2] reset ล้างสัดส่วนด้วย', pmR.savedRatio('tree') === 0);
+}
+
 console.log(`\npanel: ${pass} ผ่าน, ${fail} ล้มเหลว`);
 console.log(fail === 0 ? 'ALL OK' : 'HAS FAILURES');
 process.exit(fail === 0 ? 0 : 1);

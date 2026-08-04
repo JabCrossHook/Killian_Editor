@@ -3,6 +3,10 @@ import { KEditor } from './editor.js';
 import { ask, confirmBox, popupMenu } from './ui.js';
 import { iconHtml, icon } from './icons.js';
 import { REL_COLOR, REL_LABEL } from './relationship-types.js';
+// [alpha.60r2 ข้อ 12] รูปใน entity มีเมทาดาทาแล้ว (คำบรรยาย/alt/title/ขนาด)
+// โมดูลบริสุทธิ์ — แปลงรูปแบบเก่า (string[]) ให้อัตโนมัติ ไฟล์เดิมเปิดได้ทุกใบ
+import { migrateImages, imageFile, imageAlt, imageLabel, setImageMeta,
+         makePrimary, removeImage, addImage, needsImageMigration } from './wiki-images.js';
 
 export const CAT_TH = { characters: 'ตัวละคร', locations: 'สถานที่',
                         items: 'สิ่งของ', lore: 'ตำนาน' };
@@ -202,22 +206,26 @@ export class WikiEditor {
       avatar.title = 'คลิกเพื่อตั้งรูปประจำตัว (คลิกขวา = เอารูปออก)';
       const paintAvatar = async () => {
         avatar.textContent = '';
-        const first = (this.e.images || [])[0];
-        const name = typeof first === 'string' ? first : (first && (first.name || first.file)) || '';
+        const first = migrateImages(this.e.images)[0];
+        const name = first ? first.file : '';
         if (!name) { avatar.innerHTML = iconHtml('user', 32); return; }
         const url = /^(file|https?|data):/i.test(name)
           ? name
           : await kapi.toFileURL(await kapi.join(this.projectRoot, 'Images', name));
         const imgEl = document.createElement('img');
         imgEl.src = url;
+        imgEl.alt = imageAlt(first);
+        if (first.caption) imgEl.title = first.caption;
         imgEl.onerror = () => { avatar.innerHTML = iconHtml('user', 32); };
         avatar.appendChild(imgEl);
       };
       paintAvatar();
       // ตั้งรูปประจำตัว = ย้ายรูปที่เลือกไปเป็นตัวแรกของ images[] (คลังรูปยังเก็บครบเหมือนเดิม)
       const setAvatar = (name) => {
-        const list = (this.e.images || []).filter((x) => x !== name);
-        this.e.images = [name, ...list];
+        // เพิ่มเข้ารายการก่อน (ถ้ายังไม่มี) แล้วเลื่อนขึ้นเป็นใบแรก — เมทาดาทาของใบเดิมไม่หาย
+        const list = addImage(this.e.images, name);
+        const i = list.findIndex((x) => x.file === imageFile(name));
+        this.e.images = i > 0 ? makePrimary(list, i) : list;
         this.markDirty(); this.render();
       };
       avatar.onclick = async () => {
@@ -238,8 +246,8 @@ export class WikiEditor {
       };
       avatar.oncontextmenu = (e) => {
         e.preventDefault();
-        if (!(this.e.images || []).length) return;
-        this.e.images = this.e.images.slice(1);
+        if (!migrateImages(this.e.images).length) return;
+        this.e.images = removeImage(this.e.images, 0);
         this.markDirty(); this.render();
       };
       prof.appendChild(avatar);
@@ -320,7 +328,7 @@ export class WikiEditor {
       if (!this.pickFromGallery) return;
       const it = await this.pickFromGallery();
       if (!it) return;
-      this.e.images = [...(this.e.images || []), it.file || it];
+      this.e.images = addImage(this.e.images, it.file || it);
       this.markDirty(); this.render();
     };
     // เพิ่มรูปใหม่จากไฟล์ (คัดลอกเข้าคลัง)
@@ -330,40 +338,70 @@ export class WikiEditor {
       const src = await kapi.openImageDialog(); if (!src) return;
       const dir = await kapi.join(this.projectRoot, 'Images');
       const name = await kapi.copyInto(src, dir);
-      this.e.images = [...(this.e.images || []), name];
+      this.e.images = addImage(this.e.images, name);
       this.markDirty(); this.render();
     };
     ih.append(pickImg, addImg); wrap.appendChild(ih);
     const grid = document.createElement('div'); grid.className = 'wiki-imgs';
     wrap.appendChild(grid);
-    (this.e.images || []).forEach(async (name, i) => {
+    // [alpha.60r2 ข้อ 12] แต่ละใบมีคำบรรยาย/ข้อความแทนรูปของตัวเอง — แก้ในที่ได้เลย
+    const imgs = migrateImages(this.e.images);
+    if (needsImageMigration(this.e.images)) this.e.images = imgs;   // ไฟล์เก่า (string[]) → ออบเจกต์
+    imgs.forEach(async (meta, i) => {
+      const name = meta.file;
       const cell = document.createElement('div'); cell.className = 'wiki-img';
       const im = document.createElement('img');
       const url = await kapi.toFileURL(await kapi.join(this.projectRoot, 'Images', name));
       im.src = url;
-      im.title = 'คลิกเพื่อขยาย';
-      im.onclick = () => imageLightbox(url, name);           // คลิกขยายภาพ
+      im.alt = imageAlt(meta);
+      im.title = (meta.title || meta.caption || '') + (meta.caption || meta.title ? ' — ' : '') + 'คลิกเพื่อขยาย';
+      im.onclick = () => imageLightbox(url, imageLabel(meta));      // คลิกขยายภาพ
       im.onerror = () => { im.replaceWith(Object.assign(document.createElement('div'),
         { className: 'wiki-img-miss', innerHTML: iconHtml('error', 14) + ' ' + name })); };
       const del = document.createElement('span'); del.className = 'row-add wiki-img-x';
       del.innerHTML = iconHtml('x', 14); del.title = 'เอารูปนี้ออก (ไฟล์ยังอยู่ในคลัง)';
-      del.onclick = (e) => { e.stopPropagation(); this.e.images.splice(i, 1); this.markDirty(); this.render(); };
+      del.onclick = (e) => {
+        e.stopPropagation();
+        this.e.images = removeImage(this.e.images, i);
+        this.markDirty(); this.render();
+      };
       cell.append(im, del);
       // รูปแรก = รูปในวงกลมโปรไฟล์ → ให้เลือกได้ว่าจะใช้รูปไหน (ข้อ 2)
       const star = document.createElement('span'); star.className = 'row-add wiki-img-star';
-      star.innerHTML = i === 0 ? iconHtml('star', 14) : iconHtml('star', 14);
+      star.innerHTML = iconHtml('star', 14);
       star.title = i === 0 ? 'รูปประจำตัวอยู่แล้ว' : 'ตั้งเป็นรูปประจำตัว (วงกลมด้านบน)';
       star.classList.toggle('on', i === 0);
       star.style.opacity = i === 0 ? '1' : '0.4';
       star.onclick = (e) => {
         e.stopPropagation();
         if (i === 0) return;
-        const list = [...this.e.images];
-        const [pick] = list.splice(i, 1);
-        this.e.images = [pick, ...list];
+        this.e.images = makePrimary(this.e.images, i);
         this.markDirty(); this.render();
       };
       cell.append(star);
+      // ปุ่มแก้เมทาดาทา (คำบรรยาย · ข้อความแทนรูป · ชื่อกำกับ)
+      const edit = document.createElement('span'); edit.className = 'row-add wiki-img-edit';
+      edit.innerHTML = iconHtml('edit', 14);
+      edit.title = 'แก้คำบรรยาย / ข้อความแทนรูป (alt) / ชื่อกำกับ';
+      edit.onclick = async (e) => {
+        e.stopPropagation();
+        const cur = migrateImages(this.e.images)[i];
+        if (!cur) return;
+        const cap = await ask('คำบรรยายใต้รูป (Caption)', { value: cur.caption, allowEmpty: true });
+        if (cap === null || cap === undefined) return;
+        const alt = await ask('ข้อความแทนรูป (Alt)', { value: cur.alt, allowEmpty: true });
+        if (alt === null || alt === undefined) return;
+        this.e.images = setImageMeta(this.e.images, i, { caption: cap, alt });
+        this.markDirty(); this.render();
+      };
+      cell.append(edit);
+      // คำบรรยายใต้รูป — เห็นได้ทันทีว่ารูปนี้คืออะไร
+      if (meta.caption || meta.alt) {
+        const cap = document.createElement('div'); cap.className = 'wiki-img-cap';
+        cap.textContent = meta.caption || meta.alt;
+        cap.title = meta.caption || meta.alt;
+        cell.append(cap);
+      }
       grid.appendChild(cell);
     });
 

@@ -4,7 +4,9 @@
 // spec: docs/08-panel-system.md
 import * as PL from './panel-layout.js';
 
-export const LAYOUT_VERSION = 1;
+// [alpha.60r2 ข้อ 8] v2 = เพิ่ม `splitRatios` (id ของแผง → สัดส่วนใน dock แม่)
+// เดิมสัดส่วนอยู่ใน `sizes` ของต้นไม้เท่านั้น → แผงที่ถูกปิด/ย้ายแล้วเรียกกลับ ได้สัดส่วนเฉลี่ยใหม่ทุกครั้ง
+export const LAYOUT_VERSION = 2;
 const KEY = 'k2-panel-layout';
 
 // storage เริ่มต้น: ใช้ localStorage ถ้ามี, ไม่งั้น in-memory (เช่นตอนรัน node test)
@@ -15,8 +17,23 @@ function defaultStorage() {
 }
 
 // ── serialize / deserialize (+ migration) ──
+/** สัดส่วนที่ใช้ได้จริง — 0<r<1 เท่านั้น (กันค่าเพี้ยนจากไฟล์ที่ถูกแก้มือ) */
+function cleanRatios(o) {
+  const out = {};
+  if (!o || typeof o !== 'object') return out;
+  for (const k of Object.keys(o)) {
+    const r = Number(o[k]);
+    if (Number.isFinite(r) && r > 0.02 && r < 0.98) out[k] = +r.toFixed(4);
+  }
+  return out;
+}
 export function serializeLayout(state) {
-  return JSON.stringify({ version: LAYOUT_VERSION, root: state.root ?? null, floats: state.floats ?? [] });
+  return JSON.stringify({
+    version: LAYOUT_VERSION,
+    root: state.root ?? null,
+    floats: state.floats ?? [],
+    splitRatios: cleanRatios(state.splitRatios),
+  });
 }
 export function deserializeLayout(str) {
   if (!str) return null;
@@ -24,7 +41,24 @@ export function deserializeLayout(str) {
   try { data = JSON.parse(str); } catch { return null; }
   data = migrate(data);
   if (!data || data.version !== LAYOUT_VERSION) return null;
-  return { root: data.root ?? null, floats: data.floats ?? [] };
+  // [alpha.60r2 ข้อ 8] เลย์เอาต์ที่โครงพังต้อง "ตกกลับไปค่าตั้งต้น" ไม่ใช่พาทั้งโปรแกรมล่ม
+  if (!validRoot(data.root)) return null;
+  return {
+    root: data.root ?? null,
+    floats: Array.isArray(data.floats) ? data.floats.filter((f) => f && f.panel && f.panel.id) : [],
+    splitRatios: cleanRatios(data.splitRatios),
+  };
+}
+/** โครงต้นไม้ใช้ได้ไหม (null = ยังไม่มีเลย์เอาต์ ก็ถือว่าใช้ได้) */
+function validRoot(n) {
+  if (n == null) return true;
+  if (typeof n !== 'object') return false;
+  if (n.type === 'panel') return typeof n.id === 'string' && !!n.id;
+  if (n.type === 'dock' || n.type === 'tabs') {
+    if (!Array.isArray(n.children) || !n.children.length) return false;
+    return n.children.every(validRoot);
+  }
+  return false;
 }
 // อัปเกรด schema เก่า → ปัจจุบัน (เพิ่ม case เมื่อ bump LAYOUT_VERSION)
 function migrate(data) {
@@ -32,7 +66,8 @@ function migrate(data) {
   if (data.version == null) {           // v0: เก็บ root เปล่า ๆ ไม่มี floats
     data = { version: 1, root: data.root ?? data, floats: [] };
   }
-  // if (data.version === 1) { ...ย้ายไป v2... ; data.version = 2; }
+  // v1 → v2: ยังไม่มีตารางสัดส่วน — เริ่มจากว่าง แล้วให้ UI จดใหม่ตอนวาดรอบแรก
+  if (data.version === 1) { data = { ...data, version: 2, splitRatios: data.splitRatios || {} }; }
   return data;
 }
 
@@ -41,15 +76,32 @@ export class PanelStore {
   constructor(storage = defaultStorage(), key = KEY) {
     this.storage = storage; this.key = key;
     this.root = null; this.floats = [];
+    this.splitRatios = {};                       // [ข้อ 8] id ของแผง → สัดส่วนใน dock แม่
     this.listeners = new Set();
   }
   load() {
     const parsed = deserializeLayout(this.storage.getItem(this.key));
-    if (parsed) { this.root = parsed.root; this.floats = parsed.floats; }
+    if (parsed) { this.root = parsed.root; this.floats = parsed.floats; this.splitRatios = parsed.splitRatios || {}; }
     return !!parsed;
   }
-  save() { this.storage.setItem(this.key, serializeLayout({ root: this.root, floats: this.floats })); }
-  reset() { this.root = null; this.floats = []; this.storage.removeItem(this.key); this._emit(); }
+  save() {
+    this.storage.setItem(this.key, serializeLayout(
+      { root: this.root, floats: this.floats, splitRatios: this.splitRatios }));
+  }
+  reset() {
+    this.root = null; this.floats = []; this.splitRatios = {};
+    this.storage.removeItem(this.key); this._emit();
+  }
+  /** จำสัดส่วนของแผงหนึ่งตัว — คืน true เมื่อค่าเปลี่ยนจริง (จะได้ไม่ save ซ้ำทุกเฟรม) */
+  setSplitRatio(id, ratio) {
+    const r = Number(ratio);
+    if (!id || !Number.isFinite(r) || r <= 0.02 || r >= 0.98) return false;
+    const v = +r.toFixed(4);
+    if (this.splitRatios[id] === v) return false;
+    this.splitRatios[id] = v;
+    return true;
+  }
+  getSplitRatio(id) { return this.splitRatios[id] || 0; }
   // อัปเดต layout (ผ่านฟังก์ชันจาก panel-layout) แล้วบันทึก + แจ้ง listener อัตโนมัติ
   update(nextRoot) { this.root = nextRoot; this.save(); this._emit(); }
   setFloats(floats) { this.floats = floats; this.save(); this._emit(); }
@@ -75,7 +127,15 @@ export class PanelManager {
   }
   get root() { return this.store.root; }
   get floats() { return this.store.floats; }
-  layout() { return { root: this.store.root, floats: this.store.floats }; }
+  get splitRatios() { return this.store.splitRatios; }
+  layout() { return { root: this.store.root, floats: this.store.floats, splitRatios: this.store.splitRatios }; }
+  /** [ข้อ 8] จำสัดส่วนที่ผู้ใช้ลากไว้ — บันทึกลง storage เมื่อค่าเปลี่ยนจริงเท่านั้น */
+  rememberRatio(id, ratio) {
+    if (!this.store.setSplitRatio(id, ratio)) return false;
+    this.store.save();
+    return true;
+  }
+  savedRatio(id) { return this.store.getSplitRatio(id); }
 
   // ---- registry ----
   /** Register a panel definition. Must be called before load() so unknown ids can be pruned. */

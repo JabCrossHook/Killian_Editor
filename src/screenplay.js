@@ -9,6 +9,8 @@ import { baseKeymap, toggleMark, chainCommands } from 'prosemirror-commands';
 import { parseScript, lineFor, SP_ELEMS, TAB_CYCLE, NEXT_ELEM,
          splitCharacter, withExtension } from './fountain.js';
 import { state, DEFAULT_SP_CYCLE, spCycleKeys, spKeyMatch } from './core.js';
+// [alpha.60r2 ข้อ 2] สลับรูปตัวพิมพ์ (โมดูลบริสุทธิ์ — ไม่ import prosemirror)
+import { caseTransform } from './text-case.js';
 
 const marks = {
   strong: { parseDOM: [{ tag: 'strong' }], toDOM: () => ['strong', 0] },
@@ -355,6 +357,13 @@ export class SPEditor {
     if (name === 'undo') return run(undo);
     if (name === 'redo') return run(redo);
     if (name === 'align') return this.setAlign(arg);
+    // [alpha.60r2 ข้อ 2] สลับรูปตัวพิมพ์ของช่วงที่เลือก — ใช้ตัวเดียวกับโหมดนิยาย
+    if (name === 'case') {
+      const tr = caseTransform(v.state, arg);
+      if (tr) v.dispatch(tr.scrollIntoView());
+      v.focus();
+      return !!tr;
+    }
   }
 
   getMarkdown() {

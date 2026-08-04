@@ -13,6 +13,8 @@ import { dropCursor } from 'prosemirror-dropcursor';
 import { gapCursor } from 'prosemirror-gapcursor';
 import { mdToDoc, docToMd, collectAlign } from './md.js';
 import { searchPlugin } from './search.js';
+// [alpha.60r2 ข้อ 2] สลับรูปตัวพิมพ์ (โมดูลบริสุทธิ์ — ไม่ import prosemirror)
+import { caseTransform } from './text-case.js';
 // [alpha.58r บั๊ก 20] เส้นคั่นหน้าของนิยาย — คนละคีย์กับของบทภาพยนตร์
 import { prosePageBreakPlugin } from './prose-view.js';
 import { Plugin as PMPlugin, PluginKey as PMKey } from 'prosemirror-state';
@@ -434,6 +436,12 @@ export class KEditor {
         let tr = v.state.tr;
         for (const mk of Object.values(s.marks)) tr = tr.removeMark(from, to, mk);
         v.dispatch(tr); v.focus(); return;
+      }
+      // [alpha.60r2 ข้อ 2] สลับรูปตัวพิมพ์ของช่วงที่เลือก (Sentence/lower/UPPER/Capitalize/aLt/Title/iNVERSE)
+      case 'case': {
+        const tr = caseTransform(v.state, arg);
+        if (tr) v.dispatch(tr.scrollIntoView());
+        v.focus(); return !!tr;
       }
     }
   }

@@ -1,6 +1,8 @@
 // UI ประกอบ: dialog ถามข้อความ (แทน prompt ที่ Electron ไม่รองรับ) + เมนูคลิกขวาใน tree
 
-export function ask(title, { placeholder = '', value = '', okLabel = 'ตกลง' } = {}) {
+// allowEmpty (alpha.60r2 ข้อ 12): ปกติ "ว่าง" = ยกเลิก — แต่บางช่อง (คำบรรยายรูป) ต้องลบให้ว่างได้
+// เปิดแล้ว: ตกลง → คืนสตริง (อาจว่าง) · ยกเลิก/Esc/คลิกนอกกล่อง → คืน null เหมือนเดิม
+export function ask(title, { placeholder = '', value = '', okLabel = 'ตกลง', allowEmpty = false } = {}) {
   return new Promise((resolve) => {
     const ov = document.createElement('div'); ov.className = 'k-overlay';
     const box = document.createElement('div'); box.className = 'k-dialog';
@@ -14,11 +16,11 @@ export function ask(title, { placeholder = '', value = '', okLabel = 'ตกล�
     box.querySelector('.k-ok').textContent = okLabel;
     ov.appendChild(box); document.body.appendChild(ov);
     const done = (v) => { ov.remove(); resolve(v); };
-    box.querySelector('.k-ok').onclick = () => done(inp.value.trim() || null);
+    box.querySelector('.k-ok').onclick = () => done(allowEmpty ? inp.value.trim() : (inp.value.trim() || null));
     box.querySelector('.k-cancel').onclick = () => done(null);
     ov.onclick = (e) => { if (e.target === ov) done(null); };
     inp.onkeydown = (e) => {
-      if (e.key === 'Enter') done(inp.value.trim() || null);
+      if (e.key === 'Enter') done(allowEmpty ? inp.value.trim() : (inp.value.trim() || null));
       if (e.key === 'Escape') done(null);
     };
     inp.focus(); inp.select();
