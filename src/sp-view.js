@@ -11,6 +11,7 @@
 import { paginate, mergeSpFormat, textWidth, wrapLines, CHARS_PER_INCH, LINE_HEIGHT_IN,
          linesPerPage, pageNumberLabel, lineHeightIn, formatLines,
          clampLineHeight } from './sp-format.js';
+import { num } from './num.js';
 
 // ───────── รายการโหมด ─────────
 export const SP_VIEWS = ['normal', 'layout', 'draft', 'side', 'overview1', 'overview4'];
@@ -190,7 +191,7 @@ export function pagesOf(blocks, fmt, lines) {
   return paginate(blocks, { fmt: f, lines: lines || formatLines(f) });
 }
 
-const cssIn = (v) => (+v || 0) + 'in';
+const cssIn = (v) => num(v, 0) + 'in';
 
 /**
  * วาดหน้ากระดาษลง host (DOM) — ใช้กับโหมด side / overview

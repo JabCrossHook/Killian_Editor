@@ -1,7 +1,7 @@
 // import-sp.js — [alpha.60 ข้อ 62-66] นำเข้าบทภาพยนตร์จาก 5 รูปแบบ
 // FDX · Celtx (ZIP+HTML) · Adobe Story (XML) · Fade In Pro (JSON) · Fountain (markup)
 // คืน element list → convertToK2Elements → fountain markdown → inject เข้า SPEditor
-import { parseScript, SP_ELEMS, classify } from './fountain.js';
+import { parseScript, SP_ELEMS, classify, splitCharacter } from './fountain.js';
 import JSZip from 'jszip';
 
 // [62-66] ตารางนำเข้าทั้ง 5 รูปแบบ — name/ext ใช้ใน UI · parse รับ content (string|Uint8Array)
@@ -337,14 +337,19 @@ export function elementsToMarkdown(elements) {
     let line = prefix + text;
 
     // กัน round-trip: เช็คว่า classify อ่านกลับได้ element เดิมไหม
+    // ถ้าไม่ได้ ให้ใส่ prefix แบบชัดเจนของ element นั้น ๆ จาก SP_ELEMS
+    // (เดิมรองรับแค่ action/character/scene จาก ~15 ชนิด — ชนิดอื่นที่ classify เดาผิด
+    //  จะเงียบไปเลย เช่น ฉากย่อย/สลับฉาก/ทรานซิชันเข้า ที่มี prefix `$sub `/`$intercut `/`$in `)
     try {
-      const [got] = classify(line, prevBlank, prevType);
-      if (got !== el) {
-        // ใส่ prefix แบบชัดเจนเพื่อบังคับ element
-        if (el === 'action') line = '!' + text;
-        else if (el === 'character') line = '@' + text;
-        else if (el === 'scene') line = '. ' + text;
+      let [got] = classify(line, prevBlank, prevType);
+      if (got !== el && prefix) {
+        // prefix สัญลักษณ์เดี่ยว (. ! @ > (( ) เขียนติดข้อความได้ · prefix คำ ($sub …) ต้องมีวรรค
+        line = prefix.endsWith(' ') ? prefix + text : prefix + ' ' + text;
+        [got] = classify(line, prevBlank, prevType);
+        if (got !== el) line = prefix + text;          // แบบไม่มีวรรคยังใกล้เคียงกว่าไม่ใส่เลย
       }
+      // element ที่ไม่มี prefix ของตัวเอง (บทพูด/วงเล็บ) พึ่งบริบทบรรทัดก่อนหน้าล้วน ๆ
+      // → ถ้าอ่านกลับไม่ได้ ต้องมี "ชื่อตัวละคร" นำหน้าอยู่แล้ว ไม่มีอะไรให้แก้ตรงนี้
     } catch {}
 
     lines.push(line);
@@ -364,7 +369,9 @@ export function importSummary(elements) {
   for (const { el, text } of elements) {
     counts[el] = (counts[el] || 0) + 1;
     if (el === 'character') {
-      const name = text.split('(')[0].trim();
+      // ห้ามใช้ text.split('(')[0] — ชื่อที่มีวงเล็บอยู่ในตัว ("ดร. (ปรายฟ้า)") จะถูกตัดผิด
+      // splitCharacter() ตัดเฉพาะ "ส่วนเสริมท้ายบรรทัด" ((V.O.)/(ต่อ)) ซึ่งเป็นกติกาเดียวกับตัวแก้ไข
+      const { name } = splitCharacter(text);
       if (name) chars.add(name);
     }
     if (text) words += text.split(/[\s\u00A0]+/).filter(Boolean).length;

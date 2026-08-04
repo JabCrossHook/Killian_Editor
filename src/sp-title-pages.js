@@ -10,6 +10,7 @@
 // หน้าปกไม่นับรวมกับเลขหน้าของบท (ธรรมเนียม: หน้าแรกของบท = หน้า 1)
 
 import { mergeSpFormat, textWidth } from './sp-format.js';
+import { num } from './num.js';
 
 export const TITLE_PAGE_VERSION = 1;
 export const TITLE_ALIGNS = ['left', 'center', 'right'];
@@ -28,7 +29,6 @@ export function newTitlePage(strings) {
   return { strings: Array.isArray(strings) ? strings.map((s) => newTitleString(s)) : [] };
 }
 
-function num(v, d) { const n = parseFloat(v); return Number.isFinite(n) ? n : d; }
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 /** ทำให้ข้อมูลที่อ่านจากไฟล์อยู่ในรูปที่ UI/ตัววาดใช้ได้เสมอ */
@@ -105,6 +105,17 @@ export class TitlePageEditor {
     if (!this.page(i)) return false;
     this.pages.splice(i, 1);
     return true;
+  }
+  /**
+   * ทำสำเนาหน้าปก — วางไว้ถัดจากหน้าต้นฉบับ · คืน index ของหน้าใหม่ (-1 = ไม่มีหน้านั้น)
+   * ต้อง deep-copy ทุกสตริง ไม่งั้นแก้หน้าใหม่แล้วหน้าเดิมเปลี่ยนตาม
+   */
+  duplicatePage(i) {
+    const p = this.page(i);
+    if (!p) return -1;
+    const copy = newTitlePage(p.strings.map((s) => newTitleString(s)));
+    this.pages.splice(i + 1, 0, copy);
+    return i + 1;
   }
   /** ย้ายหน้า (ลาก/ปุ่มขึ้น-ลง) — คืน index ใหม่ หรือ -1 เมื่อย้ายไม่ได้ */
   movePage(from, to) {

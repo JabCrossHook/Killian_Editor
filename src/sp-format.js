@@ -10,6 +10,8 @@
 //
 // หน่วยทั้งไฟล์เป็น "นิ้ว" (in) เหมือนอุตสาหกรรมบท — CSS ใช้ `in` ได้ตรง ๆ
 
+import { num } from './num.js';
+
 // ───────── 85. ขนาดกระดาษ + ระยะขอบ ─────────
 export const PAPER_SIZES = {
   letter: { name: 'Letter (8.5 × 11 นิ้ว)', width: 8.5,  height: 11,    unit: 'in' },
@@ -56,34 +58,40 @@ export function textWidth(paper, margins) {
   const m = { ...MARGIN_DEFAULTS, ...(margins || {}) };
   return Math.max(0.5, num(p.width, 8.5) - num(m.left, 1.5) - num(m.right, 1));
 }
-function num(v, d) { const n = parseFloat(v); return Number.isFinite(n) ? n : d; }
-
 // ───────── 81+82. ระยะเยื้อง / ความกว้าง / ระยะเว้นบรรทัด ต่อ element ─────────
 // indent = ระยะจาก "ขอบกระดาษ" (แบบ Final Draft) · width = ความกว้างของบล็อก
 // linesBefore/linesBetween = 1/10 บรรทัด (10 = 1 บรรทัด, 20 = 2 บรรทัด)
+// `keepNext` = ห้ามค้างท้ายหน้าเดี่ยว ๆ ต้องอยู่ติดบล็อกถัดไป
+// (RTF ใช้เป็น `\keepn` · เป็นแหล่งความจริงเดียว — export-rtf.js ดึงจากที่นี่ตอนรัน ไม่ฮาร์ดโค้ดซ้ำ)
 export const SP_ELEMENT_CONFIG = {
-  scene:         { indent: 1.5, width: 6.0, linesBefore: 20, linesBetween: 10 },
-  action:        { indent: 1.5, width: 6.0, linesBefore: 10, linesBetween: 10 },
-  character:     { indent: 3.7, width: 3.8, linesBefore: 10, linesBetween: 10 },
-  parenthetical: { indent: 3.1, width: 2.9, linesBefore: 0,  linesBetween: 10 },
-  dialogue:      { indent: 2.5, width: 3.5, linesBefore: 0,  linesBetween: 10 },
+  scene:         { indent: 1.5, width: 6.0, linesBefore: 20, linesBetween: 10, keepNext: true },
+  action:        { indent: 1.5, width: 6.0, linesBefore: 10, linesBetween: 10, keepNext: false },
+  character:     { indent: 3.7, width: 3.8, linesBefore: 10, linesBetween: 10, keepNext: true },
+  parenthetical: { indent: 3.1, width: 2.9, linesBefore: 0,  linesBetween: 10, keepNext: true },
+  dialogue:      { indent: 2.5, width: 3.5, linesBefore: 0,  linesBetween: 10, keepNext: false },
   // [alpha.57a ข้อ 2] ทรานซิชันเข้า = ชิดซ้าย · ทรานซิชันออก = ชิดขวา (ของเดิม)
-  'transition-in': { indent: 1.5, width: 6.0, linesBefore: 10, linesBetween: 10 },
-  transition:    { indent: 6.0, width: 2.0, linesBefore: 10, linesBetween: 10 },
+  'transition-in': { indent: 1.5, width: 6.0, linesBefore: 10, linesBetween: 10, keepNext: true },
+  transition:    { indent: 6.0, width: 2.0, linesBefore: 10, linesBetween: 10, keepNext: false },
   // [alpha.58 ข้อเสนอ] ฉากย่อย + ช็อต วางตัวเหมือนหัวฉากทุกอย่าง (ระยะเยื้อง/ความกว้าง/ระยะเว้น)
   // ต่างกันแค่ "ไม่มีเลขฉาก" — เลขฉากผูกกับ el === 'scene' เท่านั้น
-  subheader:     { indent: 1.5, width: 6.0, linesBefore: 20, linesBetween: 10 },
-  intercut:      { indent: 1.5, width: 6.0, linesBefore: 20, linesBetween: 10 },
-  shot:          { indent: 1.5, width: 6.0, linesBefore: 20, linesBetween: 10 },
-  'act-break':   { indent: 1.5, width: 6.0, linesBefore: 20, linesBetween: 10 },
-  note:          { indent: 1.5, width: 6.0, linesBefore: 10, linesBetween: 10 },
-  summary:       { indent: 1.5, width: 6.0, linesBefore: 10, linesBetween: 10 },
-  outline1:      { indent: 1.5, width: 6.0, linesBefore: 10, linesBetween: 10 },
-  outline2:      { indent: 1.7, width: 5.8, linesBefore: 10, linesBetween: 10 },
-  outline3:      { indent: 1.9, width: 5.6, linesBefore: 10, linesBetween: 10 },
-  image:         { indent: 1.5, width: 6.0, linesBefore: 10, linesBetween: 10 },
-  raw:           { indent: 1.5, width: 6.0, linesBefore: 10, linesBetween: 10 },
+  subheader:     { indent: 1.5, width: 6.0, linesBefore: 20, linesBetween: 10, keepNext: true },
+  intercut:      { indent: 1.5, width: 6.0, linesBefore: 20, linesBetween: 10, keepNext: true },
+  shot:          { indent: 1.5, width: 6.0, linesBefore: 20, linesBetween: 10, keepNext: true },
+  'act-break':   { indent: 1.5, width: 6.0, linesBefore: 20, linesBetween: 10, keepNext: true },
+  note:          { indent: 1.5, width: 6.0, linesBefore: 10, linesBetween: 10, keepNext: false },
+  summary:       { indent: 1.5, width: 6.0, linesBefore: 10, linesBetween: 10, keepNext: false },
+  outline1:      { indent: 1.5, width: 6.0, linesBefore: 10, linesBetween: 10, keepNext: true },
+  outline2:      { indent: 1.7, width: 5.8, linesBefore: 10, linesBetween: 10, keepNext: true },
+  outline3:      { indent: 1.9, width: 5.6, linesBefore: 10, linesBetween: 10, keepNext: true },
+  image:         { indent: 1.5, width: 6.0, linesBefore: 10, linesBetween: 10, keepNext: false },
+  raw:           { indent: 1.5, width: 6.0, linesBefore: 10, linesBetween: 10, keepNext: false },
 };
+
+/** element ที่ต้องอยู่ติดบล็อกถัดไป — อ่านจาก fmt ตอนรัน (ผู้ใช้ตั้งทับได้) */
+export function keepNextElements(fmt) {
+  const f = fmt && fmt.elements ? fmt : mergeSpFormat(fmt);
+  return SP_ELEMENT_KEYS.filter((k) => f.elements[k] && f.elements[k].keepNext === true);
+}
 
 // ───────── 83. สไตล์ จอ (screen) vs พิมพ์ (print) ─────────
 const ST = (caps, bold, italic, underline) => ({ caps, bold, italic, underline });

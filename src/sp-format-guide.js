@@ -9,6 +9,7 @@
 import { Plugin as PMPlugin, PluginKey as PMKey } from 'prosemirror-state';
 import { Decoration as Deco, DecorationSet as DecoSet } from 'prosemirror-view';
 import { lineEndingType, LINE_MARK } from './sp-view.js';
+import { createPageBreakPlugin } from './page-break-plugin.js';
 
 // ───────── 61. แสดงรูปแบบ ─────────
 const guideKey = new PMKey('kspguide');
@@ -120,63 +121,19 @@ export function refreshSceneNumbers(view) {
 // ───────── 57. เส้นคั่นหน้าในตัวแก้ไข ─────────
 // ตำแหน่งมาจาก paginate() ที่ app.js เรียกใน scheduleCount (debounce 300ms)
 // เก็บเป็นตัวแปรระดับโมดูลแบบเดียวกับสมอคอมเมนต์ — plugin แค่หยิบไปวาด
-const pbKey = new PMKey('ksppagebreak');
-let _breaks = [];                  // [{pos, page}] — page = เลขหน้าที่เริ่มตรงนั้น
-
-let _breakSig = '';
+const SP_PB = createPageBreakPlugin({
+  key: 'ksppagebreak', cls: 'sp-page-break', decoKey: 'pb',
+});
 /**
  * ตั้งรายการเส้นคั่นหน้า — คืน true เมื่อ "เปลี่ยนจริง"
  * ผู้เรียก (scheduleCount) ใช้ค่านี้ตัดสินว่าจะ dispatch transaction ไหม:
  * การวาด decoration ใหม่ทุก 300ms ทั้งที่ตำแหน่งเท่าเดิม ทำให้ ProseMirror รีเฟรช DOM ฟรี ๆ
  * (เคยไปกวนตำแหน่งเลื่อนของหน้ากระดาษระหว่างซูม)
  */
-export function setPageBreaks(list) {
-  const next = (list || []).filter((b) => b && Number.isFinite(b.pos) && b.pos > 0);
-  const sig = next.map((b) => b.pos + ':' + b.page).join(',');
-  if (sig === _breakSig) return false;
-  _breakSig = sig;
-  _breaks = next;
-  return true;
-}
-export function pageBreaks() { return _breaks.slice(); }
-
-function pbDecos(doc) {
-  if (!_breaks.length || !doc) return DecoSet.empty;
-  const max = doc.content.size;
-  const out = [];
-  for (const b of _breaks) {
-    if (b.pos > max) continue;
-    out.push(Deco.widget(b.pos, () => {
-      const d = document.createElement('div');
-      d.className = 'sp-page-break';
-      d.dataset.page = String(b.page || '');
-      d.setAttribute('contenteditable', 'false');
-      const lbl = document.createElement('span');
-      lbl.className = 'sp-page-break-num';
-      lbl.textContent = 'หน้า ' + (b.page || '');
-      d.append(lbl);
-      return d;
-    }, { side: -1, key: 'pb' + b.pos + '-' + b.page }));
-  }
-  return DecoSet.create(doc, out);
-}
-
-export function spPageBreakPlugin() {
-  return new PMPlugin({
-    key: pbKey,
-    state: {
-      init: (_c, st) => pbDecos(st.doc),
-      apply(tr, prev, _o, st) {
-        if (!tr.docChanged && !tr.getMeta(pbKey)) return prev.map(tr.mapping, tr.doc);
-        return pbDecos(st.doc);
-      },
-    },
-    props: { decorations(state) { return pbKey.getState(state); } },
-  });
-}
-export function refreshPageBreaks(view) {
-  if (view) view.dispatch(view.state.tr.setMeta(pbKey, true));
-}
+export const setPageBreaks = SP_PB.setBreaks;
+export const pageBreaks = SP_PB.breaks;
+export const spPageBreakPlugin = SP_PB.plugin;
+export const refreshPageBreaks = SP_PB.refresh;
 
 // ───────── alpha.58 · 55–56 · CONTINUED / (MORE) / (cont'd) ─────────
 // เครื่องหมายพวกนี้ "ไม่ใช่เนื้อบท" — ห้ามแทรกเป็นข้อความจริง ไม่งั้นไฟล์ .md เพี้ยนและลบไม่ออก

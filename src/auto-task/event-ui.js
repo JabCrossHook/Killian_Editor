@@ -1,6 +1,6 @@
 // event-ui.js — UI/การต่อสายของ Auto-task / Event Queue (ข้อ 88)
 // เปิด/ปิด auto-sync ใน settings + ผูกงาน rename-entity เข้ากับเอนจินจริง
-import { el, setStatus, state, log } from '../core.js';
+import { el, setStatus, state, log, t } from '../core.js';
 import { AutoTaskEngine, installDefaultRules, renameEntityTask } from '../auto-task/event-queue.js';
 
 let engine = null;
@@ -35,7 +35,7 @@ export function getTaskEngine() {
     engine = new AutoTaskEngine({
       meta: state.meta,
       onLog: (entry) => log('info', 'auto-task: ' + entry.type, entry),
-      onError: (e, type) => log('error', 'auto-task: งาน ' + type + ' พัง', { error: e && e.message }),
+      onError: (e, type) => log('error', t('task.jobFailed', 'auto-task: งาน ') + type + t('task.failedSuffix', ' พัง'), { error: e && e.message }),
     });
     installDefaultRules(engine);
     // งานจริงที่ทำได้ตอนนี้: เปลี่ยนชื่อเอนทิตี้ → ไล่แก้ทุกไฟล์

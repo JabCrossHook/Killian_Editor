@@ -275,6 +275,8 @@ function buildMenu() {
         chk('จัดการเล่ม', toggles.panels['books'], () => send('toggle-panel', 'books')),
         chk('เส้นเวลา', toggles.panels['timeline'], () => send('toggle-panel', 'timeline')),
         chk('แผนที่', toggles.panels['maps'], () => send('toggle-panel', 'maps')),
+        // [alpha.60r1 ข้อ 21] คลังรูปย้ายจากแท็บมาเป็นแผงเช่นกัน
+        chk(`คลังรูปภาพ (${C}+${S}+G)`, toggles.panels['gallery'], () => send('toggle-panel', 'gallery')),
         { type: 'separator' },
         { label: '📐 จัดการแผง (แสดง/ซ่อน)…', click: () => send('panel-system') },
         { label: 'รีเซ็ตการจัดวางแผงทั้งหมด', click: () => send('reset-panels') },

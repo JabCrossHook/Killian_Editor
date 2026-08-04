@@ -259,6 +259,46 @@ check('[57a] paginate รองรับ element ใหม่ (ไม่หล�
   SF.paginate([{ el: 'transition-in', text: 'FADE IN:' }, { el: 'subheader', text: 'ห้องครัว' },
                { el: 'intercut', text: 'INTERCUT WITH:' }]).pages[0].blocks.length === 3);
 
+// ═════════ [alpha.60r1] ช่องว่างเทส: ตัดบรรทัดไทย+ละตินผสม / กระดาษขนาดสุดขั้ว ═════════
+{
+  // wrapLines นับเป็น "จำนวนตัวอักษร" ไม่ใช่ความกว้างจริง — ไทยไม่มีช่องว่างระหว่างคำ
+  // จึงถูกนับเป็นคำเดียวยาว ๆ แล้วถูกหั่นทุก cols ตัว (พฤติกรรมที่ paginate/PDF ต้องตรงกันเป๊ะ)
+  const thai40 = 'ก'.repeat(40);
+  // ข้อควรรู้: "คำแรกที่ยาวเกินบรรทัด" ทำให้ wrapLines นับเพิ่ม 1 บรรทัด (บรรทัดว่างนำหน้า)
+  // ยอมได้ — ดีกว่าข้อความล้นขอบล่าง · pdf-generator.wrapTextLines มิเรอร์พฤติกรรมนี้เป๊ะ
+  check('[wrap] ไทยล้วน 40 ตัว บนกล่อง 2 นิ้ว (20 ตัว) = 2 บรรทัดจริง + 1 บรรทัดนำ',
+    SF.wrapLines(thai40, 2) === 3, SF.wrapLines(thai40, 2));
+  check('[wrap] ไทย 41 ตัว = เพิ่มอีกบรรทัด',
+    SF.wrapLines(thai40 + 'ก', 2) === 4, SF.wrapLines(thai40 + 'ก', 2));
+  const mixed = 'ทอร่าพูดว่า OK then she left ห้องครัวไปเงียบ ๆ';
+  check('[wrap] ไทย+ละตินผสม ตัดที่ช่องว่างของฝั่งละติน',
+    SF.wrapLines(mixed, 6) >= 1 && SF.wrapLines(mixed, 6) <= 2, SF.wrapLines(mixed, 6));
+  check('[wrap] ไทย+ละตินผสม กล่องแคบมาก → หลายบรรทัด',
+    SF.wrapLines(mixed, 1) >= 4, SF.wrapLines(mixed, 1));
+  check('[wrap] วรรณยุกต์/สระ นับเป็นตัวอักษรด้วย (ไม่ใช่ความกว้าง 0)',
+    SF.wrapLines('กิ่ง'.repeat(10), 1) === SF.wrapLines('x'.repeat(40), 1),
+    SF.wrapLines('กิ่ง'.repeat(10), 1) + ' vs ' + SF.wrapLines('x'.repeat(40), 1));
+  check('[wrap] ข้อความว่าง = 1 บรรทัดเสมอ (ไม่ใช่ 0)', SF.wrapLines('   ', 6) === 1);
+  check('[wrap] wrapLines ความกว้าง 0 ไม่พัง (อย่างน้อย 1 คอลัมน์)',
+    SF.wrapLines('กขค', 0) >= 1, SF.wrapLines('กขค', 0));
+
+  // ── กระดาษกำหนดเองขนาดสุดขั้ว ──
+  const tiny = SF.mergeSpFormat({ paperSize: 'custom', paper: { width: 1, height: 1 },
+                                  margins: { top: 0.1, bottom: 0.1, left: 0.1, right: 0.1 } });
+  check('[85] กระดาษ 1×1 นิ้ว → พื้นที่พิมพ์ยังเป็นบวก', SF.textWidth(tiny.paper, tiny.margins) > 0);
+  check('[85] กระดาษ 1×1 นิ้ว → บรรทัด/หน้าอย่างน้อย 1', SF.formatLines(tiny) >= 1, SF.formatLines(tiny));
+  check('[85] กระดาษ 1×1 นิ้ว จัดหน้าได้ ไม่วนลูป',
+    SF.paginate([{ el: 'action', text: 'ก'.repeat(200) }], { fmt: tiny }).count >= 1);
+  const huge = SF.mergeSpFormat({ paperSize: 'custom', paper: { width: 40, height: 60 } });
+  check('[85] กระดาษ 40×60 นิ้ว → บรรทัด/หน้าเยอะตามจริง', SF.formatLines(huge) > 300, SF.formatLines(huge));
+  const bad = SF.mergeSpFormat({ paperSize: 'custom', paper: { width: 'x', height: null } });
+  check('[85] ขนาดกระดาษที่กรอกผิด → ตกกลับค่ามาตรฐาน Letter',
+    bad.paper.width === 8.5 && bad.paper.height === 11, JSON.stringify(bad.paper));
+  const negM = SF.mergeSpFormat({ margins: { left: 99, right: 99 } });
+  check('[85] ระยะขอบกว้างเกินกระดาษ → พื้นที่พิมพ์ไม่ติดลบ',
+    SF.textWidth(negM.paper, negM.margins) >= 0.5, SF.textWidth(negM.paper, negM.margins));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 try { fs.unlinkSync(tmp); } catch {}
 if (fail) process.exit(1);

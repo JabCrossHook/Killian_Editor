@@ -15,7 +15,7 @@
 //              └ .k-split-pane
 //
 // pane ว่าง (leaf.tabId = null) รองรับด้วย — เปิดแยกจอตอนมีแท็บเดียวจึงทำได้ แล้วค่อยลากแท็บมาวาง
-import { $, el, setStatus, state } from '../core.js';
+import { $, el, setStatus, state, t as tr } from '../core.js';   // บทเรียน 25: ในไฟล์นี้ตัวแปร t = แท็บ → i18n ใช้ชื่อ tr
 import * as SL from '../layout/split-layout.js';
 
 const ROOT_ID = 'split-root';
@@ -171,15 +171,15 @@ function renderLeaf(node, sm) {
   else {
     const hint = el('div', 'k-split-empty');
     hint.append(el('div', 'k-split-empty-icon', '⌗'));
-    hint.append(el('div', '', 'ช่องว่าง — ลากหัวแท็บมาวางที่นี่'));
-    hint.append(el('div', 'dim', 'หรือคลิกช่องนี้แล้วเลือกแท็บด้านบน'));
+    hint.append(el('div', '', tr('split.emptyPane', 'ช่องว่าง — ลากหัวแท็บมาวางที่นี่')));
+    hint.append(el('div', 'dim', tr('split.emptyPaneHint', 'หรือคลิกช่องนี้แล้วเลือกแท็บด้านบน')));
     body.appendChild(hint);
   }
   pane.appendChild(body);
 
   // ปุ่มปิดช่องนี้ (ทุกช่องมีของตัวเอง — ปิดช่องไหนก็ได้ ไม่ใช่แค่ฝั่งขวา)
-  const cb = el('div', 'cmp-close', '✕ ปิดช่องนี้');
-  cb.title = 'ปิดช่องนี้ (แท็บยังเปิดอยู่)';
+  const cb = el('div', 'cmp-close', tr('split.closePane', '✕ ปิดช่องนี้'));
+  cb.title = tr('split.closePaneHint', 'ปิดช่องนี้ (แท็บยังเปิดอยู่)');
   cb.onmousedown = (e) => e.stopPropagation();
   cb.onclick = (e) => { e.stopPropagation(); closePane(node.id); };
   pane.appendChild(cb);
@@ -198,7 +198,7 @@ function renderLeafTabs(node, sm) {
     btn.title = id;
     btn.append(el('span', 'k-mtab-title', (t && t.title) || id.split(/[\\/]/).pop()));
     const x = el('span', 'k-mtab-x', '×');
-    x.title = 'เอาออกจากช่องนี้ (แท็บยังเปิดอยู่)';
+    x.title = tr('split.removeFromPane', 'เอาออกจากช่องนี้ (แท็บยังเปิดอยู่)');
     x.onmousedown = (e) => e.stopPropagation();
     x.onclick = (e) => {
       e.stopPropagation();
@@ -251,7 +251,7 @@ function splitHandle(node, index, sm) {
   const h = el('div', 'k-split-handle ' + (row ? 'k-sh-col' : 'k-sh-row'));
   h.dataset.splitId = node.id;
   h.dataset.index = String(index);
-  h.title = 'ลากเพื่อปรับสัดส่วน (ดับเบิลคลิก = 50%)';
+  h.title = tr('split.dragResize', 'ลากเพื่อปรับสัดส่วน (ดับเบิลคลิก = 50%)');
   h.addEventListener('dblclick', () => sm.resize(node.id, index, 0.5));
   h.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
@@ -358,8 +358,8 @@ export function createSplit(tabId, dir) {
   // (เดิมกรณีมีแท็บเดียวจะขึ้นว่า "ต้องเปิดอย่างน้อย 2 แท็บ" แล้วไม่เกิดอะไรขึ้น = ดูเหมือน split พัง)
   const other = [...state.tabs.keys()].find((f) => f !== cur && tabOf(f) && !sm.has(f)) || null;
   sm.splitWith(other, side);
-  setStatus(other ? 'แยกหน้าจอ: ' + (d === 'down' ? 'บน-ล่าง' : 'ซ้าย-ขวา')
-                  : 'เปิดช่องว่างแล้ว — ลากหัวแท็บมาวางในช่อง หรือคลิกช่องแล้วเลือกแท็บ');
+  setStatus(other ? tr('split.statusPrefix', 'แยกหน้าจอ: ') + (d === 'down' ? 'บน-ล่าง' : 'ซ้าย-ขวา')
+                  : tr('split.openedEmpty', 'เปิดช่องว่างแล้ว — ลากหัวแท็บมาวางในช่อง หรือคลิกช่องแล้วเลือกแท็บ'));
   return { dir: d, right: other };
 }
 
@@ -371,7 +371,7 @@ export function closeSplit() {
   sm.store.update(keep ? SL.leaf(keep) : null);
   sm.focusId = sm.root ? sm.root.id : null;
   if (keep && keep !== state.active?.file && state.tabs.has(keep)) hooks.activate?.(keep);
-  setStatus('ยกเลิกแยกหน้าจอแล้ว');
+  setStatus(tr('split.closed', 'ยกเลิกแยกหน้าจอแล้ว'));
 }
 
 /** ปิดเฉพาะช่องหนึ่ง (แท็บยังเปิดอยู่) */
@@ -392,7 +392,7 @@ export function toggleSplit(tabId, dir) {
       const next = JSON.parse(JSON.stringify(sm.root));
       if (next.type === 'split') next.dir = dir === 'down' ? 'col' : 'row';
       sm.store.update(next);
-      setStatus('แยกหน้าจอ: ' + (dir === 'down' ? 'บน-ล่าง' : 'ซ้าย-ขวา'));
+      setStatus(tr('split.statusPrefix', 'แยกหน้าจอ: ') + (dir === 'down' ? 'บน-ล่าง' : 'ซ้าย-ขวา'));
       return true;
     }
     closeSplit();

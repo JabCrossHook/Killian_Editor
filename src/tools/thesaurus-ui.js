@@ -1,7 +1,7 @@
 // thesaurus-ui.js — UI สำหรับ Thesaurus: คลิกขวาคำ → คำพ้อง/คำตรงข้าม (ข้อ 67)
 // แยกจาก src/thesaurus.js เดิม (ซึ่งเป็น UI ของ K1 เก่า — ไฟล์นี้เป็น UI ใหม่สำหรับ tools/thesaurus.js)
-import { el, setStatus, state } from '../core.js';
-import { getSynonyms, getAntonyms, shared } from '../tools/thesaurus.js';
+import { el, setStatus, state, t } from '../core.js';
+import { getSynonyms, getAntonyms } from '../tools/thesaurus.js';
 
 // แสดง popup คำพ้อง/คำตรงข้าม
 export async function showThesaurusPopup(word, x, y) {
@@ -34,7 +34,7 @@ export async function showThesaurusPopup(word, x, y) {
   }
 
   if (!syns.length && !ants.length) {
-    setStatus('ไม่พบคำพ้อง/คำตรงข้ามสำหรับ "' + norm + '"');
+    setStatus(t('thes.notFound', 'ไม่พบคำพ้อง/คำตรงข้ามสำหรับ "') + norm + '"');
     return;
   }
 
@@ -50,7 +50,7 @@ export async function showThesaurusPopup(word, x, y) {
     pop.append(el('div', 'k-thes-head', 'คำพ้อง (Synonyms)'));
     for (const s of syns.slice(0, 15)) {
       const item = el('div', 'k-thes-item', s);
-      item.onclick = () => { navigator.clipboard.writeText(s); setStatus('คัดลอก: ' + s); pop.remove(); };
+      item.onclick = () => { navigator.clipboard.writeText(s); setStatus(t('thes.copied', 'คัดลอก: ') + s); pop.remove(); };
       pop.append(item);
     }
   }
@@ -58,7 +58,7 @@ export async function showThesaurusPopup(word, x, y) {
     pop.append(el('div', 'k-thes-head', 'คำตรงข้าม (Antonyms)'));
     for (const a of ants.slice(0, 15)) {
       const item = el('div', 'k-thes-item', a);
-      item.onclick = () => { navigator.clipboard.writeText(a); setStatus('คัดลอก: ' + a); pop.remove(); };
+      item.onclick = () => { navigator.clipboard.writeText(a); setStatus(t('thes.copied', 'คัดลอก: ') + a); pop.remove(); };
       pop.append(item);
     }
   }

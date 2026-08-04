@@ -6,11 +6,11 @@
 //
 // ส่วนคำนวณบริสุทธิ์ (ทดสอบด้วย node ได้) · ส่วนที่แตะ DOM = renderProsePageView + plugin เส้นคั่นหน้า
 
-import { Plugin as PMPlugin, PluginKey as PMKey } from 'prosemirror-state';
-import { Decoration as Deco, DecorationSet as DecoSet } from 'prosemirror-view';
 import { mergeProseFormat, paginateProse, proseMetrics, prosePageLabel,
          proseFontStack, proseHeadingStack, proseLinePx, proseFontPx } from './prose-format.js';
 import { PAPER_SIZES, MARGIN_DEFAULTS } from './sp-format.js';
+import { num } from './num.js';
+import { createPageBreakPlugin } from './page-break-plugin.js';
 
 // ───────── รายการโหมด (ชื่อเดียวกับบทภาพยนตร์ เพื่อให้เมนู/คลาส CSS ใช้ร่วมกันได้) ─────────
 export const PROSE_VIEWS = ['normal', 'layout', 'draft', 'side', 'overview1', 'overview4'];
@@ -43,61 +43,17 @@ export function prosePagesOf(blocks, fmt, paper, margins) {
 
 // ───────── เส้นคั่นหน้าในตัวแก้ไขนิยาย (widget decoration) ─────────
 // แยกคีย์/สถานะจาก spPageBreakPlugin เพราะ KEditor กับ SPEditor เปิดพร้อมกันได้คนละแท็บ
-const edPbKey = new PMKey('kedpagebreak');
-let _edBreaks = [];
-let _edBreakSig = '';
-
+const ED_PB = createPageBreakPlugin({
+  key: 'kedpagebreak', cls: 'sp-page-break ed-page-break', decoKey: 'edpb',
+});
 /** ตั้งรายการเส้นคั่นหน้าของนิยาย — คืน true เมื่อเปลี่ยนจริง (บทเรียน 44: อย่า dispatch ซ้ำ) */
-export function setProsePageBreaks(list) {
-  const next = (list || []).filter((b) => b && Number.isFinite(b.pos) && b.pos > 0);
-  const sig = next.map((b) => b.pos + ':' + b.page).join(',');
-  if (sig === _edBreakSig) return false;
-  _edBreakSig = sig;
-  _edBreaks = next;
-  return true;
-}
-export function prosePageBreaks() { return _edBreaks.slice(); }
-
-function edPbDecos(doc) {
-  if (!_edBreaks.length || !doc) return DecoSet.empty;
-  const max = doc.content.size;
-  const out = [];
-  for (const b of _edBreaks) {
-    if (b.pos > max) continue;
-    out.push(Deco.widget(b.pos, () => {
-      const d = document.createElement('div');
-      d.className = 'sp-page-break ed-page-break';
-      d.dataset.page = String(b.page || '');
-      d.setAttribute('contenteditable', 'false');
-      const lbl = document.createElement('span');
-      lbl.className = 'sp-page-break-num';
-      lbl.textContent = 'หน้า ' + (b.page || '');
-      d.append(lbl);
-      return d;
-    }, { side: -1, key: 'edpb' + b.pos + '-' + b.page }));
-  }
-  return DecoSet.create(doc, out);
-}
-
-export function prosePageBreakPlugin() {
-  return new PMPlugin({
-    key: edPbKey,
-    state: {
-      init: (_c, st) => edPbDecos(st.doc),
-      apply(tr, prev, _o, st) {
-        if (!tr.docChanged && !tr.getMeta(edPbKey)) return prev.map(tr.mapping, tr.doc);
-        return edPbDecos(st.doc);
-      },
-    },
-    props: { decorations(state) { return edPbKey.getState(state); } },
-  });
-}
-export function refreshProsePageBreaks(view) {
-  if (view) view.dispatch(view.state.tr.setMeta(edPbKey, true));
-}
+export const setProsePageBreaks = ED_PB.setBreaks;
+export const prosePageBreaks = ED_PB.breaks;
+export const prosePageBreakPlugin = ED_PB.plugin;
+export const refreshProsePageBreaks = ED_PB.refresh;
 
 // ───────── การวาดหน้ากระดาษจริง (side / overview) ─────────
-const cssIn = (v) => (+v || 0) + 'in';
+const cssIn = (v) => num(v, 0) + 'in';
 
 /**
  * วาดหน้ากระดาษนิยายลง host (DOM) — โครงเดียวกับ renderPageView ของบทภาพยนตร์

@@ -173,5 +173,14 @@ check('blocksFromDoc: figure เก็บ src/alt', fb[5].type === 'figure' && f
 check('blocksFromDoc: pos ไล่ตามจริง', fb[2].pos === 20);
 check('blocksFromDoc: doc ว่างไม่พัง', P.proseBlocksFromDoc(null).length === 0);
 
+// [alpha.60r1] เติมเช็คที่หายไป 1 ข้อ (เอกสารอ้าง 84 แต่ไฟล์มี 83)
+// num() ย้ายไป num.js แล้ว — พิสูจน์ว่าค่า 0 ที่ผู้ใช้ตั้งเองยังรอด ไม่ถูกแทนด้วยค่าเริ่มต้น (กฎ 20)
+check('[กฎ20] ตั้งย่อหน้าแรกไม่เยื้อง (0) แล้วต้องได้ 0 จริง',
+  P.mergeProseFormat({ firstLineIndent: 0 }).firstLineIndent === 0,
+  P.mergeProseFormat({ firstLineIndent: 0 }).firstLineIndent);
+check('[กฎ20] ตั้งระยะห่างย่อหน้าเป็น 0 แล้วต้องได้ 0 จริง',
+  P.mergeProseFormat({ paraSpacing: 0 }).paraSpacing === 0,
+  P.mergeProseFormat({ paraSpacing: 0 }).paraSpacing);
+
 console.log(`\nprose-format: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

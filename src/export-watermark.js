@@ -5,6 +5,7 @@
 // ส่วนที่เขียนไฟล์รับ `api` เข้ามา (kapi) จึงไม่ผูกกับ Electron ตอนทดสอบ
 
 import { mergeSpFormat, spCss, textWidth } from './sp-format.js';
+import { num } from './num.js';
 
 export const DEFAULT_WM = {
   fontSize: 54,            // px
@@ -117,25 +118,37 @@ export function buildWatermarkHtml(pages, fmt, opts = {}) {
 
 /**
  * สร้าง PDF ทีละคน
- * @param {object} api  { join, pdfFromHtml }  (kapi)
- * @param {object} args { pages, fmt, recipients, outDir, prefix, wmTemplate, wmOptions, fontUrls, title, onProgress }
+ *
+ * มีสองเส้นทาง — เลือกเองด้วย `buildPdf`:
+ *   (ก) **ตัวสร้างในโปรแกรม** (แนะนำ) — ส่ง `buildPdf(watermarkText) → Uint8Array` เข้ามา
+ *       ได้สารบัญ/เปิดที่หน้าเดิม/ฟอนต์ไทยสองวงศ์ครบเหมือนส่งออก PDF ปกติ (กฎ 19)
+ *   (ข) Chromium printToPDF — ทางเดิม ใช้เมื่อไม่มี `buildPdf` (เช่นในเทสที่ไม่มีไฟล์ฟอนต์)
+ *
+ * @param {object} api  { join, pdfFromHtml, writeBytes }  (kapi)
+ * @param {object} args { pages, fmt, recipients, outDir, prefix, wmTemplate, wmOptions,
+ *                        fontUrls, title, date, onProgress, buildPdf }
  * @returns {Promise<string[]>} รายการไฟล์ที่สร้าง
  */
 export async function generateWatermarkedPDFs(api, args = {}) {
   const { pages, fmt, recipients = [], outDir, prefix = 'script',
-          wmTemplate = '{ชื่อ}', wmOptions, fontUrls, title, date, onProgress } = args;
+          wmTemplate = '{ชื่อ}', wmOptions, fontUrls, title, date, onProgress, buildPdf } = args;
   const made = [];
   for (let i = 0; i < recipients.length; i++) {
     const r = recipients[i];
     const text = watermarkText(r.watermark || wmTemplate, { name: r.name, title, date });
-    const html = buildWatermarkHtml(pages, fmt, { watermark: text, wmOptions, fontUrls, title });
     const file = `${safeFileName(prefix)}_${safeFileName(r.name)}.pdf`;
     const dest = await api.join(outDir, file);
-    await api.pdfFromHtml(html, dest, {
-      width: (fmt && fmt.paper && fmt.paper.width) || 8.5,
-      height: (fmt && fmt.paper && fmt.paper.height) || 11,
-      margins: (fmt && fmt.margins) || null,
-    });
+    if (typeof buildPdf === 'function') {
+      const bytes = await buildPdf(text, { ...wmOptions });
+      await api.writeBytes(dest, Array.from(bytes));            // กฎ 10/23 — ไบนารีห้ามผ่าน writeFile
+    } else {
+      const html = buildWatermarkHtml(pages, fmt, { watermark: text, wmOptions, fontUrls, title });
+      await api.pdfFromHtml(html, dest, {
+        width: num(fmt && fmt.paper && fmt.paper.width, 8.5),
+        height: num(fmt && fmt.paper && fmt.paper.height, 11),
+        margins: (fmt && fmt.margins) || null,
+      });
+    }
     made.push(dest);
     if (onProgress) onProgress(i + 1, recipients.length, r.name);
   }

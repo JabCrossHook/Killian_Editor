@@ -8,6 +8,7 @@
 // หน่วยระยะเป็น "นิ้ว" เหมือน sp-format.js ทั้งไฟล์ (xOffset = ขยับจากตำแหน่งตามการจัดหน้า)
 
 import { mergeSpFormat, textWidth, lineHeightIn } from './sp-format.js';
+import { num } from './num.js';
 
 // ───────── ตัวแปรที่ใช้ได้ในข้อความหัวกระดาษ ─────────
 // เขียนได้ทั้ง ${PAGE} และ ${หน้า} — ตารางนี้เป็น "คำอธิบายให้ UI แสดง" ด้วย
@@ -60,7 +61,6 @@ export function mergeHeaders(user) {
   };
 }
 
-function num(v, d) { const n = parseFloat(v); return Number.isFinite(n) ? n : d; }
 function clampLines(v, d) {
   const n = Math.round(num(v, d));
   return Math.max(0, Math.min(10, Number.isFinite(n) ? n : d));
@@ -117,7 +117,7 @@ export function linesForBody(fmt, hdr) {
 export function headerStringsFor(index, hdr, ctx = {}) {
   const h = hdr && 'strings' in hdr ? hdr : mergeHeaders(hdr);
   if (!h.enabled) return [];
-  const i = Math.max(1, Math.round(+index || 1));
+  const i = Math.max(1, Math.round(num(index, 1)));
   if (i === 1 && !h.firstPage) return [];
   const c = { ...ctx, PAGE: ctx.PAGE ?? i };
   return visibleRows(h).map((r) => {
@@ -142,9 +142,10 @@ export function headerHtml(index, hdr, ctx = {}) {
   // xOffset เป็นบวก = ขยับไปทางขวา → ฝั่งขวาต้อง "ลดระยะจากขอบขวา" จึงใช้เครื่องหมายกลับ
   const cell = (r) => {
     const side = r.align === 'right' ? 'right' : r.align === 'center' ? 'center' : 'left';
+    const off = num(r.xOffset, 0);
     const place = side === 'center'
-      ? `left:50%;transform:translateX(calc(-50% + ${+r.xOffset}in))`
-      : side === 'right' ? `right:${+(-r.xOffset).toFixed(4)}in` : `left:${+r.xOffset}in`;
+      ? `left:50%;transform:translateX(calc(-50% + ${off}in))`
+      : side === 'right' ? `right:${+(-off).toFixed(4)}in` : `left:${off}in`;
     const st = [
       r.bold ? 'font-weight:700' : '',
       r.italic ? 'font-style:italic' : '',

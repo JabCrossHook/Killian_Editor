@@ -8,6 +8,7 @@
 // เนื้อแผงคือ element เดิมใน index.html (#tree-panel, #content, …) — "ย้ายเข้า" host เท่านั้น ห้ามสร้างใหม่
 // เพราะโค้ดทั้งโปรเจกต์อ้าง id เหล่านี้ ($('#panes'), $('#tabs'), $('#props-body'), …)
 import { $, el, setStatus, t, onLanguageChanged } from '../core.js';
+import { popupMenu } from '../ui.js';
 import * as PL from './panel-layout.js';
 import { PanelManager } from './panel-store.js';
 import { renderPanelLayout } from './panel-renderer.js';
@@ -43,6 +44,8 @@ export const PANEL_DEFS = [
   { id: 'books',     title: 'จัดการเล่ม',       icon: 'book-content', adopt: '#books-panel',   defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.booksTitle' },
   { id: 'timeline',  title: 'เส้นเวลา',         icon: 'history',      adopt: '#tl-panel',      defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.timelineTitle' },
   { id: 'maps',      title: 'แผนที่',           icon: 'layout',       adopt: '#maps-panel',    defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.mapsTitle' },
+  // [alpha.60r1 ข้อ 21] คลังรูปภาพ — ย้ายจากแท็บเอกสารมาเป็นแผงเหมือนฟีเจอร์อื่น
+  { id: 'gallery',   title: 'คลังรูปภาพ',       icon: 'image',        adopt: '#gal-panel',     defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.galleryTitle' },
 ];
 // ชื่อแผงตามภาษาที่โหลดอยู่ (fallback = ชื่อไทยในตาราง) — เรียกใหม่ทุกครั้งที่ render
 function titleOf(d) { return d.i18n ? t(d.i18n, d.title) : d.title; }
@@ -219,7 +222,7 @@ function syncMinTray() {
       if (tray.querySelector(`[data-key="${d.id}"]`)) continue;
       const chip = el('div', 'k-min-chip', '▣ ' + titleOf(d));
       chip.dataset.key = d.id;
-      chip.title = 'คลิกเพื่อเรียกแผง "' + titleOf(d) + '" กลับมา';
+      chip.title = t('panel.trayRestorePre', 'คลิกเพื่อเรียกแผง "') + titleOf(d) + t('panel.trayRestorePost', '" กลับมา');
       chip.onclick = () => showPanel(d.id, { side: sideOf(d) });   // กลับไปฝั่งเดิมที่เคยอยู่
       tray.appendChild(chip);
     }
@@ -297,8 +300,50 @@ function rememberHome(pid) {
       if (!best || d < best.d) best = { d, id: s, side: r2.left < r.left ? 'right' : 'left' };
     }
   }
-  homes.set(pid, { targetId: best ? best.id : 'docs', side: best ? best.side : sideOf({ id: pid }) });
+  homes.set(pid, { targetId: best ? best.id : 'docs', side: best ? best.side : sideOf({ id: pid }),
+                   ratio: currentRatio(pid) });
   saveHomes();
+}
+
+// ───────── [alpha.60r1 · ข้อ 22] จำ "สัดส่วน" ของแผง ไม่ใช่แค่ตำแหน่ง ─────────
+// เลย์เอาต์ที่ผนึกอยู่เก็บ sizes ไว้ในต้นไม้แล้ว (serializeLayout เก็บทั้ง root)
+// แต่แผงที่ "ปิดแล้วเปิดใหม่" จะถูกยัดกลับเข้า dock ด้วยสัดส่วนเฉลี่ยเสมอ
+// → ผู้ใช้ที่ย่อแผงโปรเจกต์ให้แคบไว้ ต้องมาลากใหม่ทุกครั้งที่ปิด-เปิด
+
+/** สัดส่วนของแผงเทียบพี่น้องใน dock เดียวกัน (วัดจาก DOM · 0 = วัดไม่ได้) */
+function currentRatio(pid) {
+  const node = document.querySelector(`#${HOST_ID} .k-panel[data-panel-id="${pid}"]`);
+  const dockEl = node && node.closest('.k-dock');
+  if (!node || !dockEl) return 0;
+  const row = dockEl.dataset.dir === 'row';
+  const r = node.getBoundingClientRect(), dr = dockEl.getBoundingClientRect();
+  const total = row ? dr.width : dr.height;
+  const mine = row ? r.width : r.height;
+  if (!(total > 0) || !(mine > 0)) return 0;
+  return Math.max(0.05, Math.min(0.95, mine / total));
+}
+
+/** ตั้งสัดส่วนของแผงใน dock แม่ให้เท่ากับ ratio (พี่น้องแบ่งส่วนที่เหลือตามอัตราเดิม) */
+function applyRatio(pid, ratio) {
+  const m = getPanelManager();
+  if (!m.root || !(ratio > 0) || !(ratio < 1)) return false;
+  const next = JSON.parse(JSON.stringify(m.root));
+  let hit = null;
+  PL.walk(next, (n) => {
+    if (hit || n.type !== 'dock') return;
+    const i = (n.children || []).findIndex((c) => c.type === 'panel' && c.id === pid);
+    if (i >= 0 && n.children.length > 1) hit = { node: n, index: i };
+  });
+  if (!hit) return false;
+  const { node, index } = hit;
+  const n = node.children.length;
+  const sizes = PL.normalizeSizes(
+    node.sizes && node.sizes.length === n ? node.sizes : new Array(n).fill(1 / n));
+  const restOld = sizes.reduce((a, v, i) => (i === index ? a : a + v), 0);
+  const rest = 1 - ratio;
+  node.sizes = sizes.map((v, i) => (i === index ? ratio : (restOld > 0 ? v / restOld * rest : rest / (n - 1))));
+  m.store.update(next);
+  return true;
 }
 
 export function showPanel(id, opts = {}) {
@@ -325,6 +370,8 @@ export function showPanel(id, opts = {}) {
       // ผนึกซ้าย/ขวาเทียบแผงที่อยู่ในกลุ่มแท็บ = ยัด dock ซ้อนในกลุ่มแท็บ (โครงเพี้ยน) → ยึดแผงเอกสารแทน
       if (o.side !== 'center' && PL.tabGroupOf(m.root, o.targetId) && m.isDocked('docs')) o.targetId = 'docs';
       ok = m.showPanel(pid, o);
+      // [ข้อ 22] คืนสัดส่วนที่ผู้ใช้เคยลากไว้ ไม่ใช่แบ่งเท่ากันใหม่ทุกครั้ง
+      if (ok && home && home.ratio > 0) { try { applyRatio(pid, home.ratio); } catch {} }
     }
   }
   if (ok && onShowHook) { try { onShowHook(pid); } catch {} }
@@ -350,7 +397,7 @@ export function resetPanels() {
   m.store.reset();
   m.store.update(defaultLayout());
   renderPanels(true);
-  setStatus('รีเซ็ตการจัดวางแผงแล้ว');
+  setStatus(t('panel.layoutReset', 'รีเซ็ตการจัดวางแผงแล้ว'));
   return true;
 }
 /** รายการแผงสำหรับเมนู "มุมมอง → แผง" */
@@ -383,16 +430,18 @@ export function addPanelButton(id, node) {
 export async function togglePanelDialog() {
   const items = panelMenuItems();
   items.push('-');
-  items.push({ label: '⟲ รีเซ็ตการจัดวางแผงทั้งหมด', click: () => resetPanels() });
+  items.push({ label: t('panel.resetAll', '⟲ รีเซ็ตการจัดวางแผงทั้งหมด'), click: () => resetPanels() });
   try {
-    const { popupMenu } = await import('../app.js');
+    // popupMenu อยู่ที่ ui.js — app.js แค่ import มาใช้ ไม่ได้ export ต่อ
+    // (เดิม `import('../app.js')` จึงได้ undefined ทุกครั้ง → ตกไป fallback ตลอดกาล)
     const btn = $('#tb-panels');
     const r = btn ? btn.getBoundingClientRect() : { left: 40, bottom: 60 };
+    if (typeof popupMenu !== 'function') throw new Error('no popupMenu');
     popupMenu(r.left, r.bottom + 4, items);
   } catch {
     const ov = el('div', 'k-overlay');
     const box = el('div', 'k-dialog');
-    box.append(el('div', 'k-dlg-title', '📐 จัดการแผง'));
+    box.append(el('div', 'k-dlg-title', t('panel.manage', '📐 จัดการแผง')));
     for (const it of items) {
       if (it === '-') { box.append(el('hr')); continue; }
       const row = el('div', 'k-menu-item', it.label);

@@ -19,11 +19,10 @@ import { mergeSpFormat, textWidth, lineHeightIn, paginate, pageNumberLabel,
          CHARS_PER_INCH } from './sp-format.js';
 import { mergeHeaders, headerStringsFor, headerLineCount, linesForBody } from './sp-headers.js';
 import { normalizeTitlePages } from './sp-title-pages.js';
+import { num, numClamp } from './num.js';
 
 export const PT_PER_IN = 72;
 
-/** เลขที่อ่านได้จริงเท่านั้น — ต่างจาก `x || d` ที่ทำ 0 หลุดเป็นค่าเริ่มต้น (บทเรียน 5) */
-function num(v, d) { const n = parseFloat(v); return Number.isFinite(n) ? n : d; }
 
 export const PDF_DEFAULTS = {
   toc: true,                   // [87] bookmark ต่อหัวฉาก
@@ -96,9 +95,10 @@ export function mergePdfOptions(user) {
   const u = user && typeof user === 'object' ? user : {};
   const o = { ...PDF_DEFAULTS, ...u };
   o.omit = Array.isArray(u.omit) ? u.omit.filter((k) => typeof k === 'string') : [];
-  o.openPage = Math.max(0, Math.round(+o.openPage || 0));
-  o.startPage = Math.max(1, Math.round(+o.startPage || 1));
-  o.fontPt = Math.max(4, Math.min(96, +o.fontPt || 12));
+  // กฎ 20: ห้าม `+x || d` — openPage 0 (ไม่เด้งหน้า) เป็นค่าที่ตั้งใจ ไม่ใช่ "ไม่ได้ตั้ง"
+  o.openPage = Math.max(0, Math.round(num(o.openPage, 0)));
+  o.startPage = Math.max(1, Math.round(num(o.startPage, 1)));
+  o.fontPt = numClamp(o.fontPt, 12, 4, 96);
   return o;
 }
 
@@ -110,7 +110,7 @@ export function mergePdfOptions(user) {
 // ที่ wrapLines นับเพิ่มหนึ่งบรรทัด (จะได้บรรทัดว่างนำหน้า — ยอมได้ ดีกว่าข้อความล้นหน้า)
 /** ตัดข้อความเป็นบรรทัดตามจำนวนตัวอักษรต่อบรรทัด — คืนอาร์เรย์บรรทัดจริง */
 export function wrapTextLines(text, widthIn, cpi = CHARS_PER_INCH) {
-  const cols = Math.max(1, Math.floor((+widthIn || 6) * cpi));
+  const cols = Math.max(1, Math.floor(num(widthIn, 6) * cpi));
   const s = String(text ?? '');
   if (!s.trim()) return [''];
   const out = [];
@@ -247,7 +247,7 @@ function makeDrawer(set, custom) {
     }
     // ข้อความที่หมุน (ลายน้ำ) ต้องเดินตามแนวเส้นฐานที่เอียง ไม่ใช่ตามแกน x เฉย ๆ
     // (แม่แบบลายน้ำมาตรฐานคือ "{ชื่อ} · {วันที่}" ซึ่งมี `·` อยู่ด้วย จึงต้องสลับฟอนต์ให้ได้)
-    const rad = rotate ? (+rotate.angle || 0) * Math.PI / 180 : 0;
+    const rad = rotate ? num(rotate.angle, 0) * Math.PI / 180 : 0;
     const ux = Math.cos(rad), uy = Math.sin(rad);
     let cx = px, cy = y;
     runs.forEach((r, i) => {
@@ -319,12 +319,13 @@ export async function generatePdf(args = {}) {
   const wmText = String(opts.watermark || '').trim();
   const stampWatermark = (page) => {
     if (!wmText) return;
-    const s = Math.max(8, +opts.watermarkSize || 54);
+    const s = Math.max(8, num(opts.watermarkSize, 54));
     const w = widthOf(pickFont(set, false, false), wmText, s);
     draw(page, wmText, {
+      // มุม 0 องศา (แนวนอน) เป็นค่าที่ผู้ใช้ตั้งได้จริง — `|| 0` จึงไม่ผิด แต่ใช้ num() ให้เหมือนกันทั้งไฟล์
       x: (pw - w * 0.8) / 2, y: ph / 2 - s / 2, size: s, boxWidth: 0,
-      color: rgb(0, 0, 0), opacity: Math.max(0.02, Math.min(0.5, +opts.watermarkOpacity || 0.1)),
-      rotate: degrees(+opts.watermarkAngle || 0),
+      color: rgb(0, 0, 0), opacity: numClamp(opts.watermarkOpacity, 0.1, 0.02, 0.5),
+      rotate: degrees(num(opts.watermarkAngle, 0)),
     });
   };
 
@@ -335,16 +336,16 @@ export async function generatePdf(args = {}) {
     for (const s of tp.strings) {
       const text = String(s.text ?? '');
       if (!text.trim()) continue;
-      const x = (+s.x || 0) * PT_PER_IN;
-      const boxW = (+s.width > 0 ? +s.width : Math.max(0.5, tw)) * PT_PER_IN;
-      const sz = +s.size || 12;
+      const x = num(s.x, 0) * PT_PER_IN;
+      const boxW = (num(s.width, 0) > 0 ? num(s.width, 0) : Math.max(0.5, tw)) * PT_PER_IN;
+      const sz = numClamp(s.size, 12, 4, 96);
       const lh = sz * 1.2;
       // ตัวอักษรบนหน้าปกปรับขนาดได้ → จำนวนตัว/บรรทัดคิดจากขนาดจริง ไม่ใช่ 10 ตัว/นิ้วของ 12pt
       const cpi = CHARS_PER_INCH * 12 / sz;
       const lines = wrapTextLines(text, boxW / PT_PER_IN, cpi);
       lines.forEach((ln, i) => {
         draw(page, ln, {
-          x, y: ph - (+s.y || 0) * PT_PER_IN - lh * (i + 1) + lh * 0.22,
+          x, y: ph - num(s.y, 0) * PT_PER_IN - lh * (i + 1) + lh * 0.22,
           size: sz, bold: s.bold, italic: s.italic, underline: s.underline,
           align: s.align, boxWidth: boxW,
         });

@@ -1,3 +1,117 @@
+v2.0.0-alpha.60r1
+-----------------
+**รอบเก็บบั๊ก 22 ข้อ + งานที่ค้าง — คุณภาพโค้ด · i18n · ส่งออก · เทส**
+
+### บั๊ก 6 (ตัวบล็อก e2e) — จำนวนหน้าของบทหายทั้งระบบ
+- ข้อ 96 (alpha.60) เขียน gate กลับด้าน: `if (spAutoPaginate !== false)` แต่ค่าเริ่มต้นคือ `false`
+  → ปิดสวิตช์ (ค่าเริ่มต้น) แล้ว **จำนวนหน้า · เส้นคั่นหน้า · CONTINUED หายหมด**
+- แก้: แยกงานจัดหน้าเป็น `repaginateNow(tab)` แล้วให้
+  - สวิตช์ปิด (ค่าเริ่มต้น) = จัดหน้าทุกครั้งที่ `scheduleCount` ทำงาน (เหมือนก่อน alpha.60)
+  - สวิตช์เปิด = `scheduleRepaginate` ทำห่าง ๆ ตามช่วงเวลา · แถบสถานะใช้ค่าล่าสุดที่จำไว้
+- เทสใหม่ [96] 5 ข้อ คุมทั้งสองโหมด
+
+### บั๊ก 1 + Code Quality — `num()` แหล่งเดียว (กฎเหล็กข้อ 20)
+- ไฟล์ใหม่ **`src/num.js`** (บริสุทธิ์ 100% ไม่ import อะไรเลย): `num` / `numClamp` / `numInt`
+  · `core.js` ส่งต่อให้โมดูลที่แตะ DOM · โมดูลบริสุทธิ์ import ตรง
+- ลบสำเนา `num()` ที่ซ้ำใน 5 ไฟล์ (sp-format · sp-headers · sp-title-pages · prose-format · pdf-generator)
+- แทน `+x || d` / `parseFloat(x) || d` ที่เหลือทั้งหมด:
+  `pdf-generator` (openPage/startPage/fontPt/rotate.angle/watermark*/title x,y,width,size/wrapTextLines) ·
+  `sp-headers` (index/xOffset) · `pdf-ui` (spFontPt) · `export-rtf` (inTw/indent/width/linesBefore) ·
+  `export-watermark` (ขนาดกระดาษ) · `prose-view` + `sp-view` (`cssIn`) · `app.js` (spPaginateInterval/ลายน้ำ)
+
+### บั๊ก 2 — RTF เว้นบรรทัดไม่ตรงกับจอ/PDF
+- `paraCtrl` เคยคิด `(linesBefore/10 − 1)` → หัวฉากได้ 1 บรรทัดแทน 2 · **บรรยาย/ตัวละครได้ 0**
+  (ชื่อตัวละครติดบรรยายในไฟล์ Word)
+- แก้เป็น `round(linesBefore/10) × 240 twips` ตรงกับที่ `paginate()` นับ
+
+### บั๊ก 3 — `caps` ของหัวกระดาษ (ตรวจแล้วไม่ใช่บั๊ก)
+- ทั้ง HTML preview · PDF · ข้อความล้วน วิ่งผ่าน `headerStringsFor()` ซึ่ง `toUpperCase()` ให้แล้ว
+  → ไม่มีทางไม่ตรงกัน · เพิ่ม unit test 7 ข้อล็อกไว้กันคนแยกทางกันภายหลัง
+
+### บั๊ก 4 — แคชฟอนต์ PDF ล้างไม่ได้
+- `pdfFontBytes()` จำ **mtime ของทุกไฟล์ฟอนต์** แล้วเทียบใหม่ทุกครั้ง → เปลี่ยนไฟล์ฟอนต์แล้วเห็นผลทันที
+- เพิ่ม `clearPdfFontCache()` สำหรับล้างด้วยมือ · อ่านไม่ได้รอบใดก็ยังใช้ของเดิมต่อ (ไม่พัง)
+
+### บั๊ก 5 — เส้นคั่นหน้าเขียนซ้ำสองที่
+- ไฟล์ใหม่ **`src/page-break-plugin.js`** — `createPageBreakPlugin({key, cls, decoKey})`
+- `sp-format-guide.js` (บท) และ `prose-view.js` (นิยาย) ใช้โรงงานเดียวกัน **แต่สถานะแยกกัน**
+  (เปิดบท+นิยายคนละแท็บพร้อมกันได้เหมือนเดิม) — ตัดโค้ดซ้ำ ~53 บรรทัด
+
+### บั๊ก 7 — กล่อง "จัดการแผง" ตกไป fallback ตลอด
+- `panel-ui.js` เคย `import('../app.js')` เพื่อเอา `popupMenu` แต่ app.js แค่ import มาใช้ ไม่ได้ export ต่อ
+  → ได้ `undefined` ทุกครั้ง · แก้เป็น import จาก `ui.js` ตรง ๆ
+
+### บั๊ก 8 + 9 — `sp-compare.js`
+- ลบ `flushBuf()` ที่ประกาศแล้วไม่เคยถูกเรียก (dead code)
+- `SP_PREFIX` เลิกคัดลอกตาราง → สร้างจาก **`SP_ELEMS` ของ fountain.js** ตอนรัน
+  (เปลี่ยน prefix ที่เดียวแล้วการเทียบบทตามทันที)
+
+### บั๊ก 10 — นับ token เกินเมื่อคำตอบว่าง
+- `usageOf()` ใช้ `num(output) || estimateTokens(text)` → `output = 0` จริง ๆ หลุดไปประมาณจากข้อความ
+- แยก "ไม่มีค่ามา" ออกจาก "ค่ามาเป็น 0" ด้วย `isNum()` (ทั้ง output และ total)
+
+### บั๊ก 11 — `SEVERITY` ประกาศซ้ำ 2 ไฟล์
+- ย้าย `SEVERITY` + `SEV_RANK` เข้า **`ai/ai-core.js`** · `ai-plot.js` / `ai-character.js` ส่งต่อ
+
+### บั๊ก 12 + 13 — นำเข้าบทภาพยนตร์
+- Round-trip fallback เดิมรองรับแค่ 3 ชนิด (action/character/scene) จาก ~15
+  → ใช้ prefix ของ `SP_ELEMS` ทุกชนิด (ฉากย่อย `$sub` · สลับฉาก `$intercut` · ทรานซิชันเข้า `$in` …)
+- `importSummary` เลิก `text.split('(')[0]` → ใช้ **`splitCharacter()`**
+  ("ดร. (ปรายฟ้า) (V.O.)" กับ "ดร. (ปรายฟ้า)" นับเป็นคนเดียวถูกต้อง)
+
+### บั๊ก 14–17 — import ที่ไม่เคยถูกใช้
+- ถอด `saveAICfg` (ai-ui) · `shared` (thesaurus-ui) · `addCol`/`removeCol`/`getKanbanData`/
+  `markDirty`/`saveProjectMeta` (kanban-ui) · `detectFormat`/`renderComparisonHtml` (app.js)
+
+### บั๊ก 18 — i18n ของโมดูล UI ใหม่
+- ย้ายข้อความไทย **~145 สตริง** เข้า `languages/th.json` + `en.json` (พร้อมคำแปลอังกฤษ)
+  `ai/ai-ui` · `comments/comment-ui` · `import/import-ui` · `tools/thesaurus-ui` ·
+  `kanban/kanban-ui` · `panels/panel-ui` · `layout/split-ui` · `auto-task/event-ui`
+- ทุกจุดใช้รูป `t('key', 'ไทย')` — ไม่มีคีย์ก็ยังได้ไทยเหมือนเดิม
+- **บทเรียน 25 ซ้ำ**: `split-ui` / `ai-ui` / `comment-ui` มีตัวแปรชื่อ `t` (แท็บ) อยู่แล้ว
+  → import เป็น `t as tr` เหมือน app.js (ไม่ทำแบบนี้ = `t3 is not a function` กลางการวาด split)
+
+### บั๊ก 19 + 20 — สถานะการต่อเมนู (ตรวจแล้ว)
+- Comment · Kanban · Panel · Split · Import-Scrivener · World · Auto-task **ต่อเมนู/คำสั่งครบแล้ว**
+  ตั้งแต่ alpha.60 (มีทั้ง menu item ใน `main.js` และ `case` ใน `handleCommand`)
+- Thesaurus เข้าถึงผ่านเมนูคลิกขวาในตัวแก้ไข (ไม่ใช่เมนูหลัก) — ตามที่ออกแบบไว้
+
+### บั๊ก 21 — คลังรูปเป็นแผง
+- เดิมเป็น "แท็บเอกสาร" (`::gallery::`) แย่งแถบแท็บกับฉากที่กำลังเขียน
+- ตอนนี้เป็นแผงเต็มตัว (`#gal-panel`) — dock / ลอย / รวมเป็นแท็บกับแผงอื่นได้
+  · เมนู มุมมอง → แผง → คลังรูปภาพ · ปุ่ม 🖼 และ Ctrl+Shift+G เหมือนเดิม
+
+### บั๊ก 22 — แผงจำ "สัดส่วน" ด้วย
+- ปิดแผงแล้วเปิดใหม่เคยได้สัดส่วนเฉลี่ยเสมอ (ผู้ใช้ต้องลากใหม่ทุกครั้ง)
+- `rememberHome()` เก็บ `ratio` เพิ่มจาก `{side,targetId}` · `applyRatio()` คืนให้ตอนเปิดกลับ
+  (พี่น้องใน dock แบ่งส่วนที่เหลือตามอัตราเดิม)
+
+### ฟีเจอร์ที่ยังไม่สมบูรณ์ — ปิดงาน
+- **หน้าปกใช้กับ FDX/RTF ได้แล้ว**: `generateFdx(blocks, meta, {titlePages})` ·
+  `generateRtf(blocks, meta, fmt, {titlePages, fontPt})` — ชนะหน้าปกอัตโนมัติจาก meta
+- **FDX ส่งออกเลขฉาก**: `<Paragraph Type="Scene Heading" Number="1">` (ไล่นับเอง หรือใช้ `b.sceneNo`)
+- **RTF ตามขนาดฟอนต์ที่ตั้งไว้**: `rtfFs(pt)` → `\fsN` (เดิมฮาร์ดโค้ด 12pt)
+- **KEEP_NEXT ไม่ฮาร์ดโค้ดแล้ว**: เพิ่ม `keepNext` ใน `SP_ELEMENT_CONFIG` + `keepNextElements(fmt)`
+  → ผู้ใช้ตั้งทับได้ · RTF อ่านตอนรัน
+- **PDF ลายน้ำรายคนใช้ตัวสร้างในโปรแกรม**: `generateWatermarkedPDFs(api, {buildPdf})`
+  → ได้สารบัญ · หน้าปก · หัวกระดาษ · ฟอนต์ไทยสองวงศ์ (กฎ 19) เหมือนส่งออก PDF ปกติ
+  (ทาง Chromium `printToPDF` ยังอยู่เป็นทางสำรองเมื่อไม่ส่ง `buildPdf`)
+- **`TitlePageEditor.duplicatePage(i)`** + ปุ่ม "⧉ ทำสำเนา" ในกล่องหน้าปก (deep copy)
+
+### เทสที่เพิ่ม
+- unit **832 → 1,014** · e2e **1,432 → 1,471**: ตัดบรรทัดไทย/ไทยผสมละติน · กระดาษ custom สุดขั้ว (1×1 นิ้ว, 40×60 นิ้ว) ·
+  `needsLatinFont` กับอีโมจิ/เครื่องหมายสากล · `splitFontRuns` สลับหลายรอบ ·
+  RTF ขนาดฟอนต์ ≠ 12pt · FDX/RTF ที่มีแต่บรรทัดว่าง · หน้าปกใน FDX/RTF · `keepNext` ·
+  caps ของหัวกระดาษ · prose-format เติมเช็คที่หายไป
+- e2e: [96] สวิตช์ปรับหน้าตามช่วงเวลา · [21] คลังรูปเป็นแผง · [22] แผงจำสัดส่วน ·
+  num()/กฎ 20 · หน้าปก FDX/RTF · duplicatePage · แคชฟอนต์ · เส้นคั่นหน้าแยกสถานะ ·
+  popupMenu ของกล่องจัดการแผง · SP_PREFIX · splitCharacter · คีย์ i18n ครบ
+
+### บทเรียนใหม่
+- **e2e ต้องล้าง global settings ด้วย** (`%APPDATA%/Killian2/settings.json` — alpha.60 ข้อ 94)
+  รอบก่อนหน้าเขียน `uiFontSize = 4` ค้างไว้ → รอบถัดไปฟอนต์ UI เริ่มที่ 18px แล้วเช็คที่คาด 14px ล้ม
+  ตั้งแต่ต้น (ขยายจากบทเรียน 4 และ 34 ที่พูดถึงแค่ localStorage)
+
 v2.0.0-alpha.60r
 -----------------
 **แก้ไขเล็กน้อย 8 ข้อ — UX + session + AI providers**

@@ -1,15 +1,15 @@
 // ai-ui.js — UI ทั้งหมดของ AI features (ข้อ 72–79): assistant, plot, dialogue, character, world, chat
-import { $, el, state, setStatus, log } from '../core.js';
-import { callAI, getAISettings, loadApiKey, saveAISettings as saveAICfg } from '../ai-settings.js';
+import { $, el, state, setStatus, log, t as tr } from '../core.js';   // บทเรียน 25: ในไฟล์นี้ตัวแปร t = แท็บ → i18n ใช้ชื่อ tr
+import { callAI, getAISettings, loadApiKey } from '../ai-settings.js';
 import { listScenes, listEntities } from '../project-scan.js';
 
 // ───────── helper: เช็คว่า AI พร้อมหรือยัง ─────────
 async function aiReady() {
-  if (!state.root) { setStatus('ยังไม่ได้เปิดโปรเจกต์'); return false; }
+  if (!state.root) { setStatus(tr('ai.noProject', 'ยังไม่ได้เปิดโปรเจกต์')); return false; }
   const ai = getAISettings();
   if ((ai.provider || 'openai') === 'ollama') return true;
   if (await loadApiKey()) return true;
-  setStatus('ตั้งค่า AI ที่ ไฟล์ → ตั้งค่า AI ก่อน');
+  setStatus(tr('ai.needSetup', 'ตั้งค่า AI ที่ ไฟล์ → ตั้งค่า AI ก่อน'));
   return false;
 }
 
@@ -44,42 +44,42 @@ export async function openAIAssistant() {
   const sel = t?.editor ? t.editor.getSelectedText() : (t?.sp ? t.sp.getSelectedText() : '');
   const fullText = t?.editor ? t.editor.getText() : (t?.sp ? t.sp.getText() : '');
 
-  showDialog('✨ AI ผู้ช่วยเขียน', (box, ov) => {
-    const TASK_TH = { expand: 'ขยายความ', summarize: 'สรุปความ', rewrite: 'เขียนใหม่',
-                      changeTone: 'เปลี่ยนโทน', continue: 'เขียนต่อ' };
-    const TONE_TH = { formal: 'ทางการ', casual: 'กันเอง', humorous: 'ตลก', dark: 'มืดหม่น',
-                      romantic: 'โรแมนติก', tense: 'ระทึก', concise: 'กระชับ', lyrical: 'บรรยายละเอียด' };
+  showDialog(tr('ai.assistantTitle', '✨ AI ผู้ช่วยเขียน'), (box, ov) => {
+    const TASK_TH = { expand: tr('ai.opExpand', 'ขยายความ'), summarize: tr('ai.opSummarize', 'สรุปความ'), rewrite: tr('ai.opRewrite', 'เขียนใหม่'),
+                      changeTone: tr('ai.opTone', 'เปลี่ยนโทน'), continue: tr('ai.opContinue', 'เขียนต่อ') };
+    const TONE_TH = { formal: tr('ai.toneFormal', 'ทางการ'), casual: tr('ai.toneCasual', 'กันเอง'), humorous: tr('ai.toneFunny', 'ตลก'), dark: tr('ai.toneDark', 'มืดหม่น'),
+                      romantic: tr('ai.toneRomantic', 'โรแมนติก'), tense: tr('ai.toneTense', 'ระทึก'), concise: tr('ai.toneConcise', 'กระชับ'), lyrical: tr('ai.toneDetailed', 'บรรยายละเอียด') };
     const taskSel = el('select');
     Object.keys(TASK_TH).forEach((v) => taskSel.append(el('option', '', TASK_TH[v], { value: v })));
     const toneSel = el('select');
     toneSel.append(el('option', '', 'ไม่เปลี่ยนโทน', { value: '' }));
     Object.keys(TONE_TH).forEach((v) => toneSel.append(el('option', '', TONE_TH[v], { value: v })));
-    const instrInput = el('textarea'); instrInput.placeholder = 'คำแนะนำเพิ่มเติม (ถ้ามี)';
+    const instrInput = el('textarea'); instrInput.placeholder = tr('ai.extraHint', 'คำแนะนำเพิ่มเติม (ถ้ามี)');
     instrInput.style.cssText = 'width:100%;min-height:60px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:8px;font:inherit;resize:vertical';
 
     const textInput = el('textarea');
     textInput.value = sel || fullText.slice(0, 3000);
-    textInput.placeholder = 'ข้อความที่จะประมวลผล';
+    textInput.placeholder = tr('ai.inputLabel', 'ข้อความที่จะประมวลผล');
     textInput.style.cssText = 'width:100%;min-height:120px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:8px;font:inherit;resize:vertical;margin-top:8px';
 
     const resultDiv = el('div');
     resultDiv.style.cssText = 'max-height:40vh;overflow-y:auto;white-space:pre-wrap;margin:8px 0;padding:8px;background:var(--side);border-radius:6px;min-height:60px;font-size:14px;line-height:1.8';
 
     const row1 = el('div', 'k-row');
-    row1.append(el('label', '', 'คำสั่ง: '), taskSel);
-    row1.append(el('label', '', ' โทน: '), toneSel);
+    row1.append(el('label', '', tr('ai.opLabel', 'คำสั่ง: ')), taskSel);
+    row1.append(el('label', '', tr('ai.toneLabel', ' โทน: ')), toneSel);
     box.append(row1);
     box.append(instrInput);
-    box.append(el('label', '', 'ข้อความ:'));
+    box.append(el('label', '', tr('ai.textLabel', 'ข้อความ:')));
     box.append(textInput);
-    box.append(el('label', '', 'ผลลัพธ์:'));
+    box.append(el('label', '', tr('ai.resultLabel', 'ผลลัพธ์:')));
     box.append(resultDiv);
 
     const btns = el('div', 'k-dlg-btns');
     const runBtn = el('button', 'k-ok', '▶ ประมวลผล');
     runBtn.onclick = async () => {
       runBtn.disabled = true;
-      resultDiv.textContent = 'กำลังประมวลผล…';
+      resultDiv.textContent = tr('ai.working', 'กำลังประมวลผล…');
       const task = taskSel.value;
       const tone = toneSel.value;
       const instr = instrInput.value.trim();
@@ -95,8 +95,8 @@ export async function openAIAssistant() {
         client: getAIClient(), rag, task, tone: tone || undefined, instruction: instr, text,
         stream: true, onChunk: (c) => { acc += c; resultDiv.textContent = acc; },
       });
-      if (res.ok) resultDiv.textContent = res.text || acc || '(ไม่มีคำตอบ)';
-      else resultDiv.textContent = '❌ ' + (res.error || 'เกิดข้อผิดพลาด กรุณาลองใหม่');
+      if (res.ok) resultDiv.textContent = res.text || acc || tr('ai.noAnswer', '(ไม่มีคำตอบ)');
+      else resultDiv.textContent = '❌ ' + (res.error || tr('ai.errorRetry', 'เกิดข้อผิดพลาด กรุณาลองใหม่'));
       runBtn.disabled = false;
     };
 
@@ -107,7 +107,7 @@ export async function openAIAssistant() {
       if (t?.editor) t.editor.cmd('insertText', r);
       else if (t?.sp) t.sp.cmd('insertText', r);
       ov.remove();
-      setStatus('แทรกผลลัพธ์ AI ลงฉากแล้ว');
+      setStatus(tr('ai.insertedResult', 'แทรกผลลัพธ์ AI ลงฉากแล้ว'));
     };
     btns.append(runBtn, insertBtn, el('button', 'k-cancel', 'ปิด'));
     const closeBtn = btns.lastChild;
@@ -121,14 +121,14 @@ export async function openAIAssistant() {
 // ══════════════════════════════════════════════════════════════
 export async function openPlotHoleDetector() {
   if (!(await aiReady())) return;
-  if (!state.root) { setStatus('เปิดโปรเจกต์ก่อน'); return; }
+  if (!state.root) { setStatus(tr('ai.openProjectFirst', 'เปิดโปรเจกต์ก่อน')); return; }
 
-  setStatus('🔍 กำลังตรวจสอบ Plot Holes…');
+  setStatus(tr('ai.plotWorking', '🔍 กำลังตรวจสอบ Plot Holes…'));
 
-  showDialog('🔍 ตรวจสอบ Plot Hole', async (box, ov) => {
+  showDialog(tr('ai.plotTitle', '🔍 ตรวจสอบ Plot Hole'), async (box, ov) => {
     const resultDiv = el('div');
     resultDiv.style.cssText = 'max-height:50vh;overflow-y:auto;white-space:pre-wrap;font-size:14px;line-height:1.8;min-height:80px';
-    resultDiv.textContent = 'กำลังรวบรวมข้อมูลฉาก…';
+    resultDiv.textContent = tr('ai.collectingScenes', 'กำลังรวบรวมข้อมูลฉาก…');
     box.append(resultDiv);
 
     // รวบรวมฉากทั้งหมด (path ของบทมาจาก draft.json — ดู project-scan.js)
@@ -137,28 +137,28 @@ export async function openPlotHoleDetector() {
       allScenes = (await listScenes(state.root, { withText: true }))
         .map((s) => ({ id: s.id, title: s.title, chapterId: s.chapterId, text: s.text || '',
                        storyDate: s.row.storyDate || '', pov: s.row.pov || '' }));
-    } catch (e) { resultDiv.textContent = '❌ อ่านไฟล์ไม่สำเร็จ: ' + e.message; return; }
+    } catch (e) { resultDiv.textContent = tr('ai.readFail', '❌ อ่านไฟล์ไม่สำเร็จ: ') + e.message; return; }
 
-    if (!allScenes.length) { resultDiv.textContent = '(ไม่พบฉากในโปรเจกต์นี้)'; return; }
+    if (!allScenes.length) { resultDiv.textContent = tr('ai.noScenes', '(ไม่พบฉากในโปรเจกต์นี้)'); return; }
 
     // ใช้เอนจิน ai-plot.js (แบ่ง batch ตามงบ token + ตรวจออฟไลน์ + แปลงคำตอบเป็นโครงสร้าง)
-    resultDiv.textContent = 'กำลังส่งให้ AI วิเคราะห์…';
+    resultDiv.textContent = tr('ai.sendingToAi', 'กำลังส่งให้ AI วิเคราะห์…');
     const { detectPlotHoles } = await import('./ai-plot.js');
     const { getAIClient } = await import('./ai-bridge.js');
     const res = await detectPlotHoles([], { client: getAIClient(), scenes: allScenes });
 
     resultDiv.textContent = '';
     if (!res.holes.length) {
-      resultDiv.textContent = res.error ? '❌ ' + res.error : '✅ ไม่พบจุดบกพร่องของพล็อต';
+      resultDiv.textContent = res.error ? '❌ ' + res.error : tr('ai.noPlotHoles', '✅ ไม่พบจุดบกพร่องของพล็อต');
     } else {
       resultDiv.append(el('div', 'dim', `พบ ${res.holes.length} จุด · ตรวจ ${res.batches} รอบ`));
       for (const h of res.holes) {
         const row = el('div');
         row.style.cssText = 'margin:8px 0;padding:8px 10px;background:var(--side);border-radius:6px;border-left:3px solid var(--accent)';
         const sev = { high: '🔴', medium: '🟡', low: '⚪' }[h.severity] || '•';
-        row.append(el('div', '', `${sev} [${h.type || 'ทั่วไป'}] ${h.description || ''}`));
-        if (h.sceneTitle || h.sceneId) row.append(el('div', 'dim', 'ฉาก: ' + (h.sceneTitle || h.sceneId)));
-        if (h.evidence) row.append(el('div', 'dim', 'หลักฐาน: ' + h.evidence));
+        row.append(el('div', '', `${sev} [${h.type || tr('ai.general', 'ทั่วไป')}] ${h.description || ''}`));
+        if (h.sceneTitle || h.sceneId) row.append(el('div', 'dim', tr('ai.sceneLabel', 'ฉาก: ') + (h.sceneTitle || h.sceneId)));
+        if (h.evidence) row.append(el('div', 'dim', tr('ai.evidenceLabel', 'หลักฐาน: ') + h.evidence));
         if (h.suggestion) row.append(el('div', '', '💡 ' + h.suggestion));
         resultDiv.append(row);
       }
@@ -179,15 +179,15 @@ export async function openPlotHoleDetector() {
 export async function openDialogueGenerator() {
   if (!(await aiReady())) return;
 
-  showDialog('💬 สร้างบทสนทนา', (box, ov) => {
+  showDialog(tr('ai.dialogueTitle', '💬 สร้างบทสนทนา'), (box, ov) => {
     box.style.minWidth = '500px';
     const charA = el('input'); charA.placeholder = 'ชื่อตัวละคร A';
     const charB = el('input'); charB.placeholder = 'ชื่อตัวละคร B';
-    const descA = el('textarea'); descA.placeholder = 'คำอธิบายตัวละคร A (บุคลิก, พูดจา, เป้าหมาย…)';
+    const descA = el('textarea'); descA.placeholder = tr('ai.charADesc', 'คำอธิบายตัวละคร A (บุคลิก, พูดจา, เป้าหมาย…)');
     descA.style.cssText = 'width:100%;min-height:60px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:8px;font:inherit;resize:vertical';
-    const descB = el('textarea'); descB.placeholder = 'คำอธิบายตัวละคร B';
+    const descB = el('textarea'); descB.placeholder = tr('ai.charBDesc', 'คำอธิบายตัวละคร B');
     descB.style.cssText = descA.style.cssText;
-    const context = el('textarea'); context.placeholder = 'บริบทของบทสนทนา (สถานการณ์, สถานที่, เป้าหมาย…)';
+    const context = el('textarea'); context.placeholder = tr('ai.dialogueCtx', 'บริบทของบทสนทนา (สถานการณ์, สถานที่, เป้าหมาย…)');
     context.style.cssText = descA.style.cssText;
     const resultDiv = el('div');
     resultDiv.style.cssText = 'max-height:35vh;overflow-y:auto;white-space:pre-wrap;margin:8px 0;padding:8px;background:var(--side);border-radius:6px;min-height:60px;font-size:14px;line-height:1.8';
@@ -197,26 +197,26 @@ export async function openDialogueGenerator() {
     fmtSel.append(el('option', '', 'ร้อยแก้ว', { value: 'prose' }));
 
     box.append(el('div', 'k-row'));
-    box.querySelector('.k-row').append(el('label', '', 'ตัวละคร A: '), charA);
+    box.querySelector('.k-row').append(el('label', '', tr('ai.charA', 'ตัวละคร A: ')), charA);
     box.append(descA);
-    box.append(el('label', '', 'ตัวละคร B: '));
+    box.append(el('label', '', tr('ai.charB', 'ตัวละคร B: ')));
     box.append(charB);
     box.append(descB);
-    box.append(el('label', '', 'บริบท: '));
+    box.append(el('label', '', tr('ai.ctxLabel', 'บริบท: ')));
     box.append(context);
     const fmtRow = el('div', 'k-row');
-    fmtRow.append(el('label', '', 'รูปแบบ: '), fmtSel);
+    fmtRow.append(el('label', '', tr('ai.formatLabel', 'รูปแบบ: ')), fmtSel);
     box.append(fmtRow);
-    box.append(el('label', '', 'บทสนทนา:'));
+    box.append(el('label', '', tr('ai.dialogueLabel', 'บทสนทนา:')));
     box.append(resultDiv);
 
     const btns = el('div', 'k-dlg-btns');
     const runBtn = el('button', 'k-ok', '▶ สร้าง');
     runBtn.onclick = async () => {
       runBtn.disabled = true;
-      resultDiv.textContent = 'กำลังสร้างบทสนทนา…';
+      resultDiv.textContent = tr('ai.dialogueWorking', 'กำลังสร้างบทสนทนา…');
       const a = charA.value.trim(), b = charB.value.trim(), ctx = context.value.trim();
-      if (!a || !b) { resultDiv.textContent = '❌ กรุณาใส่ชื่อตัวละครทั้งสอง'; runBtn.disabled = false; return; }
+      if (!a || !b) { resultDiv.textContent = tr('ai.needBothChars', '❌ กรุณาใส่ชื่อตัวละครทั้งสอง'); runBtn.disabled = false; return; }
       // ใช้เอนจิน ai-dialogue.js — ดึงบุคลิกจาก Wiki ก่อน แล้วค่อยใช้ที่พิมพ์ในกล่อง
       const { generateDialogue } = await import('./ai-dialogue.js');
       const { getAIClient } = await import('./ai-bridge.js');
@@ -230,8 +230,8 @@ export async function openDialogueGenerator() {
           onChunk: (c) => { acc += c; resultDiv.textContent = acc; } });
       if (res.ok) {
         resultDiv.textContent = res.text;
-        if (res.speakers?.length) resultDiv.title = 'ผู้พูด: ' + res.speakers.join(', ');
-      } else resultDiv.textContent = '❌ ' + (res.error || 'เกิดข้อผิดพลาด');
+        if (res.speakers?.length) resultDiv.title = tr('ai.speakerLabel', 'ผู้พูด: ') + res.speakers.join(', ');
+      } else resultDiv.textContent = '❌ ' + (res.error || tr('ai.error', 'เกิดข้อผิดพลาด'));
       runBtn.disabled = false;
     };
     const insertBtn = el('button', '', '📥 แทรก');
@@ -241,7 +241,7 @@ export async function openDialogueGenerator() {
       const t = state.active;
       if (t?.editor) t.editor.cmd('insertText', r);
       else if (t?.sp) t.sp.cmd('insertText', r);
-      ov.remove(); setStatus('แทรกบทสนทนาลงฉากแล้ว');
+      ov.remove(); setStatus(tr('ai.insertedDialogue', 'แทรกบทสนทนาลงฉากแล้ว'));
     };
     btns.append(runBtn, insertBtn, el('button', 'k-cancel', 'ปิด'));
     btns.lastChild.onclick = () => ov.remove();
@@ -254,38 +254,38 @@ export async function openDialogueGenerator() {
 // ══════════════════════════════════════════════════════════════
 export async function openConsistencyCheck(entityPath) {
   if (!(await aiReady())) return;
-  if (!entityPath) { setStatus('เลือกเอนทิตี้ (ตัวละคร) ก่อน'); return; }
+  if (!entityPath) { setStatus(tr('ai.pickEntity', 'เลือกเอนทิตี้ (ตัวละคร) ก่อน')); return; }
 
   let entity;
-  try { entity = await kapi.readJson(entityPath); } catch { setStatus('อ่านไฟล์เอนทิตี้ไม่สำเร็จ'); return; }
-  if (!entity || !entity.name) { setStatus('เอนทิตี้ไม่มีชื่อ'); return; }
+  try { entity = await kapi.readJson(entityPath); } catch { setStatus(tr('ai.entityReadFail', 'อ่านไฟล์เอนทิตี้ไม่สำเร็จ')); return; }
+  if (!entity || !entity.name) { setStatus(tr('ai.entityUnnamed', 'เอนทิตี้ไม่มีชื่อ')); return; }
 
-  setStatus('🎭 กำลังตรวจสอบความสม่ำเสมอ…');
-  showDialog('🎭 ตรวจสอบความสม่ำเสมอ — ' + entity.name, async (box, ov) => {
+  setStatus(tr('ai.consistWorking', '🎭 กำลังตรวจสอบความสม่ำเสมอ…'));
+  showDialog(tr('ai.consistTitle', '🎭 ตรวจสอบความสม่ำเสมอ — ') + entity.name, async (box, ov) => {
     const resultDiv = el('div');
     resultDiv.style.cssText = 'max-height:50vh;overflow-y:auto;white-space:pre-wrap;font-size:14px;line-height:1.8;min-height:80px';
-    resultDiv.textContent = 'กำลังรวบรวมข้อมูล…';
+    resultDiv.textContent = tr('ai.collecting', 'กำลังรวบรวมข้อมูล…');
     box.append(resultDiv);
 
     // ใช้เอนจิน ai-character.js — หาฉากที่ตัวละครปรากฏเอง + ตรวจออฟไลน์ + แปลงคำตอบเป็นโครงสร้าง
     const scenes = (await listScenes(state.root, { withText: true }))
       .map((s) => ({ id: s.id, title: s.title, text: s.text || '', storyDate: s.row.storyDate || '' }));
-    resultDiv.textContent = 'กำลังส่งให้ AI วิเคราะห์…';
+    resultDiv.textContent = tr('ai.sendingToAi', 'กำลังส่งให้ AI วิเคราะห์…');
     const { checkConsistency } = await import('./ai-character.js');
     const { getAIClient } = await import('./ai-bridge.js');
     const res = await checkConsistency(entityPath, { client: getAIClient(), entity, scenes });
 
     resultDiv.textContent = '';
     if (!res.issues.length) {
-      resultDiv.textContent = res.error ? '❌ ' + res.error : '✅ ไม่พบความไม่สม่ำเสมอ';
+      resultDiv.textContent = res.error ? '❌ ' + res.error : tr('ai.noInconsist', '✅ ไม่พบความไม่สม่ำเสมอ');
     } else {
       resultDiv.append(el('div', 'dim', `พบ ${res.issues.length} จุด จาก ${res.appearances || 0} ฉากที่ปรากฏ`));
       for (const it of res.issues) {
         const row = el('div');
         row.style.cssText = 'margin:8px 0;padding:8px 10px;background:var(--side);border-radius:6px;border-left:3px solid var(--accent)';
-        row.append(el('div', '', `• [${it.aspect || 'ทั่วไป'}] ${it.issue || ''}`));
-        if (it.sceneTitle || it.sceneId) row.append(el('div', 'dim', 'ฉาก: ' + (it.sceneTitle || it.sceneId)));
-        if (it.evidence) row.append(el('div', 'dim', 'หลักฐาน: ' + it.evidence));
+        row.append(el('div', '', `• [${it.aspect || tr('ai.general', 'ทั่วไป')}] ${it.issue || ''}`));
+        if (it.sceneTitle || it.sceneId) row.append(el('div', 'dim', tr('ai.sceneLabel', 'ฉาก: ') + (it.sceneTitle || it.sceneId)));
+        if (it.evidence) row.append(el('div', 'dim', tr('ai.evidenceLabel', 'หลักฐาน: ') + it.evidence));
         if (it.suggestion) row.append(el('div', '', '💡 ' + it.suggestion));
         resultDiv.append(row);
       }
@@ -305,25 +305,25 @@ export async function openConsistencyCheck(entityPath) {
 export async function openWorldGenerator() {
   if (!(await aiReady())) return;
 
-  showDialog('🌍 สร้างโลก', (box, ov) => {
+  showDialog(tr('ai.worldTitle', '🌍 สร้างโลก'), (box, ov) => {
     const typeSel = el('select');
     ['magic', 'city', 'culture', 'economy', 'religion', 'faction'].forEach((v) => {
-      const labels = { magic: 'ระบบเวทมนตร์', city: 'เมือง', culture: 'วัฒนธรรม', economy: 'เศรษฐกิจ', religion: 'ศาสนา', faction: 'กลุ่ม/ฝ่าย' };
+      const labels = { magic: tr('ai.wMagic', 'ระบบเวทมนตร์'), city: tr('ai.wCity', 'เมือง'), culture: tr('ai.wCulture', 'วัฒนธรรม'), economy: tr('ai.wEconomy', 'เศรษฐกิจ'), religion: tr('ai.wReligion', 'ศาสนา'), faction: tr('ai.wFaction', 'กลุ่ม/ฝ่าย') };
       typeSel.append(el('option', '', labels[v] || v, { value: v }));
     });
 
     const promptInput = el('textarea');
-    promptInput.placeholder = 'อธิบายสิ่งที่ต้องการสร้าง (เช่น "ระบบเวทมนตร์ที่ใช้เลือดเป็นต้นทุน")';
+    promptInput.placeholder = tr('ai.worldPrompt', 'อธิบายสิ่งที่ต้องการสร้าง (เช่น "ระบบเวทมนตร์ที่ใช้เลือดเป็นต้นทุน")');
     promptInput.style.cssText = 'width:100%;min-height:80px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:8px;font:inherit;resize:vertical';
 
     const resultDiv = el('div');
     resultDiv.style.cssText = 'max-height:40vh;overflow-y:auto;white-space:pre-wrap;margin:8px 0;padding:8px;background:var(--side);border-radius:6px;min-height:80px;font-size:14px;line-height:1.8';
 
     box.append(el('div', 'k-row'));
-    box.querySelector('.k-row').append(el('label', '', 'ประเภท: '), typeSel);
-    box.append(el('label', '', 'รายละเอียด:'));
+    box.querySelector('.k-row').append(el('label', '', tr('ai.kindLabel', 'ประเภท: ')), typeSel);
+    box.append(el('label', '', tr('ai.detailLabel', 'รายละเอียด:')));
     box.append(promptInput);
-    box.append(el('label', '', 'ผลลัพธ์:'));
+    box.append(el('label', '', tr('ai.resultLabel', 'ผลลัพธ์:')));
     box.append(resultDiv);
 
     const btns = el('div', 'k-dlg-btns');
@@ -331,15 +331,15 @@ export async function openWorldGenerator() {
     let lastWorld = null;                     // ผลลัพธ์ที่ผ่าน schema แล้ว (ใช้ตอนบันทึกลง Wiki)
     runBtn.onclick = async () => {
       runBtn.disabled = true;
-      resultDiv.textContent = 'กำลังสร้าง…';
+      resultDiv.textContent = tr('ai.generating', 'กำลังสร้าง…');
       lastWorld = null;
       // ใช้เอนจิน ai-world.js — มีเทมเพลตต่อประเภท + ตรวจว่าคำตอบครบโครง (ไม่ครบ = ลองใหม่)
       const { generateWorld, toMarkdown } = await import('./ai-world.js');
       const { getAIClient } = await import('./ai-bridge.js');
-      const res = await generateWorld(typeSel.value, promptInput.value.trim() || 'สร้างตามจินตนาการ',
+      const res = await generateWorld(typeSel.value, promptInput.value.trim() || tr('ai.freeform', 'สร้างตามจินตนาการ'),
                                       { client: getAIClient() });
       if (res.ok) { lastWorld = res.world; resultDiv.textContent = toMarkdown(res.world); }
-      else resultDiv.textContent = '❌ ' + (res.error || 'เกิดข้อผิดพลาด');
+      else resultDiv.textContent = '❌ ' + (res.error || tr('ai.error', 'เกิดข้อผิดพลาด'));
       runBtn.disabled = false;
     };
     const saveBtn = el('button', '', '📥 บันทึกลง Wiki');
@@ -358,7 +358,7 @@ export async function openWorldGenerator() {
         id: Date.now().toString(36), aliases: [], fields: {}, customProperties: {},
         images: [], relationships: [], chapterOverrides: [], ...base,
         sections: (lastWorld?.sections || []).map((s) => ({ title: s.title, content: s.body }))
-                  .concat(lastWorld ? [] : [{ title: 'คำอธิบาย', content: r }]),
+                  .concat(lastWorld ? [] : [{ title: tr('ai.description', 'คำอธิบาย'), content: r }]),
         created: new Date().toISOString(),
       };
       const catDir = await kapi.join(await kapi.join(state.root, 'Wiki'), cat);
@@ -366,7 +366,7 @@ export async function openWorldGenerator() {
       const name = entity.name || 'Worldbuilding';
       const file = await kapi.join(catDir, name.replace(/[\/\\:*?"<>|]/g, '_') + '.json');
       await kapi.writeFile(file, JSON.stringify(entity, null, 2));
-      setStatus('บันทึกลง Wiki แล้ว: ' + name);
+      setStatus(tr('ai.savedToWiki', 'บันทึกลง Wiki แล้ว: ') + name);
     };
     btns.append(runBtn, saveBtn, el('button', 'k-cancel', 'ปิด'));
     btns.lastChild.onclick = () => ov.remove();
@@ -400,7 +400,7 @@ export async function openAIChat() {
   // แถบพิมพ์
   const inputBar = el('div');
   inputBar.style.cssText = 'display:flex;padding:8px 12px;border-top:1px solid var(--border);background:var(--side)';
-  const input = el('input'); input.placeholder = 'ถามเกี่ยวกับเรื่องของคุณ…';
+  const input = el('input'); input.placeholder = tr('ai.chatPlaceholder', 'ถามเกี่ยวกับเรื่องของคุณ…');
   input.style.cssText = 'flex:1;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font:inherit;outline:none';
   const sendBtn = el('button', '', '▶');
   sendBtn.style.cssText = 'margin-left:8px;min-width:48px';
@@ -426,7 +426,7 @@ export async function openAIChat() {
     if (!sources || !sources.length) return;
     const s = el('div', 'dim');
     s.style.cssText = 'margin:0 40px 8px 0;font-size:11px';
-    s.textContent = '📎 อ้างอิง: ' + sources.map((x) => x.label).join(' · ');
+    s.textContent = tr('ai.sources', '📎 อ้างอิง: ') + sources.map((x) => x.label).join(' · ');
     chatArea.append(s);
   };
 
@@ -441,7 +441,7 @@ export async function openAIChat() {
     let ctx = { text: '', sources: [] };
     try {
       const { ragContext } = await import('./ai-bridge.js');
-      bubble.textContent = 'กำลังค้นข้อมูลในโปรเจกต์…';
+      bubble.textContent = tr('ai.searchingProject', 'กำลังค้นข้อมูลในโปรเจกต์…');
       ctx = await ragContext(q, { k: 6, maxTokens: 1800 });
     } catch (e) { log('warn', 'ai chat: RAG ใช้ไม่ได้ → ถามตรง ๆ', e); }
 
@@ -459,15 +459,15 @@ export async function openAIChat() {
       const res = await client.stream(
         { messages: [...msgs, { role: 'user', content: prompt }], system, feature: 'chat' },
         (chunk) => { acc += chunk; bubble.textContent = acc; chatArea.scrollTop = chatArea.scrollHeight; });
-      if (!res.ok) { bubble.textContent = '❌ ' + (res.error || 'เรียก AI ไม่สำเร็จ'); return; }
-      if (!acc) { acc = res.text || ''; bubble.textContent = acc || '(ไม่มีคำตอบ)'; }
+      if (!res.ok) { bubble.textContent = '❌ ' + (res.error || tr('ai.callFail', 'เรียก AI ไม่สำเร็จ')); return; }
+      if (!acc) { acc = res.text || ''; bubble.textContent = acc || tr('ai.noAnswer', '(ไม่มีคำตอบ)'); }
       history.push({ role: 'assistant', content: acc });
       addSources(ctx.sources);
     } catch (e) {
       // เอนจินใหม่ล้ม → กลับไปทางเดิม เพื่อไม่ให้ผู้ใช้ค้าง
       log('error', 'ai chat: stream ล้มเหลว', e);
       const result = await callAI(prompt, system);
-      bubble.textContent = result || '❌ เกิดข้อผิดพลาด';
+      bubble.textContent = result || tr('ai.errorMark', '❌ เกิดข้อผิดพลาด');
     }
   };
 
@@ -479,5 +479,7 @@ export async function openAIChat() {
   x.onclick = () => closeTab(KEY);
   state.tabs.set(KEY, tab);
   activate(KEY);
-  addMsg('assistant', 'สวัสดี! ถามอะไรเกี่ยวกับเรื่องของคุณได้เลย เช่น "เรื่องนี้มีตัวละครอะไรบ้าง" หรือ "ช่วยสรุปฉากที่มีไฟต์ให้หน่อย"');
+  addMsg('assistant', tr('ai.greeting', 'สวัสดี! ถามอะไรเกี่ยวกับเรื่องของคุณได้เลย เช่น') +
+    ' "' + tr('ai.sample1', 'เรื่องนี้มีตัวละครอะไรบ้าง') + '" ' +
+    tr('ai.orWord', 'หรือ') + ' "' + tr('ai.sample2', 'ช่วยสรุปฉากที่มีไฟต์ให้หน่อย') + '"');
 }

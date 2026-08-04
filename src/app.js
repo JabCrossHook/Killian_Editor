@@ -44,7 +44,7 @@ import { $, el, state, smart, LOG_BUF, log, setStatus,
          SCENE_STATUSES, SCENE_COLORS, STATUS_COLORS, BUILTIN_CATS, CAT_ICON,
          REL_TYPES, REL_COLOR, REL_LABEL, categorizeRole, categorizeWith,
          t, i18n, loadLanguage, applyDataI18n, onLanguageChanged, SHORTCUTS, SHORTCUT_LABELS, shortcutId,
-         formatShortcut, accelText, withShortcut } from './core.js';
+         formatShortcut, accelText, withShortcut, num } from './core.js';
 import { sceneProps } from './scene-props.js';
 import { openMaps, renderMaps, renderMapsPanel } from './maps-ui.js';
 import { openTimeline, renderTimeline } from './timeline-ui.js';
@@ -102,9 +102,9 @@ import { openAIAssistant, openPlotHoleDetector, openDialogueGenerator, openConsi
 import { showThesaurusPopup, initThesaurus } from './tools/thesaurus-ui.js';
 import { importScrivenerDialog } from './import/import-ui.js';
 // [alpha.60 ข้อ 62-66] นำเข้าบทภาพยนตร์จาก 5 รูปแบบ
-import { importScreenplayDialog, elementsToMarkdown, importSummary, detectFormat } from './import-sp.js';
+import { importScreenplayDialog, importSummary, elementsToMarkdown } from './import-sp.js';
 // [alpha.60 ข้อ 74] เปรียบเทียบบทภาพยนตร์
-import { compareScripts, renderComparisonHtml, showComparisonDialog } from './sp-compare.js';
+import { showComparisonDialog, compareScripts } from './sp-compare.js';
 import { resetAI, getAIClient, ragContext } from './ai/ai-bridge.js';
 import { icon, initIcons, iconHtml, iconLabel, hasIcon } from './icons.js';
 // [97] หน้ารายชื่อตัวละคร (Cast of Characters) — หน้าเดี่ยวประจำเล่ม
@@ -130,16 +130,16 @@ import { setTypeSound, isTypeSound, setTypeVolume, typeVolume, playType,
          soundKindFor, isEditorTarget } from './typewriter-sound.js';
 import { SP_ERRORS, validateScreenplay, errorSummary, summaryText, nextError, elLabel } from './sp-validator.js';
 import { generateFdx } from './export-fdx.js';
-import { generateRtf } from './export-rtf.js';
+import { generateRtf, escapeRtf } from './export-rtf.js';
 import { buildWatermarkHtml, generateWatermarkedPDFs, parseRecipients, safeFileName,
          watermarkText, DEFAULT_WM } from './export-watermark.js';
 // ---- alpha.59: ชุด PDF — ตัวสร้างในโปรแกรม (69) · สารบัญ (87) · ตัด element (88) ·
 //      เปิดที่หน้าเดิม (89) · หน้าปก (90) · หัวกระดาษ (91) ----
 import { openTitlePageDialog, openHeaderDialog, pdfExportDialog, buildScriptPdf,
          writeCompiledPdf, projectTitlePages, projectHeaders, pdfFontBytes,
-         currentScriptPage, savedPdfOptions } from './pdf-ui.js';
+         currentScriptPage, savedPdfOptions, clearPdfFontCache } from './pdf-ui.js';
 import { PDF_DEFAULTS, OMITTABLE_ELEMENTS, PDF_FONT_FILES, wrapTextLines,
-         layoutPageLines } from './pdf-generator.js';
+         layoutPageLines, mergePdfOptions } from './pdf-generator.js';
 import { TitlePageEditor, defaultTitlePages, normalizeTitlePages,
          titlePagesText } from './sp-title-pages.js';
 import { HEADER_DEFAULTS, HEADER_VARS, mergeHeaders, headerStringsFor, headerLineCount,
@@ -3110,8 +3110,10 @@ function allWorkflows() { return [...PRESETS, ...userWorkflows()]; }
 /** [67][68] ผลลัพธ์เวิร์กโฟลว์ที่เลือกนามสกุล .fdx/.rtf → อ่านเป็นบทแล้วแปลงต่อ */
 export function finalizeCompiled(r) {
   if (!r) return '';
-  if (r.ext === 'fdx') return generateFdx(parseScript(r.text), scriptMeta());
-  if (r.ext === 'rtf') return generateRtf(parseScript(r.text), scriptMeta(), spFormat());
+  const tp = projectTitlePages();
+  if (r.ext === 'fdx') return generateFdx(parseScript(r.text), scriptMeta(), { titlePages: tp });
+  if (r.ext === 'rtf') return generateRtf(parseScript(r.text), scriptMeta(), spFormat(),
+                                          { titlePages: tp, fontPt: num((state.settings || {}).spFontPt, 12) });
   return r.text;
 }
 
@@ -3352,8 +3354,13 @@ export async function exportScript(kind) {
   if (!src) return null;
   const blocks = src.blocks || parseScript(src.md);
   const meta = scriptMeta(src.title);
-  const text = kind === 'fdx' ? generateFdx(blocks, meta)
-                              : generateRtf(blocks, meta, spFormat());
+  // [alpha.60r1] FDX/RTF ต้องใช้ "หน้าปกที่ผู้ใช้แต่งเอง" (ข้อ 90) เหมือน PDF
+  // ไม่ใช่สร้างหน้าปกจาก meta เองคนละแบบกับที่เห็นบนจอ
+  const titlePages = projectTitlePages();
+  const fontPt = num((state.settings || {}).spFontPt, 12);
+  const text = kind === 'fdx'
+    ? generateFdx(blocks, meta, { titlePages, startScene: 1 })
+    : generateRtf(blocks, meta, spFormat(), { titlePages, fontPt });
   const dest = await kapi.saveAsDialog(safeName(src.title) + '.' + kind, kind);
   if (!dest) return null;
   await kapi.writeFile(dest, text);
@@ -3431,13 +3438,22 @@ export async function watermarkDialog() {
     if (!rs.length) { prog.textContent = 'ยังไม่มีรายชื่อผู้รับ'; return; }
     if (!outDir) { prog.textContent = 'เลือกโฟลเดอร์ปลายทางก่อน'; return; }
     bGo.disabled = true;
-    const wmOptions = { ...DEFAULT_WM, fontSize: parseInt(size.value, 10) || DEFAULT_WM.fontSize,
-                        angle: parseFloat(ang.value) || 0 };
+    const wmOptions = { ...DEFAULT_WM, fontSize: num(size.value, DEFAULT_WM.fontSize),
+                        angle: num(ang.value, 0) };
     try {
+      // [alpha.60r1] ใช้ "ตัวสร้าง PDF ในโปรแกรม" ทางเดียวกับส่งออก PDF ปกติ
+      // → ได้สารบัญ/หน้าปก/หัวกระดาษ/ฟอนต์ไทยสองวงศ์ (กฎ 19) เหมือนกันทุกไฟล์
+      // ค่าลายน้ำของ export-watermark เป็น px/องศา ส่วน generatePdf คิดเป็น pt → แปลงที่นี่ที่เดียว
       const made = await generateWatermarkedPDFs(kapi, {
         pages, fmt, recipients: rs, outDir, prefix: pre.value,
         wmTemplate: tpl.value, wmOptions, fontUrls: await embeddedFontUrls(),
         title: src.title, date: new Date().toISOString().slice(0, 10),
+        buildPdf: async (text) => (await buildScriptPdf({
+          blocks: src.blocks, title: src.title, fmt,
+          opts: { ...savedPdfOptions(), openPage: 0, watermark: text,
+                  watermarkSize: wmOptions.fontSize * 0.75,     // px → pt
+                  watermarkAngle: wmOptions.angle },
+        })).bytes,
         onProgress: (i, n, name) => { prog.textContent = `กำลังสร้าง ${i}/${n} — ${name}`; },
       });
       if (state.meta) {
@@ -3491,25 +3507,23 @@ async function loadPlugins() {
   $('#tb-plug').style.display = plugins.commands.length ? '' : 'none';
 }
 
-// ---------------- คลังรูปภาพ (แท็บแบบ v1) ----------------
+// ---------------- คลังรูปภาพ (แผง — [alpha.60r1 ข้อ 21]) ----------------
+// เดิมเป็น "แท็บเอกสาร" (::gallery::) จึงไปแย่งแถบแท็บกับฉากที่กำลังเขียน และวางคู่กับ
+// หน้ากระดาษไม่ได้เลย · ตอนนี้เป็นแผงเต็มตัวเหมือนแดชบอร์ด/Kanban → dock/float/แท็บร่วมได้
+let galInst = null;
+export function renderGalleryPanel() {
+  const host = $('#gal-body');
+  if (!host) return null;
+  if (!state.root) { host.innerHTML = ''; host.append(el('div', 'dim', 'เปิดโปรเจกต์ก่อน')); return null; }
+  host.innerHTML = '';
+  galInst = new Gallery(host, state.root, { onChanged: () => { imgURLBase.clear(); } });
+  return galInst;
+}
+export function galleryInstance() { return galInst; }
 async function openGallery() {
-  const key = '::gallery::';
-  if (state.tabs.has(key)) return activate(key);
-  const pane = el('div', 'pane');
-  $('#panes').append(pane);
-  const tabBtn = el('div', 'tab');
-  tabBtn.append(el('span', 'tab-title', 'คลังรูปภาพ'));
-  const x = el('span', 'tab-x', '×'); tabBtn.append(x);
-  $('#tabs').append(tabBtn);
-  const gal = new Gallery(pane, state.root, {
-    onChanged: () => { imgURLBase.clear(); },
-  });
-  const tab = { file: key, title: 'คลังรูปภาพ', pane, tabBtn, dirty: false,
-                editor: null, plain: null, wiki: null, gal };
-  tabBtn.onclick = (e) => { if (e.target !== x) activate(key); };
-  x.onclick = () => closeTab(key);
-  state.tabs.set(key, tab);
-  activate(key);
+  showPanel('gallery');
+  syncMenuToggles();
+  return renderFeaturePanel('gallery');
 }
 
 // ---------------- เทมเพลต Wiki (templates.json ที่ root โปรเจกต์ — โครง v1) ----------------
@@ -5153,17 +5167,51 @@ function heavyDelay(tab) {
 let countJob = null;
 // [alpha.60 ข้อ 96] ปรับหน้าใหม่อัตโนมัติ — debounce ตามช่วงเวลาที่ตั้ง
 let repaginateJob = null;
+/**
+ * [alpha.60 ข้อ 96] "ปรับหน้าใหม่ตามช่วงเวลา" — สวิตช์ **หน่วงเวลา** ไม่ใช่สวิตช์ปิดฟีเจอร์
+ *   ปิด (ค่าเริ่มต้น) = จัดหน้าทุกครั้งที่ scheduleCount ทำงาน (ทันใจ เหมือนก่อน alpha.60)
+ *   เปิด             = scheduleCount ข้ามการจัดหน้า แล้วให้ job ตัวนี้ทำแทนทุก N วินาที
+ * (alpha.60r: เดิม gate เขียนกลับด้าน — ปิดสวิตช์แล้ว "จำนวนหน้า/เส้นคั่นหน้า/CONTINUED"
+ *  หายทั้งระบบ เพราะค่าเริ่มต้นของ spAutoPaginate คือ false)
+ */
 function scheduleRepaginate() {
   const s = state.settings;
   if (!s.spAutoPaginate) return;
   clearTimeout(repaginateJob);
-  const ms = Math.min(60000, Math.max(1000, (+s.spPaginateInterval || 30) * 1000));
+  const ms = Math.min(60000, Math.max(1000, num(s.spPaginateInterval, 30) * 1000));
   repaginateJob = setTimeout(() => {
     const t = state.active;
     if (!t || !t.sp) return;
-    scheduleCount(); // คำนวณหน้าใหม่ผ่านเส้นทางเดียวกับ scheduleCount
+    repaginateNow(t);
   }, ms);
 }
+
+/** จัดหน้าบทของแท็บ + วาดเส้นคั่นหน้า/เครื่องหมายต่อเนื่อง — คืนข้อความ " · N หน้า" */
+function repaginateNow(t) {
+  try {
+    const fmt = spFormat();
+    // นับจากบล็อกในเอกสารจริง (ไม่ใช่ md) เพื่อให้ตำแหน่งเส้นคั่นหน้าตรงกับจอ (ข้อ 57)
+    const blocks = blocksFromDoc(t.sp.view.state.doc);
+    const pg = pagesOf(blocks, fmt);
+    // เส้นคั่นหน้าในตัวแก้ไข — หน้า 2 เป็นต้นไป
+    // [alpha.57a] เลขบนเส้นคั่นนับต่อจาก "เลขหน้าเริ่มต้น" ของไฟล์ (ตั้งในคุณสมบัติฉาก)
+    const base = currentStartPage(t) - 1;
+    const starts = pageStartPositions(pg);
+    const changed = setPageBreaks(starts.map((pos, i) => ({ pos, page: base + i + 1 })).slice(1)
+      .filter((x) => Number.isFinite(x.pos)));
+    updatePageNumberHint();
+    // [alpha.58 · 55–56] เครื่องหมายต่อเนื่อง — คิดจากผลจัดหน้าชุดเดียวกัน จึงตรงกับเส้นคั่นหน้าเสมอ
+    const marks = spContinuedOn() ? computeContinueds(pg, fmt) : [];
+    const cChanged = setContinueds(marks);
+    // วาดใหม่เฉพาะตอนตำแหน่งเส้นเปลี่ยนจริง — dispatch ทุก 300ms ไปกวนตำแหน่งเลื่อนตอนซูม
+    if (changed || cChanged) t.sp.refreshGuides();
+    refreshSpView();                       // มุมมองเรียงหน้า/ภาพรวมตามเนื้อหาล่าสุด
+    _spPageText = ` · ${pg.count} หน้า`;
+    return _spPageText;
+  } catch (e) { log('warn', 'นับหน้าบทไม่สำเร็จ', e); return _spPageText; }
+}
+// จำนวนหน้าที่คำนวณไว้ล่าสุด — ตอนเปิด "ปรับหน้าตามช่วงเวลา" แถบสถานะยังโชว์ค่าเดิมได้
+let _spPageText = '';
 function scheduleCount() {
   clearTimeout(countJob);
   const t0 = state.active;
@@ -5178,35 +5226,16 @@ function scheduleCount() {
     let txt = `คำ ${countWords(body).toLocaleString()} · อักขระ ${body.length.toLocaleString()}`;
     // [84][85] บทภาพยนตร์: บอกจำนวนหน้าจริงตามขนาดกระดาษ/ระยะขอบ/กฎตัดหน้าที่ตั้งไว้
     if (t.sp) {
-      // [alpha.60 ข้อ 96] ปรับหน้าใหม่ตามช่วงเวลาที่ตั้ง — scheduleRepaginate จัดการ debounce แยก
-      // scheduleCount ยังทำงานต่อสำหรับนับคำ/ตรวจผิด (ไม่หน่วง)
-      if (state.settings.spAutoPaginate !== false) {
-      try {
-        const fmt = spFormat();
-        // นับจากบล็อกในเอกสารจริง (ไม่ใช่ md) เพื่อให้ตำแหน่งเส้นคั่นหน้าตรงกับจอ (ข้อ 57)
-        const blocks = blocksFromDoc(t.sp.view.state.doc);
-        const pg = pagesOf(blocks, fmt);
-        txt += ` · ${pg.count} หน้า`;
-        // เส้นคั่นหน้าในตัวแก้ไข — หน้า 2 เป็นต้นไป
-        // [alpha.57a] เลขบนเส้นคั่นนับต่อจาก "เลขหน้าเริ่มต้น" ของไฟล์ (ตั้งในคุณสมบัติฉาก)
-        const base = currentStartPage(t) - 1;
-        const starts = pageStartPositions(pg);
-        const changed = setPageBreaks(starts.map((pos, i) => ({ pos, page: base + i + 1 })).slice(1)
-          .filter((x) => Number.isFinite(x.pos)));
-        updatePageNumberHint();
-        // [alpha.58 · 55–56] เครื่องหมายต่อเนื่อง — คิดจากผลจัดหน้าชุดเดียวกัน จึงตรงกับเส้นคั่นหน้าเสมอ
-        const marks = spContinuedOn() ? computeContinueds(pg, fmt) : [];
-        const cChanged = setContinueds(marks);
-        // วาดใหม่เฉพาะตอนตำแหน่งเส้นเปลี่ยนจริง — dispatch ทุก 300ms ไปกวนตำแหน่งเลื่อนตอนซูม
-        if (changed || cChanged) t.sp.refreshGuides();
-        refreshSpView();                       // มุมมองเรียงหน้า/ภาพรวมตามเนื้อหาล่าสุด
-      } catch (e) { log('warn', 'นับหน้าบทไม่สำเร็จ', e); }
-      } // [alpha.60 ข้อ 96] จบ gate spAutoPaginate
+      // [alpha.60 ข้อ 96 · แก้ใน alpha.60r1] เปิด "ปรับหน้าตามช่วงเวลา" = ยกงานจัดหน้า
+      // ไปให้ scheduleRepaginate ทำห่าง ๆ · ปิด (ค่าเริ่มต้น) = จัดหน้าที่นี่ทุกครั้ง
+      // แถบสถานะโชว์จำนวนหน้าเสมอไม่ว่าโหมดไหน (ค่าล่าสุดถูกจำไว้ใน _spPageText)
+      txt += state.settings.spAutoPaginate ? _spPageText : repaginateNow(t);
       // [54] ตรวจข้อผิดพลาดพร้อมกัน (debounce เดียวกับการนับคำ)
       try { checkScreenplay(t); } catch (e) { log('warn', 'ตรวจบทไม่สำเร็จ', e); }
     } else {
       setPageBreaks([]);
       setContinueds([]);
+      _spPageText = '';
       _spErrors = [];
     }
     // [alpha.58r บั๊ก 20] นิยายก็ต้องรู้ว่าอยู่หน้าไหน/ขึ้นหน้าใหม่ตรงไหน
@@ -5558,6 +5587,7 @@ const FEATURE_PANELS = {
   books:     () => renderBookManager($('#books-body')),
   timeline:  () => renderTimeline($('#tl-body')),
   maps:      () => renderMapsPanel(),
+  gallery:   () => renderGalleryPanel(),        // [alpha.60r1 ข้อ 21]
 };
 export function isFeaturePanel(id) { return !!FEATURE_PANELS[panelId(id)]; }
 // วาดค้างอยู่ = ใช้รอบเดียวกัน — openX() เรียก showPanel (hook เริ่มวาด) แล้ว await ต่อ
@@ -5579,10 +5609,11 @@ export function renderFeaturePanel(id) {
 setPanelShowHook((pid) => { renderFeaturePanel(pid); });
 /** ล้างเนื้อแผงฟีเจอร์ (ตอนปิดโปรเจกต์ — ไม่งั้นโปรเจกต์ใหม่เห็นสถิติ/กระดานของเก่า) */
 export function clearFeaturePanels() {
-  for (const sel of ['#dash-body', '#kanban-body', '#books-body', '#tl-body', '#maps-body']) {
+  for (const sel of ['#dash-body', '#kanban-body', '#books-body', '#tl-body', '#maps-body', '#gal-body']) {
     const n = $(sel); if (n) n.innerHTML = '';
   }
   mapsState_C.s = null;
+  galInst = null;
 }
 /** วาดแผงฟีเจอร์ทุกตัวที่เปิดค้างอยู่ (เรียกหลัง initPanelSystem ตอนเปิดโปรเจกต์) */
 export async function renderOpenFeaturePanels() {
@@ -6991,6 +7022,10 @@ async function runTest(projectPath) {
     // k2-panel-home (alpha.56) จำ "ที่เดิม" ของแผงที่ถูกปิด → รอบก่อนที่ตายกลางคันทำให้เลย์เอาต์เพี้ยน
     for (const k of ['k2-ui-layout', 'k2-panel-layout', 'k2-panel-home', 'k2-split-layout', 'k2-home-view'])
       localStorage.removeItem(k);
+    // [alpha.60r1] เช่นเดียวกับ localStorage: **global settings** (alpha.60 ข้อ 94) ก็ค้างข้ามรอบ
+    // เก็บที่ %APPDATA%/Killian2/settings.json — รอบก่อนหน้าที่เทส "ตั้งค่า" เขียน uiFontSize=4 ไว้
+    // รอบถัดไปจึงเริ่มด้วยฟอนต์ UI 18px แล้ว check ที่คาด 14px ล้มตั้งแต่ต้น (เผา 1 รอบ e2e)
+    try { await kapi.writeGlobalSettings({}); } catch {}
     resetPanelSystem();
     if (projectPath) await loadProject(projectPath);
     resetPanels();
@@ -8201,14 +8236,19 @@ async function runTest(projectPath) {
           'Gender' in eTp.fields && eTp.sections.length >= 1, JSON.stringify(eTp).slice(0, 200));
 
     // ---- คลังรูปแบบ v1: index sync + picker ใช้แทรกในฉากได้ ----
+    // [alpha.60r1 ข้อ 21] คลังรูปเป็น "แผง" แล้ว ไม่ใช่แท็บเอกสาร
     await openGallery();
     await new Promise((r) => setTimeout(r, 400));
-    check('คลังรูปเปิดเป็นแท็บ + เห็นรูป', !!state.active?.gal &&
-          document.querySelectorAll('.pane.on .gal-cell').length >= 1);
+    check('[21] คลังรูปเปิดเป็นแผง (ไม่ใช่แท็บเอกสาร)',
+          isPanelOpen('gallery') && !state.tabs.has('::gallery::'));
+    check('[21] แผงคลังรูปเห็นรูปจริง',
+          document.querySelectorAll('#gal-body .gal-cell').length >= 1,
+          document.querySelectorAll('#gal-body .gal-cell').length);
     const idx = await kapi.readJson(await kapi.join(state.root, 'Images', 'images.json'));
     check('images.json ถูก sync จากไฟล์จริง', idx.images.some((x) => x.file === 'sunset.png'),
           JSON.stringify(idx));
-    closeTab('::gallery::');
+    hidePanel('gallery');
+    check('[21] ปิดแผงคลังรูปได้', !isPanelOpen('gallery'));
     activate(t.file);
     // picker: เปิด → เลือกรูปแรก → ![caption](rel) ถูกแทรก
     const pPick = insertImage();
@@ -11279,9 +11319,9 @@ async function runTest(projectPath) {
       // คำสั่ง gallery ต้องเปิดคลังรูปได้จริง
       await handleCommand('gallery');
       await new Promise((r) => setTimeout(r, 400));
-      check('#28 คำสั่ง gallery เปิดคลังรูปได้', !!state.active?.gal &&
-            document.querySelectorAll('.pane.on .gal-cell').length >= 1);
-      closeTab('::gallery::');
+      check('#28 คำสั่ง gallery เปิดคลังรูปได้', isPanelOpen('gallery') &&
+            document.querySelectorAll('#gal-body .gal-cell').length >= 1);
+      hidePanel('gallery');
       activate(t.file);
     }
 
@@ -11495,6 +11535,26 @@ async function runTest(projectPath) {
         scheduleCount();
         await new Promise((r) => setTimeout(r, 400));
         check('[84] แถบสถานะบอกจำนวนหน้าของบทหนัง', /\d+ หน้า/.test($('#wc').textContent), $('#wc').textContent);
+        // [alpha.60r1 บั๊ก 6] "ปรับหน้าตามช่วงเวลา" (ข้อ 96) เป็นสวิตช์หน่วงเวลา ไม่ใช่สวิตช์ปิดฟีเจอร์
+        // เดิม gate เขียนกลับด้าน → ค่าเริ่มต้น (ปิด) ทำให้จำนวนหน้า/เส้นคั่นหน้าหายทั้งระบบ
+        check('[96] ค่าเริ่มต้นของ spAutoPaginate คือปิด', S.spAutoPaginate === false, String(S.spAutoPaginate));
+        check('[96] ปิดสวิตช์แล้วยังนับหน้าให้ทันที', /\d+ หน้า/.test($('#wc').textContent));
+        check('[96] เส้นคั่นหน้าถูกตั้งจริงตอนสวิตช์ปิด (ถ้าบทยาวเกิน 1 หน้า)',
+              pgInfo.count <= 1 || pageBreaks().length >= 1, pageBreaks().length + '/' + pgInfo.count);
+        {
+          const before = $('#wc').textContent;
+          S.spAutoPaginate = true;
+          scheduleCount();
+          await new Promise((r) => setTimeout(r, 400));
+          check('[96] เปิดสวิตช์แล้วแถบสถานะยังบอกจำนวนหน้า (ใช้ค่าที่คำนวณไว้ล่าสุด)',
+                /\d+ หน้า/.test($('#wc').textContent), $('#wc').textContent);
+          check('[96] เปิดสวิตช์แล้วจำนวนหน้าตรงกับตอนปิด',
+                $('#wc').textContent.replace(/^.*·/, '') === before.replace(/^.*·/, ''),
+                before + ' → ' + $('#wc').textContent);
+          S.spAutoPaginate = false;
+          scheduleCount();
+          await new Promise((r) => setTimeout(r, 400));
+        }
         // กฎที่ตั้งเองมีผลกับการแบ่งบทพูด
         const longBlocks = [{ el: 'action', text: 'x '.repeat(30) }, { el: 'character', text: 'ทอร่า' },
                             { el: 'dialogue', text: 'พูดยาวมาก '.repeat(40) }];
@@ -11794,10 +11854,11 @@ async function runTest(projectPath) {
           // ---- [67][68] ส่งออก FDX / RTF จากบทจริงบนจอ ----
           const blocksEx = parseScript(spT.sp.getMarkdown());
           const xml = generateFdx(blocksEx, scriptMeta('บททดสอบ'));
+          // [alpha.60r1] หัวฉากมี attribute Number="N" ต่อท้ายแล้ว → เช็คแบบไม่ผูกกับ ">"
           check('[67] สร้าง FDX จากบทบนจอได้ + มีหัวฉาก/ตัวละคร/บทพูด',
-                xml.includes('<Paragraph Type="Scene Heading">') &&
+                xml.includes('<Paragraph Type="Scene Heading"') &&
                 xml.includes('<Paragraph Type="Character">') &&
-                xml.includes('<Paragraph Type="Dialogue">'));
+                xml.includes('<Paragraph Type="Dialogue">'), xml.slice(0, 300));
           check('[67] FDX แปลงเป็น XML DOM ได้จริง (ไม่มี syntax error)', (() => {
             const d = new DOMParser().parseFromString(xml, 'application/xml');
             return !d.querySelector('parsererror') && d.documentElement.tagName === 'FinalDraft';
@@ -13581,6 +13642,147 @@ async function runTest(projectPath) {
         document.querySelectorAll('.k-overlay').forEach((o) => o.remove());
         check('[59] เก็บกวาดกล่องของ alpha.59 หมดแล้ว',
               document.querySelectorAll('.k-overlay').length === 0);
+      }
+    }
+
+    // ════════════════ alpha.60r1 — รอบเก็บบั๊ก 22 ข้อ ════════════════
+    {
+      // ---- num() แหล่งเดียว (กฎ 20) ----
+      check('[60r1] core.js ส่งต่อ num() ให้ทุกโมดูล', typeof num === 'function');
+      check('[60r1] num(0, 12) = 0 ไม่ใช่ 12', num(0, 12) === 0);
+      check('[60r1] num("", 12) = 12', num('', 12) === 12 && num(null, 12) === 12 && num('x', 12) === 12);
+      check('[60r1] num("2.5", 0) อ่านสตริงตัวเลขได้', num('2.5', 0) === 2.5);
+      {
+        // ค่า 0 ที่ผู้ใช้ตั้งเองต้องรอดทุกทาง (เดิม +x||d ทำหาย)
+        const f0 = spFormat();
+        check('[กฎ20] linesBefore ของบทพูดยังเป็น 0 หลังผ่าน mergeSpFormat',
+              f0.elements.dialogue.linesBefore === 0);
+        check('[กฎ20] mergePdfOptions: openPage 0 ไม่กลายเป็นค่าอื่น',
+              mergePdfOptions({ openPage: 0 }).openPage === 0);
+        check('[กฎ20] mergePdfOptions: fontPt ที่กรอกผิด → 12',
+              mergePdfOptions({ fontPt: 'x' }).fontPt === 12);
+        check('[กฎ20] หัวกระดาษ xOffset 0 ไม่ถูกแทนค่า',
+              mergeHeaders({ strings: [{ text: 'a', xOffset: 0 }] }).strings[0].xOffset === 0);
+      }
+
+      // ---- [ข้อ 1 ในรายการฟีเจอร์] FDX/RTF ใช้หน้าปกที่ผู้ใช้แต่งเอง ----
+      {
+        const tpTest = [{ strings: [{ text: 'ปกทดสอบ 60r1', x: 1.5, y: 4, align: 'center', size: 18 }] }];
+        const bl = [{ el: 'scene', text: 'INT. ห้อง - กลางวัน' }, { el: 'action', text: 'ทดสอบ' }];
+        const fdxT = generateFdx(bl, { title: 'ชื่อจาก meta' }, { titlePages: tpTest });
+        check('[67] FDX ใช้หน้าปกที่ผู้ใช้แต่งเอง',
+              fdxT.includes('ปกทดสอบ 60r1') && !fdxT.includes('ชื่อจาก meta'));
+        check('[67] FDX ใส่เลขฉากใน attribute Number', fdxT.includes('Number="1"'), fdxT.slice(0, 300));
+        const rtfT = generateRtf(bl, { title: 'ชื่อจาก meta' }, spFormat(),
+                                 { titlePages: tpTest, fontPt: 14 });
+        check('[68] RTF ใช้หน้าปกที่ผู้ใช้แต่งเอง', rtfT.includes(escapeRtf('ปกทดสอบ 60r1')));
+        check('[68] RTF ใช้ขนาดฟอนต์ที่ตั้งไว้ (14pt = fs28)', rtfT.includes('\\fs28'));
+        check('[68] RTF ยังเป็น ASCII ล้วน', [...rtfT].every((c) => c.codePointAt(0) < 128));
+      }
+
+      // ---- [90] ทำสำเนาหน้าปก ----
+      {
+        const ed = new TitlePageEditor([{ strings: [{ text: 'ก', x: 1, y: 1 }] }]);
+        const at = ed.duplicatePage(0);
+        check('[90] duplicatePage คืน index ถัดจากต้นฉบับ', at === 1 && ed.count === 2);
+        check('[90] สำเนามีข้อความเหมือนต้นฉบับ', ed.page(1).strings[0].text === 'ก');
+        ed.updateString(1, 0, { text: 'ข' });
+        check('[90] แก้สำเนาแล้วต้นฉบับไม่เปลี่ยน (deep copy)', ed.page(0).strings[0].text === 'ก');
+        check('[90] duplicatePage หน้าที่ไม่มี → -1', ed.duplicatePage(9) === -1);
+        const dlgTp = await openTitlePageDialog();
+        await new Promise((r) => setTimeout(r, 120));
+        check('[90] กล่องหน้าปกมีปุ่มทำสำเนา',
+              [...document.querySelectorAll('.k-tp-page-btns button')].some((b) => /สำเนา/.test(b.textContent)));
+        if (dlgTp) dlgTp.ov.remove();
+      }
+
+      // ---- [ข้อ 4] แคชฟอนต์ PDF ล้างได้ ----
+      check('[60r1] มีคำสั่งล้างแคชฟอนต์ PDF', typeof clearPdfFontCache === 'function');
+      {
+        const a = await pdfFontBytes();
+        clearPdfFontCache();
+        const b = await pdfFontBytes();
+        check('[60r1] ล้างแคชแล้วอ่านฟอนต์ใหม่ได้ (ผลลัพธ์ยังใช้งานได้)',
+              !!b && (a.file === b.file), a.file + ' / ' + b.file);
+      }
+
+      // ---- [ข้อ 5] เส้นคั่นหน้าใช้โรงงานเดียวกัน แต่สถานะแยกกัน ----
+      {
+        setPageBreaks([{ pos: 5, page: 2 }]);
+        setProsePageBreaks([{ pos: 9, page: 3 }, { pos: 17, page: 4 }]);
+        check('[60r1] เส้นคั่นหน้าบท/นิยาย แยกสถานะกันจริง',
+              pageBreaks().length === 1 && prosePageBreaks().length === 2,
+              pageBreaks().length + '/' + prosePageBreaks().length);
+        check('[60r1] ตั้งค่าเดิมซ้ำ → คืน false (ไม่ dispatch ซ้ำ · บทเรียน 44)',
+              setPageBreaks([{ pos: 5, page: 2 }]) === false);
+        check('[60r1] ตั้งค่าใหม่จริง → คืน true', setPageBreaks([{ pos: 7, page: 2 }]) === true);
+        setPageBreaks([]); setProsePageBreaks([]);
+      }
+
+      // ---- [ข้อ 7] กล่องจัดการแผงใช้ popupMenu จริง ไม่ตกไป fallback ----
+      {
+        document.querySelectorAll('.k-menu:not(#k-fab-menu)').forEach((m) => m.remove());
+        await togglePanelDialog();
+        await new Promise((r) => setTimeout(r, 100));
+        const menu = document.querySelector('.k-menu:not(#k-fab-menu)');
+        check('[60r1] จัดการแผงเปิดเป็นเมนูป๊อปอัป (ไม่ใช่กล่อง fallback)', !!menu,
+              document.querySelectorAll('.k-overlay').length + ' overlays');
+        closeMenu();
+        document.querySelectorAll('.k-overlay').forEach((o) => o.remove());
+      }
+
+      // ---- [ข้อ 9] SP_PREFIX ของตัวเทียบบทมาจาก SP_ELEMS ----
+      {
+        const d = compareScripts('@ทอร่า\nสวัสดี', '@ทอร่า\nสวัสดีจ้า');
+        check('[74] เทียบบทยังทำงานหลังดึง prefix จาก SP_ELEMS', Array.isArray(d) && d.length >= 2);
+        check('[74] ชื่อตัวละครถูกมองว่าเหมือนเดิม (prefix ตรง)',
+              d.some((x) => x.type === 'equal' && /ทอร่า/.test(x.old || x.new || '')),
+              JSON.stringify(d).slice(0, 200));
+      }
+
+      // ---- [ข้อ 13] ชื่อตัวละครที่มีวงเล็บในตัว ----
+      {
+        // ชื่อที่มีวงเล็บอยู่ในตัว + ส่วนเสริมท้ายบรรทัด — เดิม split('(')[0] ตัดเหลือ "ดร."
+        // splitCharacter ตัดเฉพาะส่วนเสริมท้ายบรรทัด จึงเหลือชื่อเต็มและนับเป็นคนเดียว
+        const sum = importSummary([{ el: 'character', text: 'ดร. (ปรายฟ้า) (V.O.)' },
+                                   { el: 'character', text: 'ดร. (ปรายฟ้า) (ต่อ)' }]);
+        check('[63] ชื่อที่มีวงเล็บในตัวไม่ถูกตัดผิด (นับเป็นคนเดียว)', sum.characters === 1,
+              JSON.stringify(sum));
+        check('[63] ตัดเฉพาะส่วนเสริม ไม่ตัดวงเล็บที่อยู่ในชื่อ',
+              splitCharacter('ดร. (ปรายฟ้า) (V.O.)').name === 'ดร. (ปรายฟ้า)',
+              splitCharacter('ดร. (ปรายฟ้า) (V.O.)').name);
+      }
+
+      // ---- [ข้อ 18] i18n ของโมดูล UI ใหม่ ----
+      {
+        const keys = ['cmt.reply', 'cmt.resolve', 'split.closePane', 'imp.projectName',
+                      'kanban.newColumn', 'thes.copied', 'panel.resetAll', 'ai.assistantTitle',
+                      'task.jobFailed', 'panel.galleryTitle'];
+        // บทเรียน 25/68: ใน runTest ตัวแปร t = แท็บ → i18n ต้องเรียกผ่าน tr
+        const missing = keys.filter((k) => tr(k, '@@') === '@@' || tr(k, '@@') === k);
+        check('[60r1] คีย์ i18n ของโมดูล UI ใหม่มีครบใน languages/*.json',
+              missing.length === 0, missing.join(','));
+      }
+
+      // ---- [ข้อ 22] แผงจำสัดส่วนตอนปิด-เปิด ----
+      {
+        showPanel('props');
+        await new Promise((r) => setTimeout(r, 150));
+        const dockOf = (id) => {
+          const n = document.querySelector(`#app-root .k-panel[data-panel-id="${id}"]`);
+          return n && n.closest('.k-dock');
+        };
+        const dk = dockOf('props');
+        check('[22] แผงคุณสมบัติอยู่ใน dock ที่มีเพื่อนบ้าน', !!dk && dk.children.length >= 2);
+        hidePanel('props');
+        await new Promise((r) => setTimeout(r, 100));
+        const homeRaw = JSON.parse(localStorage.getItem('k2-panel-home') || '{}');
+        check('[22] ปิดแผงแล้วบันทึก "สัดส่วน" ไว้ด้วย ไม่ใช่แค่ตำแหน่ง',
+              Number.isFinite(homeRaw.props && homeRaw.props.ratio) && homeRaw.props.ratio > 0,
+              JSON.stringify(homeRaw.props));
+        showPanel('props');
+        await new Promise((r) => setTimeout(r, 150));
+        check('[22] เปิดกลับแล้วแผงยังอยู่ (คืนสัดส่วนแล้วไม่พัง)', isPanelOpen('props'));
       }
     }
 

@@ -17,8 +17,8 @@
 // บริสุทธิ์ 100% — ไม่แตะ DOM/kapi/state (ทดสอบด้วย node ได้: test/prose-format.test.cjs)
 
 import { PAPER_SIZES, MARGIN_DEFAULTS, textWidth } from './sp-format.js';
+import { num } from './num.js';
 
-const num = (v, d) => { const n = parseFloat(v); return Number.isFinite(n) ? n : d; };
 const clamp = (v, lo, hi, d) => {
   const n = parseFloat(v);
   return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : d;

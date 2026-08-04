@@ -173,6 +173,9 @@ export const STATUS_COLORS = {
 export const DEFAULT_STATUS_COLOR = '#8a8f98';
 export const BUILTIN_CATS = ['characters', 'locations', 'items', 'lore'];
 export const CAT_ICON = { characters: 'user', locations: 'map', items: 'briefcase', lore: 'bookmark' };
+// ตัวแปลงตัวเลขที่ปลอดภัยกับค่า 0 (กฎ 20) — แหล่งความจริงเดียวของทั้งโปรเจกต์
+// โมดูลบริสุทธิ์ import จาก './num.js' ตรง ๆ (core.js แตะ DOM จึง import กลับมาไม่ได้)
+export { num, numClamp, numInt } from './num.js';
 // ประเภทความสัมพันธ์ (ครอบครัว/คนรัก/ศัตรู…) — โมดูลบริสุทธิ์ ส่งต่อจาก relationship-types.js
 // เพื่อให้ feature module ดึงจาก core.js ที่เดียวเหมือนค่าคงที่ตัวอื่น
 export { REL_TYPES, REL_COLOR, REL_ICON, REL_LABEL, categorizeRole, categorizeWith } from './relationship-types.js';

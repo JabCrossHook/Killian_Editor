@@ -6,6 +6,7 @@
 // **ที่เก็บข้อมูล**: project.khn.json → `titlePages` (หน้าปก) และ `settings.spHeaders` (หัวกระดาษ)
 // เป็นค่า "ระดับโปรเจกต์" เหมือนขนาดกระดาษ/รูปแบบบท — ไม่ใช่รายเล่มแบบ roster.json
 import { el, state, setStatus, log, textWidth } from './core.js';
+import { num } from './num.js';
 import { confirmBox } from './ui.js';
 import { TitlePageEditor, normalizeTitlePages, defaultTitlePages,
          titlePageInnerHtml } from './sp-title-pages.js';
@@ -51,12 +52,35 @@ export function pdfMeta(title) {
 // pdf-lib ไม่มีลูกโซ่ฟอนต์สำรองแบบ CSS → ต้องส่ง "สองวงศ์" ไปให้ตัววาดสลับเอง
 //   main  = ฟอนต์ที่มีอักษรไทย · latin = CourierPrime สำหรับเครื่องหมายสากล (· © — … “ ”)
 // อ่านครั้งเดียวแล้วแคชไว้ — ไฟล์รวมกันราว 500KB และผู้ใช้กดส่งออกซ้ำ ๆ
-const FONT_CACHE = { set: null };
+//
+// **แคชต้องล้างได้**: ผู้ใช้เปลี่ยนไฟล์ฟอนต์ระหว่างเปิดโปรแกรม (เช่นวางไฟล์ใหม่ทับ
+// renderer/assets/fonts/) แล้วต้องรีสตาร์ตถึงจะเห็นผล → จำ mtime ของทุกไฟล์ที่อ่านไว้
+// แล้วเทียบใหม่ทุกครั้ง (kapi.mtime เร็วกว่าการอ่านไบต์ ~500KB มาก)
+const FONT_CACHE = { set: null, stamp: '' };
+/** ล้างแคชฟอนต์ PDF ด้วยมือ (เมนู/คอนโซลนักพัฒนา) */
+export function clearPdfFontCache() { FONT_CACHE.set = null; FONT_CACHE.stamp = ''; }
+
+async function fontStamp(dir, files) {
+  const parts = [];
+  for (const f of files) {
+    try {
+      const p = await kapi.join(dir, f);
+      parts.push(f + ':' + (await kapi.mtime(p) || 0));
+    } catch { parts.push(f + ':?'); }
+  }
+  return parts.join('|');
+}
+
 export async function pdfFontBytes() {
-  if (FONT_CACHE.set) return FONT_CACHE.set;
   const out = { regular: null, latin: null, file: '' };
+  let dir = '';
+  const L = PDF_FONT_FILES.latin;
+  const all = [...PDF_FONT_FILES.main, L.regular, L.bold, L.italic, L.boldItalic].filter(Boolean);
   try {
-    const dir = await kapi.join(await kapi.appDir(), 'renderer', 'assets', 'fonts');
+    dir = await kapi.join(await kapi.appDir(), 'renderer', 'assets', 'fonts');
+    const stamp = await fontStamp(dir, all);
+    if (FONT_CACHE.set && FONT_CACHE.stamp === stamp) return FONT_CACHE.set;
+    FONT_CACHE.stamp = stamp;
     const read = async (f) => {
       const p = await kapi.join(dir, f);
       return (await kapi.exists(p)) ? new Uint8Array(await kapi.readBytes(p)) : null;
@@ -65,13 +89,15 @@ export async function pdfFontBytes() {
       const b = await read(f);
       if (b) { out.regular = b; out.file = f; break; }
     }
-    const L = PDF_FONT_FILES.latin;
     const lr = await read(L.regular);
     if (lr) {
       out.latin = { regular: lr, bold: await read(L.bold),
                     italic: await read(L.italic), boldItalic: await read(L.boldItalic) };
     }
-  } catch (e) { log('warn', 'อ่านไฟล์ฟอนต์สำหรับ PDF ไม่สำเร็จ', e); }
+  } catch (e) {
+    log('warn', 'อ่านไฟล์ฟอนต์สำหรับ PDF ไม่สำเร็จ', e);
+    if (FONT_CACHE.set) return FONT_CACHE.set;             // อ่านไม่ได้รอบนี้ — ใช้ของเดิมต่อ
+  }
   FONT_CACHE.set = out;
   return out;
 }
@@ -156,13 +182,15 @@ export async function openTitlePageDialog() {
     bUp.onclick = () => { const t = ed.movePage(pageIdx, pageIdx - 1); if (t >= 0) { pageIdx = t; render(); } };
     const bDn = el('button', 'cmp-mini', '▼'); bDn.title = 'เลื่อนหน้าลง';
     bDn.onclick = () => { const t = ed.movePage(pageIdx, pageIdx + 1); if (t >= 0) { pageIdx = t; render(); } };
+    const bDup = el('button', 'cmp-mini', '⧉ ทำสำเนา'); bDup.title = 'ทำสำเนาหน้านี้ไว้ถัดไป';
+    bDup.onclick = () => { const t = ed.duplicatePage(pageIdx); if (t >= 0) { pageIdx = t; strIdx = -1; render(); } };
     const bDel = el('button', 'cmp-mini', '🗑 ลบหน้า');
     bDel.onclick = async () => {
       if (!(await confirmBox('ลบหน้าปกหน้าที่ ' + (pageIdx + 1) + '?'))) return;
       ed.deletePage(pageIdx);
       pageIdx = Math.max(0, Math.min(pageIdx, ed.count - 1)); strIdx = -1; render();
     };
-    btns.append(bAdd, bUp, bDn, bDel);
+    btns.append(bAdd, bDup, bUp, bDn, bDel);
     colPages.append(btns);
     const bStd = el('button', 'k-key-btn', '🎬 ใส่หน้าปกมาตรฐาน');
     bStd.title = 'สร้างจากข้อมูลผลงาน (ชื่อเรื่อง/ผู้เขียน/ติดต่อ/ลิขสิทธิ์)';
@@ -462,7 +490,7 @@ export async function pdfExportDialog() {
     drawRectAroundNotes: cRect.checked,
     watermark: wm.value.trim(),
     startPage: currentStartPage(state.active),
-    fontPt: parseFloat((state.settings || {}).spFontPt) || 12,
+    fontPt: num((state.settings || {}).spFontPt, 12),   // กฎ 20 — ห้าม `parseFloat(x) || 12`
   });
 
   const btns = el('div', 'k-dlg-btns');

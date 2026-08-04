@@ -20,7 +20,7 @@ export KILLIAN_TEST=1 KILLIAN_TEST_PROJECT=/tmp/k2proj
 xvfb-run -a --server-args="-screen 0 1500x950x24" ./node_modules/.bin/electron . --no-sandbox --disable-gpu
 # ผลอยู่ /tmp/k2result.txt — บรรทัดสุดท้ายต้องเป็น "ALL OK"
 ```
-ปัจจุบัน **1,432 checks · ALL OK** — ห้ามทำให้จำนวนลดลง (unit `npm run test:unit` = **832 checks**)
+ปัจจุบัน **1,471 checks · ALL OK** — ห้ามทำให้จำนวนลดลง (unit `npm run test:unit` = **1,014 checks**)
 (บน Windows: `node test/fixture.js C:\tmp\k2proj` แล้วตั้ง `KILLIAN_TEST_PROJECT=C:\tmp\k2proj`
  ผลออกที่ `C:\tmp\k2result.txt` · unit test `.cjs` ใช้ `os.tmpdir()` แล้วรันได้ทั้งสองระบบ)
 
@@ -29,6 +29,12 @@ xvfb-run -a --server-args="-screen 0 1500x950x24" ./node_modules/.bin/electron .
 ## 📁 โครงสร้างไฟล์ (src/)
 
 ### แกนกลาง (import จากที่นี่เสมอ)
+- **num.js** (alpha.60r1, บริสุทธิ์ 100% ไม่ import อะไรเลย) — `num(v, d)` / `numClamp(v, d, min, max)` / `numInt(v, d)`
+  **แหล่งความจริงเดียวของกฎข้อ 20** · โมดูลบริสุทธิ์ import ตรง (`./num.js`) · โมดูลที่แตะ DOM ดึงผ่าน core.js
+  (core.js แตะ `window`/`document` ตอน import จึงเอาเข้าโมดูลบริสุทธิ์ไม่ได้)
+- **page-break-plugin.js** (alpha.60r1) — `createPageBreakPlugin({key, cls, decoKey})` คืน
+  `{setBreaks, breaks, plugin, refresh}` · `sp-format-guide.js` (บท) กับ `prose-view.js` (นิยาย)
+  ใช้โรงงานเดียวกันแต่ **สถานะแยกกันคนละชุด** (เปิดบท+นิยายพร้อมกันคนละแท็บได้)
 - **core.js** — `$`, `el`, `state`, `smart`, `log`, `setStatus`, ค่าคงที่ (`DEFAULT_SETTINGS`, `SCENE_STATUSES`, `SCENE_COLORS`, `BUILTIN_CATS`, `CAT_ICON`, `BASE_ED_FS`, ...) — **ทุกโมดูลใหม่ import จากที่นี่**
 - **app.js** (~5,300 บรรทัด) — orchestrator: bootstrap, explorer (buildTree/tree), tabs, toolbar (floatBar), commands, shortcuts, zoom, **selftest ทั้งหมด**
 
@@ -100,7 +106,7 @@ editor.js · screenplay.js · md.js (⚠️ CommonJS) · smart.js · spell.js ·
 **กฎของโมดูล AI**: ไม่ยิงเน็ตเอง (รับ `client`/`http` เข้ามา) · ไม่ throw (คืน `{ok:false,error,code}` ภาษาไทย) ·
 `buildXPrompt`/`parseX` เป็น pure เสมอ · คีย์อยู่ `ai-key.json` เท่านั้น · ฟีเจอร์ตรวจสอบมีชั้นออฟไลน์ก่อน
 
-ทุกตัวไม่แตะ DOM/fs (ต่อไฟล์ผ่าน `io` adapter = `kapi`) · `npm run test:unit` = **957 checks**
+ทุกตัวไม่แตะ DOM/fs (ต่อไฟล์ผ่าน `io` adapter = `kapi`) · `npm run test:unit` = **1,014 checks**
 UI ที่ต้องทำต่อ: `panels/panel-ui.js` · `layout/split-ui.js` · `kanban/kanban-ui.js` · แผง "ฉากที่กล่าวถึง" ในหน้า Wiki ·
 แผง AI (ผู้ช่วยเขียน/ตรวจปม/บทสนทนา/สร้างโลก/แชท) · หน้านำเข้า Scrivener · แถบคอมเมนต์ข้างฉาก
 แล้วค่อยต่อ entry point ตามกฎข้อ 7 (เมนู main.js + `case` ใน `handleCommand`)
@@ -195,6 +201,29 @@ UI ที่ต้องทำต่อ: `panels/panel-ui.js` · `layout/split-u
     → `zlib.inflateSync` ก่อน แล้วถอด hex · และกรองเอาแค่ content stream (ไบนารีฟอนต์ที่ฝังไว้
     มีไบต์ที่อ่านเป็น `Tj` ได้โดยบังเอิญ ทำให้นับคำสั่งวาดเพี้ยน)
 23. **ไบต์ PDF เขียนด้วย `kapi.writeBytes(dest, Array.from(bytes))`** ไม่ใช่ `writeFile` (กฎ 10)
+
+---
+
+## 🚧 กฎเพิ่มหลังรอบ alpha.60r1 (บทเรียนจากบั๊ก 22 ข้อ)
+
+24. **`num()` มีที่เดียวคือ `src/num.js`** — ห้ามประกาศสำเนาในไฟล์ใหม่อีก
+    โมดูลบริสุทธิ์ `import { num } from './num.js'` · โมดูล UI `import { num } from './core.js'`
+    เช็คเร็ว: `grep -rn "parseFloat(v); return Number.isFinite" src/` ต้องเจอแค่ `num.js`
+25. **สวิตช์ "หน่วงเวลา" ห้ามเขียนเป็นสวิตช์ "ปิดฟีเจอร์"** — `spAutoPaginate` (ข้อ 96) เคย gate
+    การจัดหน้าทั้งก้อนไว้ ทั้งที่ค่าเริ่มต้นคือปิด → จำนวนหน้า/เส้นคั่นหน้า/CONTINUED หายทั้งระบบ
+    **แยกงานจริงออกเป็นฟังก์ชัน (`repaginateNow`) แล้วให้สวิตช์เลือกแค่ "ใครเรียกและเมื่อไร"**
+26. **ตัวแปรชื่อ `t` บัง `t()` ของ i18n** (บทเรียน 25 ซ้ำอีกครั้ง) — ไฟล์ที่ใช้ `const t = state.active`
+    (`app.js` · `split-ui` · `ai-ui` · `comment-ui`) ต้อง `import { t as tr }` เท่านั้น
+    อาการ: build ผ่าน แต่ runtime ได้ `t3 is not a function` กลางการวาด
+27. **e2e ต้องล้าง global settings ด้วย ไม่ใช่แค่ localStorage** —
+    `%APPDATA%/Killian2/settings.json` (ข้อ 94) ค้างข้ามรอบ · `runTest()` เรียก
+    `kapi.writeGlobalSettings({})` ก่อนเริ่มเสมอ (ขยายจากกฎ 18 / บทเรียน 4+34)
+28. **ตารางที่ "ต้องตรงกับอีกไฟล์" ให้ derive ตอนรัน อย่าคัดลอก** —
+    `SP_PREFIX` ของ `sp-compare` สร้างจาก `SP_ELEMS` · `KEEP_NEXT` ของ `export-rtf` อ่าน
+    `SP_ELEMENT_CONFIG[el].keepNext` · เปลี่ยนต้นทางที่เดียวแล้วปลายทางตามทันที
+29. **สตริง UI ของโมดูลใหม่ต้องเข้า `languages/*.json`** ในรูป `t('ns.key', 'ไทย')`
+    (ไม่มีคีย์ = ได้ไทยเหมือนเดิม ไม่พัง) · `languages/` กับ `renderer/languages/` เป็นไฟล์ hardlink
+    เดียวกัน — แก้ที่เดียวได้ทั้งคู่ แต่ต้องเช็คว่ายังเป็น JSON ที่อ่านได้
 
 ---
 

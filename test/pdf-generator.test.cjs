@@ -380,6 +380,41 @@ const meta = { title: 'ยามเมื่อฟ้าสาง', author: 'ท
   check('addOutline รายการว่าง → 0 (ไม่แตะไฟล์)', G.addOutline({ context: null }, []) === 0);
   check('addOutline ชื่อว่างล้วน → 0', G.addOutline({ context: null }, [{ title: '  ' }]) === 0);
 
+  // ═══ [alpha.60r1] ช่องว่างเทส: needsLatinFont กับอีโมจิ / splitFontRuns สลับไทย-ละตินหลายรอบ ═══
+  {
+    // กฎ 19: ฟอนต์ไทยปี 1998 เอา cmap ของเครื่องหมายสากลไปชี้ทับ → ต้องส่งตัวพวกนี้ให้วงศ์ละติน
+    const EMO = String.fromCodePoint(0x1F600);
+    check('[63] needsLatinFont: อีโมจิ → ใช้วงศ์ละติน (ไทยไม่มี glyph)', G.needsLatinFont(EMO));
+    check('[63] needsLatinFont: ตัวอักษรไทย → ไม่ใช่ละติน', !G.needsLatinFont('ก'));
+    check('[63] needsLatinFont: ASCII → ไม่ใช่ละติน (ฟอนต์ไทยมีครบ)',
+      !G.needsLatinFont('A') && !G.needsLatinFont('1'));
+    check('[63] needsLatinFont: PUA F701 (รูปเลื่อนของไทย) → ไม่ใช่ละติน',
+      !G.needsLatinFont(String.fromCharCode(0xF701)));
+    check('[63] needsLatinFont: มิดดอต · → ละติน', G.needsLatinFont(String.fromCharCode(0x00B7)));
+    check('[63] needsLatinFont: จุดไข่ปลา … → ละติน', G.needsLatinFont(String.fromCharCode(0x2026)));
+    check('[63] needsLatinFont: อัญประกาศโค้ง “ ” → ละติน',
+      G.needsLatinFont(String.fromCharCode(0x201C)) && G.needsLatinFont(String.fromCharCode(0x201D)));
+    check('[63] needsLatinFont: ขีดยาว — → ละติน', G.needsLatinFont(String.fromCharCode(0x2014)));
+
+    const src = 'กิน A ข B ค' + String.fromCharCode(0x00B7) + 'ง' + String.fromCharCode(0x2026) + 'จ';
+    const runs = G.splitFontRuns(src, true);
+    check('[63] splitFontRuns: สลับไทย-ละตินหลายรอบ แล้วต่อกลับได้ข้อความเดิม',
+      runs.map((r) => r.text).join('') === src, JSON.stringify(runs));
+    check('[63] splitFontRuns: มีช่วงละตินมากกว่า 1 ช่วง (ไม่ยุบรวมผิด)',
+      runs.filter((r) => r.latin).length >= 2, JSON.stringify(runs.map((r) => r.latin)));
+    check('[63] splitFontRuns: ไม่มีช่วงว่าง', runs.every((r) => r.text.length > 0));
+    check('[63] splitFontRuns: ช่วงติดกันต้องสลับค่า latin เสมอ (ยุบช่วงเดียวกันแล้ว)',
+      runs.every((r, i) => i === 0 || r.latin !== runs[i - 1].latin), JSON.stringify(runs));
+    check('[63] splitFontRuns: ไม่มีวงศ์ละติน → คืนช่วงเดียว',
+      G.splitFontRuns('กิน A ข', false).length === 1);
+    check('[63] splitFontRuns: ข้อความว่าง → อาร์เรย์ว่าง', G.splitFontRuns('', true).length === 0);
+    check('[63] splitFontRuns: ไทยล้วน → ช่วงเดียว ไม่ใช่ละติน',
+      G.splitFontRuns('กินข้าว', true).length === 1 && !G.splitFontRuns('กินข้าว', true)[0].latin);
+    check('[63] splitFontRuns: อีโมจิถูกแยกไปช่วงละติน',
+      G.splitFontRuns('ก' + EMO + 'ข', true).some((r) => r.latin && r.text.includes(EMO)),
+      JSON.stringify(G.splitFontRuns('ก' + EMO + 'ข', true)));
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.log('FAIL exception | ' + (e && e.stack || e)); process.exit(1); });

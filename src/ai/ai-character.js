@@ -1,7 +1,7 @@
 // ai-character.js — ตรวจความสม่ำเสมอของตัวละครข้ามฉาก (ข้อ 75)
 // spec: docs/75-ai-character.md
 // มี 2 ชั้น: (1) ตรวจออฟไลน์จากรูปแบบภาษา (ฟรี แม่นแน่นอน) (2) ส่งให้ AI ดูเรื่องนิสัย/การกระทำ
-import { extractJson, validate, estimateTokens } from './ai-core.js';
+import { extractJson, validate, estimateTokens, SEVERITY, SEV_RANK } from './ai-core.js';
 import { characterProfile, profileBlock } from './ai-dialogue.js';
 
 export const ASPECTS = {
@@ -12,8 +12,7 @@ export const ASPECTS = {
   appearance:  'รูปลักษณ์',
   relationship:'ความสัมพันธ์กับตัวละครอื่น',
 };
-export const SEVERITY = { critical: 'ร้ายแรง', major: 'สำคัญ', minor: 'เล็กน้อย' };
-const SEV_RANK = { critical: 3, major: 2, minor: 1 };
+export { SEVERITY, SEV_RANK };            // ส่งต่อจาก ai-core.js (แหล่งเดียว)
 
 const SYSTEM = 'คุณเป็นบรรณาธิการต้นฉบับที่เชี่ยวชาญเรื่องความสม่ำเสมอของตัวละคร '
   + 'อ่านโปรไฟล์ตัวละครกับฉากที่ตัวละครนั้นปรากฏ แล้วชี้จุดที่ตัวละครทำ/พูดไม่ตรงกับตัวเองในฉากอื่นหรือไม่ตรงกับโปรไฟล์ '

@@ -174,7 +174,7 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
 
 ## E2E test workflow (สำคัญ — ทำทุกครั้งก่อนเชื่อว่าแก้สำเร็จ)
 
-Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **1,380 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
+Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **1,471 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
 
 **Unit test โมดูลบริสุทธิ์ (alpha.39, รันเร็ว ไม่ต้องเปิด electron):**
 ```bash
@@ -187,14 +187,15 @@ node test/relationship.test.cjs    # 28 checks — REL_TYPES/สี/ไอคอ
 node test/sp-continued.test.cjs    # 45 checks — CONTINUED/MORE/cont'd + side + compile (alpha.58)
 node test/sp-reports.test.cjs      # 54 checks — parseHeading/สถานที่/ตัวละคร/กราฟ (alpha.58)
 node test/smart-terms.test.cjs     # 55 checks — looksLikeTerm/เกณฑ์เจอซ้ำ/pin/ignore (alpha.58)
-node test/prose-format.test.cjs    # 84 checks — รูปแบบ + จัดหน้านิยาย (alpha.58r)
+node test/prose-format.test.cjs    # 85 checks — รูปแบบ + จัดหน้านิยาย (alpha.58r)
 node test/alpha58r.test.cjs        # 57 checks — lineHeight/spCss/pin/preset/mdToHtml/align/hr+code
-node test/sp-headers.test.cjs      # 48 checks — หัวกระดาษ/ตัวแปร/linesForBody (alpha.59 · 91)
+node test/sp-headers.test.cjs      # 55 checks — หัวกระดาษ/ตัวแปร/linesForBody (alpha.59 · 91)
 node test/sp-title-pages.test.cjs  # 62 checks — TitlePageEditor/หน้าปกมาตรฐาน/HTML (alpha.59 · 90)
-node test/pdf-generator.test.cjs   # 87 checks — สร้าง PDF จริง/Outlines/OpenAction/ฟอนต์ (alpha.59 · 69/87/89)
+node test/pdf-generator.test.cjs   # 103 checks — สร้าง PDF จริง/Outlines/OpenAction/ฟอนต์ (alpha.59 · 69/87/89)
 node test/compile-omit.test.cjs    # 32 checks — ตัด element ตอนส่งออก (alpha.59 · 88)
+node test/sp-export.test.cjs       # 101 checks — FDX/RTF/ลายน้ำ + หน้าปก/เลขฉาก/fontPt (alpha.60r1)
 ```
-`npm run test:unit` รันชุดบริสุทธิ์ทั้งหมดรวดเดียว (**832 checks**)
+`npm run test:unit` รันชุดบริสุทธิ์ทั้งหมดรวดเดียว (**1,014 checks**)
 · **ตรวจ PDF ที่สร้างขึ้นในเทส**: pdf-lib **บีบอัด content stream (FlateDecode)** และเขียนข้อความเป็น
 **hex string** (`<48656C…> Tj`) ทั้งฟอนต์มาตรฐานและฟอนต์ที่ฝัง → ค้นข้อความจากไบต์ดิบไม่เจอเลย
 ต้อง `zlib.inflateSync` ก่อน **แล้วถอด hex** (ดู `streamsText`/`drawnText` ใน `pdf-generator.test.cjs`)
@@ -457,6 +458,25 @@ grep -E "FAIL|STOP" /tmp/k2result.txt | head -3
 50. **เพิ่มช่องในคุณสมบัติฉาก = แก้ index ใน e2e "สองที่"** — มีทั้ง **กล่อง** (`scene-props.js`) และ
    **แผง** (`renderPropsPanel` ใน app.js) ที่เทสอ้าง `inps[N]` แยกกัน (ขยายจากบทเรียนข้อ 12)
 
+66. **สวิตช์ "หน่วงเวลา" ที่เขียนเป็น "ปิดฟีเจอร์" = ฟีเจอร์หายทั้งระบบ** (alpha.60r1 บั๊ก 6)
+   `spAutoPaginate` (ข้อ 96) ค่าเริ่มต้น `false` แต่ `scheduleCount` เขียน `if (spAutoPaginate !== false)`
+   ครอบการจัดหน้าทั้งก้อน → ผู้ใช้ทุกคนที่ไม่เคยแตะสวิตช์ ไม่เห็นจำนวนหน้า/เส้นคั่นหน้า/CONTINUED เลย
+   **แก้: แยกงานจริงเป็นฟังก์ชัน (`repaginateNow`) แล้วให้สวิตช์เลือกแค่ "ใครเรียก เมื่อไร"**
+   · e2e จับได้ที่ [84] "แถบสถานะบอกจำนวนหน้า" — เช็คที่วัด **ผลลัพธ์ที่ผู้ใช้เห็น** จับ regression แบบนี้ได้เสมอ
+67. **e2e ไม่ idempotent เพราะ global settings ค้างข้ามรอบ** (alpha.60r1 — เผา 1 รอบ e2e)
+   ข้อ 94 เพิ่ม `%APPDATA%/Killian2/settings.json` ที่ merge ทับ `DEFAULT_SETTINGS`
+   รอบก่อนหน้าเทส "ตั้งค่า" เขียน `uiFontSize = 4` ลงไป → รอบถัดไปฟอนต์ UI เริ่มที่ 18px
+   แล้ว check ที่คาด 14px ล้มตั้งแต่ต้น (ดูเหมือนโค้ดพัง ทั้งที่ไม่ใช่)
+   **แก้: `runTest()` เรียก `kapi.writeGlobalSettings({})` ก่อนเริ่ม** (คู่กับการล้าง localStorage เดิม)
+68. **เติม i18n ในไฟล์ที่มีตัวแปรชื่อ `t` = ระเบิดตอนรัน** (บทเรียน 25 ซ้ำ)
+   `split-ui.js` / `ai-ui.js` / `comment-ui.js` ใช้ `const t = state.active` อยู่แล้ว
+   พอ `import { t } from core.js` เข้ามา esbuild เปลี่ยนชื่อเป็น `t3` แล้วตัวแปรท้องถิ่นบังทับ
+   → `TypeError: t3 is not a function` กลางการวาด split (build ผ่านสนิท)
+   **แก้: `import { t as tr }` เสมอในไฟล์กลุ่มนี้ เหมือนที่ app.js ทำมาตั้งแต่แรก**
+69. **`splitCharacter()` ตัดเฉพาะวงเล็บ "ท้ายบรรทัด"** — `text.split('(')[0]` ตัดผิดเมื่อชื่อมีวงเล็บในตัว
+   ("ดร. (ปรายฟ้า) (V.O.)" → `split` ได้ "ดร." · `splitCharacter` ได้ "ดร. (ปรายฟ้า)")
+   · ข้อจำกัดที่แก้ไม่ได้: "ดร. (ปรายฟ้า)" เดี่ยว ๆ แยกไม่ออกว่าเป็นชื่อหรือชื่อ+ส่วนเสริม — ยอมรับ
+
 ---
 
 ## Build recipes (app ไม่ต้องมี node_modules ตอน runtime — main/preload ใช้แค่ electron+fs/path/url, bundle.js มี prosemirror ครบ)
@@ -539,7 +559,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ---
 
-## เวอร์ชัน (ล่าสุด alpha.60 · e2e 1,432 + unit 832)
+## เวอร์ชัน (ล่าสุด alpha.60r1 · e2e 1,471 + unit 1,014)
 
 .13–.22 (v1→v2 พื้นฐาน): snapshot, line numbers, spellcheck ไทย+Chromium, ปุ่มลัดตั้งเอง, mac build, บทหนัง Ctrl+arrow, relationship sync, floating format bar, sidebar resize, SmartType Final Draft, wiki gallery/lightbox, explorer search+tags, panel docking, tree float+snap
 .24 batch 8 (drag-move explorer, panel snap, split compare, version tracking, scene lock, screenplay Final Draft look, screenplay images, wiki links) · .25–.27 **Planner board** (fabric.js) · .28 **floating windows** · .29 memo-in-chapter + scoped search
@@ -760,7 +780,23 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
     · `kapi.readGlobalSettings/writeGlobalSettings` (IPC ใหม่)
     · `loadSettings` เป็น async โหลด global ก่อน merge project
   **[96] Auto-Pagination**: `spAutoPaginate` + `spPaginateInterval` (1–60s) · `scheduleRepaginate()` debounce
-    · gate ใน scheduleCount — ปิดแล้วข้ามการจัดหน้าแต่ยังนับคำ/ตรวจผิดปกติ
+    · **สวิตช์นี้คือ "หน่วงเวลา" ไม่ใช่ "ปิดฟีเจอร์"** (แก้ใน alpha.60r1):
+      ปิด (ค่าเริ่มต้น) = `scheduleCount` เรียก `repaginateNow()` ทุกครั้ง ·
+      เปิด = ยกงานไปให้ `scheduleRepaginate` ทำห่าง ๆ แถบสถานะใช้ค่าล่าสุดที่จำไว้
+
+.60r1 **รอบเก็บบั๊ก 22 ข้อ + ปิดงานที่ค้าง** (ดู CHANGELOG เต็มใน `renderer/CHANGELOG.md`)
+  **บล็อก e2e**: ข้อ 96 เขียน gate กลับด้าน → จำนวนหน้า/เส้นคั่นหน้า/CONTINUED หายทั้งระบบตอนสวิตช์ปิด (= ค่าเริ่มต้น)
+  **`src/num.js` ใหม่** — `num`/`numClamp`/`numInt` แหล่งเดียวของกฎ 20 · ลบสำเนาใน 5 ไฟล์ · ไล่แทน `+x || d` ทั้งโปรเจกต์
+  **`src/page-break-plugin.js` ใหม่** — `createPageBreakPlugin()` ให้บทกับนิยายใช้ร่วม (สถานะแยกกัน) ตัดโค้ดซ้ำ 53 บรรทัด
+  **RTF**: `\sb` เว้นบรรทัดตรงกับ `paginate()` แล้ว (เดิมลบออก 1 บรรทัดทุกบล็อก) · รับ `fontPt` · `keepNext` มาจาก `SP_ELEMENT_CONFIG`
+  **FDX**: เลขฉาก `Number="N"` · หน้าปกที่ผู้ใช้แต่งเอง (ทั้ง FDX และ RTF) ชนะหน้าปกอัตโนมัติจาก meta
+  **PDF ลายน้ำรายคน** ใช้ `buildScriptPdf` (สารบัญ/หน้าปก/ฟอนต์ไทยสองวงศ์ครบ) — Chromium เป็นทางสำรอง
+  **`TitlePageEditor.duplicatePage()`** + ปุ่มทำสำเนาในกล่องหน้าปก · **แคชฟอนต์ PDF เทียบ mtime** + `clearPdfFontCache()`
+  **คลังรูปเป็นแผง** (`#gal-panel`) เลิกแย่งแถบแท็บกับฉาก · **แผงจำสัดส่วนตอนปิด-เปิด** (`home.ratio`)
+  **i18n ~145 สตริง** ของ 8 โมดูล UI ใหม่เข้า `languages/*.json` (ไทย+อังกฤษ)
+  เก็บงานเล็ก: `popupMenu` ใน panel-ui (เดิม import จาก app.js ได้ undefined ตลอด) · `flushBuf` dead code ·
+  `SP_PREFIX` derive จาก `SP_ELEMS` · `usageOf` นับ token 0 ถูกต้อง · `SEVERITY` รวมที่ ai-core ·
+  import-sp รองรับ round-trip ครบทุก element + `splitCharacter` · ถอด import ที่ไม่ได้ใช้ 9 ตัว
 
 **ยังเหลือ**: `search-engine.js` ยังเป็น orphan — Global Search (`global-search.js`) ยังสแกนไฟล์ตรง ๆ ไม่ได้ใช้ inverted index (ควรสลับมาใช้เพื่อความเร็ว) · multiple-drafts-per-book UI (โครงรองรับแล้ว), screenplay align persistence, Campaign/D&D mode, electron-builder + code signing, .icns/.ico icon, native arm64 build. Top เคยบอก paper/indent "อาจต้องปรับปรุง ไว้ก่อน"
 

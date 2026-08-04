@@ -143,5 +143,32 @@ check('headerPlainLine ไม่ยาวเกินความกว้าง
 check('headerPlainLine หน้าแรก = ว่าง',
   H.headerPlainLine(1, hdrOn, ctx, 40) === '');
 
+// ═════ [alpha.60r1] caps: HTML preview / PDF / ข้อความล้วน ต้องได้ตัวพิมพ์ใหญ่ตรงกันหมด ═════
+// (ตรวจข้อสงสัยว่า headerHtml ลืมใส่ text-transform — จริง ๆ ทุกทางวิ่งผ่าน headerStringsFor
+//  ซึ่ง toUpperCase() ให้แล้ว จึงไม่มีทางเพี้ยน · ล็อกเป็นเทสถาวรกันคนไปแยกทางกันภายหลัง)
+{
+  const capsHdr = H.mergeHeaders({ enabled: true, firstPage: true,
+    strings: [{ text: 'draft ${DRAFT}', align: 'left', caps: true },
+              { text: 'draft ${DRAFT}', align: 'right', caps: false }] });
+  const c = { DRAFT: 'two' };
+  const rows = H.headerStringsFor(1, capsHdr, c);
+  check('[91] caps=true → ข้อความถูกทำเป็นตัวพิมพ์ใหญ่ตั้งแต่ headerStringsFor',
+    rows[0].text === 'DRAFT TWO', rows[0].text);
+  check('[91] caps=false → คงตัวพิมพ์เดิม', rows[1].text === 'draft two', rows[1].text);
+  const html = H.headerHtml(1, capsHdr, c);
+  check('[91] HTML preview ได้ตัวพิมพ์ใหญ่ตรงกับที่ PDF วาด',
+    html.includes('DRAFT TWO') && html.includes('draft two'), html);
+  const plain = H.headerPlainLine(1, capsHdr, c, 60);
+  check('[91] ข้อความล้วนก็ตรงกัน', plain.includes('DRAFT TWO') && plain.includes('draft two'), plain);
+  check('[91] caps ไม่ทำให้ภาษาไทยเพี้ยน',
+    H.headerStringsFor(1, H.mergeHeaders({ enabled: true, firstPage: true,
+      strings: [{ text: 'ฉบับร่าง', caps: true }] }), {})[0].text === 'ฉบับร่าง');
+  // xOffset = 0 ต้องไม่ถูกแทนด้วยค่าเริ่มต้น (กฎ 20)
+  const zero = H.mergeHeaders({ enabled: true, strings: [{ text: 'a', xOffset: 0, align: 'right' }] });
+  check('[กฎ20] xOffset 0 รอด mergeHeaders', zero.strings[0].xOffset === 0);
+  check('[กฎ20] xOffset 0 → CSS ชิดขวาพอดี 0in',
+    H.headerHtml(2, zero, {}).includes('right:0in'), H.headerHtml(2, zero, {}));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

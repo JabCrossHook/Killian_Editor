@@ -1,8 +1,7 @@
 // kanban-ui.js — กระดาน Kanban แสดงฉากตามสถานะ · ลากการ์ดเปลี่ยนสถานะ (ข้อ 12)
-import { $, el, setStatus, state, SCENE_COLORS } from '../core.js';
-import { KanbanBoard, getKanbanData, addColumn as addCol, removeColumn as removeCol } from './kanban-core.js';
+import { $, el, setStatus, state, SCENE_COLORS, t } from '../core.js';
+import { KanbanBoard } from './kanban-core.js';   // คอลัมน์จัดการผ่านเมธอดของ board (addColumn/removeColumn)
 import { allStatuses, statusColor } from '../custom-status.js';
-import { markDirty, saveProjectMeta } from '../app.js';
 import { chapterFolders, scenePath, syncIo } from '../project-scan.js';
 import { ask } from '../ui.js';
 import { showPanel, isPanelOpen } from '../panels/panel-ui.js';
@@ -60,7 +59,7 @@ function renderKanban(b) {
   const addBtn = el('button', 'kb-add-col', '+ เพิ่มคอลัมน์');
   addBtn.onclick = async () => {
     // window.prompt() เป็น no-op ใน Electron — ต้องใช้กล่องของโปรแกรมเอง
-    const name = await ask('ชื่อคอลัมน์ใหม่', { placeholder: 'เช่น รอรีวิว' });
+    const name = await ask(t('kanban.newColumn', 'ชื่อคอลัมน์ใหม่'), { placeholder: t('kanban.newColumnHint', 'เช่น รอรีวิว') });
     if (!name) return;
     await b.addColumn(name);
     renderKanban(b);
@@ -84,10 +83,10 @@ function renderKanban(b) {
     // ปุ่มลบคอลัมน์ (เฉพาะคอลัมน์ที่กำหนดเอง)
     if (col.custom) {
       const delBtn = el('span', 'kb-col-del', '×');
-      delBtn.title = 'ลบคอลัมน์';
+      delBtn.title = t('kanban.deleteColumn', 'ลบคอลัมน์');
       delBtn.onclick = async (e) => { e.stopPropagation();
         const res = await b.removeColumn(col.key, { moveTo: allStatuses()[0] || '' });
-        if (!res.ok) { setStatus('ย้ายฉากออกจากคอลัมน์นี้ก่อน'); return; }
+        if (!res.ok) { setStatus(t('kanban.moveScenesFirst', 'ย้ายฉากออกจากคอลัมน์นี้ก่อน')); return; }
         renderKanban(b);
       };
       colHead.append(delBtn);
@@ -134,7 +133,7 @@ function renderKanban(b) {
             openScene(p, card.title);
             return;
           }
-          setStatus('ไม่พบไฟล์ฉาก: ' + card.title);
+          setStatus(t('kanban.sceneNotFound', 'ไม่พบไฟล์ฉาก: ') + card.title);
         };
 
         // อ่านบทก่อนวาง (drag)

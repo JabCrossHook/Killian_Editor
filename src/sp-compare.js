@@ -1,6 +1,6 @@
 // sp-compare.js — [alpha.60 ข้อ 74] เปรียบเทียบบทภาพยนตร์ 2 ฉบับ
 // LCS diff + color-coded HTML output (deleted=แดง, added=เขียว, context=ขาว, change=เหลือง)
-import { parseScript } from './fountain.js';
+import { parseScript, SP_ELEMS } from './fountain.js';
 
 // [74] เปรียบเทียบบท 2 ชุด → diffs แบบมีสี
 export function compareScripts(oldText, newText) {
@@ -137,21 +137,6 @@ function lineDiff(oldLines, newLines) {
   // Backtrack to produce diffs
   const diffs = [];
   let i = m, j = n;
-  const buf = [];
-
-  function flushBuf(isNew) {
-    if (!buf.length) return;
-    // ถ้ามีทั้ง delete และ insert ใน buffer → merge เป็น change
-    // (เกิดขึ้นเมื่อบรรทัดเก่ากับใหม่เป็นคู่กัน แต่ข้อความต่าง)
-    if (isNew) {
-      for (const line of buf) diffs.push({ type: 'insert', new: line });
-    } else {
-      for (let k = 0; k < buf.length; k++) {
-        diffs.push({ type: 'delete', old: buf[k] });
-      }
-    }
-    buf.length = 0;
-  }
 
   // เก็บ equal มาช้าที่สุดเพื่อจับคู่ change
   const result = [];
@@ -226,13 +211,18 @@ function lineDiff(oldLines, newLines) {
 }
 
 // ===================== helpers =====================
-const SP_PREFIX = {
-  scene: '. ', action: '! ', character: '@ ', parenthetical: '',
-  dialogue: '', transition: '> ', 'transition-in': '$in ', subheader: '$sub ',
-  intercut: '$intercut ', shot: '$shot ', 'act-break': '$act ',
-  summary: '= ', outline1: '# ', outline2: '## ', outline3: '### ',
-  note: '(( ', raw: '', image: '', blank: '',
-};
+// prefix ของแต่ละ element — ดึงจาก SP_ELEMS (fountain.js) ซึ่งเป็นแหล่งความจริงเดียว
+// (เดิมคัดลอกตารางมาไว้ที่นี่ → เปลี่ยน prefix ที่ fountain.js แล้วการเทียบบทเพี้ยนเงียบ ๆ)
+// element ที่ "ไม่มี prefix ตอนเขียนไฟล์" (บทพูด/วงเล็บ/รูป/raw) ต้องคงเป็นค่าว่างเหมือนเดิม
+const NO_PREFIX = new Set(['dialogue', 'parenthetical', 'image', 'raw', 'blank']);
+const SP_PREFIX = Object.fromEntries(Object.entries(SP_ELEMS).map(([k, v]) => {
+  if (NO_PREFIX.has(k)) return [k, ''];
+  const p = String(v.prefix || '');
+  // prefix ที่เป็นสัญลักษณ์ตัวเดียว (. ! @ > (() เขียนติดข้อความในไฟล์ แต่ตอน "เทียบบท"
+  // เว้นวรรคให้อ่านง่ายกว่า — ขอแค่สองฝั่งใช้กติกาเดียวกัน
+  return [k, p && !p.endsWith(' ') ? p + ' ' : p];
+}));
+
 
 function escHtml(s) {
   if (s == null) return '';

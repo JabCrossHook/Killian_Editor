@@ -2,7 +2,7 @@
 // เดิมคอมเมนต์เป็น "กล่องโต้ตอบ" ที่เก็บใน scenes.json → แบน ไม่มีสมอ ไม่มี resolve ไม่มีผู้เขียน
 // ตอนนี้เป็น "แผง" (dock/tab/float ได้) ที่ใช้ comment-core.js — เธรดซ้อนได้ · ผูกกับข้อความ · ปิดเรื่องได้
 // เก็บท้ายไฟล์ .md เอง (<!-- k2-comments --> ) → แก้นอกโปรแกรมได้ · v1 (Python) ยังเปิดไฟล์ได้เหมือนเดิม
-import { $, el, state, setStatus, log } from '../core.js';
+import { $, el, state, setStatus, log, t as tr } from '../core.js';   // บทเรียน 25: ในไฟล์นี้ตัวแปร t = แท็บ → i18n ใช้ชื่อ tr
 import { CommentStore, countComments, openComments, reanchorAll } from './comment-core.js';
 import { setCommentAnchors, refreshCommentAnchors } from '../editor.js';
 import { TextSelection } from 'prosemirror-state';
@@ -102,7 +102,7 @@ export async function renderCommentPanel(host) {
   host.innerHTML = '';
   const file = activeFile();
   if (!file) {
-    host.append(el('div', 'dim', '(เปิดฉากก่อนจึงจะคอมเมนต์ได้)'));
+    host.append(el('div', 'dim', tr('cmt.needScene', '(เปิดฉากก่อนจึงจะคอมเมนต์ได้)')));
     lastList = [];
     clearCommentAnchors();
     return null;
@@ -111,7 +111,7 @@ export async function renderCommentPanel(host) {
   const store = commentStore();
   let all = [];
   try { all = await store.list(file); }
-  catch (e) { log('error', 'อ่านคอมเมนต์ไม่ได้', e); host.append(el('div', 'dim', '(อ่านคอมเมนต์ไม่ได้)')); return null; }
+  catch (e) { log('error', tr('cmt.readFailLog', 'อ่านคอมเมนต์ไม่ได้'), e); host.append(el('div', 'dim', tr('cmt.readFail', '(อ่านคอมเมนต์ไม่ได้)'))); return null; }
 
   // หัวแผง: ชื่อฉาก + ตัวกรอง
   const head = el('div', 'k-cm-head');
@@ -119,15 +119,15 @@ export async function renderCommentPanel(host) {
   const nOpen = openComments(all).length;
   head.append(el('span', 'k-cm-count', `${countComments(all)} รายการ · ยังไม่ปิด ${nOpen}`));
   const fBtn = el('button', 'k-cm-filter' + (filterOpen ? ' on' : ''),
-                  filterOpen ? '🔽 เฉพาะที่ยังไม่ปิด' : '🔽 ทั้งหมด');
-  fBtn.title = 'สลับกรองคอมเมนต์ที่ปิดเรื่องแล้ว';
+                  filterOpen ? tr('cmt.filterOpen', '🔽 เฉพาะที่ยังไม่ปิด') : tr('cmt.filterAll', '🔽 ทั้งหมด'));
+  fBtn.title = tr('cmt.filterHint', 'สลับกรองคอมเมนต์ที่ปิดเรื่องแล้ว');
   fBtn.onclick = () => { filterOpen = !filterOpen; renderCommentPanel(host); };
   head.append(fBtn);
   host.append(head);
 
   const list = el('div', 'k-cm-list');
   const shown = filterOpen ? all.filter((c) => !c.resolved) : all;
-  if (!shown.length) list.append(el('div', 'dim', filterOpen ? '(ไม่มีคอมเมนต์ที่ยังไม่ปิด)' : '(ยังไม่มีคอมเมนต์ในฉากนี้)'));
+  if (!shown.length) list.append(el('div', 'dim', filterOpen ? tr('cmt.emptyOpen', '(ไม่มีคอมเมนต์ที่ยังไม่ปิด)') : tr('cmt.emptyAll', '(ยังไม่มีคอมเมนต์ในฉากนี้)')));
   for (const c of shown) list.append(commentCard(c, file, host, 0));
   host.append(list);
 
@@ -136,12 +136,12 @@ export async function renderCommentPanel(host) {
   const foot = el('div', 'k-cm-foot');
   if (sel) {
     const chip = el('div', 'k-cm-anchor-chip', '📍 ผูกกับ: “' + short(sel.quote) + '”');
-    chip.title = 'คอมเมนต์ที่เพิ่มจะผูกกับข้อความที่เลือกไว้';
+    chip.title = tr('cmt.anchorHint', 'คอมเมนต์ที่เพิ่มจะผูกกับข้อความที่เลือกไว้');
     foot.append(chip);
   }
   const row = el('div', 'k-cm-input-row');
   const inp = el('textarea', 'k-cm-input');
-  inp.placeholder = sel ? 'คอมเมนต์เกี่ยวกับข้อความที่เลือก…' : 'พิมพ์คอมเมนต์…';
+  inp.placeholder = sel ? tr('cmt.placeholderSel', 'คอมเมนต์เกี่ยวกับข้อความที่เลือก…') : tr('cmt.placeholder', 'พิมพ์คอมเมนต์…');
   inp.rows = 2;
   const addB = el('button', 'k-ok', '💬 เพิ่ม');
   const doAdd = async () => {
@@ -151,9 +151,9 @@ export async function renderCommentPanel(host) {
     try {
       await store.add(file, sel, text);
       inp.value = '';
-      setStatus('เพิ่มคอมเมนต์แล้ว');
+      setStatus(tr('cmt.added', 'เพิ่มคอมเมนต์แล้ว'));
       await renderCommentPanel(host);
-    } catch (e) { log('error', 'เพิ่มคอมเมนต์ไม่สำเร็จ', e); setStatus('เพิ่มคอมเมนต์ไม่สำเร็จ'); addB.disabled = false; }
+    } catch (e) { log('error', tr('cmt.addFail', 'เพิ่มคอมเมนต์ไม่สำเร็จ'), e); setStatus(tr('cmt.addFail', 'เพิ่มคอมเมนต์ไม่สำเร็จ')); addB.disabled = false; }
   };
   addB.onclick = doAdd;
   // Enter = ส่ง · Shift+Enter = ขึ้นบรรทัดใหม่
@@ -178,18 +178,18 @@ function commentCard(c, file, host, depth) {
 
   const top = el('div', 'k-cm-top');
   top.append(el('span', 'k-cm-author', '👤 ' + (c.author || 'ไม่ระบุชื่อ')));
-  top.append(el('span', 'k-cm-when', fmtWhen(c.timestamp) + (c.editedAt ? ' (แก้ไขแล้ว)' : '')));
+  top.append(el('span', 'k-cm-when', fmtWhen(c.timestamp) + (c.editedAt ? tr('cmt.edited', ' (แก้ไขแล้ว)') : '')));
   const acts = el('span', 'k-cm-acts');
 
   const mk = (label, title, fn, cls) => { const b = el('span', 'k-cm-act' + (cls ? ' ' + cls : ''), label); b.title = title; b.onclick = fn; return b; };
-  if (!depth) acts.append(mk(c.resolved ? '↩' : '✓', c.resolved ? 'เปิดเรื่องนี้อีกครั้ง' : 'ปิดเรื่องนี้ (resolve)',
-    async () => { await store.resolve(file, c.id, !c.resolved); setStatus(c.resolved ? 'เปิดคอมเมนต์อีกครั้ง' : 'ปิดเรื่องคอมเมนต์แล้ว'); renderCommentPanel(host); }));
-  acts.append(mk('✏️', 'แก้ไขข้อความ', () => startEdit()));
-  acts.append(mk('↩💬', 'ตอบกลับ', () => startReply()));
-  acts.append(mk('🗑', 'ลบคอมเมนต์นี้ (พร้อมเธรดตอบกลับ)', async () => {
+  if (!depth) acts.append(mk(c.resolved ? '↩' : '✓', c.resolved ? tr('cmt.reopen', 'เปิดเรื่องนี้อีกครั้ง') : tr('cmt.resolve', 'ปิดเรื่องนี้ (resolve)'),
+    async () => { await store.resolve(file, c.id, !c.resolved); setStatus(c.resolved ? tr('cmt.reopened', 'เปิดคอมเมนต์อีกครั้ง') : tr('cmt.resolved', 'ปิดเรื่องคอมเมนต์แล้ว')); renderCommentPanel(host); }));
+  acts.append(mk('✏️', tr('cmt.edit', 'แก้ไขข้อความ'), () => startEdit()));
+  acts.append(mk('↩💬', tr('cmt.reply', 'ตอบกลับ'), () => startReply()));
+  acts.append(mk('🗑', tr('cmt.deleteHint', 'ลบคอมเมนต์นี้ (พร้อมเธรดตอบกลับ)'), async () => {
     const { confirmBox } = await import('../ui.js');
-    if (!(await confirmBox('ลบคอมเมนต์นี้ (พร้อมเธรดตอบกลับทั้งหมด) ?', 'ลบคอมเมนต์'))) return;
-    await store.remove(file, c.id); setStatus('ลบคอมเมนต์แล้ว'); renderCommentPanel(host);
+    if (!(await confirmBox(tr('cmt.deleteConfirm', 'ลบคอมเมนต์นี้ (พร้อมเธรดตอบกลับทั้งหมด) ?'), tr('cmt.delete', 'ลบคอมเมนต์')))) return;
+    await store.remove(file, c.id); setStatus(tr('cmt.deleted', 'ลบคอมเมนต์แล้ว')); renderCommentPanel(host);
   }, 'k-danger'));
   top.append(acts);
   card.append(top);
@@ -200,8 +200,8 @@ function commentCard(c, file, host, depth) {
 
   if (c.anchor && c.anchor.quote) {
     const q = el('div', 'k-cm-quote' + (c.anchor.lost ? ' lost' : ''),
-                 (c.anchor.lost ? '📍✕ (ข้อความถูกลบไปแล้ว) ' : '📍 ') + '“' + short(c.anchor.quote, 60) + '”');
-    q.title = c.anchor.lost ? 'ไม่พบข้อความที่คอมเมนต์นี้ผูกไว้แล้ว' : 'ชี้เพื่อไฮไลต์ในฉาก · คลิกเพื่อเลื่อนไปหา';
+                 (c.anchor.lost ? tr('cmt.anchorLost', '📍✕ (ข้อความถูกลบไปแล้ว) ') : '📍 ') + '“' + short(c.anchor.quote, 60) + '”');
+    q.title = c.anchor.lost ? tr('cmt.anchorLostHint', 'ไม่พบข้อความที่คอมเมนต์นี้ผูกไว้แล้ว') : tr('cmt.anchorOkHint', 'ชี้เพื่อไฮไลต์ในฉาก · คลิกเพื่อเลื่อนไปหา');
     if (!c.anchor.lost) {
       // ชี้ = เน้นอันนี้อันเดียว · เลิกชี้ = กลับไปไฮไลต์ทุกสมอตามข้อมูลจริง (ไม่ใช่ข้อความในหน้าจอที่ถูกตัดสั้น)
       q.onmouseenter = () => { setCommentAnchors([c.anchor.quote], c.anchor.quote); refreshCommentAnchors(editorView()); };
@@ -216,7 +216,7 @@ function commentCard(c, file, host, depth) {
     if (card.querySelector('.k-cm-edit')) return;
     const ta = el('textarea', 'k-cm-edit'); ta.value = c.text; ta.rows = 2;
     const ok = el('button', 'k-ok', 'บันทึก');
-    const no = el('button', null, 'ยกเลิก');
+    const no = el('button', null, tr('cmt.cancel', 'ยกเลิก'));
     const box = el('div', 'k-cm-editbox'); box.append(ta, ok, no);
     body.after(box); body.hidden = true; ta.focus();
     const close = () => { box.remove(); body.hidden = false; };
@@ -224,22 +224,22 @@ function commentCard(c, file, host, depth) {
     ok.onclick = async () => {
       const v = ta.value.trim();
       if (!v) { close(); return; }
-      await store.edit(file, c.id, v); setStatus('แก้ไขคอมเมนต์แล้ว'); renderCommentPanel(host);
+      await store.edit(file, c.id, v); setStatus(tr('cmt.editedDone', 'แก้ไขคอมเมนต์แล้ว')); renderCommentPanel(host);
     };
   }
   // ---- ตอบกลับ ----
   function startReply() {
     if (card.querySelector('.k-cm-reply')) return;
-    const ta = el('textarea', 'k-cm-reply'); ta.placeholder = 'ตอบกลับ…'; ta.rows = 2;
+    const ta = el('textarea', 'k-cm-reply'); ta.placeholder = tr('cmt.replyPlaceholder', 'ตอบกลับ…'); ta.rows = 2;
     const ok = el('button', 'k-ok', 'ตอบ');
-    const no = el('button', null, 'ยกเลิก');
+    const no = el('button', null, tr('cmt.cancel', 'ยกเลิก'));
     const box = el('div', 'k-cm-editbox'); box.append(ta, ok, no);
     card.append(box); ta.focus();
     no.onclick = () => box.remove();
     const send = async () => {
       const v = ta.value.trim();
       if (!v) { box.remove(); return; }
-      await store.reply(file, c.id, v); setStatus('ตอบกลับแล้ว'); renderCommentPanel(host);
+      await store.reply(file, c.id, v); setStatus(tr('cmt.replied', 'ตอบกลับแล้ว')); renderCommentPanel(host);
     };
     ok.onclick = send;
     ta.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
@@ -265,7 +265,7 @@ export function scrollToAnchor(quote) {
     const i = node.text.indexOf(quote);
     if (i >= 0) hit = pos + i;
   });
-  if (hit == null) { setStatus('ไม่พบข้อความที่คอมเมนต์ผูกไว้ (อาจถูกแก้/ลบไปแล้ว)'); return false; }
+  if (hit == null) { setStatus(tr('cmt.anchorMissing', 'ไม่พบข้อความที่คอมเมนต์ผูกไว้ (อาจถูกแก้/ลบไปแล้ว)')); return false; }
   try {
     const to = Math.min(hit + quote.length, v.state.doc.content.size);
     v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, hit, to)).scrollIntoView());

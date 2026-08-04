@@ -112,6 +112,11 @@ export const PROVIDERS = {
 };
 export const PROVIDER_IDS = Object.keys(PROVIDERS);
 
+// ───────── ระดับความรุนแรงของสิ่งที่ตรวจพบ (ใช้ร่วมกันทุกโมดูลตรวจสอบ) ─────────
+// เดิมประกาศซ้ำใน ai-plot.js กับ ai-character.js — แก้ที่หนึ่งแล้วอีกที่ไม่ตาม
+export const SEVERITY = { critical: 'ร้ายแรง', major: 'สำคัญ', minor: 'เล็กน้อย' };
+export const SEV_RANK = { critical: 3, major: 2, minor: 1 };
+
 /** Build an HTTP request for a chat completion. @returns {{url,headers,body}} */
 export function buildRequest(provider, opts = {}) {
   const p = PROVIDERS[provider] || PROVIDERS.openai;
@@ -138,10 +143,14 @@ export function parseStreamChunk(provider, line) {
   try { return p.chunk(line); } catch { return null; }
 }
 function usageOf(input, output, total, text) {
-  const i = num(input), o = num(output) || (text ? estimateTokens(text) : 0);
-  return { input: i, output: o, total: num(total) || i + o };
+  // กฎ 20: `num(output) || …` ทำให้ "output = 0 จริง ๆ" (คำตอบว่าง/ถูกตัด) หลุดไปประมาณจากข้อความ
+  // → ต้องแยก "ไม่มีค่ามา" ออกจาก "ค่ามาเป็น 0" ให้ชัด
+  const i = num(input);
+  const o = isNum(output) ? output : (text ? estimateTokens(text) : 0);
+  return { input: i, output: o, total: isNum(total) ? total : i + o };
 }
-const num = (v) => (typeof v === 'number' && isFinite(v) ? v : 0);
+const isNum = (v) => typeof v === 'number' && isFinite(v);
+const num = (v) => (isNum(v) ? v : 0);
 function safeJson(s) { try { return JSON.parse(s); } catch { return null; } }
 
 // ────────────────────────────────────────────────────────────────

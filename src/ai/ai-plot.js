@@ -1,7 +1,7 @@
 // ai-plot.js — ตรวจหาช่องโหว่ของเนื้อเรื่อง (ข้อ 73)
 // สร้าง prompt (pure) → เรียก AI → แปลงคำตอบเป็นโครงสร้าง (pure) + ตรวจแบบออฟไลน์ที่ทำได้เองก่อน
 // spec: docs/73-ai-plot.md
-import { extractJson, validate, estimateTokens, chunkText } from './ai-core.js';
+import { extractJson, validate, estimateTokens, chunkText, SEVERITY, SEV_RANK } from './ai-core.js';
 
 // ───────── ชนิดปัญหา + ระดับความรุนแรง ─────────
 export const HOLE_TYPES = {
@@ -12,8 +12,7 @@ export const HOLE_TYPES = {
   'plot-thread':          'ปมที่ทิ้งค้าง',
   'pacing':               'จังหวะการเล่าเรื่อง',
 };
-export const SEVERITY = { critical: 'ร้ายแรง', major: 'สำคัญ', minor: 'เล็กน้อย' };
-const SEV_RANK = { critical: 3, major: 2, minor: 1 };
+export { SEVERITY, SEV_RANK };            // ส่งต่อจาก ai-core.js (แหล่งเดียว)
 
 const SYSTEM = 'คุณเป็นบรรณาธิการต้นฉบับ (story editor) มืออาชีพ อ่านนิยาย/บทภาพยนตร์ภาษาไทยแล้วชี้จุดที่ขัดกันเอง '
   + 'คุณเข้มงวดแต่ยุติธรรม: รายงานเฉพาะสิ่งที่ขัดกันจริงในเนื้อหาที่ได้รับ ห้ามเดาสิ่งที่ไม่ได้เขียนไว้ '
