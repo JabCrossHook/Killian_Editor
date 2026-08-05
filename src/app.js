@@ -9798,8 +9798,16 @@ async function runTest(projectPath) {
     state.settings.lineNumbers = false; applySettings();
     await new Promise((r) => setTimeout(r, 120));
     check('ปิดเลขบรรทัด → เอา k-ln ออก', !document.body.classList.contains('k-ln'));
+    // [alpha.61] `applySettings()` ล้างรางผ่าน `scheduleLineGutter()` ซึ่งรอ **requestAnimationFrame**
+    // — Chromium หยุดยิง rAF เมื่อหน้าต่างถูกบัง/ไม่ได้อยู่หน้าสุด (บทเรียนข้อ 14i-2)
+    // ตอนรัน e2e จาก .app ที่ build แล้ว หน้าต่างมักไม่ได้อยู่หน้าสุด → 120ms เดียวไม่พอเสมอไป
+    // → รอจนรางถูกล้างจริง (สูงสุด ~1 วินาที) แทนการเชื่อว่าเฟรมเดียวมาแน่
+    for (let i = 0; i < 20 && (lnG.classList.contains('on') || lnG.querySelectorAll('.k-ln-no').length); i++) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
     check('[11] ปิดเลขบรรทัด → รางหายไป (ไม่เหลือแถบเปล่า)',
-          !lnG.classList.contains('on') && lnG.querySelectorAll('.k-ln-no').length === 0);
+          !lnG.classList.contains('on') && lnG.querySelectorAll('.k-ln-no').length === 0,
+          `on=${lnG.classList.contains('on')} เลขค้าง=${lnG.querySelectorAll('.k-ln-no').length}`);
     check('[2] ปิด/เปิดเลขบรรทัดแล้วความกว้างเนื้อหาเท่าเดิม',
           Math.abs(pmLnEl.getBoundingClientRect().width - lnW0) < 1.5,
           `${lnW0} → ${pmLnEl.getBoundingClientRect().width}`);

@@ -14,6 +14,22 @@ description: Build, maintain, extend, and debug Killian 2 (คิเลียน
 
 ## เริ่มงานทุกครั้ง: เอาซอร์สมาก่อน
 
+**[alpha.61] มี 2 สภาพแวดล้อม — ดูก่อนว่าอยู่ที่ไหน**
+
+| ที่ | path | หมายเหตุ |
+|---|---|---|
+| **เครื่อง Top เอง (Mac Intel)** | `/Users/kaipleng/Desktop/Killian2` | repo จริง มี git remote · build .dmg ได้ที่นี่เลย |
+| แซนด์บ็อกซ์ (Linux) | `/home/claude/work/v2_extract/Killian2` | ต้องขอ `Killian2-src.zip` แล้วแตก · ต้องใช้ xvfb |
+
+**ถ้าอยู่บนเครื่อง Top: `node_modules` มักถูกก๊อปมาจาก Windows** → esbuild/electron เป็นไบนารีผิดแพลตฟอร์ม
+```bash
+node build.js || {                       # เห็น "installed esbuild for another platform" = ต้องซ่อม
+  npm install --no-audit --no-fund       # ได้ @esbuild/darwin-x64
+  rm -rf node_modules/electron/dist node_modules/electron/path.txt
+  node node_modules/electron/install.js  # ดาวน์โหลด Electron.app ของ darwin
+}
+```
+
 แซนด์บ็อกซ์อาจล้างระหว่าง task — เช็คก่อน ถ้าไม่มีให้ขอ `Killian2-src.zip` (ล่าสุด) แตกที่ `/home/claude/work/v2_extract/`
 
 ```bash
@@ -73,6 +89,16 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
   - **`sensory-profile.js`** (alpha.45) — บรรยากาศรับรู้ของสถานที่: `renderSensoryProfile(wrap, entity, onDirty)` (เรียกซ้ำได้ ไม่ซ้ำช่อง),
     `ensureSensory` (เรียกใน `addEntity` + `openEntity`), `isSensoryEntity`/`sensoryFilled` · เก็บใน `entity.sensoryProfile`
   - **`branch-graph.js`** (alpha.42, บริสุทธิ์) — เอนจินผังแตกสาย: `buildGraph` (choices→edges, ตั้ง `dangling`), `layoutGraph` (จัดชั้น BFS ระยะสั้นสุด → x/y), `analyzeGraph` (roots/endings/unreachable/cycles ด้วย DFS สี), `enumeratePaths`. UI = `branching-ui.js` วาด SVG (เส้น) + div (กล่อง). **unit test แยก 37 ข้อ** (`test/branch.test.cjs`)
+  - **`ai/` (alpha.61 — ผู้ให้บริการที่ผู้ใช้ตั้งเอง + แชท opencode)**
+    · **`ai/ai-providers.js`** (บริสุทธิ์) — `PARAM_DEFS`(12) · `normalizeParams` · `parseDomains`/`isDomainAllowed`
+      · `newProvider`/`validateProvider` · `stripSecrets`/`withSecrets` · `modelsRequests`/`parseModels`
+      · `chatRequest`/`parseChat` · `listProviders`/`activeProvider`/`upsertProvider`/`removeProvider`
+    · **`ai/ai-session.js`** (บริสุทธิ์) — `CHAT_MODES`(plan/write) · `SCOPES`(project/book/chapter/scene/none)
+      · `isSendKey` · `newSession`/`addMessage`/`renameSession`/`archiveSession` · `sessionStats`/`contextLabel`
+      · `searchSessions` · `chatMessages` (ตัดประวัติตามงบ token) · `rawJson`/`shareMarkdown`
+    · `ai/ai-provider-ui.js` — กล่องตั้งค่า + ป๊อปอัป 4 ส่วน · **`sendRequest()` = ประตูเดียวที่ตรวจ Allowed Domains**
+    · `ai/ai-chat-panel.js` — แผง 3 ชั้น (รายการ → เซสชัน → รายละเอียด) · `collectScope()` บังคับระดับการเข้าถึงจริง
+    · (ของเดิม `ai/ai-core.js` · `ai-bridge.js` · `ai-ui.js` ยังอยู่ — ฟีเจอร์ AI เดิมวิ่งผ่าน `callAI()` ที่ต่อเข้าทะเบียนใหม่แล้ว)
   - **`search-engine.js`** (alpha.39, บริสุทธิ์) — ค้นหาเต็มข้อความทั้งโปรเจกต์: tokenizer ไทย (`Intl.Segmenter('th')`+bigram fallback) → inverted index → `SearchIndex.build/search` (คำเดียว/AND/OR/NOT/`field:`) → snippet+line+score. `indexProject(root,kapi,parseMd)` เป็น integration layer. **unit test แยก · ค้น 1,000 ไฟล์ ~16ms/คิวรี**
   - **`panels/panel-layout.js` + `panel-store.js`** (alpha.39, บริสุทธิ์ · **ห้ามแก้**) — layout tree ของ panel: `snapZone`,`dockPanel`,`addAsTab/moveTab/splitTab`,`resizeDock`,`removePanel`(+collapse) · store: `serializeLayout`/versioning/migrate + `PanelStore`(รับ storage adapter) + `PanelManager`
   - **`panels/panel-renderer.js` + `panel-drag.js` + `panel-ui.js`** (alpha.46) — **UI จริงของ Panel System** (ดูหัวข้อด้านล่าง)
@@ -226,7 +252,7 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
 
 ## E2E test workflow (สำคัญ — ทำทุกครั้งก่อนเชื่อว่าแก้สำเร็จ)
 
-Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **1,729 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
+Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **1,842 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
 
 **Unit test โมดูลบริสุทธิ์ (alpha.39, รันเร็ว ไม่ต้องเปิด electron):**
 ```bash
@@ -251,6 +277,7 @@ node test/wiki-images.test.cjs     # 43 checks — migrate string→object/capti
 node test/scene-meta.test.cjs      # 56 checks — frontmatter ชนะ index/bool จากสตริง/ลบคีย์ว่าง (alpha.60r2 · 13)
 node test/margin-presets.test.cjs  # 45 checks — 8 ชุด/จับคู่กลับ/ค่าที่ผู้ใช้ตั้งเอง (alpha.60r2 · 6)
 node test/i18n-csv.test.cjs      # 61 checks — flatten/CSV quote+BOM/round-trip ไฟล์ภาษาจริง (alpha.60r3 · 4)
+node test/ai-providers.test.cjs    # 102 checks — provider/param/โดเมน/ความลับ/models/chat + session/สถิติ/ค้นหา (alpha.61 · 2)
 ```
 `npm run test:unit` รันชุดบริสุทธิ์ทั้งหมดรวดเดียว (**1,913 checks**)
 · **ตรวจ PDF ที่สร้างขึ้นในเทส**: pdf-lib **บีบอัด content stream (FlateDecode)** และเขียนข้อความเป็น
@@ -258,6 +285,21 @@ node test/i18n-csv.test.cjs      # 61 checks — flatten/CSV quote+BOM/round-tri
 ต้อง `zlib.inflateSync` ก่อน **แล้วถอด hex** (ดู `streamsText`/`drawnText` ใน `pdf-generator.test.cjs`)
 · และต้อง **กรองเอาแค่ content stream** (`printable > 0.95` + มี `BT`/`ET`) เพราะไบนารีฟอนต์ที่ฝังไว้
 ก็ถูกบีบอัดเหมือนกัน และมีไบต์ที่อ่านเป็น `Tj` ได้โดยบังเอิญ → นับคำสั่งวาดเพี้ยนทุกครั้ง
+
+**รัน e2e บน macOS** (ไม่ต้องมี xvfb · หน้าต่างเด้งขึ้นมาจริง ~4 นาที):
+```bash
+ps aux | grep -i electron | grep -v grep | awk '{print $2}' | xargs -r kill -9   # ฆ่า zombie ก่อนเสมอ
+node build.js && rm -f /tmp/k2result.txt && rm -rf /tmp/k2proj
+node test/fixture.js /tmp/k2proj
+KILLIAN_TEST=1 KILLIAN_TEST_PROJECT=/tmp/k2proj ./node_modules/.bin/electron . >/tmp/k2elec.log 2>&1 &
+until tail -1 /tmp/k2result.txt 2>/dev/null | grep -qE "ALL OK|^STOP"; do sleep 5; done
+grep -c PASS /tmp/k2result.txt; grep -E "^FAIL|^STOP" /tmp/k2result.txt | head -3
+```
+**รัน e2e จาก `.app` ที่ build แล้วด้วย** (verify ตัวที่จะส่งจริง — ทำก่อน ship ทุกครั้ง):
+```bash
+KILLIAN_TEST=1 KILLIAN_TEST_PROJECT=/tmp/k2proj2 \
+  "dist/mac/Killian 2.app/Contents/MacOS/Killian 2" >/tmp/k2app.log 2>&1 &
+```
 
 **รัน e2e บน Windows ได้ด้วย** (ไม่ต้องมี xvfb — มี electron ใน node_modules อยู่แล้ว):
 ```powershell
@@ -555,6 +597,22 @@ grep -E "FAIL|STOP" /tmp/k2result.txt | head -3
    `saveAllTabs` เขียนไฟล์แบบ async · เทสรอ 250ms แล้วเช็คว่าไม่เหลือแท็บค้าง → พังเมื่อไฟล์เยอะ/เครื่องช้า
    **แก้: วนรอ "เงื่อนไขจริง" พร้อมเพดาน** (`for (let i=0;i<40 && ยังมี dirty;i++) await 50ms`)
    ใช้แนวนี้กับทุกที่ที่รอ layout ของ ProseMirror ด้วย (รอ `scrollHeight` โตจริงก่อนวัด)
+75. **[alpha.61] `electron-builder` เขียนทับ `package.json` แล้วลบ `scripts`/`devDependencies`/`build` ทิ้ง**
+   ขั้น "installing native dependencies" (`@electron/rebuild`) รัน npm install ใน appDir แล้วเขียนไฟล์กลับแบบตัดฟิลด์
+   → หลัง `npm run dist:mac` ครั้งแรก `npm run test:unit` พังด้วย `Cannot read properties of undefined (reading 'test:unit')`
+   **แก้: commit ก่อน build เสมอ แล้ว `git checkout HEAD -- package.json` ทันทีหลัง build**
+76. **[alpha.61] rAF หยุดยิงเมื่อหน้าต่างไม่ได้อยู่หน้าสุด → เทสที่รอ "1 เฟรม" แกว่งบน macOS**
+   `scheduleLineGutter()` / `keepZoomCenter()` คืนสถานะผ่าน `requestAnimationFrame`
+   · รัน e2e จาก **`.app` ที่ build แล้ว** หน้าต่างมักถูกบัง → เฟรมไม่มาใน 120ms → FAIL ทั้งที่โค้ดถูก
+   · `backgroundThrottling:false` กัน **timer** ไม่ให้ถูกหรี่ แต่ **ไม่กัน rAF** ของหน้าต่างที่ถูกบัง
+   **แก้: วนรอเงื่อนไขจริง (บทเรียน 74) แทนการเชื่อว่าเฟรมเดียวมาแน่** — อย่าเพิ่ม sleep ให้ยาวขึ้นเฉย ๆ
+77. **[alpha.61] `node_modules` ที่ก๊อปข้ามแพลตฟอร์มพังเงียบ ๆ 2 ชั้น**
+   repo บนเครื่อง Top มี `@esbuild/win32-x64` + `electron/dist/electron.exe` ติดมาจากฝั่ง Windows
+   · `node build.js` ฟ้องตรง ๆ (esbuild บอกเอง) · แต่ **electron ไม่ฟ้อง** — `path.txt` ชี้ `electron.exe` เฉย ๆ
+   **แก้: `npm install` แล้ว `rm -rf node_modules/electron/{dist,path.txt} && node node_modules/electron/install.js`**
+78. **[alpha.61] ไฟล์ที่ working tree เป็น CRLF ทั้งไฟล์ ทำให้ diff จริงถูกกลบ**
+   `main.js` ถูกบันทึกเป็น CRLF มาก่อนเริ่มงาน → `git diff --stat` ขึ้น 766+/766- ทั้งที่ไม่มีอะไรเปลี่ยน
+   **เช็คด้วย `git diff -w --stat` ก่อนเสมอ** ถ้าเหลือ 0 = whitespace ล้วน → `perl -i -pe 's/\r\n/\n/g'` แล้วค่อยแก้จริง
 
 ---
 
@@ -564,12 +622,18 @@ Electron **43.1.1**. github (allowlist: github.com + release-assets.githubuserco
 `https://github.com/electron/electron/releases/download/v43.1.1/electron-v43.1.1-<PLATFORM>.zip`
 PLATFORM = `win32-x64` / `darwin-arm64` / `darwin-x64`
 
-**macOS Intel DMG** (alpha.60r2 — ทำได้ในเครื่องเดียวจบ):
+**macOS Intel DMG** (alpha.60r2 · **ยืนยันแล้วบนเครื่อง Top ที่ alpha.61**):
 ```bash
 npm run dist:mac        # = node build.js && electron-builder --mac dmg --x64
+git checkout HEAD -- package.json   # ⚠ ดูกับดักข้างล่าง — ต้องทำทุกครั้งหลัง build
 # ผลลัพธ์: dist/Killian2-<version>-mac-intel.dmg (~127MB) + dist/mac/Killian 2.app
 file "dist/mac/Killian 2.app/Contents/MacOS/Killian 2"   # ต้องเห็น "Mach-O 64-bit executable x86_64"
+npx asar extract-file "dist/mac/Killian 2.app/Contents/Resources/app.asar" package.json  # verify version
 ```
+> ⚠ **กับดัก [alpha.61]: `electron-builder` เขียนทับ `package.json` แล้วลบ `scripts`/`devDependencies`/`build` ทิ้ง**
+> เกิดที่ขั้น "installing native dependencies" (`@electron/rebuild` รัน npm install ใน appDir)
+> → หลัง build `npm run test:unit` / `npm run dist:mac` จะพังทันทีเพราะไม่มี `scripts` แล้ว
+> **แก้: `git checkout HEAD -- package.json` ทุกครั้งหลัง build** (commit ก่อน build จะปลอดภัยที่สุด)
 `build.mac` ใน package.json ตั้ง `identity:null` + `hardenedRuntime:false` + `gatekeeperAssess:false`
 (ยังไม่มีใบรับรองนักพัฒนา) → **ผู้ใช้ต้องคลิกขวา → Open ครั้งแรก** ไม่งั้น Gatekeeper บล็อก
 ยังไม่มีไอคอน `.icns` — electron-builder ใช้ไอคอนมาตรฐานของ Electron ไปก่อน
@@ -648,7 +712,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ---
 
-## เวอร์ชัน (ล่าสุด alpha.60r3a · e2e 1,729 + unit 1,913)
+## เวอร์ชัน (ล่าสุด alpha.61 · e2e 1,842 + unit)
 
 .13–.22 (v1→v2 พื้นฐาน): snapshot, line numbers, spellcheck ไทย+Chromium, ปุ่มลัดตั้งเอง, mac build, บทหนัง Ctrl+arrow, relationship sync, floating format bar, sidebar resize, SmartType Final Draft, wiki gallery/lightbox, explorer search+tags, panel docking, tree float+snap
 .24 batch 8 (drag-move explorer, panel snap, split compare, version tracking, scene lock, screenplay Final Draft look, screenplay images, wiki links) · .25–.27 **Planner board** (fabric.js) · .28 **floating windows** · .29 memo-in-chapter + scoped search
@@ -969,7 +1033,59 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
     `ส่งออกบล็อก: ปิดหัวฉากแล้วไม่มี <h3>` → เปลี่ยนเป็น "ตัวส่งออกไม่เติมหัวข้อชื่อฉากให้"
     เพราะหัวฉากของบท **เป็น `<h3>` จริงในเนื้อหา** ตามมาตรฐานใหม่
 
-**ยังเหลือ**: `search-engine.js` ยังเป็น orphan — Global Search (`global-search.js`) ยังสแกนไฟล์ตรง ๆ ไม่ได้ใช้ inverted index (ควรสลับมาใช้เพื่อความเร็ว) · multiple-drafts-per-book UI (โครงรองรับแล้ว), screenplay align persistence, Campaign/D&D mode, electron-builder + code signing, .icns/.ico icon, native arm64 build. Top เคยบอก paper/indent "อาจต้องปรับปรุง ไว้ก่อน"
+.61 **4 งานใหญ่: ลำดับเปิดโปรแกรม · AI ที่ผู้ใช้ตั้งเอง · ปุ่มพื้นฐานของตัวแก้ไข · อิสระเรื่องตัวพิมพ์**
+  **[1] ลำดับเปิดโปรแกรม** — กดเปิด → หน้าต่างรอโหลด → เข้าโปรแกรม → แยกทางที่ **`bootSequence()` ที่เดียว**
+    · เดิม `loadProject()` เด้ง `showHomeDialog()` ทับทุกครั้ง → "เปิดล่าสุดโดยข้ามหน้าแรก" เป็นไปไม่ได้เลย
+    · `openLastProject` (เมนู **ไฟล์**) · `showHomeOnStartup` (เมนู **มุมมอง**) — ทั้งคู่ **global settings**
+      (`saveGlobalSetting(k,v)` merge ทับทีละคีย์ · `bootGlobalSettings()` อ่านตอนยังไม่มีโปรเจกต์)
+    · ค่าเริ่มต้นเปลี่ยนเป็น **false ทั้งคู่** = เข้าหน้าแรกก่อน (เดิม showHomeOnStartup=true)
+    · **หน้าแรก**: แถบคำสั่งลง**ขอบล่าง** (`.home-actions-bottom` + `.home-wrap` เป็น flex column) ·
+      เอา `.home-close-btn` มุมขวาบนออก · มุมมองเป็น **2 ปุ่มโหมด** `.home-view-mode[data-view]`
+      (กดซ้ำไม่สลับกลับ — ต่างจากสวิตช์เดิม) · **ปุ่มค้นหาโปรเจกต์** กรองจาก `card.dataset.search`
+    · ลำดับปุ่มใหม่: `home-view-modes · home-btn-find · home-find-input · export · import · spacer · new · open · close`
+  **[2] ตั้งค่า AI: ผู้ให้บริการที่ผู้ใช้สร้างเอง** — เลิกใช้รายการสำเร็จรูป
+    · **`src/ai/ai-providers.js` (บริสุทธิ์)** — `PARAM_DEFS` 12 ตัว · `normalizeParams` (หนีบช่วง ·
+      **แยก "ตั้งเป็น 0 จริง" ออกจาก "ไม่ได้ตั้ง"** ตามกฎ 20) · `parseDomains`/`isDomainAllowed`
+      (รายการว่าง = ไม่จำกัด · `*.a.com` ไม่ครอบ `a.com` เปล่า) · `newProvider`/`validateProvider` ·
+      **`stripSecrets`/`withSecrets`** · `modelsRequests` (ลอง `/models` → `/v1/models` → `/api/tags`) ·
+      `parseModels` (รับ `data[].id` · `models[].name` · อาร์เรย์ล้วน) · `chatRequest`/`parseChat`
+    · **`src/ai/ai-provider-ui.js`** — กล่องตั้งค่า + ป๊อปอัป 4 ส่วน (ชื่อ → Credential → Model → Parameters)
+      · **`sendRequest()` = ประตูเดียว** ที่ตรวจ Allowed Domains ก่อนยิงทุกคำขอ
+      · คีย์เก็บที่ `ai-key.json` → `{ keys: { <credentialId>: apiKey } }` (รุ่นเก่าที่เป็น `apiKey` เดี่ยวยังอ่านได้)
+      · `ai.providers[]` + `ai.activeProviderId` + `ai.sendKey` อยู่ใน `project.khn.json`
+    · `callAI()` ใน ai-settings.js **วิ่งผ่านทะเบียนใหม่ก่อนเสมอ** เมื่อมี `ai.providers` → ฟีเจอร์ AI เดิมทุกตัวตามทันทีโดยไม่ต้องแก้ทีละไฟล์
+  **[2b] แผงแชท AI แบบ opencode** — `src/ai/ai-session.js` (บริสุทธิ์) + `src/ai/ai-chat-panel.js` (UI)
+    · เซสชัน = ไฟล์ JSON ใน **`<โปรเจกต์>/Sessions/<id>.json`** → เปลี่ยนโปรเจกต์เห็นคนละชุด · แก้นอกโปรแกรมได้
+    · 3 ชั้นในแผงเดียว: **รายการ** (ค้นทั้งชื่อ+เนื้อความ · ล่าสุดบนสุด · ➕ ใหม่) →
+      **เซสชัน** (ชื่อซ้ายบน · `.ai-chat-ctx` ขวาบน — hover เห็นต้นทุน/%/token · เมนู ⋯ เปลี่ยนชื่อ/แชร์/จัดเก็บ/ลบ) →
+      **รายละเอียด** (สถิติ 18 แถว + `.ai-detail-raw` แสดง JSON ดิบ + ปุ่มปิด)
+    · กล่องพิมพ์: 📎 ไฟล์ · โหมด `plan`(อ่านอย่างเดียว)/`write` · **โมเดล override แยกจากตั้งค่า** ·
+      `scope` = project/book/chapter/scene/none (`collectScope()` เป็นคนบังคับจริง — `none` คืน `''`) ·
+      ปุ่มส่ง `isSendKey(ev, 'enter'|'shift-enter')`
+    · `sessionStats()` — **"บริบท" = คำขอครั้งล่าสุด ไม่ใช่ยอดสะสม** · `contextLimit` เดาจาก `guessLimit(used)`
+      เพราะ API ส่วนใหญ่ไม่บอกขีดจำกัดกลับมา
+    · unit test: `test/ai-providers.test.cjs` (102 checks — ครอบทั้ง ai-providers และ ai-session)
+  **[3] ฟังก์ชันพื้นฐานของตัวแก้ไขที่หายไป** (ผู้ใช้เจอเองว่า "กด Tab แล้วโฟกัสไปแถบรูปแบบ")
+    · schema เพิ่ม **`hard_break`** + **`page_break`** · คำสั่งใหม่ใน editor.js:
+      `insertTab`/`removeTab`/`insertHardBreak`/`insertPageBreak` (เป็น PM command จริง → `chainCommands` ต่อได้)
+    · keymap: `Tab`=sinkListItem→insertTab · `Shift-Tab`=liftListItem→removeTab ·
+      `Shift-Enter`=exitCode→insertHardBreak · `Mod-Enter`=insertPageBreak
+    · **md.js**: hard break = **แบ็กสแลชท้ายบรรทัด** (CommonMark · `\\` คู่ยังเป็นแบ็กสแลชจริง) ·
+      page break = `<!--pagebreak-->` (แนวเดียวกับ `<!--align:…-->` · v1 เปิดได้)
+      · `inlineToMd` ต้อง **ปิดเครื่องหมายรูปแบบก่อนขึ้นบรรทัด** ไม่งั้น `**` คร่อม `\n` แล้วอ่านกลับไม่ได้
+    · `Ctrl+Shift+V` + เมนู ลบ = ใช้ **role ของ Electron** (`pasteAndMatchStyle` / `delete`) → ทุกแป้นพิมพ์
+    · `deleteCurrentLine()` ใน app.js — ทำงานทั้งนิยายและบทหนัง · บล็อกสุดท้ายแทนที่ด้วยบล็อกว่าง
+      (ถาม `schema.topNodeType.contentMatch.defaultType` ไม่ใช่เดาชื่อ `paragraph` เพราะบทหนังไม่มี node ชื่อนั้น)
+    · คีย์ลัด **Ctrl+Shift+Delete** (Ctrl+Shift+K ไม่ว่าง = จัดกึ่งกลาง)
+    · **บทหนัง**: `DEFAULT_SP_CYCLE_KEYS.tab/shiftTab` ย้ายไป **Ctrl+Tab / Ctrl+Shift+Tab**
+      → Tab เปล่าเยื้องได้ · สลับ element ยังกด Ctrl+↑/↓ ได้เหมือนเดิม · `SPEditor.insertPageBreak()` สำหรับ Ctrl+Enter
+  **[4] อิสระเรื่องตัวพิมพ์ใหญ่/เล็กในบทหนัง** — `DEFAULT_SP_FORMAT.forceCase` (เริ่มต้น true)
+    · **`mergeSpFormat` ล้าง `styles[k].screen/print.caps` ให้เมื่อ forceCase=false** → ทุกทางออกตามทันที
+      (spCss · pdf-generator · export-rtf · sp-headers อ่าน `caps` ตัวเดียวกันหมด) · ค่าที่ผู้ใช้ติ๊กเองไม่หาย
+    · `settings.spForceCase`/`spAutoCapitalize`/`spAutoCorrectI` → เมนู **บท → 🔠 ตัวพิมพ์ใหญ่/เล็ก (ให้อิสระ)**
+    · แก้จุดฮาร์ดโค้ดที่เหลือ: `export-rtf.js` เคย `title.toUpperCase()` เสมอบนหน้าปก
+
+**ยังเหลือ**: `search-engine.js` ยังเป็น orphan — Global Search (`global-search.js`) ยังสแกนไฟล์ตรง ๆ ไม่ได้ใช้ inverted index (ควรสลับมาใช้เพื่อความเร็ว) · multiple-drafts-per-book UI (โครงรองรับแล้ว), screenplay align persistence, Campaign/D&D mode, **code signing** + `.icns`/`.ico` icon (electron-builder ใช้ได้แล้ว แต่ยังไม่เซ็นและใช้ไอคอนเริ่มต้นของ Electron), native arm64 build. Top เคยบอก paper/indent "อาจต้องปรับปรุง ไว้ก่อน"
 
 **นิสัยผู้ใช้ (Top)**: พูด "เริ่มเลย"/"continue"/"ทำต่อ"/"เอาให้จบ" = ให้ลงมือทำเลย **อย่าถามย้ำ scope** (เคยโดนบ่น "เช็คอะไรละ"). ชอบทำหลายฟีเจอร์รวดเดียวแล้วแก้บั๊กทีเดียว. ส่งสกรีนช็อตบั๊ก = pixel-verify คือเทสจริง. มักจบ session ด้วย "update skill"
 
@@ -977,4 +1093,4 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ## วิธีทำงาน
 
-reproduce → แก้ root cause → **เพิ่ม selftest ถาวร** → build+e2e ALL OK → (ถ้า UI) pixel-check → bump version + CHANGELOG + README → rm+rezip + verify จากไฟล์แตกใหม่ → outputs + present. บอกข้อจำกัดตรงๆ (รันบน Linux ทดสอบ win/mac จริงไม่ได้ — โครงสร้างถูก + โค้ดผ่าน e2e). งานใหญ่แยก phase + สื่อสารว่าอะไรเหลือ
+reproduce → แก้ root cause → **เพิ่ม selftest ถาวร** → build+e2e ALL OK → (ถ้า UI) pixel-check → bump version + CHANGELOG + README → rm+rezip + verify จากไฟล์แตกใหม่ → outputs + present. บอกข้อจำกัดตรงๆ (บนเครื่อง Top: mac Intel รัน+build+ทดสอบจริงได้ · **win/arm64 ยังทดสอบจริงไม่ได้**). งานใหญ่แยก phase + สื่อสารว่าอะไรเหลือ
