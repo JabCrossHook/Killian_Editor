@@ -233,6 +233,24 @@ const check = (name, cond, extra) => {
   check('[เซสชัน] addMessage ไม่แก้เซสชันเดิม (immutable)', s.messages.length === 2);
   check('[เซสชัน] ชื่อยาวถูกตัดพร้อม …', S.titleFromText('ก'.repeat(80)).endsWith('…'));
 
+  // [alpha.62 บั๊ก 3] เริ่มใหม่ — ล้างบทสนทนาแต่เก็บเซสชัน/ค่าตั้งไว้
+  const restartSrc = S.newSession({ mode: 'write', scope: 'book', model: 'gpt-x', providerId: 'p1',
+                                    files: [{ path: '/a.md', name: 'a.md' }], contextLimit: 8192 });
+  let rs = S.addMessage(restartSrc, S.newMessage('user', 'คำถามแรกของรอบเก่า'));
+  rs = S.addMessage(rs, S.newMessage('assistant', 'คำตอบ'));
+  const cleared = S.clearMessages(rs);
+  check('[เริ่มใหม่] ล้างข้อความหมด', cleared.messages.length === 0);
+  check('[เริ่มใหม่] เก็บ id เดิม (ไฟล์เดิม ไม่ใช่เซสชันใหม่)', cleared.id === rs.id);
+  check('[เริ่มใหม่] เก็บโหมด/ระดับการเข้าถึง/โมเดล/ผู้ให้บริการ',
+        cleared.mode === 'write' && cleared.scope === 'book' &&
+        cleared.model === 'gpt-x' && cleared.providerId === 'p1');
+  check('[เริ่มใหม่] เก็บไฟล์แนบไว้', (cleared.files || []).length === 1);
+  check('[เริ่มใหม่] ล้าง contextLimit ที่เดาไว้จากรอบก่อน', cleared.contextLimit === 0);
+  check('[เริ่มใหม่] ชื่ออัตโนมัติกลับเป็นค่าเริ่มต้น', cleared.title === 'เซสชันใหม่', cleared.title);
+  check('[เริ่มใหม่] ชื่อที่ผู้ใช้ตั้งเองไม่ถูกล้าง',
+        S.clearMessages(S.renameSession(rs, 'บทที่ 3')).title === 'บทที่ 3');
+  check('[เริ่มใหม่] ไม่แก้เซสชันเดิม (immutable)', rs.messages.length === 2);
+
   // สถิติ
   const u = (i, o, extra = {}) => ({ input: i, output: o, total: i + o, ...extra });
   let st = S.newSession({ contextLimit: 1000 });

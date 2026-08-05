@@ -236,6 +236,29 @@ body.k-panel-dragging, body.k-resizing { user-select:none; }
    workspace = max-content (กว้างตามหน้ากระดาษเสมอ) + min-width 100% (จาก JS ตามระดับซูม)
    → แผงแคบ = มีแถบเลื่อนแนวนอน ไม่ใช่ตัดคำ · แผงกว้าง = หน้ากระดาษอยู่กึ่งกลาง (บั๊ก #7) */
 .pane > .workspace { zoom:var(--page-scale, 1); display:flow-root; width:max-content; min-width:100%; }
+/* ══════ [alpha.62 บั๊ก 4] CSS พื้นฐานของ ProseMirror ══════
+   โปรเจกต์นี้ไม่เคย import `prosemirror-view/style/prosemirror.css` เลย (esbuild bundle แต่ JS)
+   → `.ProseMirror` ได้ `white-space:normal` ตามค่าเริ่มต้นของเบราว์เซอร์ ผลคือ
+     · กด Tab แล้ว `\t` ถูกยุบหายไปทั้งตัว — โหมดนิยาย "กด Tab ไม่ได้" (บทหนังรอดเพราะ `.sp` ตั้ง pre-wrap เอง)
+     · ย่อหน้าที่เหลือแต่ช่องว่างถูกเบราว์เซอร์ยุบ แล้ว ProseMirror อ่าน DOM กลับได้ "บรรทัดว่าง" → บรรทัดหาย
+     · gap cursor / hide-selection / img separator ไม่มีสไตล์ประกอบ
+   คัดมาเฉพาะกฎที่ ProseMirror ต้องการจริง (prosemirror.css + gapcursor.css) — ห้ามลบ */
+.ProseMirror { position:relative; word-wrap:break-word;
+  white-space:pre-wrap; white-space:break-spaces;
+  -webkit-font-variant-ligatures:none; font-variant-ligatures:none; font-feature-settings:"liga" 0; }
+.ProseMirror pre { white-space:pre-wrap; }
+.ProseMirror li { position:relative; }
+.ProseMirror-hideselection *::selection { background:transparent; }
+.ProseMirror-hideselection *::-moz-selection { background:transparent; }
+.ProseMirror-hideselection { caret-color:transparent; }
+.ProseMirror [draggable][contenteditable="false"] { user-select:text; }
+img.ProseMirror-separator { display:inline !important; border:none !important; margin:0 !important; }
+.ProseMirror-gapcursor { display:none; pointer-events:none; position:absolute; margin:0; }
+.ProseMirror-gapcursor:after { content:""; display:block; position:absolute; top:-2px; width:20px;
+  border-top:1px solid var(--accent-hi); animation:k-pm-cursor-blink 1.1s steps(2, start) infinite; }
+@keyframes k-pm-cursor-blink { to { visibility:hidden; } }
+.ProseMirror-focused .ProseMirror-gapcursor { display:block; }
+
 .ProseMirror { outline:none; width:var(--page-w); max-width:none; margin:24px auto 40vh;
   padding:0 var(--mg-right) 0 var(--mg-left);
   font-size:var(--ed-fs, 16px); line-height:var(--ed-lh, 1.75); caret-color:var(--accent-hi); }
@@ -1199,7 +1222,9 @@ body.paper-mode .sp-raw { color:#888; }
 
 /* ====== กลุ่ม 1: Home Screen ====== */
 /* [alpha.61 ข้อ 1] flex column — แถบคำสั่งท้ายกล่องดันตัวเองไปชิดขอบล่างด้วย margin-top:auto */
-.home-wrap { max-width:1100px; margin:0 auto; padding:40px 32px 24px; overflow-y:auto; height:100%;
+/* [alpha.62 บั๊ก 1] กว้างขึ้น 30% — แถบคำสั่งท้ายกล่องมี 8 ปุ่ม + ช่องค้นหา
+   ที่ 1100px ปุ่มตกลงไปบรรทัดที่สองเสมอ (ปุ่มละ min-width 120px) */
+.home-wrap { max-width:1430px; margin:0 auto; padding:40px 32px 24px; overflow-y:auto; height:100%;
   display:flex; flex-direction:column; }
 .home-head { text-align:center; margin-bottom:32px; }
 .home-title { font-size:calc(36px * var(--ui-scale, 1)); font-weight:700; color:var(--bright); margin:0 0 8px; }
@@ -1402,8 +1427,15 @@ body.paper-mode .sp-raw { color:#888; }
 ::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
 ::-webkit-scrollbar-thumb:hover { background:var(--dim); }
 ::-webkit-scrollbar-corner { background:transparent; }
-/* Smooth scrolling */
-html, body, .k-panel-body, .pane, #panes { scroll-behavior:smooth; }
+/* Smooth scrolling
+   [alpha.62 บั๊ก 7+8] **ห้ามใส่ `.pane` / `#panes`** — สองตัวนี้คือกล่องที่เลื่อนของตัวแก้ไข
+   และเป็นเป้าของการ "คืนตำแหน่งเลื่อน" ทุกเส้นทาง (restoreScroll ตอนวาดแผงใหม่ · keepZoomCenter ตอนซูม)
+   scroll-behavior:smooth เปลี่ยน `el.scrollTop = n` จาก "ตั้งค่า" เป็น "อนิเมชัน" →
+   อ่านกลับทันทีได้ค่ากลางทาง ตัวตรวจ "มีคนอื่นเลื่อนไปแล้วหรือยัง" จึงตัดสินผิด
+   ผลที่ผู้ใช้เห็น: ขยับแผงแล้วหน้ากระดาษเลื่อนเอง · ซูมด้วย Ctrl+ล้อรัว ๆ แล้วไหลไปชิดขอบซ้าย
+   (บทเรียน 71 เคยเผา e2e ไป 2 รอบเพราะเรื่องเดียวกัน) */
+html, body, .k-panel-body { scroll-behavior:smooth; }
+.pane, #panes { scroll-behavior:auto; }
 /* Context menu: เส้นคั่นระหว่างหมวด */
 .k-menu .k-menu-sep { height:1px; background:var(--border); margin:4px 6px; }
 /* Drag handles — ที่ขอบของทุก pane */
@@ -2272,8 +2304,10 @@ body.paper-mode .roster-page { background:var(--paper); color:var(--paper-ink); 
 
 /* 0.56a #1: กล่องหน้าแรกขนาดคงที่ (แบบ DaVinci Resolve — กรอบนิ่ง เนื้อในเลื่อน)
    ความกว้างคิดจากขนาดการ์ด 4 คอลัมน์พอดี → เปลี่ยน --home-thumb แล้วกล่องยังพอดีเสมอ */
+/* [alpha.62 บั๊ก 1] × 1.3 — แถบคำสั่งล่างต้องอยู่บรรทัดเดียว (ดู --home-dlg-w) */
+:root { --home-dlg-w:calc((var(--home-thumb, 190px) * 4 + 18px * 3 + 64px) * 1.3); }
 .k-dialog.k-home-dlg {
-  width:calc(var(--home-thumb, 190px) * 4 + 18px * 3 + 64px);
+  width:var(--home-dlg-w);
   max-width:94vw; height:78vh; min-height:420px;
   display:flex; flex-direction:column; overflow:hidden; }
 .k-home-dlg .home-dlg-scroll { flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; padding-right:4px; }
@@ -2723,9 +2757,10 @@ body.paper-mode .k-manual-page-break::after { background:var(--paper); color:#a5
 .ai-chat-session, .ai-chat-detail { display:flex; flex-direction:column; height:100%; min-height:0; }
 .ai-chat-head { flex:0 0 auto; display:flex; align-items:center; gap:8px;
   padding:8px 10px; border-bottom:1px solid var(--border); }
-.ai-chat-back, .ai-chat-more, .ai-chat-close { background:none; border:1px solid transparent;
+.ai-chat-back, .ai-chat-more, .ai-chat-close, .ai-chat-restart { background:none; border:1px solid transparent;
   color:var(--dim); cursor:pointer; border-radius:6px; padding:2px 8px; }
-.ai-chat-back:hover, .ai-chat-more:hover, .ai-chat-close:hover { color:var(--fg); border-color:var(--border); }
+.ai-chat-back:hover, .ai-chat-more:hover, .ai-chat-close:hover,
+.ai-chat-restart:hover { color:var(--fg); border-color:var(--border); }
 .ai-chat-title { flex:1; min-width:0; color:var(--bright); font-weight:600;
   font-size:calc(12.5px * var(--ui-scale, 1));
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -2737,9 +2772,16 @@ body.paper-mode .k-manual-page-break::after { background:var(--paper); color:#a5
 .ai-chat-msgs { flex:1; min-height:0; overflow-y:auto; padding:10px; display:flex;
   flex-direction:column; gap:10px; }
 .ai-msg { max-width:100%; }
-.ai-msg-who { font-size:calc(10.5px * var(--ui-scale, 1)); margin-bottom:3px; }
+.ai-msg-who { font-size:calc(10.5px * var(--ui-scale, 1)); margin-bottom:3px;
+  display:flex; align-items:center; gap:6px; }
+/* [alpha.62 บั๊ก 3] ปุ่มคัดลอกต่อข้อความ — จาง ๆ จนกว่าจะชี้ที่ข้อความนั้น */
+.ai-msg-copy { margin-left:auto; background:none; border:1px solid transparent; color:var(--dim);
+  cursor:pointer; border-radius:5px; padding:0 5px; opacity:0; transition:opacity .12s;
+  font-size:calc(11px * var(--ui-scale, 1)); }
+.ai-msg:hover .ai-msg-copy, .ai-msg-copy:focus { opacity:1; }
+.ai-msg-copy:hover { color:var(--bright); border-color:var(--border); }
 .ai-msg-text { white-space:pre-wrap; word-break:break-word; padding:8px 10px; border-radius:10px;
-  font-size:calc(12.5px * var(--ui-scale, 1)); line-height:1.55; }
+  font-size:calc(12.5px * var(--ui-scale, 1)); line-height:1.55; user-select:text; }
 .ai-msg-user .ai-msg-text { background:var(--sel); }
 .ai-msg-assistant .ai-msg-text { background:var(--bar); border:1px solid var(--border); }
 .ai-msg-err { color:#e06c62; font-size:calc(11.5px * var(--ui-scale, 1)); padding:4px 10px; }

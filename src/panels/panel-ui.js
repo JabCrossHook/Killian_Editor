@@ -68,7 +68,7 @@ export const PANEL_DEFS = [
   { id: 'ai-analyzer', title: '🧠 AI วิเคราะห์',  icon: 'brain',       adopt: '#ai-analyzer-panel', defaultSide: 'right', closable: true, floatable: true, i18n: 'panel.aiAnalyzerTitle',
     desc: 'ชุดเครื่องมือวิเคราะห์ต้นฉบับด้วย AI — จังหวะเรื่อง · ส่วนโค้งตัวละคร · คำซ้ำ · ความขัดแย้ง · ความยาวฉาก (ยังเป็นตัวอย่างหน้าตา)' },
   // [alpha.61 ข้อ 2] แชทกับ AI แบบ opencode — เซสชันเก็บใน Sessions/ ของโปรเจกต์
-  { id: 'ai-chat',   title: '💬 แชท AI',       icon: 'chat',        adopt: '#ai-chat-panel', defaultSide: 'right', closable: true, floatable: true, i18n: 'panel.aiChatTitle',
+  { id: 'ai-chat',   title: '💬 AI ผู้ช่วยเขียน',       icon: 'chat',        adopt: '#ai-chat-panel', defaultSide: 'right', closable: true, floatable: true, i18n: 'panel.aiChatTitle',
     desc: 'คุยกับ AI เรื่องงานเขียนของคุณ — แยกเป็นเซสชันเหมือน opencode · เลือกโหมด (วางแผน/ช่วยเขียน) · เลือกโมเดล · กำหนดได้ว่าจะให้เห็นข้อมูลระดับไหน (ทั้งโปรเจกต์/เล่ม/บท/ฉาก)' },
 ];
 // ชื่อแผงตามภาษาที่โหลดอยู่ (fallback = ชื่อไทยในตาราง) — เรียกใหม่ทุกครั้งที่ render
@@ -201,6 +201,11 @@ function captureScroll() {
 function restoreScroll(saved) {
   if (!saved.length) return;
   const jobs = saved.map(([e, top, left]) => ({ e, top, left, lastTop: 0, lastLeft: 0, done: false }));
+  // [alpha.62 บั๊ก 7] ปิด scroll-behavior:smooth ชั่วคราวตลอดช่วงคืนค่า (บทเรียน 71)
+  // ถ้าปล่อยให้เป็นอนิเมชัน `e.scrollTop = n` แล้วอ่านกลับจะได้ค่ากลางทาง →
+  // เงื่อนไข "มีคนอื่นเลื่อนไปแล้ว" เป็นจริงตั้งแต่เฟรมที่สอง แล้วเลิกตามทั้งที่ยังไม่ถึงเป้า
+  const prevBehavior = jobs.map((j) => j.e.style.scrollBehavior);
+  for (const j of jobs) j.e.style.scrollBehavior = 'auto';
   const put = () => {
     for (const j of jobs) {
       if (j.done || !j.e.isConnected) continue;
@@ -220,6 +225,7 @@ function restoreScroll(saved) {
   // ระหว่างนั้นเบราว์เซอร์หนีบค่าที่ตั้งให้เตี้ยลงตาม scrollHeight ที่ยังไม่โต → ต้องตามไปตั้งอีก
   // (หยุดเองทันทีที่ถึงค่าที่ขอ หรือมีคนอื่นเลื่อนไปที่อื่น)
   for (const ms of [0, 30, 60, 120, 250]) setTimeout(put, ms);
+  setTimeout(() => { jobs.forEach((j, i) => { j.e.style.scrollBehavior = prevBehavior[i] || ''; }); }, 260);
 }
 
 export function renderPanels(force) {

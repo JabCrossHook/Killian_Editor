@@ -126,6 +126,10 @@ export async function generateSceneField(field, body, title, onResult) {
   if (!p) { setStatus('ฉากนี้ยังไม่มีเนื้อหาให้ AI อ่าน'); return ''; }
   setStatus('✨ กำลังให้ AI เขียน' + def.label + '…');
   const raw = await callAI(p.prompt, p.system);
+  // [alpha.62 บั๊ก 5] `callAI` คืน null = ล้มเหลว และ **ตั้งข้อความบอกสาเหตุจริงไว้แล้ว**
+  // (คีย์ผิด · ยังไม่เลือกโมเดล · โดเมนไม่อยู่ในรายการ) — เขียนทับด้วยข้อความรวม ๆ ไม่ได้
+  // ไม่งั้นผู้ใช้เห็นแค่ "ไม่ขึ้นข้อความ" แล้วไม่รู้จะไปแก้ตรงไหน
+  if (raw === null) return '';
   const out = cleanResult(raw, field);
   if (!out) { setStatus('AI ไม่ได้ส่ง' + def.label + 'กลับมา'); return ''; }
   if (onResult) onResult(out);

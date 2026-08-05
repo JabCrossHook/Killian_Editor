@@ -13,7 +13,7 @@ import { ask, confirmBox, popupMenu } from '../ui.js';
 import {
   SESSION_DIR, CHAT_MODES, SCOPES, DEFAULT_MODE, DEFAULT_SCOPE, DEFAULT_SEND_KEY,
   modeDef, scopeLabel, isSendKey, newSession, newMessage, addMessage, renameSession,
-  archiveSession, sessionFileName, sessionStats, contextLabel, compact, usd,
+  archiveSession, clearMessages, sessionFileName, sessionStats, contextLabel, compact, usd,
   searchSessions, chatMessages, rawJson, shareMarkdown, estimateTokens,
 } from './ai-session.js';
 import { providerList, providerById, currentProvider, complete, aiMeta } from './ai-provider-ui.js';
@@ -240,10 +240,14 @@ function sessionView() {
     '— คลิกเพื่อดูรายละเอียด —',
   ].join('\n');
   badge.onclick = () => { S.view = 'detail'; draw(); };
+  // [alpha.62 บั๊ก 3] เริ่มใหม่ — ล้างบทสนทนาของเซสชันนี้ (เซสชันยังอยู่ที่เดิม)
+  const restart = el('button', 'ai-chat-restart', '↻');
+  restart.title = 'เริ่มใหม่ — ล้างบทสนทนาของเซสชันนี้ (เก็บโหมด/โมเดล/ไฟล์แนบไว้)';
+  restart.onclick = () => restartSession(s);
   const more = el('button', 'ai-chat-more', '⋯');
   more.title = 'ตัวเลือกของเซสชัน';
   more.onclick = (e) => sessionMenu(e, s);
-  right.append(badge, more);
+  right.append(badge, restart, more);
   head.append(back, title, right);
   wrap.append(head);
 
@@ -265,6 +269,17 @@ function msgNode(m) {
   const n = el('div', 'ai-msg ai-msg-' + m.role);
   const who = el('div', 'ai-msg-who dim',
     m.role === 'user' ? 'คุณ' : m.role === 'assistant' ? (m.model ? '🤖 ' + m.model : '🤖 ผู้ช่วย') : m.role);
+  // [alpha.62 บั๊ก 3] คัดลอกข้อความทีละก้อน — คำตอบของ AI ส่วนใหญ่เอาไปวางต่อในต้นฉบับ
+  // (ลากคลุมเองไม่ได้เพราะแผงลอย/แผง dock กินอีเวนต์เมาส์ไปทำอย่างอื่น)
+  const copy = el('button', 'ai-msg-copy', '⧉');
+  copy.type = 'button';
+  copy.title = 'คัดลอกข้อความนี้';
+  copy.onclick = async () => {
+    const ok = await copyText(m.text || '');
+    copy.textContent = ok ? '✓' : '✕';
+    setTimeout(() => { copy.textContent = '⧉'; }, 1200);
+  };
+  who.append(copy);
   const txt = el('div', 'ai-msg-text', m.text);
   n.append(who, txt);
   if (m.error) n.append(el('div', 'ai-msg-err', '⚠ ' + m.error));
@@ -456,9 +471,53 @@ function recordUsage(res, prov, s) {
   ai.usage = list;
 }
 
+/**
+ * [alpha.62 บั๊ก 3] คัดลอกข้อความลงคลิปบอร์ด
+ * `navigator.clipboard` ใน Electron ต้องการหน้าต่างที่โฟกัสอยู่ — แผงลอยที่เพิ่งถูกคลิก
+ * บางจังหวะยังไม่ได้โฟกัส แล้วเมท็อดนี้ reject เงียบ ๆ → มีทางสำรองด้วย textarea + execCommand
+ */
+export async function copyText(text) {
+  const s = String(text ?? '');
+  if (!s) return false;
+  // main process ก่อน — ไม่ต้องพึ่งโฟกัสของหน้าต่าง
+  try { if (kapi.clipboardWrite && await kapi.clipboardWrite(s)) return true; } catch {}
+  try { await navigator.clipboard.writeText(s); return true; } catch {}
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = s;
+    ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+    document.body.append(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch { return false; }
+}
+
+/** [alpha.62 บั๊ก 3] เริ่มใหม่ — ถามก่อนแล้วล้างบทสนทนา (เซสชันยังอยู่ที่เดิม) */
+export async function restartSession(s, { confirm = true } = {}) {
+  const target = s || S.cur;
+  if (!target) return null;
+  if (confirm && (target.messages || []).length
+      && !(await confirmBox(`เริ่มใหม่ — ล้างบทสนทนา ${(target.messages || []).length} ข้อความของ "${target.title}" ?`))) {
+    return null;
+  }
+  S.cur = clearMessages(target);
+  await saveSession(S.cur);
+  S.view = 'session';
+  draw();
+  setStatus('เริ่มบทสนทนาใหม่แล้ว (เก็บโหมด/โมเดล/ไฟล์แนบไว้)');
+  return S.cur;
+}
+
 // ── เมนู ⋯ ──
 function sessionMenu(ev, s) {
   popupMenu(ev.clientX, ev.clientY, [
+    { label: '↻ เริ่มใหม่ (ล้างบทสนทนา)', click: () => restartSession(s) },
+    { label: '⧉ คัดลอกบทสนทนาทั้งหมด', click: async () => {
+      setStatus(await copyText(shareMarkdown(s)) ? 'คัดลอกบทสนทนาแล้ว' : 'คัดลอกไม่สำเร็จ');
+    } },
+    '-',
     { label: '✎ เปลี่ยนชื่อ', click: async () => {
       const v = await ask('ชื่อเซสชัน', { value: s.title });
       if (v === null) return;
@@ -466,8 +525,7 @@ function sessionMenu(ev, s) {
       await saveSession(S.cur); draw();
     } },
     { label: '↗ แชร์ (คัดลอกเป็น Markdown)', click: async () => {
-      try { await navigator.clipboard.writeText(shareMarkdown(s)); setStatus('คัดลอกบทสนทนาแล้ว'); }
-      catch { setStatus('คัดลอกไม่สำเร็จ'); }
+      setStatus(await copyText(shareMarkdown(s)) ? 'คัดลอกบทสนทนาแล้ว' : 'คัดลอกไม่สำเร็จ');
     } },
     { label: s.archived ? '📤 เอาออกจากที่จัดเก็บ' : '📥 จัดเก็บ', click: async () => {
       S.cur = archiveSession(s, !s.archived);

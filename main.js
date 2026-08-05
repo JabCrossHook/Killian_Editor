@@ -343,7 +343,7 @@ function buildMenu() {
         // [alpha.60r1 ข้อ 21] คลังรูปย้ายจากแท็บมาเป็นแผงเช่นกัน
         chk(`คลังรูปภาพ (${C}+${S}+G)`, toggles.panels['gallery'], () => send('toggle-panel', 'gallery')),
         chk('🧠 AI วิเคราะห์', toggles.panels['ai-analyzer'], () => send('toggle-panel', 'ai-analyzer')),
-        chk('💬 แชท AI', toggles.panels['ai-chat'], () => send('toggle-panel', 'ai-chat')),
+        chk('💬 AI ผู้ช่วยเขียน', toggles.panels['ai-chat'], () => send('toggle-panel', 'ai-chat')),
         { type: 'separator' },
         { label: '📐 จัดการแผง (แสดง/ซ่อน)…', click: () => send('panel-system') },
         { label: 'รีเซ็ตการจัดวางแผงทั้งหมด', click: () => send('reset-panels') },
@@ -382,7 +382,7 @@ function buildMenu() {
         click: () => send('ai-settings') },
       { type: 'separator' },
       // [alpha.61 ข้อ 2] แชทเป็นแผงแบบ opencode — เซสชันเก็บใน Sessions/ ของโปรเจกต์
-      chk('💬 แผงแชท AI', toggles.panels['ai-chat'], () => send('toggle-panel', 'ai-chat')),
+      chk('💬 แผง AI ผู้ช่วยเขียน', toggles.panels['ai-chat'], () => send('toggle-panel', 'ai-chat')),
       { label: '➕ เซสชันแชทใหม่', click: () => send('ai-chat-new') },
       { type: 'separator' },
       { label: 'ผู้ช่วยเขียน (Expand/Summarize/Rewrite)…', click: () => send('ai-assistant') },
@@ -563,6 +563,14 @@ H('path:resolve', (...a) => path.resolve(...a));
 H('path:relative', (a, b) => path.relative(a, b).split(path.sep).join('/'));
 H('path:toFileURL', (p) => require('url').pathToFileURL(p).href);
 H('shell:reveal', (p) => { try { shell.showItemInFolder(p); return true; } catch { return false; } });
+// [alpha.62 บั๊ก 3] คัดลอกลงคลิปบอร์ดผ่าน main process
+// `navigator.clipboard.writeText` ใน renderer ต้องการหน้าต่างที่ "โฟกัสอยู่" — หน้าต่างไร้ขอบ
+// ที่เพิ่งถูกคลิกบนแผงลอย หรือหน้าต่างที่ถูกบัง จะโดนปฏิเสธเงียบ ๆ · ทางนี้ทำงานเสมอ
+H('clipboard:write', (text) => {
+  try { require('electron').clipboard.writeText(String(text ?? '')); return true; }
+  catch { return false; }
+});
+H('clipboard:read', () => { try { return require('electron').clipboard.readText(); } catch { return ''; } });
 H('dialog:openProject', async () => {
   const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'] });
   return r.canceled ? null : r.filePaths[0];

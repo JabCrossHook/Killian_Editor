@@ -41,6 +41,33 @@ export async function saveApiKey(apiKey) {
 
 export function clearKeyCache() { _keyCache = null; }
 
+/**
+ * [alpha.62 บั๊ก 6] "ตั้งค่า AI เรียบร้อยหรือยัง" — จุดเดียวที่ทุกฟีเจอร์ถาม
+ *
+ * alpha.61 ย้ายทะเบียนผู้ให้บริการไปที่ `meta.ai.providers[]` + คีย์ในรูปแบบใหม่
+ * (`ai-key.json → {keys:{<credentialId>:…}}`) แต่ตัวเช็คเดิมของ ai-ui.js / ai-summary.js
+ * ยังอ่าน `loadApiKey()` ซึ่งดูเฉพาะฟิลด์ `apiKey` เดี่ยวของรูปแบบเก่า → คืน '' เสมอ
+ * ผลคือผู้ใช้ที่ตั้งค่าครบแล้วยังโดนบล็อกด้วย "ตั้งค่า AI ที่ ไฟล์ → ตั้งค่า AI ก่อน"
+ * (ฟีเจอร์ที่โดน: แนะนำชื่อด้วย AI · สรุปเรื่อง · ผู้ช่วยเขียน · ตรวจพล็อต · สร้างบทสนทนา ฯลฯ)
+ *
+ * @returns {Promise<{ok:boolean, why:string}>} why = เหตุผลที่ยังใช้ไม่ได้ ('' เมื่อ ok)
+ */
+export async function aiConfigured() {
+  if (!state.root) return { ok: false, why: 'ยังไม่ได้เปิดโปรเจกต์' };
+  const ai = getAISettings();
+  // ทะเบียนใหม่ (alpha.61) มาก่อนเสมอ
+  if (Array.isArray(ai.providers) && ai.providers.length) {
+    const { currentProvider } = await import('./ai/ai-provider-ui.js');
+    const p = await currentProvider();
+    if (!p) return { ok: false, why: 'ยังไม่ได้เลือกผู้ให้บริการ AI (ไฟล์ → ตั้งค่า AI)' };
+    if (!p.model) return { ok: false, why: 'ผู้ให้บริการ "' + p.name + '" ยังไม่ได้เลือกโมเดล (ไฟล์ → ตั้งค่า AI)' };
+    return { ok: true, why: '' };
+  }
+  if ((ai.provider || 'openai') === 'ollama') return { ok: true, why: '' };
+  if (await loadApiKey()) return { ok: true, why: '' };
+  return { ok: false, why: 'ตั้งค่า AI ที่ ไฟล์ → ตั้งค่า AI ก่อน' };
+}
+
 // ---- เรียก AI (ผ่าน main process) ----
 export async function callAI(prompt, system = '') {
   const ai = getAISettings();
@@ -50,12 +77,14 @@ export async function callAI(prompt, system = '') {
   if (Array.isArray(ai.providers) && ai.providers.length) {
     const { currentProvider, complete } = await import('./ai/ai-provider-ui.js');
     const p = await currentProvider();
-    if (p) {
-      const r = await complete(p, { system, messages: [{ role: 'user', content: prompt }] });
-      if (!r.ok) { log('error', 'AI (provider ใหม่) ล้มเหลว', r.error); setStatus('❌ AI: ' + r.error); return null; }
-      recordUsage((r.usage && r.usage.total) || 0, p.name, r.model);
-      return (r.text || '').trim();
-    }
+    // [alpha.62 บั๊ก 5] ตั้งทะเบียนใหม่ไว้แล้ว = ห้ามตกไปทางเก่าเงียบ ๆ
+    // (ทางเก่าอ่าน `ai-key.json → apiKey` ซึ่งรูปแบบใหม่ไม่มี → ได้ข้อความ "ยังไม่ได้ตั้งค่า AI"
+    //  ทั้งที่ตั้งครบแล้ว · ปุ่ม ✨ ในคุณสมบัติฉากจึงเงียบไปเฉย ๆ) → รายงานเหตุผลจริงเสมอ
+    if (!p) { setStatus('❌ AI: ยังไม่ได้เลือกผู้ให้บริการ (ไฟล์ → ตั้งค่า AI)'); return null; }
+    const r = await complete(p, { system, messages: [{ role: 'user', content: prompt }] });
+    if (!r.ok) { log('error', 'AI (provider ใหม่) ล้มเหลว', r.error); setStatus('❌ AI: ' + r.error); return null; }
+    recordUsage((r.usage && r.usage.total) || 0, p.name, r.model);
+    return (r.text || '').trim();
   }
   const apiKey = await loadApiKey();
   const provider = ai.provider || 'openai';

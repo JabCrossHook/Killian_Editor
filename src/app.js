@@ -542,6 +542,11 @@ function keepZoomCenter(fn) {
   // คืนตำแหน่ง "ทั้งทันทีและใน rAF ถัดไป" (บทเรียนข้อ 36)
   // อ่าน scrollWidth บังคับให้ layout อัปเดตก่อน จึงเซ็ตได้ถูกตั้งแต่รอบแรก —
   // และไม่ต้องพึ่ง rAF ที่ Chromium หยุดยิงเมื่อหน้าต่างถูกบัง/ไม่ได้อยู่หน้าสุด (บทเรียนข้อ 14i-2)
+  // [alpha.62 บั๊ก 8] บังคับให้เป็น "การตั้งค่า" ไม่ใช่ "อนิเมชัน" ตลอดช่วงคืนตำแหน่ง
+  // ซูมด้วย Ctrl+ล้อรัว ๆ = keepZoomCenter ซ้อนกันหลายรอบ · ถ้าค่าที่อ่านได้เป็นค่ากลางทาง
+  // ของอนิเมชันรอบก่อน สัดส่วน fx จะไหลลงเรื่อย ๆ จนหน้ากระดาษไปติดขอบซ้าย (บทเรียน 71)
+  const prevBehavior = before.map((b) => b.h.style.scrollBehavior);
+  for (const b of before) b.h.style.scrollBehavior = 'auto';
   const restore = () => {
     for (const b of before) {
       const maxX = Math.max(0, b.h.scrollWidth - b.h.clientWidth);
@@ -551,7 +556,12 @@ function keepZoomCenter(fn) {
     }
   };
   restore();
-  requestAnimationFrame(restore);
+  requestAnimationFrame(() => {
+    restore();
+    before.forEach((b, i) => { b.h.style.scrollBehavior = prevBehavior[i] || ''; });
+  });
+  // rAF ไม่ยิงเมื่อหน้าต่างถูกบัง (บทเรียน 76) → มี timer สำรองคืนค่าเสมอ
+  setTimeout(() => { before.forEach((b, i) => { b.h.style.scrollBehavior = prevBehavior[i] || ''; }); }, 120);
 }
 function setPageScale(z) {
   keepZoomCenter(() => {
@@ -5772,6 +5782,7 @@ function refreshToolbar() {
   $('#tb-dashboard')?.classList.toggle('on', isPanelOpen('dashboard'));
   // [alpha.60r3 ข้อ 5] แผงวิเคราะห์ด้วย AI · [ข้อ 6] ซ่อน/แสดงรหัสมาร์กดาวน์
   $('#tb-ai-analyzer')?.classList.toggle('on', isPanelOpen('ai-analyzer'));
+  $('#tb-ai-chat')?.classList.toggle('on', isPanelOpen('ai-chat'));   // [alpha.62 บั๊ก 2]
   $('#tb-md-codes')?.classList.toggle('on', showMarkdownCodes());
   syncFloatBarVisible();
   syncMenuToggles();          // เมนู native ติ๊กถูกตามสถานะจริง (ส่งเฉพาะตอนค่าเปลี่ยน)
@@ -6584,6 +6595,11 @@ async function handleCommand(ch, ...a) {
     // [alpha.61 ข้อ 2] แชท AI เป็น "แผง" แบบ opencode แล้ว — กล่องเดิมยังเรียกได้ที่ ai-chat-dialog
     case 'ai-chat': showPanel('ai-chat'); await renderFeaturePanel('ai-chat');
                     syncMenuToggles(); break;
+    // [alpha.62 บั๊ก 2] ปุ่มบนแถบเครื่องมือเป็นสวิตช์จริง — กดซ้ำแล้วต้องปิดแผงได้
+    case 'ai-chat-toggle':
+      if (isPanelOpen('ai-chat')) hidePanel('ai-chat');
+      else { showPanel('ai-chat'); await renderFeaturePanel('ai-chat'); }
+      refreshToolbar(); syncMenuToggles(); break;
     case 'ai-chat-new': showPanel('ai-chat'); await newChatSession();
                         syncMenuToggles(); break;
     case 'ai-chat-dialog': openAIChat(); break;
@@ -7085,7 +7101,8 @@ window.addEventListener('DOMContentLoaded', () => {
   $('#tb-ai-analyzer') && ($('#tb-ai-analyzer').onclick = () => handleCommand('ai-analyzer'));
   // [alpha.60r3 ข้อ 6] ซ่อน/แสดงรหัสมาร์กดาวน์+fountain ที่นำหน้าบรรทัด
   $('#tb-md-codes') && ($('#tb-md-codes').onclick = () => handleCommand('markdown-codes'));
-  $('#tb-ai-chat').onclick = () => openAIChat();
+  // [alpha.62 บั๊ก 2] เป็นสวิตช์ของแผง "AI ผู้ช่วยเขียน" — กล่องแชทเดิมย้ายไปเมนู AI → แชทกับเรื่องของคุณ
+  $('#tb-ai-chat').onclick = () => handleCommand('ai-chat-toggle');
   $('#tb-tree-panel').onclick = () => { togglePanel('tree'); refreshToolbar(); };
   $('#tb-outline-panel').onclick = () => { togglePanel('outline'); refreshToolbar(); };
   $('#tb-props-panel').onclick = () => { togglePanel('props'); refreshToolbar(); };
@@ -8093,14 +8110,15 @@ async function runTest(projectPath) {
       await pAddB;
 
       await openBookManager();
-      await new Promise((r) => setTimeout(r, 250));
+      // สถิติของแต่ละเล่มไล่อ่านไฟล์ทีละใบ (async) — รอ "เงื่อนไขจริง" ไม่ใช่เดาเวลา (บทเรียน 61 · 74)
+      const bookStatsReady = () => [...document.querySelectorAll('#books-body .book-stats')]
+        .some((e) => /คำ/.test(e.textContent) && e.textContent !== '…');
+      for (let i = 0; i < 60 && !bookStatsReady(); i++) await new Promise((r) => setTimeout(r, 50));
       // บั๊ก #18: จัดการเล่มเป็นแผงแล้ว — ไม่ใช่แท็บเอกสาร จึงเช็คที่ #books-body ไม่ใช่ .pane.on
       check('เปิดตัวจัดการเล่มได้ + มีการ์ดเล่ม',
             isPanelOpen('books') &&
             document.querySelectorAll('#books-body .book-card').length >= 2);
-      check('การ์ดเล่มมีสถิติ (บท/ฉาก/คำ) โหลดเข้ามา',
-            [...document.querySelectorAll('#books-body .book-stats')]
-              .some((e) => /คำ/.test(e.textContent) && e.textContent !== '…'));
+      check('การ์ดเล่มมีสถิติ (บท/ฉาก/คำ) โหลดเข้ามา', bookStatsReady());
       await kapi.testShot('/tmp/k2_books.png');
 
       const secsNow = await listSections();
@@ -10110,7 +10128,11 @@ async function runTest(projectPath) {
     document.querySelector('#st-daily').value = '800';
     document.querySelector('#st-proj').value = '12345';
     document.querySelector('.k-settings .k-ok').click();
-    await new Promise((r) => setTimeout(r, 60));
+    // ปุ่มบันทึกเป็น async ยาว (สแกนโฟลเดอร์ฟอนต์ + เขียน 2 ไฟล์) — รอ "เงื่อนไขจริง" ไม่ใช่เดาเวลา
+    // (บทเรียน 74: `await` แบบตายตัวหลังงาน async = FAIL ปลอมบนเครื่องช้า)
+    for (let i = 0; i < 60 && document.querySelector('.k-settings'); i++) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
     check('กล่องตั้งค่าปิดหลังบันทึก', !document.querySelector('.k-settings'));
     const pj = JSON.parse(await kapi.readFile(projFile));
     check('เขียน settings ลง project.khn.json',
@@ -15725,6 +15747,270 @@ async function runTest(projectPath) {
 
         hidePanel('ai-chat');
         await new Promise((r) => setTimeout(r, 60));
+      }
+
+      // ═══════════════════ alpha.62 — รอบเก็บบั๊กจาก human test 8 ข้อ ═══════════════════
+      const wait62 = (ms) => new Promise((r) => setTimeout(r, ms));
+      /** วนรอ "เงื่อนไขจริง" แทนการเดาเวลา (บทเรียน 61 · 74) */
+      const until62 = async (fn, tries = 40, ms = 50) => {
+        for (let i = 0; i < tries; i++) { if (fn()) return true; await wait62(ms); }
+        return !!fn();
+      };
+
+      // ---- [62-1] หน้าแรกกว้างขึ้น 30% — แถบคำสั่งล่างต้องอยู่บรรทัดเดียว ----
+      {
+        const { showHomeDialog } = await import('./home-ui.js');
+        await showHomeDialog();
+        await until62(() => !!document.querySelector('.k-home-dlg'));
+        const dlg = document.querySelector('.k-home-dlg');
+        check('[62-1] เปิดกล่องหน้าแรกได้', !!dlg);
+        const thumb = parseFloat(getComputedStyle(document.documentElement)
+          .getPropertyValue('--home-thumb')) || 190;
+        const base62 = thumb * 4 + 18 * 3 + 64;            // ความกว้างเดิมก่อน alpha.62
+        // วัดที่ "ความกว้างที่ CSS ใช้จริง" ไม่ใช่ rect — rect ถูกย่อตามอัตราซูมของหน้าต่างระบบ
+        // (บนจอ Retina ที่ตั้ง scaling ไว้ rect เล็กกว่าค่าที่ layout ใช้จริงประมาณ 8%)
+        const cs62 = getComputedStyle(dlg);
+        const w62 = parseFloat(cs62.width) || dlg.getBoundingClientRect().width;
+        // บนหน้าต่างแคบ กล่องถูกหนีบด้วย 94vw/พื้นที่ของ overlay → เทียบกับ "กว้างได้เท่าที่มี" แทน
+        const avail62 = (dlg.parentElement && dlg.parentElement.clientWidth) || window.innerWidth;
+        check('[62-1] กล่องหน้าแรกกว้างขึ้น ≥ 30% จากเดิม (หรือเต็มพื้นที่หน้าต่างแล้ว)',
+              w62 >= Math.min(base62 * 1.28, avail62 * 0.9),
+              `${Math.round(w62)} vs เดิม ${Math.round(base62)} · พื้นที่ ${Math.round(avail62)}` +
+              ` · css=${cs62.width}/${cs62.maxWidth}`);
+        const acts62 = dlg.querySelector('.home-actions');
+        check('[62-1] มีแถบคำสั่งที่ขอบล่างของกล่อง', !!acts62);
+        const btn62 = acts62.querySelector('button');
+        check('[62-1] ปุ่มบนแถบคำสั่งอยู่บรรทัดเดียว ไม่ตกลงไปสองบรรทัด',
+              acts62.getBoundingClientRect().height < btn62.getBoundingClientRect().height * 1.8,
+              `${Math.round(acts62.getBoundingClientRect().height)} / ` +
+              `${Math.round(btn62.getBoundingClientRect().height)}`);
+        // ปิดใบล่าสุดเสมอ (บทเรียน 16)
+        [...document.querySelectorAll('.k-overlay')].forEach((o) => o.remove());
+        await wait62(60);
+      }
+
+      // ---- [62-2] ปุ่ม "AI ผู้ช่วยเขียน" บนแถบเครื่องมือเป็นสวิตช์จริง ----
+      {
+        const b62 = $('#tb-ai-chat');
+        check('[62-2] ปุ่มแชท AI ถูกทำเครื่องหมายเป็นสวิตช์ (.tb-toggle)',
+              !!b62 && b62.classList.contains('tb-toggle'));
+        check('[62-2] ชื่อปุ่มคือ "AI ผู้ช่วยเขียน"', /AI ผู้ช่วยเขียน/.test(b62.title), b62.title);
+        if (isPanelOpen('ai-chat')) { hidePanel('ai-chat'); await wait62(80); }
+        b62.click();
+        await until62(() => isPanelOpen('ai-chat'));
+        check('[62-2] กดครั้งแรก = เปิดแผง', isPanelOpen('ai-chat'));
+        refreshToolbar();
+        check('[62-2] ปุ่มติด .on ตอนแผงเปิด', b62.classList.contains('on'));
+        b62.click();
+        await until62(() => !isPanelOpen('ai-chat'));
+        check('[62-2] กดซ้ำ = ปิดแผง (เดิมเปิดกล่องเดิมซ้ำ ปิดไม่ได้เลย)', !isPanelOpen('ai-chat'));
+        refreshToolbar();
+        check('[62-2] ปุ่มไม่ติด .on ตอนแผงปิด', !b62.classList.contains('on'));
+      }
+
+      // ---- [62-3] แผง AI ผู้ช่วยเขียน: เริ่มใหม่ + คัดลอกข้อความ ----
+      {
+        const AS62 = await import('./ai/ai-session.js');
+        const CP62 = await import('./ai/ai-chat-panel.js');
+        showPanel('ai-chat');
+        await renderFeaturePanel('ai-chat');
+        await until62(() => !!document.getElementById('ai-chat-body'));
+        const host62 = document.getElementById('ai-chat-body');
+        // เทสก่อนหน้า ([61-2]) อาจค้างอยู่ที่หน้าเซสชัน → สร้างเซสชันใหม่ตรง ๆ ไม่พึ่งปุ่มบนหน้ารายการ
+        await newChatSession();
+        await until62(() => !!host62.querySelector('.ai-chat-session'));
+        const S62 = _chatState();
+        check('[62-3] มีเซสชันเปิดอยู่', !!S62.cur);
+        // ใส่ข้อความจำลอง (แก้ object เดียวกับที่อยู่ในรายการ) แล้ววาดใหม่
+        S62.cur.messages.push(AS62.newMessage('user', 'ข้อความทดสอบการคัดลอก'));
+        S62.cur.messages.push(AS62.newMessage('assistant', 'คำตอบทดสอบ', { model: 'ทดสอบ' }));
+        await renderAIChatPanel(host62);
+        await until62(() => host62.querySelectorAll('.ai-msg').length === 2);
+        check('[62-3] ข้อความถูกวาดครบ', host62.querySelectorAll('.ai-msg').length === 2,
+              String(host62.querySelectorAll('.ai-msg').length));
+        check('[62-3] ทุกข้อความมีปุ่มคัดลอก',
+              host62.querySelectorAll('.ai-msg .ai-msg-copy').length === 2,
+              String(host62.querySelectorAll('.ai-msg .ai-msg-copy').length));
+        check('[62-3] เนื้อความเลือก/ลากคลุมได้ (user-select:text)',
+              getComputedStyle(host62.querySelector('.ai-msg-text')).userSelect !== 'none');
+        check('[62-3] คัดลอกข้อความได้ (มีทางสำรองเมื่อคลิปบอร์ดถูกปฏิเสธ)',
+              (await CP62.copyText('ข้อความทดสอบการคัดลอก')) === true);
+        check('[62-3] คัดลอกข้อความว่าง = ไม่ทำอะไร', (await CP62.copyText('')) === false);
+        // เริ่มใหม่
+        check('[62-3] มีปุ่ม ↻ เริ่มใหม่บนหัวเซสชัน', !!host62.querySelector('.ai-chat-restart'));
+        const id62 = S62.cur.id;
+        await CP62.restartSession(S62.cur, { confirm: false });
+        await until62(() => (_chatState().cur.messages || []).length === 0);
+        check('[62-3] เริ่มใหม่แล้วบทสนทนาว่าง', (_chatState().cur.messages || []).length === 0);
+        check('[62-3] เริ่มใหม่แล้วยังเป็นเซสชันเดิม (ไม่ได้สร้างใบใหม่)', _chatState().cur.id === id62);
+        check('[62-3] จอแสดงผลไม่เหลือข้อความเดิมค้าง',
+              document.getElementById('ai-chat-body').querySelectorAll('.ai-msg').length === 0);
+        hidePanel('ai-chat');
+        await wait62(60);
+      }
+
+      // ---- [62-4] CSS พื้นฐานของ ProseMirror: Tab ต้องเห็นผลจริง ----
+      {
+        const scEl62 = document.querySelector('#tree .scene:not(.add-row)');
+        if (scEl62) { scEl62.click(); await wait62(400); }
+        const t62 = state.active;
+        check('[62-4] เปิดฉาก (โหมดนิยาย) ได้', !!(t62 && t62.editor && t62.pane));
+        const pmEl62 = t62.pane.querySelector(':scope > .workspace > .ProseMirror');
+        check('[62-4] .ProseMirror มี CSS พื้นฐานของ ProseMirror แล้ว (white-space ไม่ใช่ normal)',
+              /^(pre|break-spaces)/.test(getComputedStyle(pmEl62).whiteSpace),
+              getComputedStyle(pmEl62).whiteSpace);
+        const ed62 = t62.editor, view62 = ed62.view;
+        const { TextSelection: TS62 } = await import('prosemirror-state');
+        const { insertTab: insertTab62 } = await import('./editor.js');
+        ed62.setMarkdown('กขค');
+        await wait62(120);
+        const endX = () => view62.coordsAtPos(view62.state.doc.content.size - 1).left;
+        const x0 = endX();
+        // วางเคอร์เซอร์ที่ต้นย่อหน้าแล้วกด Tab → ทั้งบรรทัดต้องขยับไปทางขวาจริง
+        view62.dispatch(view62.state.tr.setSelection(TS62.near(view62.state.doc.resolve(1), 1)));
+        insertTab62(view62.state, view62.dispatch);
+        await wait62(120);
+        check('[62-4] แท็บที่แทรกกินที่จริงบนจอ (เดิม white-space:normal ยุบทิ้งทั้งตัว)',
+              endX() > x0 + 4, `${Math.round(x0)} → ${Math.round(endX())}`);
+        // ขึ้นบรรทัดใหม่แล้วกด Tab ต้องไม่ทำให้บรรทัดนั้นหาย
+        ed62.setMarkdown('บรรทัดหนึ่ง\n\nบรรทัดสอง');
+        await wait62(120);
+        const p2pos = view62.state.doc.resolve(view62.state.doc.content.size - 1);
+        view62.dispatch(view62.state.tr.setSelection(TS62.near(p2pos, -1)));
+        // ล้างข้อความในบล็อกนั้นให้ว่าง = สภาพเดียวกับ "เพิ่งกด Enter ขึ้นบรรทัดใหม่"
+        view62.dispatch(view62.state.tr.deleteRange(
+          view62.state.selection.$from.start(), view62.state.selection.$from.end()));
+        await wait62(60);
+        const nBlocks62 = view62.state.doc.childCount;
+        const idx62 = view62.state.selection.$from.index(0);
+        insertTab62(view62.state, view62.dispatch);
+        await wait62(200);
+        check('[62-4] ขึ้นบรรทัดใหม่แล้วกด Tab — บรรทัดยังอยู่ ไม่ถูกลบทิ้ง',
+              view62.state.doc.childCount === nBlocks62,
+              `${nBlocks62} → ${view62.state.doc.childCount}`);
+        check('[62-4] บรรทัดใหม่เก็บอักขระแท็บไว้จริง',
+              view62.state.doc.child(idx62).textContent === '\t',
+              JSON.stringify(view62.state.doc.child(idx62).textContent));
+        // คืนเนื้อหาเดิมของไฟล์ ไม่ให้ค้างไปกวนเทสถัดไป
+        ed62.setMarkdown(t62.body || '');
+        t62.dirty = false;
+        await wait62(80);
+      }
+
+      // ---- [62-5][62-6] AI: รู้จักผู้ให้บริการที่ตั้งแบบใหม่ (alpha.61) ----
+      {
+        const { aiConfigured } = await import('./ai-settings.js');
+        const { newProvider: newProv62 } = await import('./ai/ai-providers.js');
+        state.meta.ai = state.meta.ai || {};
+        const keepProv = state.meta.ai.providers, keepAct = state.meta.ai.activeProviderId;
+        const keepLegacy = state.meta.ai.provider;
+
+        state.meta.ai.providers = [];
+        state.meta.ai.activeProviderId = '';
+        state.meta.ai.provider = 'openai';
+        const r62a = await aiConfigured();
+        check('[62-6] ยังไม่ได้ตั้งค่าอะไรเลย → บอกว่ายังไม่พร้อม พร้อมเหตุผล',
+              r62a.ok === false && !!r62a.why, r62a.why);
+
+        const prov62 = newProv62({ name: 'เจ้าทดสอบ62', model: 'model-x',
+                                   credential: { baseUrl: 'https://api.example.com/v1' } });
+        state.meta.ai.providers = [prov62];
+        state.meta.ai.activeProviderId = prov62.id;
+        const r62b = await aiConfigured();
+        check('[62-6] ตั้งผู้ให้บริการแบบใหม่ครบแล้ว → AI ต้องนับว่าพร้อม ' +
+              '(เดิมดูแต่คีย์รูปแบบเก่า จึงบล็อก "แนะนำชื่อด้วย AI" ทั้งที่ตั้งค่าไว้แล้ว)',
+              r62b.ok === true, r62b.why);
+
+        state.meta.ai.providers = [{ ...prov62, model: '' }];
+        const r62c = await aiConfigured();
+        check('[62-6] ลืมเลือกโมเดล → บอกเหตุผลตรงจุด ไม่ใช่ "ยังไม่ได้ตั้งค่า"',
+              r62c.ok === false && /โมเดล/.test(r62c.why), r62c.why);
+
+        // [62-5] ปุ่ม ✨ ต้องรายงานสาเหตุจริง ไม่เงียบหาย
+        const { generateSceneField, AI_SCENE_FIELDS } = await import('./ai-synopsis.js');
+        check('[62-5] ช่อง "ความขัดแย้ง" อยู่ในรายการช่องที่กด ✨ ได้',
+              !!AI_SCENE_FIELDS.conflict);
+        state.meta.ai.providers = [];
+        state.meta.ai.activeProviderId = '';
+        const out62 = await generateSceneField('conflict', 'เนื้อฉากทดสอบสำหรับความขัดแย้ง', 'ฉากทดสอบ');
+        const status62 = $('#status').textContent;
+        check('[62-5] กด ✨ แล้วล้มเหลว → คืนค่าว่าง', out62 === '');
+        check('[62-5] ข้อความบนแถบสถานะบอกสาเหตุจริง ไม่ใช่ "AI ไม่ได้ส่ง…กลับมา"',
+              /ตั้งค่า AI|ผู้ให้บริการ|โมเดล|HTTP|โดเมน|เชื่อมต่อ/.test(status62) &&
+              !/ไม่ได้ส่งความขัดแย้งกลับมา/.test(status62), status62);
+
+        state.meta.ai.providers = keepProv;
+        state.meta.ai.activeProviderId = keepAct;
+        state.meta.ai.provider = keepLegacy;
+      }
+
+      // ---- [62-7] ขยับ/เปิด/ปิดแผง แล้วตำแหน่งเลื่อนของตัวแก้ไขต้องนิ่ง ----
+      {
+        const t7 = state.active;
+        const pane7 = t7 && t7.pane;
+        check('[62-7] มีตัวแก้ไขเปิดอยู่', !!(t7 && t7.editor && pane7));
+        check('[62-7] .pane ต้องไม่ใช้ scroll-behavior:smooth ' +
+              '(ไม่งั้นการคืนตำแหน่งเลื่อนกลายเป็นอนิเมชัน แล้วอ่านค่ากลับได้ค่ากลางทาง)',
+              getComputedStyle(pane7).scrollBehavior === 'auto',
+              getComputedStyle(pane7).scrollBehavior);
+        t7.editor.setMarkdown(
+          Array.from({ length: 160 }, (_, i) => 'ย่อหน้าทดสอบการเลื่อนหน้ากระดาษ ' + (i + 1)).join('\n\n'));
+        await until62(() => pane7.scrollHeight > pane7.clientHeight + 400);
+        check('[62-7] เนื้อหายาวพอให้เลื่อนได้จริง', pane7.scrollHeight > pane7.clientHeight + 400,
+              `${pane7.scrollHeight} / ${pane7.clientHeight}`);
+        // ตัวแก้ไขที่มีโฟกัสจะดึงจอกลับไปหาเคอร์เซอร์ (บทเรียน 72)
+        document.activeElement && document.activeElement.blur && document.activeElement.blur();
+        pane7.scrollTop = 400;
+        await until62(() => pane7.scrollTop === 400, 20, 30);
+        const keep7 = pane7.scrollTop;
+        check('[62-7] ตั้งตำแหน่งเลื่อนแล้วติดทันที', keep7 === 400, String(keep7));
+
+        const other7 = isPanelOpen('log') ? 'notes' : 'log';
+        showPanel(other7);
+        await wait62(420);                       // restoreScroll ตั้งซ้ำถึง 250ms
+        check('[62-7] เปิดแผงแล้วหน้ากระดาษไม่เลื่อนหนี',
+              Math.abs(pane7.scrollTop - keep7) <= 8, `${keep7} → ${pane7.scrollTop}`);
+        hidePanel(other7);
+        await wait62(420);
+        check('[62-7] ปิดแผงแล้วก็ยังอยู่ที่เดิม',
+              Math.abs(pane7.scrollTop - keep7) <= 8, `${keep7} → ${pane7.scrollTop}`);
+        // และต้องไม่ "ล็อก" ไว้ — ผู้ใช้เลื่อนต่อเองได้ทันที
+        pane7.scrollTop = 900;
+        await wait62(320);
+        check('[62-7] หลังคืนค่าเสร็จ ผู้ใช้ยังเลื่อนต่อได้ (ไม่ถูกดึงกลับ)',
+              pane7.scrollTop === 900, String(pane7.scrollTop));
+      }
+
+      // ---- [62-8] ซูมรัว ๆ แล้วหน้ากระดาษต้องไม่ไหลไปชิดขอบซ้าย ----
+      {
+        const t8 = state.active;
+        const pane8 = t8.pane;
+        resetPageScale();
+        await wait62(150);
+        document.activeElement && document.activeElement.blur && document.activeElement.blur();
+        centerPage(pane8);
+        await wait62(80);
+        // ซูมเข้าทีละขั้นเหมือน Ctrl+ล้อ จนกว่าจะเกิดแถบเลื่อนแนวนอนจริง
+        for (let i = 0; i < 14 && pane8.scrollWidth <= pane8.clientWidth + 20; i++) {
+          setPageScale(pageScale + 0.1);
+          await wait62(40);
+        }
+        await wait62(200);
+        const maxX8 = Math.max(0, pane8.scrollWidth - pane8.clientWidth);
+        check('[62-8] ซูมเข้าจนมีแถบเลื่อนแนวนอนจริง', maxX8 > 20, String(maxX8));
+        const f8 = maxX8 > 0 ? pane8.scrollLeft / maxX8 : 0.5;
+        check('[62-8] ซูมเข้ารัว ๆ แล้วยังยึดกึ่งกลาง ไม่ไหลไปชิดขอบซ้าย',
+              f8 > 0.3 && f8 < 0.7, f8.toFixed(3));
+        pane8.scrollLeft = 0;
+        await wait62(80);
+        const wsL = pane8.querySelector(':scope > .workspace > .ProseMirror').getBoundingClientRect().left;
+        check('[62-8] เลื่อนสุดซ้ายแล้วเห็นขอบซ้ายของกระดาษ (ไม่มีส่วนที่เลื่อนไปหาไม่ได้)',
+              wsL >= pane8.getBoundingClientRect().left - 2,
+              `${Math.round(wsL)} vs ${Math.round(pane8.getBoundingClientRect().left)}`);
+        resetPageScale();
+        await wait62(120);
+        t8.editor.setMarkdown(t8.body || '');
+        t8.dirty = false;
       }
 
     out.push('ALL OK');

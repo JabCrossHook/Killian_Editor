@@ -28,6 +28,8 @@ contextBridge.exposeInMainWorld('kapi', {
   pdfFromHtml: call('pdf:fromHtml'),         // [70] สร้าง PDF จาก HTML (หน้าต่างซ่อน)
   pushRecent: call('recent:push'), listRecent: call('recent:list'),
   testShot: call('test:shot'), revealInOS: call('shell:reveal'),
+  // [alpha.62 บั๊ก 3] คลิปบอร์ดผ่าน main — เชื่อถือได้กว่า navigator.clipboard ในหน้าต่างไร้ขอบ
+  clipboardWrite: call('clipboard:write'), clipboardRead: call('clipboard:read'),
   winMin: call('win:minimize'), winMax: call('win:maximize'), winClose: call('win:close'),
   quitNow: call('win:quitNow'), menuPopup: call('menu:popup'),
   menuToggles: call('menu:toggles'),        // แจ้งสถานะสวิตช์ให้เมนู native ติ๊กถูกให้ตรง

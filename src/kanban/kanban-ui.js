@@ -12,16 +12,25 @@ async function getBoard() {
   if (board) return board;
   if (!state.root) return null;
   // หา draftPath จาก state (path ของฉบับร่างแรก)
-  const secs = await kapi.listDirs(state.root);
-  const first = secs.find((s) => !['Wiki','Bible','Images','Memos','Recycle','Snapshots','Backups','Plugins','Research'].includes(s));
-  if (!first) return null;
-  const sp = await kapi.join(state.root, first);
-  const dr = await kapi.join(sp, 'Draft');
-  if (!(await kapi.exists(dr))) return null;
-  const dns = await kapi.listDirs(dr);
-  if (!dns.length) return null;
+  // [alpha.62] เดิมหยิบ "โฟลเดอร์แรกที่ไม่ใช่โฟลเดอร์ระบบ" แล้วถือว่านั่นคือเล่ม
+  // แต่ `listDirs` ไม่ได้เรียงตามตัวอักษร (APFS คืนตามลำดับภายใน) และเล่มที่เพิ่งสร้าง
+  // ยังไม่มีโฟลเดอร์ Draft → บางครั้ง Kanban เปิดไม่ขึ้นเฉย ๆ ทั้งที่มีเล่มที่ใช้ได้อยู่
+  // แก้: ไล่ทุกเล่มจนเจอเล่มแรกที่ "มีฉบับร่างจริง"
+  const SKIP_DIRS = ['Wiki', 'Bible', 'Images', 'Memos', 'Recycle', 'Snapshots', 'Backups',
+                     'Plugins', 'Research', 'Sessions', 'languages', 'Fonts'];
+  const secs = (await kapi.listDirs(state.root)).filter((s) => !SKIP_DIRS.includes(s)).sort();
+  let draftPath = null;
+  for (const s of secs) {
+    const dr = await kapi.join(await kapi.join(state.root, s), 'Draft');
+    if (!(await kapi.exists(dr))) continue;
+    const dns = (await kapi.listDirs(dr)).sort();
+    if (!dns.length) continue;
+    draftPath = await kapi.join(dr, dns[0]);
+    break;
+  }
+  if (!draftPath) return null;
   // io ต้องมี join แบบ sync (kapi.join เป็น async) — ดู syncIo ใน project-scan.js
-  board = new KanbanBoard({ io: syncIo(), draftPath: await kapi.join(dr, dns[0]), statuses: allStatuses() });
+  board = new KanbanBoard({ io: syncIo(), draftPath, statuses: allStatuses() });
   await board.load();
   board.onChange(() => { if (board) { refreshKanbanUI(); } });
   return board;

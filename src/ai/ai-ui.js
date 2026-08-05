@@ -1,15 +1,15 @@
 // ai-ui.js — UI ทั้งหมดของ AI features (ข้อ 72–79): assistant, plot, dialogue, character, world, chat
 import { $, el, state, setStatus, log, t as tr } from '../core.js';   // บทเรียน 25: ในไฟล์นี้ตัวแปร t = แท็บ → i18n ใช้ชื่อ tr
-import { callAI, getAISettings, loadApiKey } from '../ai-settings.js';
+import { callAI, aiConfigured } from '../ai-settings.js';
 import { listScenes, listEntities } from '../project-scan.js';
 
 // ───────── helper: เช็คว่า AI พร้อมหรือยัง ─────────
+// [alpha.62 บั๊ก 6] ถามจุดเดียวที่ `aiConfigured()` — รู้จักทั้งทะเบียนใหม่ (alpha.61) และค่าตั้งแบบเก่า
 async function aiReady() {
   if (!state.root) { setStatus(tr('ai.noProject', 'ยังไม่ได้เปิดโปรเจกต์')); return false; }
-  const ai = getAISettings();
-  if ((ai.provider || 'openai') === 'ollama') return true;
-  if (await loadApiKey()) return true;
-  setStatus(tr('ai.needSetup', 'ตั้งค่า AI ที่ ไฟล์ → ตั้งค่า AI ก่อน'));
+  const r = await aiConfigured();
+  if (r.ok) return true;
+  setStatus('❌ ' + (r.why || tr('ai.needSetup', 'ตั้งค่า AI ที่ ไฟล์ → ตั้งค่า AI ก่อน')));
   return false;
 }
 
