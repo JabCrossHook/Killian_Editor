@@ -56,7 +56,7 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
 ## สถาปัตยกรรม (เสถียร)
 
 - **main.js** — electron main: IPC `H('channel', fn)` (fs/dialog/print/printToPdf/recent/spell/mtime/writeImageData), frameless titlebar (`frame:false`), contextIsolation
-- **preload.js** — บริดจ์ `kapi` (readFile/writeFile/readJson/exists/join/mkdir/move/remove/listFiles/listDirs/mtime/copyInto/writeImageData/spellBase/spellExtra/spellAddWord/spellDownload/spellHasBase/testShot/**openFileDialog**/**openDirDialog**/**pdfFromHtml**). **ไม่มี writeJson** (ใช้ writeFile + JSON.stringify) · `saveAsDialog(name, kind?)` เลือกฟิลเตอร์ตามนามสกุลให้เอง (มี fdx/rtf แล้ว) · `pdfFromHtml(html,out,{width,height,margins})` = เขียน HTML ลงไฟล์ชั่วคราวแล้ว `printToPDF` ใน **BrowserWindow ซ่อน** (data: URL ยาวไม่พอ + `@font-face` file:// ต้องมี origin จริง)
+- **preload.js** — บริดจ์ `kapi` (readFile/writeFile/readJson/exists/join/mkdir/move/remove/listFiles/listDirs/mtime/copyInto/writeImageData/spellBase/spellExtra/spellAddWord/spellDownload/spellHasBase/testShot/**openFileDialog**/**openDirDialog**/**pdfFromHtml**/**clipboardWrite**). **ไม่มี writeJson** (ใช้ writeFile + JSON.stringify) · `saveAsDialog(name, kind?)` เลือกฟิลเตอร์ตามนามสกุลให้เอง (มี fdx/rtf แล้ว) · `pdfFromHtml(html,out,{width,height,margins})` = เขียน HTML ลงไฟล์ชั่วคราวแล้ว `printToPDF` ใน **BrowserWindow ซ่อน** (data: URL ยาวไม่พอ + `@font-face` file:// ต้องมี origin จริง)
 - **src/** (esbuild → `renderer/bundle.js`):
   - `md.js` — พาร์เซอร์ .md ↔ doc (พอร์ตตรงจาก v1 → ไฟล์เข้ากันได้ 100%)
   - `editor.js` — `KEditor` (นิยาย): schema + `mentionPlugin` + `spellPlugin` + export `imageLightbox`
@@ -99,6 +99,8 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
     · `ai/ai-provider-ui.js` — กล่องตั้งค่า + ป๊อปอัป 4 ส่วน · **`sendRequest()` = ประตูเดียวที่ตรวจ Allowed Domains**
     · `ai/ai-chat-panel.js` — แผง 3 ชั้น (รายการ → เซสชัน → รายละเอียด) · `collectScope()` บังคับระดับการเข้าถึงจริง
     · (ของเดิม `ai/ai-core.js` · `ai-bridge.js` · `ai-ui.js` ยังอยู่ — ฟีเจอร์ AI เดิมวิ่งผ่าน `callAI()` ที่ต่อเข้าทะเบียนใหม่แล้ว)
+    · **[alpha.62] `aiConfigured()` ใน `ai-settings.js` = จุดเดียวที่ทุกฟีเจอร์ถามว่า "ตั้งค่าครบหรือยัง"**
+      (คืน `{ok, why}` — ห้ามเขียนตัวเช็คคีย์เองในไฟล์อื่นอีก)
   - **`search-engine.js`** (alpha.39, บริสุทธิ์) — ค้นหาเต็มข้อความทั้งโปรเจกต์: tokenizer ไทย (`Intl.Segmenter('th')`+bigram fallback) → inverted index → `SearchIndex.build/search` (คำเดียว/AND/OR/NOT/`field:`) → snippet+line+score. `indexProject(root,kapi,parseMd)` เป็น integration layer. **unit test แยก · ค้น 1,000 ไฟล์ ~16ms/คิวรี**
   - **`panels/panel-layout.js` + `panel-store.js`** (alpha.39, บริสุทธิ์ · **ห้ามแก้**) — layout tree ของ panel: `snapZone`,`dockPanel`,`addAsTab/moveTab/splitTab`,`resizeDock`,`removePanel`(+collapse) · store: `serializeLayout`/versioning/migrate + `PanelStore`(รับ storage adapter) + `PanelManager`
   - **`panels/panel-renderer.js` + `panel-drag.js` + `panel-ui.js`** (alpha.46) — **UI จริงของ Panel System** (ดูหัวข้อด้านล่าง)
@@ -252,7 +254,7 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
 
 ## E2E test workflow (สำคัญ — ทำทุกครั้งก่อนเชื่อว่าแก้สำเร็จ)
 
-Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **1,842 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
+Selftest ใน `app.js` (`check(name, cond, extra)` เขียน PASS/FAIL แล้ว throw ตอน fail). ปัจจุบัน **1,883 checks** target `ALL OK`. เพิ่มฟีเจอร์ = เพิ่ม check เสมอ (ห้ามลด). โมดูลบริสุทธิ์ (compile/timeline/maps/search-engine/panels/split) มี unit test แยกรันด้วย node ก่อน แล้วค่อยเทส UI ใน e2e
 
 **Unit test โมดูลบริสุทธิ์ (alpha.39, รันเร็ว ไม่ต้องเปิด electron):**
 ```bash
@@ -277,9 +279,9 @@ node test/wiki-images.test.cjs     # 43 checks — migrate string→object/capti
 node test/scene-meta.test.cjs      # 56 checks — frontmatter ชนะ index/bool จากสตริง/ลบคีย์ว่าง (alpha.60r2 · 13)
 node test/margin-presets.test.cjs  # 45 checks — 8 ชุด/จับคู่กลับ/ค่าที่ผู้ใช้ตั้งเอง (alpha.60r2 · 6)
 node test/i18n-csv.test.cjs      # 61 checks — flatten/CSV quote+BOM/round-trip ไฟล์ภาษาจริง (alpha.60r3 · 4)
-node test/ai-providers.test.cjs    # 102 checks — provider/param/โดเมน/ความลับ/models/chat + session/สถิติ/ค้นหา (alpha.61 · 2)
+node test/ai-providers.test.cjs    # 110 checks — provider/param/โดเมน/ความลับ/models/chat + session/สถิติ/ค้นหา/เริ่มใหม่ (alpha.61–62)
 ```
-`npm run test:unit` รันชุดบริสุทธิ์ทั้งหมดรวดเดียว (**1,913 checks**)
+`npm run test:unit` รันชุดบริสุทธิ์ทั้งหมดรวดเดียว (**1,282 บรรทัด PASS**)
 · **ตรวจ PDF ที่สร้างขึ้นในเทส**: pdf-lib **บีบอัด content stream (FlateDecode)** และเขียนข้อความเป็น
 **hex string** (`<48656C…> Tj`) ทั้งฟอนต์มาตรฐานและฟอนต์ที่ฝัง → ค้นข้อความจากไบต์ดิบไม่เจอเลย
 ต้อง `zlib.inflateSync` ก่อน **แล้วถอด hex** (ดู `streamsText`/`drawnText` ใน `pdf-generator.test.cjs`)
@@ -610,6 +612,42 @@ grep -E "FAIL|STOP" /tmp/k2result.txt | head -3
    repo บนเครื่อง Top มี `@esbuild/win32-x64` + `electron/dist/electron.exe` ติดมาจากฝั่ง Windows
    · `node build.js` ฟ้องตรง ๆ (esbuild บอกเอง) · แต่ **electron ไม่ฟ้อง** — `path.txt` ชี้ `electron.exe` เฉย ๆ
    **แก้: `npm install` แล้ว `rm -rf node_modules/electron/{dist,path.txt} && node node_modules/electron/install.js`**
+79. **[alpha.62] CSS ของไลบรารีที่ bundle "แต่ JS" หายไปเงียบ ๆ — ไม่มีใครฟ้อง**
+   โปรเจกต์นี้ไม่เคยรวม `prosemirror-view/style/prosemirror.css` เลย (esbuild bundle เฉพาะ JS
+   และ `index.html` ลิงก์แต่ `style.css` ของเราเอง) → `.ProseMirror` ได้ `white-space:normal`
+   ตามค่าเริ่มต้นของเบราว์เซอร์ ผลที่ผู้ใช้เจอ **ไม่มีคำว่า CSS อยู่ในอาการเลย**:
+   · กด Tab แล้ว "ไม่มีอะไรเกิดขึ้น" (อักขระแท็บถูกยุบทิ้งตอนเรนเดอร์ — คำสั่ง `insertTab` ทำงานถูกทุกอย่าง
+     และ **unit-style check ที่ดู `getMarkdown()` ก็ผ่าน**) · โหมดบทหนังรอดเพราะ `.sp` ตั้ง `pre-wrap` เอง
+   · ย่อหน้าที่เหลือแต่ช่องว่างถูกยุบ แล้ว PM อ่าน DOM กลับได้บรรทัดว่าง = **บรรทัดหายทั้งบรรทัด**
+   · gap cursor เปิดปลั๊กอินไว้แต่มองไม่เห็นมาตลอด (ไม่มี `.ProseMirror-gapcursor`)
+   **กฎ: เทสตัวแก้ไขต้องมีอย่างน้อยหนึ่ง check ที่วัด "ผลบนจอ"** (`getComputedStyle().whiteSpace`,
+   `view.coordsAtPos()`) ไม่ใช่ดูแต่ผลใน state · และเวลาเพิ่มปลั๊กอิน PM ให้เช็คว่ามันมี CSS มาด้วยไหม
+80. **[alpha.62] `scroll-behavior:smooth` บนกล่องที่ "โปรแกรมตั้งตำแหน่งเลื่อนเอง" = ตัวคืนค่าตัดสินผิด**
+   (ต่อจากบทเรียน 71 ซึ่งแก้แค่ฝั่งเทส — คราวนี้มันกัดผู้ใช้จริง 2 อาการ)
+   `el.scrollTop = n` กลายเป็น **อนิเมชัน** → อ่านกลับทันทีได้ค่ากลางทาง
+   · `restoreScroll()` เช็ค "มีคนอื่นเลื่อนไปแล้วหรือยัง" จากค่าที่อ่านกลับ → เจอค่ากลางทางแล้วเลิกตาม
+     = **ขยับแผงทีไร หน้ากระดาษเลื่อนเองทุกที**
+   · `keepZoomCenter()` เก็บสัดส่วนก่อนซูม → ซูมด้วย Ctrl+ล้อรัว ๆ (เรียกซ้อนกันหลายรอบ) สัดส่วนไหลลง
+     เรื่อย ๆ จน **หน้ากระดาษไปติดขอบซ้าย** (คือ "บั๊กเก่ากลับมา" ที่ผู้ใช้รายงาน)
+   **แก้: กล่องที่โปรแกรมตั้งตำแหน่งเลื่อนเองต้องเป็น `scroll-behavior:auto`** (`.pane` `#panes`)
+   และตัวคืนค่าบังคับ `style.scrollBehavior='auto'` ระหว่างทำงานแล้วคืนสถานะเดิม
+81. **[alpha.62] `npx asar extract-file <asar> package.json` เขียนไฟล์ลง cwd**
+   รันจากรากโปรเจกต์เพื่อ "verify version ในแพ็กเกจ" → **ทับ `package.json` ของ repo ด้วยตัวที่ถูก
+   electron-builder ตัด `scripts`/`build`/`devDependencies` ทิ้ง** (กับดักข้อ 75 ซ้ำอีกทาง)
+   `git status` ตอนนั้นสะอาดจึงไม่มีใครเอะใจ แล้วไปโผล่ตอน `npm run dist:mac` รอบถัดไป
+   **แก้: `cd /tmp` ก่อนเสมอ** แล้วอ่านไฟล์ที่แตกออกมาจากที่นั่น
+82. **[alpha.62] `kapi.listDirs` ไม่เรียงตามตัวอักษร** (APFS คืนตามลำดับภายใน)
+   โค้ดที่เขียนว่า "โฟลเดอร์แรกที่ไม่ใช่โฟลเดอร์ระบบ = เล่มที่จะใช้" จึงได้ผลไม่คงที่
+   ยิ่งเมื่อมีเล่มที่เพิ่งสร้าง (ยังไม่มี `Draft/`) หรือโฟลเดอร์ใหม่อย่าง `Sessions/` `languages/`
+   → Kanban เปิดไม่ขึ้นแบบสุ่ม ทั้งที่มีเล่มที่ใช้ได้อยู่ · **แก้: ไล่หา "ตัวแรกที่ใช้ได้จริง" + `.sort()` เสมอ**
+83. **[alpha.62] `build.js` ก๊อป `languages/` → `renderer/languages/` ทุกครั้ง**
+   แก้คำแปลที่ `renderer/languages/*.json` แล้วจะหายทุกครั้งที่ build (ดูเหมือนมีอะไรมา revert ไฟล์)
+   **แหล่งจริงคือ `languages/` ที่รากโปรเจกต์**
+84. **[alpha.62] `navigator.clipboard.writeText` ต้องการหน้าต่างที่ "โฟกัสอยู่"**
+   หน้าต่างไร้ขอบ + แผงลอยที่เพิ่งถูกคลิก มักยังไม่ได้โฟกัส → reject เงียบ ๆ (และ `document.execCommand('copy')`
+   ก็ล้มด้วยเหตุเดียวกัน) **แก้: คัดลอกผ่าน main process** (`clipboard.writeText` ของ electron →
+   `kapi.clipboardWrite`) แล้วค่อยตกไปทางเบราว์เซอร์เป็นทางสำรอง
+
 78. **[alpha.61] ไฟล์ที่ working tree เป็น CRLF ทั้งไฟล์ ทำให้ diff จริงถูกกลบ**
    `main.js` ถูกบันทึกเป็น CRLF มาก่อนเริ่มงาน → `git diff --stat` ขึ้น 766+/766- ทั้งที่ไม่มีอะไรเปลี่ยน
    **เช็คด้วย `git diff -w --stat` ก่อนเสมอ** ถ้าเหลือ 0 = whitespace ล้วน → `perl -i -pe 's/\r\n/\n/g'` แล้วค่อยแก้จริง
@@ -712,7 +750,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ---
 
-## เวอร์ชัน (ล่าสุด alpha.61 · e2e 1,842 + unit)
+## เวอร์ชัน (ล่าสุด alpha.62 · e2e 1,883 + unit)
 
 .13–.22 (v1→v2 พื้นฐาน): snapshot, line numbers, spellcheck ไทย+Chromium, ปุ่มลัดตั้งเอง, mac build, บทหนัง Ctrl+arrow, relationship sync, floating format bar, sidebar resize, SmartType Final Draft, wiki gallery/lightbox, explorer search+tags, panel docking, tree float+snap
 .24 batch 8 (drag-move explorer, panel snap, split compare, version tracking, scene lock, screenplay Final Draft look, screenplay images, wiki links) · .25–.27 **Planner board** (fabric.js) · .28 **floating windows** · .29 memo-in-chapter + scoped search
@@ -1084,6 +1122,25 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
       (spCss · pdf-generator · export-rtf · sp-headers อ่าน `caps` ตัวเดียวกันหมด) · ค่าที่ผู้ใช้ติ๊กเองไม่หาย
     · `settings.spForceCase`/`spAutoCapitalize`/`spAutoCorrectI` → เมนู **บท → 🔠 ตัวพิมพ์ใหญ่/เล็ก (ให้อิสระ)**
     · แก้จุดฮาร์ดโค้ดที่เหลือ: `export-rtf.js` เคย `title.toUpperCase()` เสมอบนหน้าปก
+
+.62 **รอบเก็บบั๊กจาก human test 8 ข้อ** (e2e 1,842 → **1,883**)
+  **[1] หน้าแรกกว้างขึ้น 30%** — `--home-dlg-w` (= สูตรเดิม × 1.3) · `.home-wrap` 1100 → 1430px
+    → แถบคำสั่งล่าง (มุมมอง · ค้นหา · ส่งออก · นำเข้า · สร้างใหม่ · เปิด · ปิด) อยู่บรรทัดเดียว
+  **[2] ปุ่ม 💬 เป็นสวิตช์ของแผง "AI ผู้ช่วยเขียน"** — คำสั่งใหม่ `ai-chat-toggle` · `.tb-toggle` + จุด ●
+    · ชื่อใหม่ทั้งชุด: 💬 = "AI ผู้ช่วยเขียน" (แผงแชท) · 🤖 = "เครื่องมือ AI (ขยาย · สรุป · เขียนใหม่)"
+  **[3] แผงแชท: ↻ เริ่มใหม่ + ⧉ คัดลอก** — `clearMessages()` ใน `ai-session.js` (บริสุทธิ์ · unit 8 ข้อ:
+    ล้างข้อความ+`contextLimit` · เก็บ id/โหมด/ระดับการเข้าถึง/โมเดล/ไฟล์แนบ/ชื่อที่ตั้งเอง)
+    · `copyText()` ใน `ai-chat-panel.js` → **`kapi.clipboardWrite` (IPC ใหม่)** แล้วค่อย fallback (บทเรียน 84)
+  **[4] CSS พื้นฐานของ ProseMirror** — ต้นเหตุ "โหมดนิยายกด Tab ไม่ได้ · ขึ้นบรรทัดใหม่แล้วกด Tab บรรทัดหาย"
+    (บทเรียน 79) · เพิ่ม `prosemirror.css` + `gapcursor.css` เข้า `style.css` — **ห้ามลบ**
+  **[5][6] `aiConfigured()` ใน `ai-settings.js` = จุดเดียวที่ตอบว่า "ตั้งค่า AI ครบหรือยัง"**
+    คืน `{ok, why}` · รู้จักทั้งทะเบียนของ alpha.61 (`meta.ai.providers[]`) · ollama · คีย์รูปแบบเก่า
+    · `ai-ui.js` / `ai-summary.js` เลิกมี `aiReady()` ของตัวเอง · `callAI()` ไม่ตกไปทางเก่าเงียบ ๆ อีก
+    · ปุ่ม ✨ (`generateSceneField`) เลิกเขียนทับข้อความบอกสาเหตุจริงด้วย "AI ไม่ได้ส่ง…กลับมา"
+  **[7][8] `scroll-behavior:smooth` ออกจาก `.pane`/`#panes`** — ต้นเหตุเดียวของทั้ง "ขยับแผงแล้ว
+    หน้ากระดาษเลื่อนเอง" และ "ซูมแล้วไหลไปชิดขอบซ้าย" (บทเรียน 80)
+  เก็บกวาด: `getBoard()` ของ Kanban เลือกเล่มแรกที่ **มีฉบับร่างจริง** (บทเรียน 82) ·
+    e2e 3 จุดเปลี่ยนจากรอเวลาคงที่เป็นรอเงื่อนไขจริง (กล่องตั้งค่า · สถิติจัดการเล่ม · บันทึกทั้งหมด)
 
 **ยังเหลือ**: `search-engine.js` ยังเป็น orphan — Global Search (`global-search.js`) ยังสแกนไฟล์ตรง ๆ ไม่ได้ใช้ inverted index (ควรสลับมาใช้เพื่อความเร็ว) · multiple-drafts-per-book UI (โครงรองรับแล้ว), screenplay align persistence, Campaign/D&D mode, **code signing** + `.icns`/`.ico` icon (electron-builder ใช้ได้แล้ว แต่ยังไม่เซ็นและใช้ไอคอนเริ่มต้นของ Electron), native arm64 build. Top เคยบอก paper/indent "อาจต้องปรับปรุง ไว้ก่อน"
 
