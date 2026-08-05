@@ -120,6 +120,38 @@ export const SP_ELEMENT_STYLES = {
   raw:           { screen: ST(false, false, false, false), print: ST(false, false, false, false) },
 };
 
+// ───────── [alpha.62 บั๊ก 11] ตัวพิมพ์ใหญ่รายชนิด element ─────────
+// อาการที่ผู้ใช้เจอ: "บทหนัง พวกตัวละคร ยังเป็น uppercase ถูก lock ปรับไม่ได้"
+// ต้นเหตุ: caps เป็น **การแสดงผล** (`text-transform:uppercase` ที่ spCss สร้าง)
+// ไม่ใช่ตัวอักษรจริงในไฟล์ → เปลี่ยน case ของข้อความยังไงบนจอก็ยังเป็นตัวใหญ่เหมือนเดิม
+// ของเดิมปิดได้แค่ "สวิตช์ใหญ่ปิดทั้งบท" (forceCase) กับตารางรูปแบบที่ซ่อนอยู่ในกล่องตั้งค่า
+// → เพิ่มทางลัดรายชนิดที่ตรงไปตรงมา: ปิดเฉพาะ "ชื่อตัวละคร" ได้โดยหัวฉากยังเป็นตัวใหญ่อยู่
+
+/** element ที่ค่ามาตรฐานบังคับตัวพิมพ์ใหญ่ (= ตัวที่ให้ผู้ใช้สลับได้) */
+export const CAPS_ELEMENTS = Object.keys(SP_ELEMENT_STYLES)
+  .filter((k) => SP_ELEMENT_STYLES[k].screen.caps || SP_ELEMENT_STYLES[k].print.caps);
+
+/** ตอนนี้ element นี้ถูกบังคับตัวพิมพ์ใหญ่อยู่ไหม (อ่านจาก fmt ที่ merge แล้ว) */
+export function elementCaps(fmt, elName, mode = 'screen') {
+  const st = fmt && fmt.styles && fmt.styles[elName];
+  return !!(st && st[mode] && st[mode].caps);
+}
+
+/**
+ * คืน `styles` ชุดใหม่ที่ตั้ง caps ของ element หนึ่งตัว (ไม่แก้ของเดิม)
+ * เก็บเฉพาะคีย์ที่ตั้งจริง — ผสานทับค่ามาตรฐานตอน mergeSpFormat
+ * @param {object} userStyles ค่าที่ผู้ใช้ตั้งไว้ (settings.spStyles) — ว่างได้
+ */
+export function setElementCaps(userStyles, elName, on, mode = 'both') {
+  if (!SP_ELEMENT_STYLES[elName]) return userStyles || {};
+  const out = JSON.parse(JSON.stringify(userStyles || {}));
+  out[elName] = out[elName] || {};
+  for (const m of (mode === 'both' ? ['screen', 'print'] : [mode])) {
+    out[elName][m] = { ...SP_ELEMENT_STYLES[elName][m], ...(out[elName][m] || {}), caps: !!on };
+  }
+  return out;
+}
+
 // ───────── 84. กฎการตัดหน้า (widow/orphan control) ─────────
 export const PAGE_BREAK_RULES = {
   minActionLinesAtBottom: 2,     // ต้องเหลือ action อย่างน้อยกี่บรรทัดท้ายหน้าจึงยอมตัด

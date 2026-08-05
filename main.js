@@ -239,6 +239,12 @@ function buildMenu() {
         chk("แก้ i เดี่ยว ๆ เป็น I ให้อัตโนมัติ", toggles.spAutoCorrectI,
             () => send('sp-auto-correct-i')),
         { type: 'separator' },
+        // [alpha.62 บั๊ก 11] ปิดเป็นรายชนิดได้ — เดิมมีแต่สวิตช์ "ปิดทั้งบท" กับตารางรูปแบบที่ซ่อนอยู่
+        // ในกล่องตั้งค่า → ผู้ใช้ที่อยากให้ "ชื่อตัวละคร" ตามที่พิมพ์ แต่หัวฉากยังเป็นตัวใหญ่ ทำไม่ได้เลย
+        { label: 'บังคับตัวพิมพ์ใหญ่เฉพาะชนิด',
+          submenu: (toggles.spCaps || []).map((c) =>
+            chk(c.label, c.on, () => send('sp-element-caps', c.el))) },
+        { type: 'separator' },
         { label: 'ตั้งพิมพ์ใหญ่รายบรรทัดเอง (ตารางรูปแบบ)…', click: () => send('page-setup') },
       ] },
       // alpha.58 [55][56] — ระบบต่อเนื่อง

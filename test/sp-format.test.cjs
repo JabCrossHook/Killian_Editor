@@ -321,6 +321,53 @@ check('[57a] paginate รองรับ element ใหม่ (ไม่หล�
     off.styles.scene.screen.bold === true && off.styles.parenthetical.screen.italic === true);
 }
 
+// ── [alpha.62 บั๊ก 11] ตัวพิมพ์ใหญ่รายชนิด element ──
+// สวิตช์ใหญ่ (forceCase) ปิดได้แค่ "ทั้งบท" → ผู้ใช้ที่อยากให้ชื่อตัวละครตามที่พิมพ์
+// แต่หัวฉากยังเป็นตัวใหญ่ ทำไม่ได้เลย · ชุดนี้คุมทางรายชนิด
+{
+  check('[62-11] CAPS_ELEMENTS มีเฉพาะชนิดที่ค่ามาตรฐานบังคับตัวใหญ่จริง',
+    SF.CAPS_ELEMENTS.includes('scene') && SF.CAPS_ELEMENTS.includes('character')
+    && SF.CAPS_ELEMENTS.includes('transition') && !SF.CAPS_ELEMENTS.includes('dialogue')
+    && !SF.CAPS_ELEMENTS.includes('action'), SF.CAPS_ELEMENTS.join(','));
+
+  const base = SF.mergeSpFormat({});
+  check('[62-11] elementCaps อ่านสถานะบนจอได้', SF.elementCaps(base, 'character') === true);
+  check('[62-11] elementCaps อ่านสถานะตอนพิมพ์ได้', SF.elementCaps(base, 'character', 'print') === true);
+  check('[62-11] elementCaps ของชนิดที่ไม่บังคับ = false', SF.elementCaps(base, 'dialogue') === false);
+  check('[62-11] elementCaps กับชนิดที่ไม่มีจริง = false ไม่โยน', SF.elementCaps(base, 'ไม่มีจริง') === false);
+
+  // ปิดเฉพาะ "ตัวละคร" — หัวฉากต้องไม่ถูกแตะ (นี่คือสิ่งที่สวิตช์ใหญ่ทำไม่ได้)
+  const src = {};
+  const st1 = SF.setElementCaps(src, 'character', false);
+  check('[62-11] setElementCaps ไม่แก้ของเดิม (คืน object ใหม่)', Object.keys(src).length === 0);
+  const f1 = SF.mergeSpFormat({ styles: st1 });
+  check('[62-11] ปิดตัวละครแล้ว ตัวละครเลิกบังคับตัวใหญ่',
+    SF.elementCaps(f1, 'character') === false && SF.elementCaps(f1, 'character', 'print') === false);
+  check('[62-11] แต่หัวฉากยังบังคับเหมือนเดิม', SF.elementCaps(f1, 'scene') === true);
+  const css1 = SF.spCss(f1);
+  // spCss ออกเป็นคลาส `.sp.sp-<element>` (ไม่ใช่ attribute selector) — ตรวจตามของจริง
+  check('[62-11] CSS: ตัวละครเป็น none · หัวฉากยังเป็น uppercase',
+    /\.sp\.sp-character\{[^}]*text-transform:none/.test(css1)
+    && /\.sp\.sp-scene\{[^}]*text-transform:uppercase/.test(css1),
+    (css1.match(/\.sp\.sp-(character|scene)\{[^}]*text-transform:[a-z]+/g) || []).join(' · '));
+
+  // เปิดกลับได้ + ตั้งเฉพาะ screen ได้
+  const st2 = SF.setElementCaps(st1, 'character', true);
+  check('[62-11] เปิดกลับได้', SF.elementCaps(SF.mergeSpFormat({ styles: st2 }), 'character') === true);
+  const st3 = SF.setElementCaps({}, 'scene', false, 'screen');
+  const f3 = SF.mergeSpFormat({ styles: st3 });
+  check('[62-11] ตั้งเฉพาะบนจอได้ — ตอนพิมพ์ยังเป็นตัวใหญ่',
+    SF.elementCaps(f3, 'scene') === false && SF.elementCaps(f3, 'scene', 'print') === true);
+
+  check('[62-11] setElementCaps กับชนิดที่ไม่มีจริง = คืนของเดิม',
+    Object.keys(SF.setElementCaps({}, 'ไม่มีจริง', false)).length === 0);
+  check('[62-11] ตั้ง caps ไม่ทำ bold/italic ที่ค่ามาตรฐานตั้งไว้หาย',
+    SF.mergeSpFormat({ styles: SF.setElementCaps({}, 'scene', false) }).styles.scene.screen.bold === true);
+  // สวิตช์ใหญ่ยังชนะเสมอ — ปิดทั้งบทแล้วค่ารายชนิดต้องถูกกลบหมด (ไม่งั้นสวิตช์ใหญ่ไม่มีความหมาย)
+  check('[62-11] forceCase=false ยังกลบค่ารายชนิดทั้งหมด',
+    SF.elementCaps(SF.mergeSpFormat({ forceCase: false, styles: SF.setElementCaps({}, 'scene', true) }), 'scene') === false);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 try { fs.unlinkSync(tmp); } catch {}
 if (fail) process.exit(1);

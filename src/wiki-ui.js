@@ -172,7 +172,8 @@ export async function openEntity(file) {
       tab.title = e2.name;
       tab.tabBtn.querySelector('.tab-title').textContent = e2.name;
       smart.loadNames(state.root); buildTree();
-      state.tabs.get('::network::')?.net?.refresh();
+      // [alpha.62 บั๊ก 16] Story Network เป็นแผงแล้ว ไม่ใช่แท็บ
+      import('./app.js').then((m) => m.netInst?.refresh()).catch(() => {});
       // ถ้าฝั่งตรงข้ามเปิดอยู่เป็นแท็บ → รีเฟรชให้เห็นความสัมพันธ์ที่เพิ่งซิงก์
       for (const t of state.tabs.values())
         if (t.wiki && t.wiki !== tab.wiki) t.wiki.reloadIfExists?.();

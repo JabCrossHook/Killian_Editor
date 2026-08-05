@@ -1880,6 +1880,10 @@ body.fm2 #tabs { display:none; }
 /* ====== Centralize UI (ข้อ 87) ====== */
 .cent-wrap { max-width:900px; margin:0 auto; padding:20px; height:100%; overflow-y:auto;
   display:flex; flex-direction:column; gap:16px; }
+/* [alpha.62 บั๊ก 15] ฝังอยู่ท้ายแดชบอร์ด — ไม่ใช่หน้าเต็มแล้ว จึงไม่ยึดความสูง/ไม่มีแถบเลื่อนของตัวเอง
+   (ซ้อน overflow-y สองชั้นทำให้เลื่อนแล้วสะดุด — แผงแดชบอร์ดเลื่อนอยู่แล้ว) */
+.cent-wrap.cent-embedded { height:auto; overflow:visible; padding:0; margin:0; max-width:none; }
+.dash-cent { margin-top:22px; padding-top:16px; border-top:1px solid var(--border); }
 .cent-panel { background:var(--side); border:1px solid var(--border); border-radius:10px;
   padding:14px; }
 .cent-panel-title { font-size:calc(14px * var(--ui-scale, 1)); font-weight:600; color:var(--bright); margin-bottom:8px; }

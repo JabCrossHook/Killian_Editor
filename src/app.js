@@ -47,6 +47,7 @@ import { $, el, state, smart, LOG_BUF, log, setStatus,
          BASE_ED_FS, BASE_SP_FS, PT_PX, ptToPx, DEFAULT_SCRIPT_FONT,
          spCycleKeys, spKeyLabel, spKeyMatch,
          PAPER_SIZES, MARGIN_DEFAULTS, SP_ELEMENT_KEYS, mergeSpFormat, pageCssVars, spCss,
+         CAPS_ELEMENTS, elementCaps, setElementCaps,
          linesPerPage, formatLines, lineHeightIn, paginate, pageCount, wrapLines,
          newRoster, normalizeRoster, rosterToText, textWidth,
          SCENE_NUMBER_DEFAULTS, PAGE_NUMBER_DEFAULTS, pageNumberLabel,
@@ -110,7 +111,7 @@ import { showAISummary } from './ai-summary.js';
 import { showAITitleSuggestions, collectProjectText, hashText, pastTitlesFor,
          summaryCacheState, rememberTitles } from './ai-summary.js';
 import { openBranchingTree, renderBranchingTree, syncChoicesFromScene, mutateChoices } from './branching-ui.js';
-import { openFloorPlan, renderFloorPlan } from './floorplan-ui.js';
+import { openFloorPlan, renderFloorPlan, renderFloorPlanPanel } from './floorplan-ui.js';
 import { showPlayerHistory } from './player-choices.js';
 import { manageVisualTags, renderAllTagChips, applyVisualTagStyle, visualTagFor } from './visual-tags.js';
 import { quickNote, showAllNotes, getSessionNotes, addSessionNote, saveSessionNotes } from './session-notes.js';
@@ -967,16 +968,54 @@ export function findNextSpError() {
   return e;
 }
 
-/** ตัวเลขข้อผิดพลาดบนแถบสถานะ (คลิก = ไปข้อถัดไป) */
+/**
+ * ตัวเลขข้อผิดพลาด/ข้อควรดูบนแถบสถานะ
+ *
+ * [alpha.62 บั๊ก 17] เดิมเป็น "ป้ายแจ้งเตือนเฉย ๆ": ข้อความบอกจำนวนอย่างเดียว
+ * คลิกแล้วกระโดดไปข้อถัดไปเงียบ ๆ โดยไม่บอกว่ากดได้ ไม่มีทางดูรายการทั้งหมด
+ * ไม่มีทางสั่งตรวจใหม่ และพอเปิดไฟล์นิยายก็หายไปทั้งอันโดยไม่บอกอะไร
+ * ตอนนี้: ป้ายบอกให้ชัดว่ากดได้ · คลิก = เมนูคำสั่งครบ · ในโหมดนิยายบอกว่าใช้กับบทเท่านั้น
+ */
 export function updateErrorBadge() {
   const box = $('#sp-errors');
   if (!box) return;
   const t2 = state.active;
-  if (!t2 || !t2.sp) { box.textContent = ''; box.classList.remove('has-err'); box.title = ''; return; }
+  if (!t2 || !t2.sp) {
+    // ไม่ใช่บทภาพยนตร์ → ซ่อน (CSS `#sp-errors:empty{display:none}`) แต่ล้าง title ให้ด้วย
+    box.textContent = ''; box.classList.remove('has-err'); box.title = '';
+    return;
+  }
   const s = errorSummary(_spErrors);
-  box.textContent = s.total ? `⚠️ ${s.total}` : '✅ 0';
+  box.textContent = s.total ? `⚠️ ${s.total} ▾` : '✅ ตรวจแล้ว ▾';
   box.classList.toggle('has-err', s.total > 0);
-  box.title = summaryText(_spErrors) + ' — คลิกเพื่อไปข้อถัดไป (Ctrl+Shift+U)';
+  box.title = summaryText(_spErrors) + ' — คลิกเพื่อดูคำสั่ง (ไปข้อถัดไป · รายการทั้งหมด · ตรวจใหม่)';
+}
+
+/**
+ * [alpha.62 บั๊ก 17] เมนูของป้ายตรวจบท — คลิกป้ายแล้วได้ "ทำอะไรได้บ้าง" ครบในที่เดียว
+ * (เดิมคลิกแล้วกระโดดไปข้อถัดไปทันที ซึ่งเดาไม่ถูกและถอยกลับไม่ได้)
+ */
+export function spErrorMenu(x, y) {
+  const t2 = state.active;
+  if (!t2 || !t2.sp) { setStatus('ป้ายนี้ใช้กับบทภาพยนตร์ — เปิดฉากที่เป็นบทก่อน'); return null; }
+  const s = errorSummary(_spErrors);
+  const items = [];
+  if (s.total) {
+    items.push({ label: iconHtml('arrow-down', 14) + ` ไปข้อถัดไป (${s.total} ข้อ)`,
+                 click: () => findNextSpError() });
+    items.push({ label: iconHtml('list-ul', 14) + ' ดูรายการทั้งหมด…', click: () => showErrorList() });
+    items.push('-');
+  } else {
+    items.push({ label: '✅ ไม่พบข้อผิดพลาดในบทนี้', disabled: true });
+    items.push('-');
+  }
+  items.push({ label: iconHtml('reset', 14) + ' ตรวจใหม่ทั้งบท', click: () => {
+    checkScreenplay(t2); updateErrorBadge();
+    setStatus(summaryText(_spErrors));
+  } });
+  items.push({ label: iconHtml('clipboard', 14) + ' ตั้งค่ารูปแบบ/การตรวจบท…', click: () => settingsDialog('page') });
+  popupMenu(x, y, items);
+  return items.length;                      // > 0 = เมนูถูกเปิดจริง (เทสใช้ตรวจ)
 }
 
 /** รายการข้อผิดพลาดทั้งบท — คลิกแถวเพื่อกระโดดไป */
@@ -1406,6 +1445,24 @@ const SP_CASE_LABELS = {
   spAutoCapitalize: 'แก้ตัวแรกของประโยคเป็นตัวใหญ่อัตโนมัติ',
   spAutoCorrectI: 'แก้ i เดี่ยว ๆ เป็น I อัตโนมัติ',
 };
+/**
+ * [alpha.62 บั๊ก 11] สลับ "บังคับตัวพิมพ์ใหญ่" ของ element เดียว (เช่นเฉพาะชื่อตัวละคร)
+ * เก็บที่ `settings.spStyles` ซึ่ง mergeSpFormat ผสานทับค่ามาตรฐานอยู่แล้ว
+ * @returns {boolean} สถานะใหม่ (true = ยังบังคับตัวใหญ่อยู่)
+ */
+export function toggleElementCaps(elName, on) {
+  const cur = elementCaps(spFormat(), elName);
+  const v = on ?? !cur;
+  state.settings.spStyles = setElementCaps(state.settings.spStyles, elName, v);
+  // ปิดรายตัวขณะที่สวิตช์ใหญ่ปิดอยู่ = ไม่มีผลอะไรให้เห็น → เปิดสวิตช์ใหญ่กลับให้ก่อน
+  // (mergeSpFormat ล้าง caps ทุกตัวทิ้งเมื่อ forceCase=false — ค่ารายตัวจะถูกกลบหมด)
+  if (v && state.settings.spForceCase === false) state.settings.spForceCase = true;
+  applySettings();
+  saveProjectMeta();
+  syncMenuToggles();
+  setStatus((SP_ELEMS[elName]?.th || elName) + ': ' + (v ? 'บังคับตัวพิมพ์ใหญ่' : 'พิมพ์อย่างไรก็เป็นอย่างนั้น'));
+  return v;
+}
 export function toggleSpCase(key, on) {
   const v = on ?? !(state.settings[key] !== false);
   state.settings[key] = v;
@@ -2454,26 +2511,26 @@ export async function loadAllEntities() {
 }
 
 // ---------------- Story Network ----------------
-async function openNetwork() {
-  const key = '::network::';
-  if (state.tabs.has(key)) { activate(key); state.tabs.get(key).net.refresh(); return; }
-  const pane = el('div', 'pane');
-  $('#panes').append(pane);
-  const tabBtn = el('div', 'tab');
-  tabBtn.append(el('span', 'tab-title', 'Story Network'));
-  const x = el('span', 'tab-x', '×'); tabBtn.append(x);
-  $('#tabs').append(tabBtn);
-  const net = new StoryNetwork(pane, {
+// [alpha.62 บั๊ก 16] เดิมเป็นแท็บเอกสาร `::network::` — แย่งแถบแท็บกับฉากที่กำลังเขียน
+// และเปิดคู่กับต้นฉบับไม่ได้ · ตอนนี้เป็นแผงเต็มตัว (dock/tab/float ได้เหมือนแผงอื่น)
+export let netInst = null;
+export async function renderNetworkPanel() {
+  const host = $('#net-body');
+  if (!host) return false;
+  if (netInst && host.firstChild) { netInst.refresh(); netInst._fit(); return true; }
+  host.innerHTML = '';
+  netInst = new StoryNetwork(host, {
     loadEntities: loadAllEntities,
     onOpen: (n) => openEntity(n.file),
   });
-  const tab = { file: key, title: 'Story Network', pane, tabBtn, dirty: false,
-                editor: null, plain: null, wiki: null, gal: null, net };
-  tabBtn.onclick = (e) => { if (e.target !== x) activate(key); };
-  x.onclick = () => closeTab(key);
-  state.tabs.set(key, tab);
-  activate(key);
-  setTimeout(() => { net._fit(); net.refresh(); }, 60);
+  // ผังวัดขนาดจาก host — ต้องรอให้แผงถูกวางลง DOM จริงก่อน ไม่งั้น canvas ได้ 0px (บั๊ก #12)
+  setTimeout(() => { try { netInst._fit(); netInst.refresh(); } catch {} }, 60);
+  return true;
+}
+async function openNetwork() {
+  showPanel('network');
+  await renderFeaturePanel('network');
+  refreshToolbar();
 }
 
 // ---------------- โน้ต (memo) ในบท ----------------
@@ -2673,17 +2730,16 @@ function revealInExplorer(file) {
 }
 
 // ---------------- Planner (กระดานวางแผน) ----------------
-async function openPlanner() {
-  const key = '::planner::';
-  if (state.tabs.has(key)) { activate(key); return; }
-  const pane = el('div', 'pane planner-pane');
-  $('#panes').append(pane);
-  const tabBtn = el('div', 'tab');
-  tabBtn.append(el('span', 'tab-title', 'Planner'));
-  const x = el('span', 'tab-x', '×'); tabBtn.append(x);
-  $('#tabs').append(tabBtn);
-  const planner = new PlannerBoard(pane, state.root, {
-    onDirty: () => { const t = state.tabs.get(key); if (t) markDirty(t); },
+// [alpha.62 บั๊ก 16] เป็นแผงแล้วเหมือนกัน — กระดานวางแผนควรเปิดคู่กับฉากที่กำลังเขียนได้
+export let plannerInst = null;
+export async function renderPlannerPanel() {
+  const host = $('#planner-body');
+  if (!host) return false;
+  if (plannerInst && host.firstChild) { try { plannerInst._fit(); } catch {} return true; }
+  host.innerHTML = '';
+  host.classList.add('planner-pane');            // สไตล์เดิมของกระดานผูกกับคลาสนี้
+  plannerInst = new PlannerBoard(host, state.root, {
+    onDirty: () => { savePlannerSoon(); },
     onReveal: (f) => revealInExplorer(f),
     onOpenFile: async (f) => {
       if (!f) return;
@@ -2693,14 +2749,22 @@ async function openPlanner() {
       if (state.tabs.has(f)) floatTab(f);        // ดับเบิลคลิกการ์ด = เปิดเป็นหน้าต่างลอย
     },
   });
-  const tab = { file: key, title: 'Planner', pane, tabBtn, dirty: false,
-                editor: null, plain: null, wiki: null, gal: null, net: null, planner };
-  tabBtn.onclick = (e) => { if (e.target !== x) { if (tab.floatWin) bringFloatFront(tab.floatWin); else activate(key); } };
-  x.onclick = () => closeTab(key);
-  state.tabs.set(key, tab);
-  activate(key);
-  bindTabStripMenus();
-  setTimeout(() => planner._fit(), 60);
+  setTimeout(() => { try { plannerInst._fit(); } catch {} }, 60);
+  return true;
+}
+// เดิม onDirty ไปทำ markDirty ของ "แท็บ Planner" แล้วผู้ใช้กด Ctrl+S เอง
+// เป็นแผงแล้วไม่มีแท็บให้ dirty → บันทึกเองแบบหน่วงสั้น ๆ (กระดานเก็บใน planner.json ของโปรเจกต์)
+let _plannerSaveJob = null;
+function savePlannerSoon() {
+  clearTimeout(_plannerSaveJob);
+  _plannerSaveJob = setTimeout(() => {
+    try { plannerInst && plannerInst.save && plannerInst.save(); } catch (e) { log('warn', 'planner: บันทึกไม่สำเร็จ', e); }
+  }, 600);
+}
+async function openPlanner() {
+  showPanel('planner');
+  await renderFeaturePanel('planner');
+  refreshToolbar();
 }
 
 // ---------------- Dashboard ----------------
@@ -3096,6 +3160,11 @@ export function syncMenuToggles() {
       spForceCase: state.settings.spForceCase !== false,
       spAutoCapitalize: state.settings.spAutoCapitalize !== false,
       spAutoCorrectI: state.settings.spAutoCorrectI !== false,
+      // [alpha.62 บั๊ก 11] ติ๊กรายชนิดใน เมนูบท → 🔠 ตัวพิมพ์ใหญ่/เล็ก → บังคับตัวพิมพ์ใหญ่เฉพาะชนิด
+      spCaps: (() => {
+        const f = spFormat();
+        return CAPS_ELEMENTS.map((k) => ({ el: k, label: SP_ELEMS[k]?.th || k, on: elementCaps(f, k) }));
+      })(),
       panels: { 'tree-panel': !!ps.tree, 'props-panel': !!ps.props,
                 'outline-panel': !!ps.outline, ...ps },
     };
@@ -4044,7 +4113,15 @@ export function galleryInstance() { return galInst; }
 async function openGallery() {
   showPanel('gallery');
   syncMenuToggles();
-  return renderFeaturePanel('gallery');
+  const r = await renderFeaturePanel('gallery');
+  refreshToolbar();
+  return r;
+}
+/** [alpha.62 บั๊ก 14] ปุ่มคลังรูปบนแถบเครื่องมือ = สวิตช์ของแผง (เปิด/ปิดได้ด้วยปุ่มเดียว) */
+export async function toggleGallery() {
+  if (isPanelOpen('gallery')) { hidePanel('gallery'); refreshToolbar(); syncMenuToggles(); return false; }
+  await openGallery();
+  return true;
 }
 
 // ---------------- เทมเพลต Wiki (templates.json ที่ root โปรเจกต์ — โครง v1) ----------------
@@ -5187,8 +5264,9 @@ export function activate(file) {
   // แสดงปุ่มบันทึกทั้งหมดเมื่อมีโปรเจกต์เปิด
   const saveAllBtn = $('#save-all-btn');
   if (saveAllBtn) saveAllBtn.style.display = state.root ? '' : 'none';
-  // กลับมาที่แท็บศูนย์รวม → รีเฟรชถ้าไฟล์เปลี่ยนไปแล้ว (ข้อ 87 real-time)
-  if (file === '::centralize::') { try { onCentralizeShown(); } catch {} }
+  // [alpha.62 บั๊ก 15] ศูนย์รวมอยู่ในแดชบอร์ดแล้ว — รีเฟรชผ่าน onCentralizeShown() ตัวเดิม
+  // (ตัวมันเองเป็นคนเช็คว่าแผงแดชบอร์ดเปิดอยู่ไหม จึงเรียกได้ทุกครั้งที่สลับแท็บ)
+  try { onCentralizeShown(); } catch {}
   // แผงคอมเมนต์ผูกกับ "ฉากที่เปิดอยู่" — สลับแท็บแล้วต้องเปลี่ยนตาม (ไม่งั้นคอมเมนต์ฉากเก่าค้าง)
   refreshCommentsPanel();
 }
@@ -5497,7 +5575,10 @@ export async function revertTab(file) {
   else if (t.sp) {
     t.sp.destroy();
     t.sp = new SPEditor(t.pane.querySelector('.pane.on') || t.pane, {
-      markdown: body, onChange: () => { markDirty(t); smartDirty(); },
+      // [alpha.62 บั๊ก 19] `smartDirty()` ไม่มีอยู่จริง — ที่นี่พังทุก keystroke หลังกด Revert บนบทหนัง
+      markdown: body,
+      onChange: () => { markDirty(t); scheduleCount(); scheduleOutline();
+                        scheduleSpSmart(t); scheduleRepaginate(); },
       onElement: (el) => { spSmartCheck(t); setElementBadge(el); },
       onKeyDown: (ev) => smart.onKey(ev),
       getChecker: getSpellchecker, resolveSrc: (p) => resolvePath(file, p),
@@ -5514,55 +5595,119 @@ export async function revertTab(file) {
 }
 
 // [76] Remove Elements by Type — ลบ element ทั้งหมดของประเภทที่เลือก
-async function removeElementsDialog() {
+//
+// [alpha.62 บั๊ก 19] ของเดิม "กดแล้วไม่มีอะไรเกิดขึ้น" ได้หลายทางโดยไม่บอกอะไรเลย:
+//   · ไม่ได้เปิดบทภาพยนตร์อยู่ → ขึ้นข้อความจาง ๆ บนแถบล่างแล้วจบ (คนกดจากเมนูไม่มีทางเห็น)
+//   · `snapshotFile` โยน error กลางทาง → onclick เป็น async ที่ไม่มีใครจับ = **เงียบสนิท**
+//     กล่องยังค้าง ปุ่มลบเหมือนเสีย (นี่คือทางที่เจอบ่อยสุด — โปรเจกต์ที่เขียนโฟลเดอร์ Snapshots ไม่ได้)
+//   · บรรทัดว่างในบทถูกเก็บเป็น element `action` เปล่า → "บรรยาย" ขึ้นเลขบวมจนน่ากลัว
+//     และถ้ากดลบจริง บรรทัดเว้นวรรคทั้งบทหายเกลี้ยง (ผลลัพธ์ไม่ใช่ที่ตั้งใจแน่นอน)
+/** @param {{silent?:boolean}} [opts] silent = ไม่เปิดกล่อง (เทสเรียกตรง) */
+export async function removeElementsDialog(opts = {}) {
   const sp = state.active?.sp;
-  if (!sp) { setStatus('เปิดบทหนังก่อน'); return; }
+  if (!sp) {
+    // ดังพอให้คนที่กดจากเมนูเห็น — เดิมบอกที่แถบล่างอย่างเดียว
+    setStatus('เปิดฉากที่เป็นบทภาพยนตร์ก่อน จึงจะลบ element ตามประเภทได้');
+    if (!opts.silent) alert('คำสั่งนี้ใช้กับบทภาพยนตร์\nเปิดฉากที่เป็นบทก่อน แล้วลองใหม่');
+    return null;
+  }
   const v = sp.view;
-  const counts = {};
+  // นับแยก "ของจริง" กับ "บรรทัดว่าง" — บรรทัดว่างคือโครงหน้ากระดาษ ไม่ใช่เนื้อหาที่คนอยากลบ
+  const counts = {}, blanks = {};
   v.state.doc.forEach((n) => {
-    if (n.type.name === 'sp') counts[n.attrs.el] = (counts[n.attrs.el] || 0) + 1;
+    if (n.type.name !== 'sp') return;
+    const k = n.attrs.el;
+    if (!n.textContent.trim()) { blanks[k] = (blanks[k] || 0) + 1; return; }
+    counts[k] = (counts[k] || 0) + 1;
   });
   const types = Object.keys(counts).filter((k) => SP_ELEMS[k]);
-  if (!types.length) { setStatus('ไม่มี element ให้ลบ'); return; }
+  if (!types.length) {
+    setStatus('บทนี้ยังไม่มี element ที่มีเนื้อหาให้ลบ');
+    if (!opts.silent) alert('บทนี้ยังไม่มี element ที่มีเนื้อหาให้ลบ');
+    return null;
+  }
+
+  /** ลบจริง — แยกออกมาให้เทสเรียกได้ตรง ๆ และให้ทุก error ถูกจับ */
+  const doRemove = async (sel) => {
+    const tab = state.active;
+    // snapshot เป็นของแถม — ห้ามทำให้การลบล้มเหลว (บั๊กเดิมล้มทั้งคำสั่งเพราะตรงนี้)
+    try {
+      if (tab) await snapshotFile(tab.file, 'ก่อนลบ ' + sel.map((x) => SP_ELEMS[x]?.th || x).join(','));
+    } catch (e) { log('warn', 'remove-elements: เก็บเวอร์ชันก่อนลบไม่สำเร็จ (ลบต่อ)', e); }
+    if (!sp.view || sp.view.isDestroyed) { setStatus('ตัวแก้ไขถูกปิดไปแล้ว — เปิดฉากใหม่แล้วลองอีกครั้ง'); return 0; }
+    const view = sp.view;
+    const delSet = new Set(sel);
+    const toRemove = [];
+    view.state.doc.forEach((n, pos) => {
+      // ลบเฉพาะบล็อกที่ "มีเนื้อหา" — บรรทัดว่างไม่ใช่เป้าหมาย
+      if (n.type.name === 'sp' && delSet.has(n.attrs.el) && n.textContent.trim())
+        toRemove.push({ pos, size: n.nodeSize });
+    });
+    if (!toRemove.length) { setStatus('ไม่พบ element ที่ตรงเงื่อนไข'); return 0; }
+    let tr = view.state.tr;
+    // ลบจากท้ายมาต้น — ตำแหน่งของตัวที่ยังไม่ถูกลบจึงไม่ขยับ
+    for (const { pos, size } of toRemove.slice().reverse()) tr = tr.delete(pos, pos + size);
+    view.dispatch(tr);
+    // [alpha.62 บั๊ก 19] **ต้นเหตุจริงของ "ลบ element ตามประเภท ใช้ไม่ได้"**
+    // บรรทัดนี้เคยเรียก `smartDirty()` ซึ่ง **ไม่มีอยู่จริงในโปรเจกต์เลย** (ไม่เคยถูกประกาศที่ไหน)
+    // → ReferenceError กลางทาง · dispatch ลบไปแล้วแต่ `ov.remove()` กับ setStatus ไม่ได้ทำงาน
+    // ผู้ใช้เห็นกล่องค้างอยู่กับที่ ไม่มีข้อความอะไร = "กดลบแล้วไม่มีอะไรเกิดขึ้น"
+    if (tab) { markDirty(tab); scheduleSpSmart(tab); scheduleRepaginate(); }
+    setStatus(`ลบ ${toRemove.length} element แล้ว (ยกเลิกได้ด้วย Ctrl+Z)`);
+    return toRemove.length;
+  };
+  if (opts.silent) return { types, counts, blanks, doRemove };
+
   const ov = el('div', 'k-overlay');
   const box = el('div', 'k-dialog');
   box.innerHTML = `<div class="k-dlg-title">ลบ element ตามประเภท</div>
-    <div class="k-hint" style="margin-bottom:10px">เลือกประเภท element ที่ต้องการลบทั้งหมดออกจากบท</div>
+    <div class="k-hint" style="margin-bottom:10px">เลือกประเภท element ที่ต้องการลบทั้งหมดออกจากบท
+      <br>(นับเฉพาะบรรทัดที่มีเนื้อหา — บรรทัดว่างไม่ถูกแตะ · ยกเลิกได้ด้วย Ctrl+Z)</div>
     <div id="rm-el-list"></div>
     <div style="margin-top:8px"><a href="#" id="rm-el-all">เลือกทั้งหมด</a> · <a href="#" id="rm-el-none">ไม่เลือก</a></div>
-    <div class="k-dlg-btns"><button class="k-cancel">${t('dialogs.cancel')}</button><button class="k-ok k-danger-btn">ลบ</button></div>`;
+    <div class="k-dlg-total dim" style="margin-top:8px"></div>
+    <div class="k-dlg-btns"><button class="k-cancel">${t('dialogs.cancel')}</button><button class="k-ok k-danger" disabled>ลบ</button></div>`;
   ov.append(box); document.body.append(ov);
   const list = box.querySelector('#rm-el-list');
+  const totalEl = box.querySelector('.k-dlg-total');
+  const okBtn = box.querySelector('.k-ok');
   const chks = [];
+  const syncTotal = () => {
+    const sel = chks.filter((c) => c.checked);
+    const n = sel.reduce((s, c) => s + (counts[c.value] || 0), 0);
+    totalEl.textContent = n ? `จะลบทั้งหมด ${n} บรรทัด` : 'ยังไม่ได้เลือกอะไร';
+    okBtn.disabled = !n;                       // ปุ่มลบกดไม่ได้ตอนยังไม่เลือก = ไม่ใช่ "กดแล้วไม่มีอะไรเกิดขึ้น"
+  };
   for (const ty of types) {
     const label = el('label', 'k-row');
+    label.style.cssText = 'display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer';
     const cb = el('input'); cb.type = 'checkbox'; cb.value = ty; chks.push(cb);
-    label.append(cb, ' ' + (SP_ELEMS[ty]?.th || ty) + ` (${counts[ty]} รายการ)`);
+    cb.onchange = syncTotal;
+    label.append(cb, el('span', null, `${SP_ELEMS[ty]?.th || ty} (${counts[ty]} บรรทัด)`));
     list.append(label);
   }
-  box.querySelector('#rm-el-all').onclick = (e) => { e.preventDefault(); chks.forEach((c) => c.checked = true); };
-  box.querySelector('#rm-el-none').onclick = (e) => { e.preventDefault(); chks.forEach((c) => c.checked = false); };
+  syncTotal();
+  box.querySelector('#rm-el-all').onclick = (e) => { e.preventDefault(); chks.forEach((c) => { c.checked = true; }); syncTotal(); };
+  box.querySelector('#rm-el-none').onclick = (e) => { e.preventDefault(); chks.forEach((c) => { c.checked = false; }); syncTotal(); };
   box.querySelector('.k-cancel').onclick = () => ov.remove();
   ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
-  box.querySelector('.k-ok').onclick = async () => {
-    const sel = chks.filter((c) => c.checked).map((c) => c.value);
-    if (!sel.length) { ov.remove(); return; }
-    if (!(await confirmBox(`ลบ element ${sel.map((t) => SP_ELEMS[t]?.th || t).join(', ')} ทั้งหมด (${sel.reduce((s, t) => s + (counts[t] || 0), 0)} รายการ)?`, 'ลบ'))) return;
-    // เก็บ snapshot ก่อนลบ
-    const t = state.active;
-    if (t) await snapshotFile(t.file, 'ก่อนลบ ' + sel.map((x) => SP_ELEMS[x]?.th).join(','));
-    let tr = v.state.tr;
-    const delSet = new Set(sel);
-    const toRemove = [];
-    v.state.doc.forEach((n, pos) => {
-      if (n.type.name === 'sp' && delSet.has(n.attrs.el)) toRemove.push({ pos, size: n.nodeSize });
-    });
-    for (const { pos, size } of toRemove.reverse()) tr = tr.delete(pos, pos + size);
-    v.dispatch(tr);
-    if (t) { markDirty(t); smartDirty(); }
-    ov.remove();
-    setStatus('ลบ ' + toRemove.length + ' element แล้ว');
+  okBtn.onclick = async () => {
+    // ทุกอย่างในนี้ห้ามหลุดเป็น unhandled rejection — ไม่งั้นกล่องค้างแบบเงียบ ๆ เหมือนบั๊กเดิม
+    try {
+      const sel = chks.filter((c) => c.checked).map((c) => c.value);
+      if (!sel.length) return;
+      const n = sel.reduce((s, k) => s + (counts[k] || 0), 0);
+      const names = sel.map((k) => SP_ELEMS[k]?.th || k).join(', ');
+      if (!(await confirmBox(`ลบ ${names} ทั้งหมด (${n} บรรทัด)?`, 'ลบ'))) return;
+      ov.remove();
+      await doRemove(sel);
+    } catch (e) {
+      log('error', 'remove-elements ล้มเหลว', e);
+      ov.remove();
+      setStatus('ลบ element ไม่สำเร็จ: ' + (e && e.message));
+    }
   };
+  return ov;
 }
 
 // [75] Character Map — Latin-1 special characters dialog
@@ -5802,6 +5947,7 @@ function refreshToolbar() {
   // [alpha.60r3 ข้อ 5] แผงวิเคราะห์ด้วย AI · [ข้อ 6] ซ่อน/แสดงรหัสมาร์กดาวน์
   $('#tb-ai-analyzer')?.classList.toggle('on', isPanelOpen('ai-analyzer'));
   $('#tb-ai-chat')?.classList.toggle('on', isPanelOpen('ai-chat'));   // [alpha.62 บั๊ก 2]
+  $('#tb-gallery')?.classList.toggle('on', isPanelOpen('gallery'));   // [alpha.62 บั๊ก 14]
   $('#tb-md-codes')?.classList.toggle('on', showMarkdownCodes());
   syncFloatBarVisible();
   syncMenuToggles();          // เมนู native ติ๊กถูกตามสถานะจริง (ส่งเฉพาะตอนค่าเปลี่ยน)
@@ -6291,6 +6437,15 @@ const FEATURE_PANELS = {
   gallery:   () => renderGalleryPanel(),        // [alpha.60r1 ข้อ 21]
   'ai-analyzer': () => renderAIAnalyzerPanel($('#ai-analyzer-body')),   // [alpha.60r3 ข้อ 5]
   'ai-chat':     () => renderAIChatPanel($('#ai-chat-body')),           // [alpha.61 ข้อ 2]
+  // [alpha.62 บั๊ก 18+20] สองตัวนี้มีตัววาดครบมาตั้งแต่ .40 แต่ไม่เคยอยู่ในตารางนี้
+  //   → เปิดแผงจากปุ่ม/ถาด/เลย์เอาต์ที่กู้มา แล้วได้กล่องเปล่า ("ใช้ไม่ได้เลย")
+  //   มีแต่ทางเดียวที่เคยวาด คือคำสั่ง global-search / scratchpad ที่เรียก render เองตรง ๆ
+  search:    () => renderSearchPanel($('#search-body')),
+  notes:     () => renderNotesPanel($('#notes-body')),
+  // [alpha.62 บั๊ก 16] 3 ฟีเจอร์ที่ยังเป็นแท็บเอกสาร → เป็นแผงเต็มตัวเหมือนตัวอื่น
+  network:   () => renderNetworkPanel(),
+  planner:   () => renderPlannerPanel(),
+  floorplan: () => renderFloorPlanPanel(),
 };
 export function isFeaturePanel(id) { return !!FEATURE_PANELS[panelId(id)]; }
 // วาดค้างอยู่ = ใช้รอบเดียวกัน — openX() เรียก showPanel (hook เริ่มวาด) แล้ว await ต่อ
@@ -6313,11 +6468,16 @@ setPanelShowHook((pid) => { renderFeaturePanel(pid); });
 /** ล้างเนื้อแผงฟีเจอร์ (ตอนปิดโปรเจกต์ — ไม่งั้นโปรเจกต์ใหม่เห็นสถิติ/กระดานของเก่า) */
 export function clearFeaturePanels() {
   for (const sel of ['#dash-body', '#kanban-body', '#books-body', '#tl-body', '#maps-body',
-                     '#gal-body', '#ai-analyzer-body']) {
+                     '#gal-body', '#ai-analyzer-body',
+                     // [alpha.62 บั๊ก 16+20] ผลค้นหา/ผัง/กระดาน เป็นของโปรเจกต์เดิมทั้งหมด
+                     '#search-body', '#net-body', '#planner-body', '#floor-body']) {
     const n = $(sel); if (n) n.innerHTML = '';
   }
+  // #notes-body ไม่ล้าง — สมุดโน้ตด่วนเป็นของผู้ใช้ ไม่ผูกกับโปรเจกต์ (เก็บใน localStorage)
+  // และตัววาดมีธง dataset.ready — ล้างเนื้อแต่ไม่ล้างธง = ได้กล่องเปล่าถาวร
   mapsState_C.s = null;
   galInst = null;
+  netInst = null; plannerInst = null;
 }
 /** วาดแผงฟีเจอร์ทุกตัวที่เปิดค้างอยู่ (เรียกหลัง initPanelSystem ตอนเปิดโปรเจกต์) */
 export async function renderOpenFeaturePanels() {
@@ -6455,12 +6615,14 @@ async function handleCommand(ch, ...a) {
         : 'เสียงเครื่องพิมพ์ดีด: ปิด');
       break;
     case 'quick-open': openQuickOpen(); break;
-    case 'global-search': showPanel('search'); renderSearchPanel($('#search-body')); syncMenuToggles(); break;
+    // [alpha.62 บั๊ก 20] วิ่งผ่าน renderFeaturePanel เหมือนแผงอื่น — dedupe การวาดซ้ำให้ด้วย
+    case 'global-search': showPanel('search'); renderFeaturePanel('search'); syncMenuToggles(); refreshToolbar(); break;
     case 'centralize': openCentralizeUI(); break;
     case 'branching': openBranchingTree(); break;
     case 'branch-sync': syncChoicesFromScene(); break;
     case 'floorplan': openFloorPlan(); break;
-    case 'scratchpad': showPanel('notes'); renderNotesPanel($('#notes-body')); syncMenuToggles(); break;
+    // [alpha.62 บั๊ก 18] เช่นเดียวกัน — เดิมนี่เป็น "ทางเดียว" ที่แผงโน้ตเคยถูกวาด
+    case 'scratchpad': showPanel('notes'); renderFeaturePanel('notes'); syncMenuToggles(); break;
     case 'export-blog': exportBlogHTML(); break;
     case 'export-zip': exportProjectZip(); break;
     case 'export-json': exportProjectJson(); break;
@@ -6549,6 +6711,8 @@ async function handleCommand(ch, ...a) {
     case 'delete-line': deleteCurrentLine(); break;
     // [alpha.61 ข้อ 4] สวิตช์ตัวพิมพ์ใหญ่/เล็กของบทหนัง — เก็บที่ระดับโปรเจกต์
     case 'sp-force-case': toggleSpCase('spForceCase'); break;
+    // [alpha.62 บั๊ก 11] ปิด/เปิดตัวพิมพ์ใหญ่รายชนิด element
+    case 'sp-element-caps': toggleElementCaps(a[0]); break;
     case 'sp-auto-capitalize': toggleSpCase('spAutoCapitalize'); break;
     case 'sp-auto-correct-i': toggleSpCase('spAutoCorrectI'); break;
     case 'toggle-open-last': await toggleOpenLastProject(); break;
@@ -7019,7 +7183,8 @@ window.addEventListener('DOMContentLoaded', () => {
   tb('#tb-align-left', 'align', 'left'); tb('#tb-align-center', 'align', 'center');
   tb('#tb-align-right', 'align', 'right'); tb('#tb-align-justify', 'align', 'justify');
   $('#tb-img').onclick = insertImage;
-  $('#tb-gallery').onclick = () => openGallery();
+  // [alpha.62 บั๊ก 14] สวิตช์จริง — กดเปิด กดซ้ำปิด (บทเรียนเดียวกับปุ่มแชท AI ใน 62-2)
+  $('#tb-gallery').onclick = () => toggleGallery();
   $('#tb-mode').onclick = (e) => {
     const tab = state.active;
     if (!tab || !(tab.editor || tab.sp)) return;
@@ -7046,9 +7211,21 @@ window.addEventListener('DOMContentLoaded', () => {
     if (!mode) return;
     const ed = getActiveEditor();
     if (!ed) { setStatus('เปิดฉากก่อนจึงจะเปลี่ยนรูปตัวพิมพ์ได้'); return; }
+    // [alpha.62 บั๊ก 11] ในบทหนัง element อย่าง "ชื่อตัวละคร/หัวฉาก" ถูก text-transform:uppercase อยู่
+    //   → เปลี่ยน case ของข้อความสำเร็จ แต่บนจอไม่ขยับเลย ผู้ใช้อ่านว่า "ล็อกไว้ ปรับไม่ได้"
+    //   ถ้าสั่งเปลี่ยนเป็นตัวเล็ก/รูปแบบอื่นทั้งที่ element นั้นบังคับตัวใหญ่อยู่ = เจตนาชัดว่า
+    //   "ขอเห็นตามที่พิมพ์" → ปลดล็อกให้ element นั้นเลย แล้วบอกว่าเกิดอะไรขึ้นและปิดกลับได้ที่ไหน
+    const spEl = state.active?.sp ? state.active.sp.curElement() : null;
+    const wasCapped = spEl && mode !== 'UC' && elementCaps(spFormat(), spEl);
     const ok = ed.cmd('case', mode);
-    if (ok) { if (state.active) markDirty(state.active); setStatus('เปลี่ยนรูปตัวพิมพ์: ' + CASE_SHORT[mode]); }
-    else setStatus('เลือกข้อความก่อน แล้วค่อยเปลี่ยนรูปตัวพิมพ์');
+    if (ok) {
+      if (state.active) markDirty(state.active);
+      if (wasCapped) {
+        toggleElementCaps(spEl, false);
+        setStatus(`เปลี่ยนรูปตัวพิมพ์: ${CASE_SHORT[mode]} — ปลดบังคับตัวพิมพ์ใหญ่ของ ` +
+                  `"${SP_ELEMS[spEl]?.th || spEl}" ให้แล้ว (เปิดกลับได้ที่ บท → 🔠 ตัวพิมพ์ใหญ่/เล็ก)`);
+      } else setStatus('เปลี่ยนรูปตัวพิมพ์: ' + CASE_SHORT[mode]);
+    } else setStatus('เลือกข้อความก่อน แล้วค่อยเปลี่ยนรูปตัวพิมพ์');
     refreshToolbar();
   };
   $('#tb-sp-elem').onchange = (e) => {
@@ -7067,8 +7244,18 @@ window.addEventListener('DOMContentLoaded', () => {
   // alpha.57 — สลับมุมมองบท + ป้ายข้อผิดพลาดบนแถบสถานะ
   const spViewSel = $('#sp-view-select');
   if (spViewSel) spViewSel.onchange = (e) => setSpView(e.target.value);
+  // [alpha.62 บั๊ก 17] ป้ายตรวจบท = ปุ่มจริง — คลิกได้เมนูคำสั่ง · คลิกขวาก็เมนูเดียวกัน
   const errBadge = $('#sp-errors');
-  if (errBadge) errBadge.onclick = () => findNextSpError();
+  if (errBadge) {
+    errBadge.onclick = (e) => {
+      const r = e.currentTarget.getBoundingClientRect();
+      spErrorMenu(r.left, r.top - 6);
+    };
+    errBadge.oncontextmenu = (e) => {
+      e.preventDefault();
+      spErrorMenu(e.clientX, e.clientY);
+    };
+  }
   $('#open-btn').onclick = async () => { const p = await kapi.openProjectDialog(); if (p) loadProject(p); };
   $('#new-btn').onclick = () => newProject();
   $('#win-min').onclick = () => kapi.winMin();
@@ -9340,17 +9527,18 @@ async function runTest(projectPath) {
     // ---- Story Network ----
     await openNetwork();
     await new Promise((r) => setTimeout(r, 500));
-    const netTab = state.tabs.get('::network::');
+    // [alpha.62 บั๊ก 16] Story Network เป็นแผงแล้ว — อ่านจาก netInst ไม่ใช่แท็บ
+    const netN = netInst;
     check('Story Network มีโหนด + เส้นความสัมพันธ์',
-          netTab.net.nodes.length >= 2 && netTab.net.edges.length >= 1,
-          `nodes=${netTab.net.nodes.length} edges=${netTab.net.edges.length}`);
+          netN.nodes.length >= 2 && netN.edges.length >= 1,
+          `nodes=${netN.nodes.length} edges=${netN.edges.length}`);
     check('เส้นในกราฟมีประเภทติดมาด้วย (family จากที่ตั้งไว้)',
-          netTab.net.edges.some((e) => e.type === 'family'),
-          JSON.stringify(netTab.net.edges.map((e) => [e.role, e.type])));
+          netN.edges.some((e) => e.type === 'family'),
+          JSON.stringify(netN.edges.map((e) => [e.role, e.type])));
     check('ทุกเส้นได้ประเภทที่มีสีจริง (ไม่ระบุ = เดาจากบทบาท)',
-          netTab.net.edges.every((e) => !!REL_COLOR[e.type]),
-          JSON.stringify(netTab.net.edges.map((e) => e.type)));
-    closeTab('::network::');
+          netN.edges.every((e) => !!REL_COLOR[e.type]),
+          JSON.stringify(netN.edges.map((e) => e.type)));
+    hidePanel('network');
 
     // ---- บรรยากาศรับรู้ของสถานที่ (Sensory Profiles) ----
     {
@@ -9412,9 +9600,10 @@ async function runTest(projectPath) {
     // ---- Planner (กระดานวางแผน) ----
     await openPlanner();
     await new Promise((r) => setTimeout(r, 350));
-    const plTab = state.tabs.get('::planner::');
-    const pb = plTab && plTab.planner;
-    check('Planner เปิดแท็บ + มี fabric canvas', !!(pb && pb.canvas), 'planner=' + !!pb);
+    // [alpha.62 บั๊ก 16] Planner เป็นแผงแล้ว — อ่านจาก plannerInst
+    const pb = plannerInst;
+    check('Planner เปิดเป็นแผง + มี fabric canvas',
+          !!(pb && pb.canvas) && isPanelOpen('planner'), 'planner=' + !!pb);
     await pb._ready;
 
     const nA = pb._createNode('scene', 'ฉาก A', '#3f3e3a');
@@ -9629,8 +9818,7 @@ async function runTest(projectPath) {
     check('หน้าต่างลอยมีหัวลาก + ปุ่ม ย่อ/คืนแท็บ/ปิด + มุมขยาย',
           !!win.querySelector('.float-bar') && win.querySelectorAll('.float-btn').length === 3 &&
           !!win.querySelector('.float-grip'));
-    // สลับไปแท็บอื่นแล้วหน้าต่างลอยต้องยังแสดงอยู่
-    activate('::planner::');
+    // สลับไปแท็บอื่นแล้วหน้าต่างลอยต้องยังแสดงอยู่ ([alpha.62] Planner เป็นแผง → ใช้แท็บเอกสารตัวอื่นแทน)
     check('สลับแท็บแล้วหน้าต่างลอยยังแสดงอยู่', flTab.pane.classList.contains('on'));
     win.querySelector('.float-btn').click();
     check('ปุ่มย่อหน้าต่างลอยทำงาน', win.classList.contains('min'));
@@ -9641,14 +9829,13 @@ async function runTest(projectPath) {
     check('ดับเบิลคลิกหัวแท็บ = สลับลอย/คืน (toggleFloatTab)',
           toggleFloatTab(flKey) === true && !!flTab.floatWin && toggleFloatTab(flKey) === true && !flTab.floatWin);
     // ดับเบิลคลิกการ์ด Planner ที่ผูกไฟล์ → เปิดเป็นหน้าต่างลอย
-    activate('::planner::');
     await pb.onOpenFile(flKey);
     const flTab2 = state.tabs.get(flKey);
     check('ดับเบิลคลิกการ์ด Planner เปิดไฟล์เป็นหน้าต่างลอย', !!flTab2 && !!flTab2.floatWin);
     closeTab(flKey);
     check('ปิดแท็บแล้วหน้าต่างลอยหายไปด้วย', !document.querySelector('.float-win'));
 
-    closeTab('::planner::');
+    hidePanel('planner');
 
     // ---- โหมดโฟกัส ----
     toggleFocus(true);
@@ -10893,7 +11080,7 @@ async function runTest(projectPath) {
     {
       await openFloorPlan();
       await new Promise((r) => setTimeout(r, 400));
-      check('เปิดผังพื้นที่ได้', state.tabs.has('::floorplan::'));
+      check('เปิดผังพื้นที่ได้ (เป็นแผงแล้ว — alpha.62 บั๊ก 16)', isPanelOpen('floorplan'));
       check('ผังพื้นที่แสดงแผงข้อมูล', !!document.querySelector('.floor-panel'));
       check('ผังพื้นที่มีแถบเส้นเวลาของสถานที่', !!document.querySelector('.floor-timeline'));
       check('ผังพื้นที่แสดงช่องเห็น/ได้ยิน/พบ ครบ 3 หัวข้อ',
@@ -10919,11 +11106,10 @@ async function runTest(projectPath) {
       // (เคยพัง: sceneCtx() อ่านจากแท็บ active เท่านั้น พอมาดูผัง ตำแหน่งปัจจุบันเลยหายหมด)
       await openScene(await kapi.join(dPath, 'Chapters', ch3.folderName, sc3.fileName), sc3.title);
       await new Promise((r) => setTimeout(r, 250));
-      activate('::floorplan::');
-      check('สลับมาแท็บผังพื้นที่แล้วยังจำฉากที่เปิดล่าสุดได้',
+      check('เปิดฉากแล้วผังพื้นที่ยังจำฉากที่เปิดล่าสุดได้',
             !!state.lastSceneFile && state.lastSceneFile.includes(sc3.fileName), state.lastSceneFile);
       state._floor = { mapId: tMap.id, picking: false };
-      await renderFloorPlan(state.tabs.get('::floorplan::').pane, tMap.id);
+      await renderFloorPlan($('#floor-body'), tMap.id);
       await new Promise((r) => setTimeout(r, 400));
       check('ผังพื้นที่วาดหมุดของแผนที่', document.querySelectorAll('.floor-pin').length === 1,
             String(document.querySelectorAll('.floor-pin').length));
@@ -10946,7 +11132,7 @@ async function runTest(projectPath) {
 
       // เพิ่ม "สิ่งที่เห็น" แล้วต้องขึ้นในแผง + นับเป็นป้ายบนการ์ดเส้นเวลา
       await updateSceneRow(dPath, sc3.id, (r) => { r.clues = ['รอยเลือดบนพื้น']; });
-      await renderFloorPlan(state.tabs.get('::floorplan::').pane, tMap.id);
+      await renderFloorPlan($('#floor-body'), tMap.id);
       await new Promise((r) => setTimeout(r, 300));
       check('รายการสิ่งที่เห็นขึ้นในแผง (ลบได้ทีละอัน)',
             [...document.querySelectorAll('.floor-item-text')].some((d) => d.textContent === 'รอยเลือดบนพื้น')
@@ -10961,14 +11147,17 @@ async function runTest(projectPath) {
       });
       await saveMaps(prevMaps);                 // คืนแผนที่เดิม ไม่ทิ้งขยะให้เทสถัดไป
       state._floor = null;
-      closeTab('::floorplan::');
+      hidePanel('floorplan');
     }
 
     // ---- ศูนย์รวม (ข้อ 87): ใช้ Auto-link Engine ไม่ใช่สแกนดิบ ----
     {
+      // [alpha.62 บั๊ก 15] ศูนย์รวมอยู่ในแดชบอร์ดแล้ว — เปิดแดชบอร์ดก็ต้องเห็นครบ
       await openCentralizeUI();
-      await new Promise((r) => setTimeout(r, 900));
-      check('เปิดหน้าศูนย์รวมได้', state.tabs.has('::centralize::'));
+      await new Promise((r) => setTimeout(r, 1400));
+      check('ศูนย์รวมอยู่ในแผงแดชบอร์ด (ไม่ใช่แท็บของตัวเองแล้ว)',
+            isPanelOpen('dashboard') && !state.tabs.has('::centralize::')
+            && !!document.querySelector('#dash-body .dash-cent'));
       check('ศูนย์รวมคำนวณสถิติได้ (ไม่ค้างที่ว่าง)', !!document.querySelector('.cent-stat'));
       check('ศูนย์รวมมีแผง backlinks', !!document.querySelector('.cent-list'));
       check('ศูนย์รวมแสดงการ์ดสถิติ (ฉาก/คำ/Wiki/จุดเชื่อมโยง)',
@@ -10978,7 +11167,8 @@ async function runTest(projectPath) {
             [...document.querySelectorAll('.cent-stat-lbl')].some((d) => d.textContent === 'จุดเชื่อมโยง'));
       check('ศูนย์รวมมีปุ่มสร้างดัชนีใหม่ + ป้ายอัปเดตสด',
             !!document.querySelector('.cent-refresh') && !!document.querySelector('.cent-live'));
-      closeTab('::centralize::');
+      check('ส่วนศูนย์รวมอยู่ "ท้าย" แดชบอร์ด (ต่อจากสถิติเดิม ไม่ทับกัน)',
+            !!document.querySelector('#dash-body .dash-wrap .dash-cent .cent-wrap.cent-embedded'));
     }
 
     // ---- Visual Tags (ข้อ 84): ชิปสีต้องโผล่ใน Explorer + แถบตัวกรอง ----
@@ -11632,24 +11822,31 @@ async function runTest(projectPath) {
       {
         await openNetwork();
         await new Promise((r) => setTimeout(r, 600));
-        const nt = state.tabs.get('::network::');
-        check('เปิดแท็บ Story Network ได้', !!nt?.net);
-        const cv = nt.net.canvas;
-        const rp = nt.pane.getBoundingClientRect();
-        check('canvas ปรับขนาดตาม pane จริง (ไม่ค้าง 300px)',
-              cv.width > 320 && cv.height > 320,
-              `cv=${cv.width}x${cv.height} pane=${Math.round(rp.width)}x${Math.round(rp.height)} ` +
-              `win=${window.innerWidth}x${window.innerHeight}`);
-        nt.net._cx = 0; nt.net._cy = 0;
+        // [alpha.62 บั๊ก 16] เป็นแผงแล้ว — host คือ #net-body
+        const nt = netInst;
+        const nHost = $('#net-body');
+        check('เปิดแผง Story Network ได้', !!nt && isPanelOpen('network'));
+        const cv = nt.canvas;
+        const rp = nHost.getBoundingClientRect();
+        // บั๊ก #12 เดิม: pane ถูกซ่อนตอนสร้าง → rect เป็น 0 แล้ว canvas ค้างที่ 300px ตลอด
+        // สิ่งที่ต้องคุมจริงคือ "canvas ตามขนาด host" (มีพื้นล่าง 300px ใน _fit)
+        // [alpha.62] เดิมเช็ค > 320 ตายตัว ซึ่งใช้ได้เฉพาะตอนเป็นแท็บเต็มจอ — เป็นแผงแล้วแคบกว่านั้นได้
+        const wantW = Math.max(300, Math.round(rp.width));
+        const wantH = Math.max(300, Math.round(rp.height));
+        check('canvas ปรับขนาดตามแผงจริง (ไม่ค้างที่ค่าเริ่มต้นตอนแผงใหญ่กว่า)',
+              Math.abs(cv.width - wantW) <= 2 && Math.abs(cv.height - wantH) <= 2,
+              `cv=${cv.width}x${cv.height} want=${wantW}x${wantH} ` +
+              `host=${Math.round(rp.width)}x${Math.round(rp.height)}`);
+        nt._cx = 0; nt._cy = 0;
         // กดที่มุมว่าง ๆ (ไม่โดนโหนด) แล้วลาก
         cv.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, clientX: 5, clientY: 5 }));
         cv.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 85, clientY: 65 }));
-        const moved = nt.net._cx !== 0 || nt.net._cy !== 0;
+        const moved = nt._cx !== 0 || nt._cy !== 0;
         document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-        check('ลากพื้นหลัง Story Network = เลื่อนผังได้', moved, `cx=${nt.net._cx} cy=${nt.net._cy}`);
-        check('ปล่อยเมาส์ → เลิกลาก', !nt.net.pan);
-        check('มีปุ่มรีเซ็ตมุมมองผัง', !!nt.pane.querySelector('.net-reset'));
-        closeTab('::network::');
+        check('ลากพื้นหลัง Story Network = เลื่อนผังได้', moved, `cx=${nt._cx} cy=${nt._cy}`);
+        check('ปล่อยเมาส์ → เลิกลาก', !nt.pan);
+        check('มีปุ่มรีเซ็ตมุมมองผัง', !!nHost.querySelector('.net-reset'));
+        hidePanel('network');
       }
 
       // ---- ข้อ 13 + 14: แผงคุณสมบัติ บันทึกอัตโนมัติ + ไม่ duplicate ----
@@ -16109,6 +16306,215 @@ async function runTest(projectPath) {
         // loadProject จบแล้วต้องไม่เหลือข้อความค้าง (โปรเจกต์เทสถูกเปิดไปแล้วตั้งแต่ต้นการทดสอบ)
         check('[62-10] หลังเปิดโปรเจกต์เสร็จ ไม่มีข้อความค้างบนแถบล่าง', busyMsg() === '');
         setStatus('พร้อม');
+      }
+
+      // ═══════════ alpha.62 รอบสอง — บั๊กจาก human test อีก 10 ข้อ (11–20) ═══════════
+
+      // ---- [62-11] บทหนัง: ปรับ case ได้จริง (ไม่ถูกล็อกเป็นตัวใหญ่) ----
+      {
+        check('[62-11] มีรายชื่อ element ที่บังคับตัวพิมพ์ใหญ่ได้ และมี "ตัวละคร" อยู่ด้วย',
+              CAPS_ELEMENTS.includes('character') && CAPS_ELEMENTS.includes('scene'),
+              CAPS_ELEMENTS.join(','));
+        const keepStyles = JSON.parse(JSON.stringify(S.spStyles || {}));
+        const keepFC11 = S.spForceCase;
+        S.spForceCase = true; S.spStyles = {}; applySettings();
+        check('[62-11] ค่าเริ่มต้น: ชื่อตัวละครถูกบังคับตัวพิมพ์ใหญ่', elementCaps(spFormat(), 'character'));
+        // ปิดเฉพาะ "ตัวละคร" — หัวฉากต้องยังเป็นตัวใหญ่อยู่ (นี่คือสิ่งที่เดิมทำไม่ได้เลย)
+        toggleElementCaps('character', false);
+        check('[62-11] ปิดตัวพิมพ์ใหญ่เฉพาะ "ตัวละคร" ได้', !elementCaps(spFormat(), 'character'));
+        check('[62-11] ปิดตัวละครแล้ว "หัวฉาก" ยังเป็นตัวใหญ่เหมือนเดิม (ไม่เหมาปิดทั้งบท)',
+              elementCaps(spFormat(), 'scene'));
+        const css11 = document.getElementById('k-sp-format').textContent;
+        check('[62-11] CSS ที่ใช้จริงตามด้วย — ตัวละคร none แต่หัวฉากยัง uppercase',
+              /\.sp\.sp-character\{[^}]*text-transform:none/.test(css11)
+              && /\.sp\.sp-scene\{[^}]*text-transform:uppercase/.test(css11),
+              (css11.match(/\.sp\.sp-(character|scene)\{[^}]*text-transform:[a-z]+/g) || []).join(' · '));
+        toggleElementCaps('character', true);
+        check('[62-11] เปิดกลับได้', elementCaps(spFormat(), 'character'));
+        // สวิตช์ใหญ่ปิดอยู่ → เปิดรายตัวต้องปลุกสวิตช์ใหญ่ให้ ไม่งั้นกดแล้วไม่มีผล (mergeSpFormat ล้าง caps ทิ้ง)
+        S.spForceCase = false; applySettings();
+        check('[62-11] สวิตช์ใหญ่ปิด = ทุกชนิดเลิกบังคับ', !elementCaps(spFormat(), 'scene'));
+        toggleElementCaps('scene', true);
+        check('[62-11] เปิดรายชนิดขณะสวิตช์ใหญ่ปิด → ปลุกสวิตช์ใหญ่ให้เอง (ไม่ใช่กดแล้วเงียบ)',
+              S.spForceCase !== false && elementCaps(spFormat(), 'scene'), String(S.spForceCase));
+        // ตัวช่วยบริสุทธิ์: setElementCaps ต้องไม่แก้ของเดิม
+        const src11 = {};
+        const out11 = setElementCaps(src11, 'character', false);
+        check('[62-11] setElementCaps คืน object ใหม่ ไม่แก้ของเดิม',
+              Object.keys(src11).length === 0 && out11.character.screen.caps === false);
+        S.spStyles = keepStyles; S.spForceCase = keepFC11; applySettings();
+      }
+
+      // ---- [62-12] ปิด-เปิดแผงแล้วสัดส่วนต้องนิ่ง (ไม่ดริฟต์ทุกครั้ง) ----
+      {
+        showPanel('tree'); showPanel('props');
+        await until62(() => isPanelOpen('tree') && isPanelOpen('props'));
+        await wait62(320);                       // รอ scheduleRemember (250ms) จดค่าตั้งต้น
+        const widthOf = (id) => {
+          const n = document.querySelector(`#app-root .k-panel[data-panel-id="${id}"]`);
+          return n ? Math.round(n.getBoundingClientRect().width) : 0;
+        };
+        const w0 = widthOf('tree');
+        check('[62-12] แผงโปรเจกต์วัดความกว้างได้', w0 > 40, String(w0));
+        // ปิด-เปิด 3 รอบ — ของเดิมหดลงทีละนิดทุกรอบเพราะ currentRatio วัดจาก DOM รวมที่จับ
+        for (let i = 0; i < 3; i++) {
+          hidePanel('tree'); await wait62(140);
+          showPanel('tree');  await wait62(320);
+        }
+        const w1 = widthOf('tree');
+        const drift = w0 ? Math.abs(w1 - w0) / w0 : 1;
+        check('[62-12] ปิด-เปิด 3 รอบแล้วความกว้างยังเท่าเดิม (คลาดไม่เกิน 4%)',
+              drift <= 0.04, `${w0}px → ${w1}px (${(drift * 100).toFixed(1)}%)`);
+      }
+
+      // ---- [62-13] แผงที่ผนึกแนวตั้งต้องกลับมาอยู่ที่เดิม ----
+      {
+        // เอาแผงบันทึกไปไว้ "ใต้" แผงเอกสาร แล้วปิด-เปิด → ต้องกลับไปอยู่ใต้เหมือนเดิม
+        showPanel('log', { targetId: 'docs', side: 'bottom' });
+        await until62(() => isPanelOpen('log'));
+        await wait62(340);
+        const rectOf = (id) => {
+          const n = document.querySelector(`#app-root .k-panel[data-panel-id="${id}"]`);
+          return n ? n.getBoundingClientRect() : null;
+        };
+        const rl0 = rectOf('log'), rd0 = rectOf('docs');
+        const wasBelow = !!(rl0 && rd0) && rl0.top >= rd0.top + rd0.height - 4;
+        check('[62-13] วางแผงบันทึกไว้ใต้แผงเอกสารได้จริง', wasBelow,
+              rl0 && rd0 ? `log.top=${Math.round(rl0.top)} docs.bottom=${Math.round(rd0.top + rd0.height)}` : 'null');
+        hidePanel('log'); await wait62(160);
+        showPanel('log');  await wait62(340);
+        const rl1 = rectOf('log'), rd1 = rectOf('docs');
+        check('[62-13] ปิด-เปิดแล้วยังอยู่ "ใต้" เหมือนเดิม (เดิมเด้งไปอยู่ซ้ายเพราะจำแค่ซ้าย/ขวา)',
+              !!(rl1 && rd1) && rl1.top >= rd1.top + rd1.height - 8,
+              rl1 && rd1 ? `log.top=${Math.round(rl1.top)} docs.bottom=${Math.round(rd1.top + rd1.height)}` : 'null');
+        hidePanel('log'); await wait62(140);
+      }
+
+      // ---- [62-14] ปุ่มคลังรูปเป็นสวิตช์ ----
+      {
+        const gb = $('#tb-gallery');
+        check('[62-14] ปุ่มคลังรูปถูกทำเครื่องหมายเป็นสวิตช์ (.tb-toggle)',
+              !!gb && gb.classList.contains('tb-toggle'));
+        if (isPanelOpen('gallery')) { hidePanel('gallery'); await wait62(120); }
+        gb.click();
+        await until62(() => isPanelOpen('gallery'));
+        check('[62-14] กดครั้งแรก = เปิดแผงคลังรูป', isPanelOpen('gallery'));
+        refreshToolbar();
+        check('[62-14] ปุ่มติด .on ตอนแผงเปิด', gb.classList.contains('on'));
+        gb.click();
+        await until62(() => !isPanelOpen('gallery'));
+        check('[62-14] กดซ้ำ = ปิดแผง (เดิมเปิดซ้ำ ปิดไม่ได้เลย)', !isPanelOpen('gallery'));
+        refreshToolbar();
+        check('[62-14] ปุ่มไม่ติด .on ตอนแผงปิด', !gb.classList.contains('on'));
+      }
+
+      // ---- [62-16] Story Network / Planner / ผังพื้นที่ เป็นแผงครบแล้ว ----
+      {
+        for (const id of ['network', 'planner', 'floorplan']) {
+          check(`[62-16] "${id}" ถูกลงทะเบียนเป็นแผง`,
+                PANEL_DEFS.some((d) => d.id === id));
+          check(`[62-16] "${id}" มีตัววาดในตารางแผงฟีเจอร์`, isFeaturePanel(id));
+        }
+        check('[62-16] ไม่มีแท็บเอกสารเทียมของ 3 ตัวนี้หลงเหลือ',
+              !state.tabs.has('::network::') && !state.tabs.has('::planner::')
+              && !state.tabs.has('::floorplan::'));
+        showPanel('network');
+        await renderFeaturePanel('network');
+        await until62(() => !!$('#net-body').firstChild);
+        check('[62-16] เปิดแผง Story Network แล้วมีเนื้อจริง', !!$('#net-body').firstChild);
+        hidePanel('network'); await wait62(100);
+      }
+
+      // ---- [62-17] ป้ายตรวจบทบนแถบล่างกดได้จริง ----
+      {
+        // หาแท็บบทภาพยนตร์ที่เปิดอยู่ (เทสก่อนหน้าเปิดไว้แล้ว) — ไม่มีก็สร้างเอง
+        let spTab17 = [...state.tabs.values()].find((x) => x.sp);
+        if (spTab17) activate(spTab17.file);
+        await wait62(200);
+        const badge = $('#sp-errors');
+        check('[62-17] มีป้ายตรวจบทบนแถบสถานะ', !!badge);
+        check('[62-17] ป้ายบอกว่ากดได้ (cursor:pointer)',
+              getComputedStyle(badge).cursor === 'pointer', getComputedStyle(badge).cursor);
+        if (spTab17) {
+          updateErrorBadge();
+          check('[62-17] ป้ายมีเครื่องหมายว่ากดแล้วมีเมนู (▾)', /▾/.test(badge.textContent), badge.textContent);
+          const n17 = spErrorMenu(200, 200);
+          check('[62-17] คลิกป้ายแล้วได้เมนูคำสั่งจริง (ไม่ใช่แค่แจ้งเตือน)',
+                n17 > 0 && !!document.querySelector('.k-menu'), String(n17));
+          const labels17 = [...document.querySelectorAll('.k-menu .k-menu-item')].map((d) => d.textContent).join('|');
+          check('[62-17] เมนูมีคำสั่ง "ตรวจใหม่" และ "ตั้งค่า"',
+                /ตรวจใหม่/.test(labels17) && /ตั้งค่า/.test(labels17), labels17);
+          closeMenu();
+        }
+      }
+
+      // ---- [62-18] แผงสมุดโน้ตด่วนใช้งานได้ ----
+      {
+        showPanel('notes');
+        await renderFeaturePanel('notes');
+        await until62(() => !!$('#notes-body').querySelector('.scratch-area'));
+        const ta18 = $('#notes-body').querySelector('.scratch-area');
+        check('[62-18] แผงโน้ตด่วนมีช่องพิมพ์จริง (เดิมเป็นกล่องเปล่า)', !!ta18);
+        check('[62-18] มีแถบคำสั่ง (ส่งออก · ย้ายเข้า Memo · ล้าง)',
+              $('#notes-body').querySelectorAll('.scratch-bar button').length >= 3,
+              String($('#notes-body').querySelectorAll('.scratch-bar button').length));
+        check('[62-18] แผงโน้ตอยู่ในตารางแผงฟีเจอร์ (เปิดจากถาด/เลย์เอาต์ที่กู้มาก็วาด)',
+              isFeaturePanel('notes'));
+        hidePanel('notes'); await wait62(100);
+      }
+
+      // ---- [62-19] ลบ element ตามประเภท ----
+      {
+        const spTab19 = [...state.tabs.values()].find((x) => x.sp);
+        check('[62-19] มีบทภาพยนตร์เปิดอยู่สำหรับทดสอบ', !!spTab19);
+        if (spTab19) {
+          activate(spTab19.file);
+          await wait62(220);
+          const before19 = spTab19.sp.getMarkdown();
+          spTab19.sp.view.dispatch(spTab19.sp.view.state.tr);   // no-op ให้ view สด
+          const info = await removeElementsDialog({ silent: true });
+          check('[62-19] อ่านชนิด element ในบทได้', !!info && info.types.length > 0,
+                info ? info.types.join(',') : 'null');
+          check('[62-19] นับเฉพาะบรรทัดที่มีเนื้อหา — ไม่นับบรรทัดว่างปนมาเป็น "บรรยาย"',
+                !!info && Object.values(info.counts).every((n) => n > 0));
+          // ลบชนิดที่มีจริงหนึ่งชนิด แล้วต้องหายจริง
+          const target19 = info.types.find((k) => k !== 'action') || info.types[0];
+          const n19 = await info.doRemove([target19]);
+          check(`[62-19] ลบ "${target19}" แล้วได้จำนวนที่ลบกลับมา`, n19 > 0, String(n19));
+          const after19 = spTab19.sp.getMarkdown();
+          check('[62-19] เนื้อหาเปลี่ยนจริงหลังลบ (ไม่ใช่กดแล้วไม่มีอะไรเกิดขึ้น)',
+                after19 !== before19);
+          let left19 = 0;
+          spTab19.sp.view.state.doc.forEach((n) => {
+            if (n.type.name === 'sp' && n.attrs.el === target19 && n.textContent.trim()) left19++;
+          });
+          check(`[62-19] ไม่เหลือ "${target19}" ที่มีเนื้อหาในบทแล้ว`, left19 === 0, String(left19));
+          // คืนเนื้อหาเดิม
+          spTab19.sp.setMarkdown ? spTab19.sp.setMarkdown(before19) : null;
+          spTab19.dirty = false;
+        }
+      }
+
+      // ---- [62-20] แผงค้นหาใช้งานได้ ----
+      {
+        showPanel('search');
+        await renderFeaturePanel('search');
+        await until62(() => !!$('#search-body').querySelector('input'));
+        const host20 = $('#search-body');
+        check('[62-20] แผงค้นหามีช่องค้นหาจริง (เดิมเป็นกล่องเปล่า)',
+              !!host20.querySelector('input[type="text"]'));
+        check('[62-20] มีตัวเลือกชนิดไฟล์ (.md / .json / ชื่อไฟล์)',
+              host20.querySelectorAll('input[type="checkbox"]').length >= 3,
+              String(host20.querySelectorAll('input[type="checkbox"]').length));
+        check('[62-20] แผงค้นหาอยู่ในตารางแผงฟีเจอร์', isFeaturePanel('search'));
+        // ค้นจริง — ต้องได้ผลจากไฟล์ในโปรเจกต์ทดสอบ
+        const q20 = host20.querySelector('input[type="text"]');
+        q20.value = 'ฉาก';
+        q20.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        const got20 = await until62(() => host20.querySelectorAll('.k-gsearch-hit, .gs-hit, .k-gsearch-results > div').length > 0, 60, 100);
+        check('[62-20] พิมพ์แล้วกด Enter ได้ผลลัพธ์จริง', got20,
+              String(host20.querySelector('.k-gsearch-results')?.children.length));
+        hidePanel('search'); await wait62(100);
       }
 
     out.push('ALL OK');

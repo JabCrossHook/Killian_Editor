@@ -242,7 +242,9 @@ export { PAPER_SIZES, MARGIN_DEFAULTS, SP_ELEMENT_CONFIG, SP_ELEMENT_STYLES, SP_
          linesPerPage, formatLines, lineHeightIn, clampLineHeight,
          textWidth, wrapLines, paginate, pageCount, splitText, annotateContinued,
          newRoster, normalizeRoster, rosterToText, ROSTER_VERSION,
-         SCENE_NUMBER_DEFAULTS, PAGE_NUMBER_DEFAULTS, sceneNumberOffsets, pageNumberLabel } from './sp-format.js';
+         SCENE_NUMBER_DEFAULTS, PAGE_NUMBER_DEFAULTS, sceneNumberOffsets, pageNumberLabel,
+         // [alpha.62 บั๊ก 11] ตัวพิมพ์ใหญ่รายชนิด element
+         CAPS_ELEMENTS, elementCaps, setElementCaps } from './sp-format.js';
 // ฟอนต์ตามภาษา (alpha.57a ข้อ 5) — โมดูลบริสุทธิ์ ส่งต่อจาก lang-fonts.js
 export { LANG_FAMILY, SCRIPT_PRESETS, BUILTIN_FONT_FILES, SYSTEM_THAI_FONTS, defaultLangFonts, normalizeLangFonts,
          normalizeRange, cssFamilyName, isUsable as isLangFontUsable, buildLangFontCss,

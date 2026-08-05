@@ -208,6 +208,18 @@ export async function renderDashboard(pane) {
     d.onclick = () => openScene(r.file, r.title);
     wrap.append(d);
   }
+
+  // ───────── [alpha.62 บั๊ก 15] ศูนย์รวมย้ายมาอยู่ในแดชบอร์ด ─────────
+  // ทั้งสองหน้าตอบคำถามเดียวกัน ("ตอนนี้เรื่องเป็นยังไง") และนับสถิติจากไฟล์ชุดเดียวกัน
+  // → เดิมต้องเปิดสองที่ แล้วตัวเลขไม่ตรงกันเพราะสแกนคนละรอบ · ตอนนี้ต่อท้ายในแผงเดียว
+  const centHost = el('div', 'dash-cent');
+  wrap.append(centHost);
+  try {
+    const { renderCentralize } = await import('./centralize-ui.js');
+    await renderCentralize(centHost, { embedded: true });
+  } catch (e) {
+    centHost.append(el('div', 'dim', 'โหลดส่วนศูนย์รวมไม่สำเร็จ'));
+  }
 }
 
 // ---------------- ตัวจัดการเล่ม (Book Manager) ----------------

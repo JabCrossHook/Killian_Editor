@@ -110,6 +110,13 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
   - **`search-engine.js`** (alpha.39, บริสุทธิ์) — ค้นหาเต็มข้อความทั้งโปรเจกต์: tokenizer ไทย (`Intl.Segmenter('th')`+bigram fallback) → inverted index → `SearchIndex.build/search` (คำเดียว/AND/OR/NOT/`field:`) → snippet+line+score. `indexProject(root,kapi,parseMd)` เป็น integration layer. **unit test แยก · ค้น 1,000 ไฟล์ ~16ms/คิวรี**
   - **`panels/panel-layout.js` + `panel-store.js`** (alpha.39, บริสุทธิ์ · **ห้ามแก้**) — layout tree ของ panel: `snapZone`,`dockPanel`,`addAsTab/moveTab/splitTab`,`resizeDock`,`removePanel`(+collapse) · store: `serializeLayout`/versioning/migrate + `PanelStore`(รับ storage adapter) + `PanelManager`
   - **`panels/panel-renderer.js` + `panel-drag.js` + `panel-ui.js`** (alpha.46) — **UI จริงของ Panel System** (ดูหัวข้อด้านล่าง)
+    · **[alpha.62 บั๊ก 12] `currentRatio()` = `treeRatio() || domRatio()` — อ่านจาก layout tree ก่อนเสมอ**
+      วัดจาก DOM ไม่ได้เพราะ `dock.width` รวม `.k-resize-handle` ที่คั่นอยู่ → ค่าต่ำกว่าจริงทุกครั้ง
+      แล้ว `rememberOpenPanels()` (ทุก 250ms หลังวาด) เอาไปทับ → ปิด-เปิดแผงทีหนึ่งหดลงอีกนิด **สะสม**
+    · **[alpha.62 บั๊ก 13] `sideBetween(r, r2)` ตอบ 4 ทิศ** — `rememberHome` เดิมคิดแค่แกนนอน
+      แผงที่ผนึกแนวตั้ง (dock `col`) มี `left` เท่ากัน → ได้ `'left'` เสมอ ตำแหน่งหายทุกครั้งที่ปิด-เปิด
+    · **[alpha.62 บั๊ก 16] แผงครบวงแล้ว** — `network` · `planner` · `floorplan` เข้ามาเป็นแผงชุดสุดท้าย
+      (ไม่เหลือแท็บเอกสารเทียม `::xxx::` ของฟีเจอร์ที่ไม่ใช่เอกสารอีกแล้ว ยกเว้น `::branching::`)
   - **`layout/split-layout.js`** (alpha.39, บริสุทธิ์) — recursive split tree: `splitPane`(ลากขอบ→row/col),`resizeSplit`(+snap 50%),`removeLeaf`(+collapse), `leaf.tabId` เชื่อมกับ Panel System · store: `serializeSplit`/`SplitStore`. UI = `split-ui.js` (`renderSplitTree`/`initSplitSystem` + โหมดเทียบ 2 ช่องแบบเดิม)
   - `compile.js` — **เอนจินเวิร์กโฟลว์ส่งออก** (บริสุทธิ์ ไม่แตะ DOM/fs): `STEP_DEFS` 3 stage (model/render/text), `PRESETS`×7, `runWorkflow(model,wf,{spFormat})`, `mdToHtml`, strip helpers — มี unit test แยก
     · **alpha.58**: ขั้นตอน `sp-continued` (stage text · ปิดไว้ทุกพรีเซ็ต) + `insertContinueds(text, fmt)`
@@ -691,6 +698,31 @@ grep -E "FAIL|STOP" /tmp/k2result.txt | head -3
    `Get-Process | ? {$_.MainWindowTitle}` → ถ้าเห็น title `Error` = มีกล่อง native ค้างอยู่ ·
    อ่านข้อความในกล่องด้วย UIAutomation (`AutomationElement` + `PropertyCondition` บน `ProcessIdProperty`)
 
+87. **[alpha.62] "วัดจาก DOM แล้วจดกลับ" = ลูปดริฟต์ที่กัดกินค่าทีละนิดทุกครั้ง**
+   `currentRatio()` วัด `panel.width / dock.width` — แต่ `dock.width` **รวม `.k-resize-handle`**
+   ที่คั่นระหว่างแผงไว้ด้วย → ค่าที่วัดได้เตี้ยกว่าสัดส่วนจริงในต้นไม้เสมอ (.200 → .196)
+   แล้ว `rememberOpenPanels()` เอาค่าเตี้ยไปทับของเดิมทุก 250ms หลังวาด
+   ปิด-เปิดแผงทีหนึ่ง `applyRatio` จึงหดลงอีกนิด **ทุกครั้ง สะสมไปเรื่อย ๆ**
+   **กฎ: ถ้ามี "แหล่งความจริง" (layout tree) อยู่แล้ว ห้ามวัดจาก DOM กลับมาเขียนทับมัน**
+   วัดจาก DOM ได้เฉพาะตอนไม่มีค่าในแหล่งความจริง (แผงในกลุ่มแท็บ/ลอย) และต้องเป็นทางสำรองเท่านั้น
+   · อาการที่ผู้ใช้บอก: "ไม่ถูกล็อก กดเปิดปิดทีไรขนาดขยับตลอด" — ไม่ใช่ค่าเพี้ยนทีเดียว แต่ **ค่อย ๆ เพี้ยน**
+88. **[alpha.62] เทียบตำแหน่ง element ด้วยแกนเดียว = พังทันทีที่มีเลย์เอาต์อีกแกน**
+   `rememberHome` เขียน `r2.left < r.left ? 'right' : 'left'` ซึ่งใช้ได้เฉพาะแผงที่เรียงแนวนอน
+   แผงที่ผนึกแนวตั้ง (dock `col`) มี `left` เท่ากันเป๊ะ → ตกเข้า else ได้ `'left'` เสมอ
+   **แก้: เทียบระยะจุดศูนย์กลางทั้ง 2 แกน แล้วเลือกทิศจากแกนที่ห่างกว่า** (`sideBetween()`)
+89. **[alpha.62] `onclick = async () => {…}` ที่ไม่มี try/catch = ฟีเจอร์ตายเงียบ** ⚠ กัดมานาน
+   "ลบ element ตามประเภท" พังเพราะเรียก **`smartDirty()` ที่ไม่มีอยู่จริงในโปรเจกต์เลย**
+   (ไม่เคยถูกประกาศที่ไหน — grep ทั้ง src เจอแค่ 2 จุดที่ *เรียก* มัน)
+   `v.dispatch(tr)` ลบไปแล้ว แต่ ReferenceError บรรทัดถัดมาทำให้ `ov.remove()`/`setStatus()` ไม่ทำงาน
+   → กล่องค้าง ไม่มีข้อความ ผู้ใช้อ่านว่า "กดแล้วไม่มีอะไรเกิดขึ้น" ทั้งที่ลบสำเร็จ
+   อีกจุดอยู่ใน `revertTab` (onChange ของ SPEditor) → บทหนังที่กด Revert แล้วพิมพ์ต่อ พังทุก keystroke
+   **วิธีจับก่อนถึงมือผู้ใช้: `grep -rn "ชื่อฟังก์ชัน" src/` ต้องเจอทั้งที่ประกาศและที่เรียก**
+   ถ้าเจอแต่ที่เรียก = ตายแน่ · esbuild ไม่ฟ้อง เพราะเป็น global lookup ตอน runtime
+   **กฎ 2 ข้อ**: (1) handler ที่เป็น async **ต้องมี try/catch ครอบทั้งก้อน** เสมอ
+   (2) **งานเสริม (snapshot/สถิติ/แคช) ห้ามทำให้งานหลักล้ม** — ครอบ try/catch ของตัวเองแล้วทำต่อ
+   · และ "ทางออกเงียบ ๆ" (`setStatus()` แล้ว return) ใช้ไม่ได้กับคำสั่งที่เรียกจาก **เมนู native** —
+   ผู้ใช้ไม่ได้มองแถบล่างอยู่ ต้อง `alert()` หรือเปิดกล่องบอกเหตุผล
+
 78. **[alpha.61] ไฟล์ที่ working tree เป็น CRLF ทั้งไฟล์ ทำให้ diff จริงถูกกลบ**
    `main.js` ถูกบันทึกเป็น CRLF มาก่อนเริ่มงาน → `git diff --stat` ขึ้น 766+/766- ทั้งที่ไม่มีอะไรเปลี่ยน
    **เช็คด้วย `git diff -w --stat` ก่อนเสมอ** ถ้าเหลือ 0 = whitespace ล้วน → `perl -i -pe 's/\r\n/\n/g'` แล้วค่อยแก้จริง
@@ -768,6 +800,14 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
   - **เนื้อแผง = element เดิมใน index.html** (`#tree-panel` `#outline-panel` `#props-panel` `#content` `#toolbar` `#statusbar`)
     พักอยู่ที่ `#k-panel-src` (hidden) แล้วถูก "ย้าย" เข้าแผง — **ห้ามสร้างใหม่** (ทั้งโปรเจกต์อ้าง `#panes` `#tabs` `#tree` `#props-body`)
   - โหมดอ่าน/โฟกัส/พิมพ์: ซ่อน `.k-dock > *:not(.k-holds-docs)` (ไม่มี `#sidebar` แล้ว)
+  - **`FEATURE_PANELS` ใน app.js = ตารางที่บอกว่า "แผงไหนวาดด้วยฟังก์ชันอะไร"**
+    · **[alpha.62 บั๊ก 18+20] แผงที่ไม่อยู่ในตารางนี้ = กล่องเปล่าถาวร** — `search`/`notes` มีตัววาดครบ
+      ตั้งแต่ .40 แต่ไม่เคยถูกใส่ → เปิดจากปุ่ม/ถาดแผง/เลย์เอาต์ที่กู้มา ไม่มีอะไรวาดให้เลย
+      (มีทางเดียวที่เคยวาดคือคำสั่งในเมนูที่เรียก `renderXxxPanel()` เองตรง ๆ)
+      **เพิ่มแผงใหม่ = เพิ่ม 3 ที่เสมอ: `PANEL_DEFS` + markup ใน index.html + `FEATURE_PANELS`**
+    · `clearFeaturePanels()` ล้างเนื้อแผงตอนเปลี่ยนโปรเจกต์ — **ยกเว้น `#notes-body`**
+      (สมุดโน้ตด่วนเป็นของผู้ใช้ ไม่ผูกโปรเจกต์ · และตัววาดมีธง `dataset.ready` —
+      ล้างเนื้อแต่ไม่ล้างธง = ได้กล่องเปล่าถาวร)
 - **Floating format bar**: `setupFloatingFormatBar()` ย้ายปุ่มจัดรูปแบบ (id เดิม + #tb-source) เข้าแถบลอยใน #content. dblclick grip=reset. `syncFloatBarVisible()` ใน refreshToolbar
 - **UI layout persist**: localStorage `k2-ui-layout` (ก้อนเดียว) ผ่าน `uiLayout()/saveUiLayout()`
 - **สลับนิยาย↔บทหนัง**: `switchFormat()` — ใช้ `tab.body` verbatim ตอน !dirty (fountain round-trip ข้าม grammar ไม่ได้)
@@ -793,7 +833,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ---
 
-## เวอร์ชัน (ล่าสุด alpha.62 · e2e 1,906 + unit)
+## เวอร์ชัน (ล่าสุด alpha.62 · e2e 1,954 + unit 1,296)
 
 .13–.22 (v1→v2 พื้นฐาน): snapshot, line numbers, spellcheck ไทย+Chromium, ปุ่มลัดตั้งเอง, mac build, บทหนัง Ctrl+arrow, relationship sync, floating format bar, sidebar resize, SmartType Final Draft, wiki gallery/lightbox, explorer search+tags, panel docking, tree float+snap
 .24 batch 8 (drag-move explorer, panel snap, split compare, version tracking, scene lock, screenplay Final Draft look, screenplay images, wiki links) · .25–.27 **Planner board** (fabric.js) · .28 **floating windows** · .29 memo-in-chapter + scoped search
@@ -1166,7 +1206,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
     · `settings.spForceCase`/`spAutoCapitalize`/`spAutoCorrectI` → เมนู **บท → 🔠 ตัวพิมพ์ใหญ่/เล็ก (ให้อิสระ)**
     · แก้จุดฮาร์ดโค้ดที่เหลือ: `export-rtf.js` เคย `title.toUpperCase()` เสมอบนหน้าปก
 
-.62 **รอบเก็บบั๊กจาก human test 10 ข้อ** (e2e 1,842 → **1,906**)
+.62 **รอบเก็บบั๊กจาก human test 20 ข้อ** (e2e 1,842 → **1,954** · unit 1,296)
   **[1] หน้าแรกกว้างขึ้น 30%** — `--home-dlg-w` (= สูตรเดิม × 1.3) · `.home-wrap` 1100 → 1430px
     → แถบคำสั่งล่าง (มุมมอง · ค้นหา · ส่งออก · นำเข้า · สร้างใหม่ · เปิด · ปิด) อยู่บรรทัดเดียว
   **[2] ปุ่ม 💬 เป็นสวิตช์ของแผง "AI ผู้ช่วยเขียน"** — คำสั่งใหม่ `ai-chat-toggle` · `.tb-toggle` + จุด ●
@@ -1190,6 +1230,25 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
     (`setBusy`/`clearBusy`/`busyMsg`/**`withBusy`**) · `pointer-events:none` ไม่บังอะไรเลย ·
     เดินสายแล้วที่: เปิดโปรเจกต์ (ทีละขั้น) · บันทึกทั้งหมด (`n/ทั้งหมด` + ชื่อไฟล์) ·
     ส่งออกเวิร์กโฟลว์/PDF/ZIP/JSON/HTML · นำเข้า ZIP/Scrivener · **ทุกคำขอ AI ผ่าน `sendRequest()` จุดเดียว**
+  **[11] ตัวพิมพ์ใหญ่รายชนิด element** — `caps` เป็น *การแสดงผล* (`text-transform`) ไม่ใช่ตัวอักษรจริง
+    → เปลี่ยน case สำเร็จแต่จอไม่ขยับ = ผู้ใช้อ่านว่า "ล็อก" · เดิมปิดได้แค่ทั้งบท/ตารางที่ซ่อนอยู่
+    `CAPS_ELEMENTS`/`elementCaps`/`setElementCaps` ใน sp-format.js (**unit 14**) ·
+    เมนู บท → 🔠 → **บังคับตัวพิมพ์ใหญ่เฉพาะชนิด** · `#tb-case` ปลดล็อก element ที่ถูกบังคับให้อัตโนมัติ
+  **[12] สัดส่วนแผงดริฟต์ทุกรอบเปิด-ปิด** — `currentRatio()` วัดจาก DOM ที่รวมที่จับปรับขนาด
+    → อ่านจาก layout tree แทน (บทเรียน 87)
+  **[13] แผงแนวตั้งไม่จำตำแหน่ง** — `sideBetween()` ตอบ 4 ทิศ แทนที่จะคิดแค่แกนนอน (บทเรียน 88)
+  **[14] ปุ่มคลังรูปเป็นสวิตช์** — `.tb-toggle` + `toggleGallery()` (แบบเดียวกับปุ่มแชท AI ในข้อ 2)
+  **[15] ยุบศูนย์รวมเข้าแดชบอร์ด** — เลิกแท็บ `::centralize::` · `renderCentralize(host,{embedded:true})`
+    ต่อท้าย `renderDashboard` · เมนูเดิมเปิดแดชบอร์ดแล้วเลื่อนไปที่ส่วนนั้น
+  **[16] network · planner · floorplan เป็นแผง** — ชุดสุดท้ายที่ยังเป็นแท็บเทียม ·
+    `netInst`/`plannerInst` แทน `tab.net`/`tab.planner` · Planner บันทึกเองแบบหน่วง 600ms (ไม่มีแท็บให้ dirty)
+  **[17] ป้ายตรวจบทบนแถบล่างกดได้จริง** — `spErrorMenu()` (ไปข้อถัดไป · รายการทั้งหมด · ตรวจใหม่ · ตั้งค่า)
+    · ป้ายมี `▾` บอกว่ากดได้ · `✅ ตรวจแล้ว` แทน `✅ 0`
+  **[18][20] แผง `search` + `notes` ไม่เคยอยู่ใน `FEATURE_PANELS`** → กล่องเปล่าถาวรทุกทางเข้า
+    ยกเว้นคำสั่งในเมนูที่เรียก render เอง (ดูหัวข้อ Panel System)
+  **[19] `smartDirty()` ไม่มีอยู่จริง** ⚠ — ต้นเหตุ "ลบ element ตามประเภทใช้ไม่ได้"
+    ReferenceError ใน onclick async ที่ไม่มีใครจับ → ลบสำเร็จแต่กล่องค้างเงียบ ๆ (บทเรียน 89)
+    · อีกจุดอยู่ใน `revertTab` → บทหนังที่กด Revert แล้วพิมพ์ต่อ พังทุก keystroke
   เก็บกวาด: `getBoard()` ของ Kanban เลือกเล่มแรกที่ **มีฉบับร่างจริง** (บทเรียน 82) ·
     e2e 3 จุดเปลี่ยนจากรอเวลาคงที่เป็นรอเงื่อนไขจริง (กล่องตั้งค่า · สถิติจัดการเล่ม · บันทึกทั้งหมด)
 
