@@ -40,6 +40,10 @@ const toggles = {
   continueds: true,
   // [alpha.60r3 ข้อ 6] ซ่อนรหัสนำหน้าบรรทัด — ค่าเริ่มต้น "เปิด" (ตรงกับ DEFAULT_SETTINGS)
   markdownCodes: true,
+  // [alpha.61 ข้อ 1] ลำดับเปิดโปรแกรม — ทั้งคู่ปิดเป็นค่าเริ่มต้น = เข้าหน้าแรกก่อน
+  openLastProject: false, showHomeAlways: false,
+  // [alpha.61 ข้อ 4] สวิตช์ตัวพิมพ์ใหญ่/เล็กของบทหนัง (ค่าเริ่มต้น = ธรรมเนียมเดิม)
+  spForceCase: true, spAutoCapitalize: true, spAutoCorrectI: true,
   panels: { 'tree-panel': true, 'props-panel': true, 'outline-panel': true },
 };
 // ตัวช่วยสร้างรายการสวิตช์ — ผู้ใช้เห็นชัดว่ากดแล้วเปิด/ปิด ไม่ใช่คำสั่งครั้งเดียว
@@ -54,6 +58,9 @@ function buildMenu() {
       { label: `สร้างโปรเจกต์ใหม่… (${C}+N)`, click: () => send('new-project') },
       { label: `เปิดโปรเจกต์… (${C}+O)`, click: () => send('open-project') },
       { label: 'โปรเจกต์ล่าสุด', submenu: recents.length ? recents : [{ label: '(ว่าง)', enabled: false }] },
+      // [alpha.61 ข้อ 1] เปิดโปรเจกต์ล่าสุดทันทีเมื่อเริ่มโปรแกรม (ข้ามหน้าแรก)
+      chk('เปิดโปรเจกต์ล่าสุดเมื่อเริ่มโปรแกรม (ข้ามหน้าแรก)', toggles.openLastProject,
+          () => send('toggle-open-last')),
       { type: 'separator' },
       { label: `บันทึก (${C}+S)`, click: () => send('save') },
       { label: `บันทึกทั้งหมด (${C}+${S}+S)`, click: () => send('save-all') },
@@ -100,8 +107,14 @@ function buildMenu() {
       // role = ระบบปฏิบัติการจัดการเอง → ใช้ได้แม้แป้นพิมพ์อยู่ภาษาไทย
       { role: 'undo', label: `เลิกทำ (${C}+Z)` }, { role: 'redo', label: `ทำซ้ำ (${C}+Y)` },
       { type: 'separator' },
-      { role: 'cut', label: 'ตัด' }, { role: 'copy', label: 'คัดลอก' },
-      { role: 'paste', label: 'วาง' }, { role: 'selectAll', label: 'เลือกทั้งหมด' },
+      { role: 'cut', label: `ตัด (${C}+X)` }, { role: 'copy', label: `คัดลอก (${C}+C)` },
+      { role: 'paste', label: `วาง (${C}+V)` },
+      // [alpha.61 ข้อ 3] วางแบบข้อความล้วน + ลบ — เดิมไม่มีทั้งคู่ (ผู้ใช้เจอเองว่า Ctrl+Shift+V ไม่ทำงาน)
+      // ใช้ role ของ Electron → ทำงานทุกแป้นพิมพ์ รวมภาษาไทย (หลักเดียวกับ undo/redo)
+      { role: 'pasteAndMatchStyle', label: `วางแบบข้อความล้วน (${C}+${S}+V)` },
+      { role: 'delete', label: 'ลบ (Delete)' },
+      { label: `ลบทั้งบรรทัด (${C}+${S}+Delete)`, click: () => send('delete-line') },
+      { role: 'selectAll', label: `เลือกทั้งหมด (${C}+A)` },
       { type: 'separator' },
       { label: `ค้นหา… (${C}+F)`, click: () => send('find') },
       { type: 'separator' },
@@ -216,6 +229,18 @@ function buildMenu() {
       ] },
       chk('แสดงรูปแบบ (เส้นขอบ element + เครื่องหมายจบบรรทัด)', toggles.showFormat,
           () => send('sp-show-format')),
+      { type: 'separator' },
+      // [alpha.61 ข้อ 4] ตัวพิมพ์ใหญ่/เล็ก — บทหนังเคยบังคับหลายจุด ตอนนี้ปิดได้ครบจากที่เดียว
+      { label: '🔠 ตัวพิมพ์ใหญ่/เล็ก (ให้อิสระ)', submenu: [
+        chk('บังคับพิมพ์ใหญ่ตามรูปแบบบทมาตรฐาน (หัวฉาก · ชื่อตัวละคร · ทรานซิชัน)',
+            toggles.spForceCase, () => send('sp-force-case')),
+        chk('แก้ตัวแรกของประโยคเป็นตัวใหญ่ให้อัตโนมัติ', toggles.spAutoCapitalize,
+            () => send('sp-auto-capitalize')),
+        chk("แก้ i เดี่ยว ๆ เป็น I ให้อัตโนมัติ", toggles.spAutoCorrectI,
+            () => send('sp-auto-correct-i')),
+        { type: 'separator' },
+        { label: 'ตั้งพิมพ์ใหญ่รายบรรทัดเอง (ตารางรูปแบบ)…', click: () => send('page-setup') },
+      ] },
       // alpha.58 [55][56] — ระบบต่อเนื่อง
       chk('ข้อความต่อเนื่อง (CONTINUED · MORE · cont\'d)', toggles.continueds,
           () => send('sp-continued')),
@@ -267,6 +292,11 @@ function buildMenu() {
       { label: '🌐 นำเข้าภาษาจาก CSV…', click: () => send('import-language-csv') },
     ] },
     { id: 'View', label: 'มุมมอง', submenu: [
+      // [alpha.61 ข้อ 1] หน้าแรก — เปิดเดี๋ยวนี้ + สวิตช์ "แสดงเสมอตอนเริ่มโปรแกรม"
+      { label: '🏠 หน้าแรก (Home)', click: () => send('home') },
+      chk('แสดงหน้าแรกเสมอเมื่อเริ่มโปรแกรม', toggles.showHomeAlways,
+          () => send('toggle-home-always')),
+      { type: 'separator' },
       { label: 'แดชบอร์ด', click: () => send('dashboard') },
       { label: 'จัดการเล่มและฉบับร่าง (Books)', click: () => send('books') },
       { label: 'เส้นเวลา (Timeline)', click: () => send('timeline') },
@@ -313,6 +343,7 @@ function buildMenu() {
         // [alpha.60r1 ข้อ 21] คลังรูปย้ายจากแท็บมาเป็นแผงเช่นกัน
         chk(`คลังรูปภาพ (${C}+${S}+G)`, toggles.panels['gallery'], () => send('toggle-panel', 'gallery')),
         chk('🧠 AI วิเคราะห์', toggles.panels['ai-analyzer'], () => send('toggle-panel', 'ai-analyzer')),
+        chk('💬 แชท AI', toggles.panels['ai-chat'], () => send('toggle-panel', 'ai-chat')),
         { type: 'separator' },
         { label: '📐 จัดการแผง (แสดง/ซ่อน)…', click: () => send('panel-system') },
         { label: 'รีเซ็ตการจัดวางแผงทั้งหมด', click: () => send('reset-panels') },
@@ -347,14 +378,19 @@ function buildMenu() {
       { label: 'เกี่ยวกับ Killian 2', click: () => send('about') },
     ] },
     { id: 'AI', label: 'AI', submenu: [
-      { label: 'ตั้งค่า AI…', click: () => send('ai-settings') },
+      { label: 'ตั้งค่า AI (ผู้ให้บริการ · Credential · โมเดล · พารามิเตอร์)…',
+        click: () => send('ai-settings') },
+      { type: 'separator' },
+      // [alpha.61 ข้อ 2] แชทเป็นแผงแบบ opencode — เซสชันเก็บใน Sessions/ ของโปรเจกต์
+      chk('💬 แผงแชท AI', toggles.panels['ai-chat'], () => send('toggle-panel', 'ai-chat')),
+      { label: '➕ เซสชันแชทใหม่', click: () => send('ai-chat-new') },
       { type: 'separator' },
       { label: 'ผู้ช่วยเขียน (Expand/Summarize/Rewrite)…', click: () => send('ai-assistant') },
       { label: 'ตรวจสอบ Plot Hole…', click: () => send('ai-plot') },
       { label: 'สร้างบทสนทนา…', click: () => send('ai-dialogue') },
       { label: 'ตรวจสอบความสม่ำเสมอของตัวละคร…', click: () => send('ai-consistency') },
       { label: 'สร้างโลก (Worldbuilding)…', click: () => send('ai-world') },
-      { label: 'แชทกับเรื่องของคุณ…', click: () => send('ai-chat') },
+      { label: 'แชทกับเรื่องของคุณ (กล่องเดิม)…', click: () => send('ai-chat-dialog') },
       { type: 'separator' },
       { label: 'สรุปเนื้อหาโปรเจกต์…', click: () => send('ai-summary') },
       { label: 'แนะนำชื่อเรื่อง…', click: () => send('ai-title') },

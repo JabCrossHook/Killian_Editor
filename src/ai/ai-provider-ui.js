@@ -1,0 +1,489 @@
+// ai-provider-ui.js — [alpha.61 ข้อ 2] หน้าตั้งค่า AI แบบใหม่
+//
+// ผู้ให้บริการไม่ใช่รายการสำเร็จรูปอีกต่อไป — เป็น dropdown ของ "เจ้าที่ผู้ใช้เพิ่มเอง"
+// กด ➕ แล้วได้ป๊อปอัปกรอก 4 ส่วนตามลำดับ: ชื่อ → Credential → Model → Parameters
+//
+// ตรรกะทั้งหมด (validate · สร้างคำขอ · อ่านคำตอบ) อยู่ใน ai-providers.js ซึ่งเป็นโมดูลบริสุทธิ์
+// ไฟล์นี้ทำแค่ "วาดและยิงคำขอ" เท่านั้น
+
+import { $, el, state, setStatus, log } from '../core.js';
+import {
+  PARAM_DEFS, defaultParams, normalizeParams, parseDomains, isDomainAllowed,
+  newProvider, validateProvider, stripSecrets, withSecrets,
+  modelsRequests, parseModels, chatRequest, parseChat,
+  listProviders, activeProvider, upsertProvider, removeProvider,
+} from './ai-providers.js';
+import { SEND_KEYS, DEFAULT_SEND_KEY } from './ai-session.js';
+
+const KEY_FILE = 'ai-key.json';
+let _keys = null;                 // { <credentialId>: apiKey } — อ่านครั้งเดียวต่อโปรเจกต์
+
+// ────────────────────────────── ที่เก็บคีย์ (แยกจากไฟล์ที่แชร์) ──────────────────────────────
+export async function loadKeys() {
+  if (_keys) return _keys;
+  _keys = {};
+  if (!state.root) return _keys;
+  try {
+    const p = await kapi.join(state.root, KEY_FILE);
+    if (await kapi.exists(p)) {
+      const j = await kapi.readJson(p);
+      _keys = (j && j.keys) || {};
+      // ไฟล์รุ่นเก่าเก็บคีย์เดียวที่ `apiKey` — พามาให้ผู้ใช้ไม่ต้องกรอกใหม่
+      if (j && j.apiKey && !Object.keys(_keys).length) _keys = { legacy: j.apiKey };
+    }
+  } catch (e) { log('warn', 'ai: อ่าน ai-key.json ไม่ได้', e); }
+  return _keys;
+}
+export async function saveKeys(keys) {
+  _keys = keys || {};
+  if (!state.root) return false;
+  await kapi.writeFile(await kapi.join(state.root, KEY_FILE), JSON.stringify({
+    keys: _keys,
+    note: 'ไฟล์นี้เก็บคีย์ส่วนตัวของแต่ละ Credential — อย่าแชร์ อย่าใส่ใน zip ที่ส่งต่อ',
+  }, null, 2));
+  return true;
+}
+export function clearKeysCache() { _keys = null; }
+
+// ────────────────────────────── ทะเบียนใน project.khn.json ──────────────────────────────
+export function aiMeta() {
+  if (!state.meta) return {};
+  state.meta.ai = state.meta.ai || {};
+  return state.meta.ai;
+}
+/** ผู้ให้บริการที่เลือกใช้อยู่ พร้อมคีย์จริง (null = ยังไม่ได้ตั้งค่าอะไรเลย) */
+export async function currentProvider() {
+  const p = activeProvider(aiMeta());
+  if (!p) return null;
+  return withSecrets(p, await loadKeys());
+}
+/** provider ตาม id (เซสชันแชท override ได้) */
+export async function providerById(id) {
+  const rows = listProviders(aiMeta());
+  const p = rows.find((x) => x.id === id);
+  return p ? withSecrets(p, await loadKeys()) : null;
+}
+export function providerList() { return listProviders(aiMeta()); }
+
+async function persist(rows, activeId) {
+  const ai = aiMeta();
+  ai.providers = rows.map(stripSecrets);
+  if (activeId !== undefined) ai.activeProviderId = activeId;
+  const { saveProjectMeta } = await import('../app.js');
+  await saveProjectMeta();
+}
+
+// ────────────────────────────── ยิงคำขอจริง (ผ่าน main process) ──────────────────────────────
+/** ยิง HTTP ตามคำขอที่โมดูลบริสุทธิ์สร้างให้ — ด่านโดเมนอยู่ตรงนี้ที่เดียว */
+export async function sendRequest(provider, req) {
+  const allowed = (provider.credential || {}).allowedDomains || [];
+  if (!isDomainAllowed(req.url, allowed)) {
+    return { ok: false, status: 0, error: 'โดเมนนี้ไม่อยู่ในรายการ Allowed HTTP Request Domains: ' + req.url };
+  }
+  const opts = { method: req.method || 'POST', headers: req.headers };
+  if (req.body !== undefined) opts.body = JSON.stringify(req.body);
+  const retries = Math.max(0, req.maxRetries ?? 0);
+  for (let attempt = 0; ; attempt++) {
+    let res;
+    try {
+      res = await kapi.httpFetch(req.url, opts);
+    } catch (e) {
+      if (attempt < retries) continue;
+      return { ok: false, status: 0, error: 'เชื่อมต่อไม่ได้: ' + (e && e.message) };
+    }
+    if (res && res.ok) {
+      let json = null;
+      try { json = JSON.parse(res.body); } catch {}
+      return { ok: true, status: res.status, json, body: res.body };
+    }
+    const st = (res && res.status) || 0;
+    const retryable = st === 429 || st === 408 || (st >= 500 && st < 600);
+    if (retryable && attempt < retries) continue;
+    return { ok: false, status: st, error: httpMsg(st), body: (res && res.body) || '' };
+  }
+}
+function httpMsg(s) {
+  if (s === 401 || s === 403) return 'API key ไม่ถูกต้องหรือไม่มีสิทธิ์ (HTTP ' + s + ')';
+  if (s === 404) return 'ไม่พบปลายทาง — ตรวจ Base URL อีกครั้ง (HTTP 404)';
+  if (s === 429) return 'เรียกถี่เกินไป (HTTP 429)';
+  if (s >= 500) return 'ฝั่งผู้ให้บริการขัดข้อง (HTTP ' + s + ')';
+  return 'เรียกไม่สำเร็จ (HTTP ' + s + ')';
+}
+
+/** ดึงรายชื่อโมเดลจาก API ของเจ้านั้น — ลองทีละเส้นทางจนกว่าจะได้ */
+export async function fetchModels(provider) {
+  const reqs = modelsRequests(provider);
+  if (!reqs.length) return { ok: false, models: [], error: 'ยังไม่ได้ใส่ Base URL' };
+  let lastErr = 'ไม่พบรายชื่อโมเดล';
+  for (const r of reqs) {
+    const res = await sendRequest(provider, { ...r, maxRetries: 0 });
+    if (!res.ok) { lastErr = res.error; continue; }
+    const models = parseModels(res.json);
+    if (models.length) return { ok: true, models };
+    lastErr = 'ปลายทางตอบกลับแล้ว แต่ไม่มีรายชื่อโมเดลในคำตอบ';
+  }
+  return { ok: false, models: [], error: lastErr };
+}
+
+/** ทดสอบการเชื่อมต่อของ Credential (ใช้รายชื่อโมเดลเป็นตัววัด — ถูกและไม่เสียเงิน) */
+export async function testCredential(provider) {
+  const r = await fetchModels(provider);
+  return r.ok ? { ok: true, msg: `เชื่อมต่อสำเร็จ — พบ ${r.models.length} โมเดล`, models: r.models }
+              : { ok: false, msg: r.error, models: [] };
+}
+
+/** คุยกับโมเดลหนึ่งรอบ — ไม่โยน error ตลอด (คืน {ok,text,usage,error}) */
+export async function complete(provider, opts = {}) {
+  if (!provider) return { ok: false, text: '', error: 'ยังไม่ได้ตั้งค่าผู้ให้บริการ AI (ไฟล์ → ตั้งค่า AI)' };
+  if (!provider.model && !opts.model) return { ok: false, text: '', error: 'ยังไม่ได้เลือกโมเดล' };
+  const req = chatRequest(provider, opts);
+  const res = await sendRequest(provider, req);
+  if (!res.ok) return { ok: false, text: '', error: res.error, status: res.status };
+  const { text, usage } = parseChat(res.json);
+  return { ok: true, text, usage, model: req.body.model, provider: provider.name };
+}
+
+// ══════════════════════════════ UI: กล่องตั้งค่า AI ══════════════════════════════
+export async function showAISettingsDialog() {
+  if (!state.root) { setStatus('เปิดโปรเจกต์ก่อนจึงตั้งค่า AI ได้'); return null; }
+  await loadKeys();
+  const ai = aiMeta();
+
+  const ov = el('div', 'k-overlay');
+  const box = el('div', 'k-dialog k-ai-settings');
+  box.append(el('div', 'k-dlg-title', '🤖 ตั้งค่า AI'));
+
+  // ---- แถวผู้ให้บริการ (dropdown ของเจ้าที่ผู้ใช้เพิ่มเอง) ----
+  const provRow = el('div', 'wiki-row');
+  provRow.append(el('label', null, 'ผู้ให้บริการ'));
+  const provSel = el('select', 'wiki-input k-dlg-select ai-prov-sel');
+  const addBtn = el('button', 'ai-prov-add', '➕ เพิ่ม');
+  addBtn.title = 'เพิ่มผู้ให้บริการใหม่';
+  const editBtn = el('button', 'ai-prov-edit', '✎ แก้ไข');
+  const delBtn = el('button', 'ai-prov-del', '🗑');
+  delBtn.title = 'ลบผู้ให้บริการนี้';
+  provRow.append(provSel, addBtn, editBtn, delBtn);
+  box.append(provRow);
+
+  const info = el('div', 'ai-prov-info dim');
+  box.append(info);
+
+  const empty = el('div', 'ai-prov-empty dim',
+    'ยังไม่มีผู้ให้บริการ — กด ➕ เพิ่ม แล้วกรอกชื่อ · Credential · เลือกโมเดล · ตั้งพารามิเตอร์');
+  box.append(empty);
+
+  // ---- ปุ่มส่งของแชท (ผู้ใช้สั่งให้ตั้งได้ในตั้งค่า) ----
+  const sendRow = el('div', 'wiki-row');
+  sendRow.append(el('label', null, 'ปุ่มส่งข้อความในแชท'));
+  const sendSel = el('select', 'wiki-input k-dlg-select ai-send-sel');
+  for (const k of SEND_KEYS) { const o = el('option', null, k.label); o.value = k.id; sendSel.append(o); }
+  sendSel.value = ai.sendKey || DEFAULT_SEND_KEY;
+  sendRow.append(sendSel);
+  box.append(sendRow);
+
+  // ---- สรุปการใช้งาน ----
+  const usage = ai.usage || [];
+  if (usage.length) {
+    const total = usage.reduce((s, u) => s + (u.tokens || 0), 0);
+    const cost = usage.reduce((s, u) => s + (u.usd || 0), 0);
+    const stat = el('div', 'dim ai-usage-stat',
+      `ใช้ไปแล้ว ${total.toLocaleString()} tokens · ${usage.length} ครั้ง · ประมาณ $${cost.toFixed(4)}`);
+    box.append(stat);
+  }
+
+  const btns = el('div', 'k-dlg-btns');
+  const cB = el('button', 'k-cancel', 'ปิด');
+  const okB = el('button', 'k-ok', 'บันทึก');
+  btns.append(cB, okB);
+  box.append(btns);
+  ov.append(box);
+  document.body.append(ov);
+
+  let rows = listProviders(ai);
+  let activeId = ai.activeProviderId || (rows[0] && rows[0].id) || '';
+
+  function refresh() {
+    provSel.innerHTML = '';
+    for (const p of rows) {
+      const o = el('option', null, p.name + (p.model ? ' · ' + p.model : ''));
+      o.value = p.id;
+      provSel.append(o);
+    }
+    if (rows.length) provSel.value = activeId || rows[0].id;
+    const has = rows.length > 0;
+    provSel.style.display = has ? '' : 'none';
+    editBtn.disabled = delBtn.disabled = !has;
+    empty.style.display = has ? 'none' : '';
+    const cur = rows.find((p) => p.id === provSel.value);
+    info.textContent = cur
+      ? `Base URL: ${cur.credential.baseUrl || '—'} · โมเดล: ${cur.model || '(ยังไม่เลือก)'} · ` +
+        `โดเมนที่อนุญาต: ${(cur.credential.allowedDomains || []).join(', ') || 'ไม่จำกัด'}`
+      : '';
+  }
+  provSel.onchange = () => { activeId = provSel.value; refresh(); };
+  addBtn.onclick = async () => {
+    const p = await providerDialog(null);
+    if (!p) return;
+    rows = upsertProvider(rows, p);
+    activeId = p.id;
+    refresh();
+  };
+  editBtn.onclick = async () => {
+    const cur = rows.find((p) => p.id === provSel.value);
+    if (!cur) return;
+    const p = await providerDialog(withSecrets(cur, await loadKeys()));
+    if (!p) return;
+    rows = upsertProvider(rows, p);
+    refresh();
+  };
+  delBtn.onclick = async () => {
+    const cur = rows.find((p) => p.id === provSel.value);
+    if (!cur) return;
+    const { confirmBox } = await import('../ui.js');
+    if (!(await confirmBox(`ลบผู้ให้บริการ "${cur.name}" ?`))) return;
+    rows = removeProvider(rows, cur.id);
+    if (activeId === cur.id) activeId = (rows[0] && rows[0].id) || '';
+    refresh();
+  };
+  refresh();
+
+  const close = () => ov.remove();
+  cB.onclick = close;
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  okB.onclick = async () => {
+    aiMeta().sendKey = sendSel.value;
+    await persist(rows, activeId);
+    close();
+    setStatus('บันทึกการตั้งค่า AI แล้ว');
+  };
+  return ov;
+}
+
+// ══════════════════════════════ UI: ป๊อปอัปผู้ให้บริการ ══════════════════════════════
+/**
+ * ป๊อปอัปกรอกผู้ให้บริการหนึ่งเจ้า — 4 ส่วนตามที่ผู้ใช้สั่ง
+ * @param {object|null} existing แก้ของเดิม (null = สร้างใหม่)
+ * @returns {Promise<object|null>} provider ที่กรอกเสร็จ (พร้อม apiKey) หรือ null เมื่อยกเลิก
+ */
+export function providerDialog(existing) {
+  return new Promise((resolve) => {
+    const P = existing ? JSON.parse(JSON.stringify(existing)) : newProvider();
+    P.params = normalizeParams({ ...defaultParams(), ...(P.params || {}) });
+
+    const ov = el('div', 'k-overlay k-ai-prov-ov');
+    ov.style.zIndex = '120';
+    const box = el('div', 'k-dialog k-ai-prov');
+    box.append(el('div', 'k-dlg-title', existing ? '✎ แก้ไขผู้ให้บริการ' : '➕ เพิ่มผู้ให้บริการ'));
+
+    const sec = (n, title) => {
+      const s = el('div', 'ai-sec');
+      s.append(el('div', 'ai-sec-title', n + '. ' + title));
+      box.append(s);
+      return s;
+    };
+    const field = (host, label, node, hint) => {
+      const r = el('div', 'ai-field');
+      r.append(el('label', null, label));
+      r.append(node);
+      if (hint) r.append(el('div', 'ai-hint dim', hint));
+      host.append(r);
+      return node;
+    };
+
+    // ── 1. ชื่อ ──
+    const s1 = sec(1, 'ชื่อผู้ให้บริการ');
+    const nameInp = field(s1, 'ชื่อ (ตั้งเอง)', el('input', 'wiki-input ai-prov-name'),
+                          'ชื่อที่จะเห็นใน dropdown เช่น "OpenAI ที่ทำงาน" หรือ "Ollama เครื่องตัวเอง"');
+    nameInp.value = P.name || '';
+
+    // ── 2. Credential ──
+    const s2 = sec(2, 'Credential');
+    const credName = field(s2, 'ชื่อ Credential', el('input', 'wiki-input ai-cred-name'));
+    credName.value = P.credential.name || '';
+    const apiInp = field(s2, 'API', el('input', 'wiki-input ai-cred-key'),
+                         `เก็บแยกที่ ${KEY_FILE} ในโฟลเดอร์โปรเจกต์ — ไม่อยู่ใน project.khn.json ที่แชร์กัน`);
+    apiInp.type = 'password';
+    apiInp.value = P.credential.apiKey || '';
+    apiInp.placeholder = 'sk-… (เว้นว่างได้ถ้าเซิร์ฟเวอร์ไม่ต้องใช้คีย์ เช่น Ollama)';
+    const baseInp = field(s2, 'Base URL', el('input', 'wiki-input ai-cred-base'));
+    baseInp.value = P.credential.baseUrl || '';
+    baseInp.placeholder = 'https://api.openai.com/v1';
+    const domInp = field(s2, 'Allowed HTTP Request Domains',
+                         el('textarea', 'wiki-input ai-cred-domains'),
+                         'คั่นด้วยคอมมาหรือขึ้นบรรทัดใหม่ · รองรับ *.example.com · เว้นว่าง = ไม่จำกัด');
+    domInp.rows = 2;
+    domInp.value = (P.credential.allowedDomains || []).join(', ');
+    domInp.placeholder = 'api.openai.com, *.openai.com';
+
+    const credBtns = el('div', 'ai-cred-btns');
+    const testBtn = el('button', 'ai-cred-test', '🔌 ทดสอบการเชื่อมต่อ');
+    const saveCredBtn = el('button', 'k-ok ai-cred-save', '💾 Save Credential');
+    const credMsg = el('span', 'ai-cred-msg dim');
+    credBtns.append(testBtn, saveCredBtn, credMsg);
+    s2.append(credBtns);
+
+    // ── 3. Model (ดึงจาก API) ──
+    const s3 = sec(3, 'Model');
+    const modelSel = field(s3, 'โมเดล', el('select', 'wiki-input k-dlg-select ai-model-sel'),
+                           'กด "ดึงรายชื่อโมเดล" เพื่อขอรายการจาก API ของเจ้านี้');
+    const modelBtns = el('div', 'ai-model-btns');
+    const loadModelsBtn = el('button', 'ai-model-load', '⟳ ดึงรายชื่อโมเดล');
+    const modelMsg = el('span', 'ai-model-msg dim');
+    modelBtns.append(loadModelsBtn, modelMsg);
+    s3.append(modelBtns);
+
+    function fillModels(list, keep) {
+      modelSel.innerHTML = '';
+      const models = list && list.length ? list : (P.model ? [P.model] : []);
+      if (!models.length) {
+        const o = el('option', null, '— ยังไม่มีรายชื่อ (กดดึงรายชื่อโมเดล) —');
+        o.value = '';
+        modelSel.append(o);
+        return;
+      }
+      for (const m of models) { const o = el('option', null, m); o.value = m; modelSel.append(o); }
+      modelSel.value = models.includes(keep) ? keep : models[0];
+    }
+    fillModels(P.models, P.model);
+
+    // ── 4. Parameters ──
+    const s4 = sec(4, 'Parameters');
+    const grid = el('div', 'ai-param-grid');
+    const inputs = {};
+    for (const d of PARAM_DEFS) {
+      const cell = el('div', 'ai-param');
+      cell.append(el('label', null, d.label + (d.th ? ' — ' + d.th : '')));
+      let node;
+      if (d.type === 'select') {
+        node = el('select', 'wiki-input k-dlg-select');
+        for (const opt of d.options) {
+          const o = el('option', null, opt === '' ? '(ไม่ระบุ)' : opt);
+          o.value = opt;
+          node.append(o);
+        }
+        node.value = P.params[d.key] ?? d.def;
+      } else if (d.type === 'kv') {
+        node = el('textarea', 'wiki-input ai-param-kv');
+        node.rows = 3;
+        node.placeholder = 'X-Header: ค่า  (บรรทัดละหนึ่งคู่)';
+        node.value = Object.entries(P.params[d.key] || {}).map(([k, v]) => k + ': ' + v).join('\n');
+      } else {
+        node = el('input', 'wiki-input');
+        node.type = 'number';
+        node.min = String(d.min); node.max = String(d.max);
+        if (d.step) node.step = String(d.step);
+        node.value = P.params[d.key] === null || P.params[d.key] === undefined ? '' : String(P.params[d.key]);
+        node.placeholder = d.def === null ? '(ไม่ส่งค่านี้)' : String(d.def);
+      }
+      node.dataset.param = d.key;
+      inputs[d.key] = node;
+      cell.append(node);
+      if (d.hint) cell.append(el('div', 'ai-hint dim', d.hint));
+      if (d.type === 'kv') cell.classList.add('ai-param-wide');
+      grid.append(cell);
+    }
+    s4.append(grid);
+
+    // ---- เก็บค่าจากฟอร์ม ----
+    function readParams() {
+      const raw = {};
+      for (const d of PARAM_DEFS) {
+        const node = inputs[d.key];
+        if (d.type === 'kv') {
+          const o = {};
+          for (const line of String(node.value || '').split('\n')) {
+            const i = line.indexOf(':');
+            if (i <= 0) continue;
+            o[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+          }
+          raw[d.key] = o;
+        } else raw[d.key] = node.value;
+      }
+      return normalizeParams(raw);
+    }
+    function collect() {
+      return newProvider({
+        ...P,
+        name: nameInp.value.trim(),
+        model: modelSel.value || '',
+        models: [...modelSel.options].map((o) => o.value).filter(Boolean),
+        credential: {
+          ...P.credential,
+          name: credName.value.trim(),
+          apiKey: apiInp.value.trim(),
+          baseUrl: baseInp.value.trim(),
+          allowedDomains: parseDomains(domInp.value),
+        },
+        params: readParams(),
+      });
+    }
+
+    // ---- ทดสอบ / ดึงโมเดล / บันทึก credential ----
+    let busy = false;
+    const setBusy = (on, msgNode, text) => {
+      busy = on;
+      testBtn.disabled = loadModelsBtn.disabled = on;
+      if (msgNode) { msgNode.textContent = text || ''; msgNode.className = msgNode.className.replace(/ ai-(ok|bad)/g, ''); }
+    };
+    const say = (node, ok, text) => {
+      node.textContent = text;
+      node.className = node.className.replace(/ ai-(ok|bad)/g, '') + (ok ? ' ai-ok' : ' ai-bad');
+    };
+    testBtn.onclick = async () => {
+      if (busy) return;
+      const p = collect();
+      const errs = validateProvider(p).filter((e) => !e.includes('ชื่อผู้ให้บริการ'));
+      if (errs.length) { say(credMsg, false, errs[0]); return; }
+      setBusy(true, credMsg, 'กำลังทดสอบ…');
+      const r = await testCredential(p);
+      setBusy(false);
+      say(credMsg, r.ok, (r.ok ? '✅ ' : '❌ ') + r.msg);
+      if (r.ok && r.models.length) fillModels(r.models, modelSel.value);
+    };
+    loadModelsBtn.onclick = async () => {
+      if (busy) return;
+      const p = collect();
+      setBusy(true, modelMsg, 'กำลังดึงรายชื่อโมเดล…');
+      const r = await fetchModels(p);
+      setBusy(false);
+      if (r.ok) { fillModels(r.models, modelSel.value); say(modelMsg, true, `พบ ${r.models.length} โมเดล`); }
+      else say(modelMsg, false, '❌ ' + r.error);
+    };
+    saveCredBtn.onclick = async () => {
+      const p = collect();
+      const errs = validateProvider(p).filter((e) => !e.includes('ชื่อผู้ให้บริการ'));
+      if (errs.length) { say(credMsg, false, errs[0]); return; }
+      const keys = await loadKeys();
+      keys[p.credential.id] = p.credential.apiKey;
+      await saveKeys(keys);
+      P.credential = { ...p.credential };
+      say(credMsg, true, '✅ บันทึก Credential แล้ว (คีย์เก็บแยกที่ ' + KEY_FILE + ')');
+    };
+
+    // ---- ปุ่มท้ายกล่อง ----
+    const errBox = el('div', 'ai-prov-err');
+    box.append(errBox);
+    const btns = el('div', 'k-dlg-btns');
+    const cancel = el('button', 'k-cancel', 'ยกเลิก');
+    const ok = el('button', 'k-ok', 'บันทึกผู้ให้บริการ');
+    btns.append(cancel, ok);
+    box.append(btns);
+    ov.append(box);
+    document.body.append(ov);
+    nameInp.focus();
+
+    const done = (v) => { ov.remove(); document.removeEventListener('keydown', esc, true); resolve(v); };
+    function esc(e) { if (e.key === 'Escape') { e.stopPropagation(); done(null); } }
+    document.addEventListener('keydown', esc, true);
+    cancel.onclick = () => done(null);
+    ok.onclick = async () => {
+      const p = collect();
+      const errs = validateProvider(p);
+      if (errs.length) { errBox.textContent = '⚠ ' + errs.join(' · '); return; }
+      const keys = await loadKeys();
+      keys[p.credential.id] = p.credential.apiKey;
+      await saveKeys(keys);
+      done(stripSecrets(p));                 // ผู้เรียกเก็บลง project.khn.json — ไม่มีคีย์ปน
+    };
+  });
+}

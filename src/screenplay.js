@@ -107,8 +107,23 @@ export class SPEditor {
           // (ผู้ใช้ตั้งปุ่มเองได้ + ปิดระบบได้ → ผูกกับ keymap ที่เป็นชื่อปุ่มตายตัวไม่ได้)
           // ที่เหลือไว้กัน Tab ย้ายโฟกัสออกจากตัวแก้ไขเมื่อผู้ใช้ย้ายคำสั่งไปปุ่มอื่น
           keymap({
-            Tab: () => true,
-            'Shift-Tab': () => true,
+            // [alpha.61 ข้อ 3] Tab ที่ไม่ถูกผูกกับ "เลือกหมวด" ต้องเยื้องข้อความจริง
+            // (เดิม `() => true` กลืนทิ้งเฉย ๆ → โหมดบทหนังไม่มี Tab ใช้เลย)
+            Tab: (st, dispatch) => {
+              if (!st.selection.$from.parent.inlineContent) return true;
+              if (dispatch) dispatch(st.tr.insertText('\t').scrollIntoView());
+              return true;
+            },
+            'Shift-Tab': (st, dispatch) => {
+              const { $from, empty } = st.selection;
+              const off = $from.parentOffset;
+              if (empty && off > 0 && $from.parent.textBetween(off - 1, off) === '\t') {
+                if (dispatch) dispatch(st.tr.delete($from.start() + off - 1, $from.start() + off));
+              }
+              return true;
+            },
+            // [alpha.61 ข้อ 3] Ctrl/⌘+Enter = ขึ้นหน้าใหม่ (element `page-break` = `---` ในไฟล์)
+            'Mod-Enter': () => { self.insertPageBreak(); return true; },
             'Mod-ArrowDown': () => { self.cycle(1); return true; },   // สลับรูปแบบถัดไป
             'Mod-ArrowUp': () => { self.cycle(-1); return true; },    // สลับรูปแบบก่อนหน้า
           }),
@@ -341,6 +356,24 @@ export class SPEditor {
     }
     v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, start, end)));
     v.focus();
+  }
+
+  /**
+   * [alpha.61 ข้อ 3] Ctrl+Enter — ขึ้นหน้าใหม่ด้วยมือ
+   * แทรก element `page-break` (เขียนลงไฟล์เป็น `---`) ต่อท้ายบล็อกปัจจุบัน
+   * แล้วต่อด้วยบล็อก `action` ว่างให้พิมพ์ต่อ — ไม่แปลงบล็อกเดิมทิ้ง
+   */
+  insertPageBreak() {
+    const v = this.view;
+    const { $from } = v.state.selection;
+    const at = $from.after(1);
+    const pb = spSchema.nodes.sp.create({ el: 'page-break' });
+    const next = spSchema.nodes.sp.create({ el: 'action' });
+    let tr = v.state.tr.insert(at, [pb, next]);
+    tr = tr.setSelection(TextSelection.create(tr.doc, at + pb.nodeSize + 1));
+    v.dispatch(tr.scrollIntoView());
+    if (this.onElement) this.onElement('action');
+    return true;
   }
 
   // sameEl = true → ขึ้นบรรทัดใหม่ชนิดเดิม (ใช้ตอนผู้ใช้ปิดระบบปุ่มสลับ element)

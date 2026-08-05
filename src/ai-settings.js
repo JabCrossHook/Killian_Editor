@@ -44,6 +44,19 @@ export function clearKeyCache() { _keyCache = null; }
 // ---- เรียก AI (ผ่าน main process) ----
 export async function callAI(prompt, system = '') {
   const ai = getAISettings();
+  // [alpha.61 ข้อ 2] ถ้าผู้ใช้ตั้ง "ผู้ให้บริการที่เพิ่มเอง" ไว้ ให้ใช้ตัวนั้นก่อนเสมอ
+  // ฟีเจอร์ AI เดิมทุกตัว (สรุปเรื่อง · แนะนำชื่อ · ผู้ช่วยเขียน) จึงวิ่งผ่านทะเบียนใหม่ได้
+  // โดยไม่ต้องแก้ทีละไฟล์ — ค่าที่ตั้งแบบเก่ายังใช้ได้ถ้ายังไม่ได้เพิ่มเจ้าใหม่
+  if (Array.isArray(ai.providers) && ai.providers.length) {
+    const { currentProvider, complete } = await import('./ai/ai-provider-ui.js');
+    const p = await currentProvider();
+    if (p) {
+      const r = await complete(p, { system, messages: [{ role: 'user', content: prompt }] });
+      if (!r.ok) { log('error', 'AI (provider ใหม่) ล้มเหลว', r.error); setStatus('❌ AI: ' + r.error); return null; }
+      recordUsage((r.usage && r.usage.total) || 0, p.name, r.model);
+      return (r.text || '').trim();
+    }
+  }
   const apiKey = await loadApiKey();
   const provider = ai.provider || 'openai';
   if (!apiKey && provider !== 'ollama') {

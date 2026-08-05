@@ -197,6 +197,12 @@ export const DEFAULT_SP_FORMAT = {
   continued: CONTINUED_DEFAULTS,
   // [alpha.58r บั๊ก 5+9] ช่วงบรรทัดที่ผู้ใช้ปรับได้ — ต้องอยู่ใน fmt เพื่อให้ paginate/pageMetrics เห็น
   lineHeight: 1,
+  // [alpha.61 ข้อ 4] สวิตช์ใหญ่ "บังคับพิมพ์ใหญ่ตามรูปแบบบทมาตรฐาน"
+  //   true  = หัวฉาก/ชื่อตัวละคร/ทรานซิชัน เป็น ALL-CAPS ตามธรรมเนียมฮอลลีวูด (ค่าเดิม)
+  //   false = ไม่บังคับเลย — ผู้ใช้พิมพ์อย่างไรก็แสดง/พิมพ์/ส่งออกอย่างนั้น
+  // ปิดที่นี่ที่เดียวแล้วทุกทางออกตาม เพราะทุกตัว (spCss · pdf-generator · export-rtf ·
+  // sp-headers) อ่าน `styles[k][mode].caps` ตัวเดียวกัน — mergeSpFormat เป็นคนล้างให้
+  forceCase: true,
 };
 
 export const SP_ELEMENT_KEYS = Object.keys(SP_ELEMENT_CONFIG);
@@ -211,14 +217,19 @@ export function mergeSpFormat(user) {
     : { ...basePaper };
   const elements = {};
   for (const k of SP_ELEMENT_KEYS) elements[k] = { ...SP_ELEMENT_CONFIG[k], ...(u.elements?.[k] || {}) };
+  // [alpha.61 ข้อ 4] forceCase=false → ล้าง caps ทุก element ทั้งบนจอและตอนพิมพ์
+  // (ยังจำค่าที่ผู้ใช้ติ๊กไว้ใน settings.spStyles — เปิดสวิตช์กลับแล้วได้ของเดิมคืนครบ)
+  const forceCase = u.forceCase !== false;
   const styles = {};
   for (const k of SP_ELEMENT_KEYS) {
     styles[k] = {
       screen: { ...SP_ELEMENT_STYLES[k].screen, ...(u.styles?.[k]?.screen || {}) },
       print:  { ...SP_ELEMENT_STYLES[k].print,  ...(u.styles?.[k]?.print  || {}) },
     };
+    if (!forceCase) { styles[k].screen.caps = false; styles[k].print.caps = false; }
   }
   return {
+    forceCase,
     paperSize, paper,
     margins: { ...MARGIN_DEFAULTS, ...(u.margins || {}) },
     elements, styles,

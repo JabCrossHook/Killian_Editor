@@ -17,6 +17,15 @@ const RE_IMG = /^!\[([^\]\n]*)\]\(([^)\n]+)\)\s*$/;
 // [alpha.58r บั๊ก 27] เส้นคั่น + บล็อกโค้ด (schema เดิมไม่มี node สองตัวนี้เลย)
 const RE_HR = /^\s{0,3}(-{3,}|\*{3,}|_{3,})\s*$/;
 const RE_FENCE = /^\s{0,3}(`{3,}|~{3,})\s*([\w+-]*)\s*$/;
+// [alpha.61 ข้อ 3] ขึ้นหน้าใหม่ด้วยมือ (Ctrl+Enter) — เก็บเป็นคอมเมนต์มาร์กดาวน์
+// แบบเดียวกับ <!--align:…--> : v1 และเครื่องมืออื่นเห็นเป็นคอมเมนต์เฉย ๆ ไม่พัง
+const RE_PAGEBREAK = /^\s*<!--\s*pagebreak\s*-->\s*$/i;
+const PAGEBREAK_MD = '<!--pagebreak-->';
+// [alpha.61 ข้อ 3] ขึ้นบรรทัดในย่อหน้าเดิม (Shift+Enter) = hard break ตามมาตรฐาน CommonMark
+// (แบ็กสแลชท้ายบรรทัด) — บรรทัดถัดไปยังเป็น "ย่อหน้าเดียวกัน" ไม่ใช่ย่อหน้าใหม่
+const RE_HARDBREAK = /(^|[^\\])((?:\\\\)*)\\$/;
+const endsWithHardBreak = (s) => RE_HARDBREAK.test(s);
+const stripHardBreak = (s) => s.slice(0, -1);
 
 // ---------- inline: md → [{text, marks:Set}] ----------
 function parseInline(s, base = []) {
@@ -48,6 +57,19 @@ function inlineNodes(text) {
 function para(text) {
   const content = inlineNodes(text);
   return { type: 'paragraph', ...(content.length ? { content } : {}) };
+}
+
+/**
+ * [alpha.61 ข้อ 3] เนื้อในของย่อหน้าที่มี hard break — คืน inline nodes ที่คั่นด้วย hard_break
+ * @param {string[]} rawLines บรรทัดดิบ (ทุกบรรทัดยกเว้นบรรทัดสุดท้ายลงท้ายด้วย `\`)
+ */
+function inlineNodesMulti(rawLines) {
+  const out = [];
+  rawLines.forEach((l, i) => {
+    if (i) out.push({ type: 'hard_break' });
+    out.push(...inlineNodes(i < rawLines.length - 1 ? stripHardBreak(l) : l));
+  });
+  return out;
 }
 
 // ---------- md → doc ----------
@@ -102,6 +124,9 @@ function mdToDoc(md, alignMap) {
       const txt = body.join('\n');
       out.push({ type: 'code_block', attrs: { lang, fence },
                  ...(txt ? { content: [{ type: 'text', text: txt }] } : {}) });
+    } else if (RE_PAGEBREAK.test(line)) {
+      out.push({ type: 'page_break' });               // [alpha.61 ข้อ 3] ขึ้นหน้าใหม่ด้วยมือ
+      i++;
     } else if (RE_HR.test(line)) {
       out.push({ type: 'horizontal_rule' });
       i++;
@@ -131,7 +156,12 @@ function mdToDoc(md, alignMap) {
       }
       out.push({ type: 'ordered_list', attrs: { order: start }, content: items });
     } else {
-      const content = inlineNodes(line);
+      // [alpha.61 ข้อ 3] บรรทัดที่ลงท้ายด้วย `\` = hard break → ย่อหน้าเดียวกับบรรทัดถัดไป
+      const raw = [line];
+      while (endsWithHardBreak(raw[raw.length - 1]) && i + 1 < lines.length) {
+        i++; raw.push(lines[i]);
+      }
+      const content = raw.length > 1 ? inlineNodesMulti(raw) : inlineNodes(line);
       out.push({ type: 'paragraph', attrs: { align },
                  ...(content.length ? { content } : {}) });
       i++;
@@ -199,11 +229,18 @@ function emitRuns(runs) {
 }
 
 function inlineToMd(content) {
-  const runs = (content || []).filter((n) => n.type === 'text').map((n) => ({
-    text: n.text,
-    sig: new Set((n.marks || []).map((m) => m.type).filter((t) => MARKSET.includes(t))),
-  }));
-  return emitRuns(runs);
+  // [alpha.61 ข้อ 3] hard_break ตัดชุด run — เขียนเป็น `\` ท้ายบรรทัด แล้วขึ้นบรรทัดใหม่
+  // (เครื่องหมายรูปแบบต้องปิดก่อนขึ้นบรรทัด ไม่งั้น `**` คร่อมข้าม \n แล้ว parse กลับไม่ได้)
+  const parts = [[]];
+  for (const n of content || []) {
+    if (n.type === 'hard_break') { parts.push([]); continue; }
+    if (n.type !== 'text') continue;
+    parts[parts.length - 1].push({
+      text: n.text,
+      sig: new Set((n.marks || []).map((m) => m.type).filter((t) => MARKSET.includes(t))),
+    });
+  }
+  return parts.map(emitRuns).join('\\\n');
 }
 
 // ---------- doc → md ----------
@@ -219,6 +256,9 @@ function docToMd(doc, opts) {
     switch (node.type) {
       case 'horizontal_rule':
         lines.push('---');
+        break;
+      case 'page_break':                       // [alpha.61 ข้อ 3] ขึ้นหน้าใหม่ด้วยมือ (Ctrl+Enter)
+        lines.push(PAGEBREAK_MD);
         break;
       case 'code_block': {
         const a = node.attrs || {};

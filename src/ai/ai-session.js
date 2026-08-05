@@ -1,0 +1,229 @@
+// ai-session.js — [alpha.61 ข้อ 2] เซสชันแชท AI แบบ opencode (โมดูลบริสุทธิ์)
+//
+// เซสชันเก็บเป็นไฟล์ JSON ในโฟลเดอร์ `Sessions/` **ของโปรเจกต์นั้น ๆ** เพื่อให้
+//   · เปิดโปรเจกต์ไหน ก็เห็นบทสนทนาของโปรเจกต์นั้น (ไม่ปนกัน)
+//   · ก๊อปโฟลเดอร์โปรเจกต์ไปเครื่องอื่น บทสนทนาไปด้วย
+//   · แก้/ลบนอกโปรแกรมได้ ตามหลัก "ไฟล์แก้นอกโปรแกรมได้" ของ Killian
+//
+// ไฟล์นี้ไม่แตะ DOM/fs/network — เป็นแค่โครงข้อมูล + การคำนวณสถิติ → unit test ได้ตรง ๆ
+
+export const SESSION_DIR = 'Sessions';
+export const SESSION_VERSION = 1;
+
+// โหมดการทำงานของผู้ช่วย (ผู้ใช้สลับได้ที่กล่องพิมพ์)
+export const CHAT_MODES = [
+  { id: 'plan',  label: 'วางแผน (อ่านอย่างเดียว)', icon: '📖', write: false,
+    system: 'คุณเป็นผู้ช่วยนักเขียน โหมดนี้คือ "อ่านอย่างเดียว" — วิเคราะห์ เสนอแนะ วางแผนได้ ' +
+            'แต่ห้ามแก้ไขหรือสร้างไฟล์ ถ้าผู้ใช้ขอให้แก้ ให้เสนอเป็นข้อความว่าจะแก้อย่างไรแทน' },
+  { id: 'write', label: 'ช่วยเขียน (แก้ไขได้)',    icon: '✍️', write: true,
+    system: 'คุณเป็นผู้ช่วยนักเขียน โหมดนี้แก้ไข/สร้างไฟล์ในโปรเจกต์ได้ ' +
+            'เขียนต่อเนื้อเรื่องให้กลมกลืนกับสำนวนเดิม และบอกทุกครั้งว่าจะแตะไฟล์ไหน' },
+];
+export const DEFAULT_MODE = 'plan';
+export function modeDef(id) { return CHAT_MODES.find((m) => m.id === id) || CHAT_MODES[0]; }
+
+// ระดับการเข้าถึงข้อมูลของโปรเจกต์ที่ยอมให้ AI เห็น
+export const SCOPES = [
+  { id: 'project', label: 'ทั้งโปรเจกต์' },
+  { id: 'book',    label: 'เฉพาะเล่มนี้' },
+  { id: 'chapter', label: 'เฉพาะบทนี้' },
+  { id: 'scene',   label: 'เฉพาะฉากนี้' },
+  { id: 'none',    label: 'ไม่ให้เข้าถึงเลย' },
+];
+export const DEFAULT_SCOPE = 'scene';
+export function scopeLabel(id) { return (SCOPES.find((s) => s.id === id) || SCOPES[0]).label; }
+
+// ปุ่มส่งข้อความ — ผู้ใช้เลือกได้ในตั้งค่า (บางคนพิมพ์หลายบรรทัดเป็นหลัก)
+export const SEND_KEYS = [
+  { id: 'enter',       label: 'Enter = ส่ง · Shift+Enter = ขึ้นบรรทัด' },
+  { id: 'shift-enter', label: 'Shift+Enter = ส่ง · Enter = ขึ้นบรรทัด' },
+];
+export const DEFAULT_SEND_KEY = 'enter';
+/** อีเวนต์นี้คือ "สั่งส่ง" ไหม ตามการตั้งค่าปุ่มส่ง */
+export function isSendKey(ev, sendKey = DEFAULT_SEND_KEY) {
+  if (!ev || ev.key !== 'Enter' || ev.isComposing) return false;
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return false;
+  return sendKey === 'shift-enter' ? ev.shiftKey === true : ev.shiftKey !== true;
+}
+
+let _seq = 0;
+export function newSessionId() {
+  _seq++;
+  return 's' + Date.now().toString(36) + _seq.toString(36);
+}
+
+/** เซสชันเปล่า */
+export function newSession(patch = {}) {
+  const now = new Date().toISOString();
+  return {
+    v: SESSION_VERSION,
+    id: patch.id || newSessionId(),
+    title: patch.title || 'เซสชันใหม่',
+    created: patch.created || now,
+    updated: patch.updated || now,
+    archived: !!patch.archived,
+    mode: patch.mode || DEFAULT_MODE,
+    scope: patch.scope || DEFAULT_SCOPE,
+    scopePath: patch.scopePath || '',
+    providerId: patch.providerId || '',     // override จากตั้งค่า — เซสชันเลือกเจ้าของตัวเองได้
+    model: patch.model || '',               // override โมเดล (อิสระจากตั้งค่ากลาง)
+    contextLimit: patch.contextLimit || 0,  // 0 = ไม่รู้ (ยังไม่เคยตอบกลับมา)
+    files: Array.isArray(patch.files) ? patch.files.slice() : [],
+    messages: Array.isArray(patch.messages) ? patch.messages.slice() : [],
+  };
+}
+
+/** ชื่อไฟล์ของเซสชัน — ปลอดภัยกับทุกระบบไฟล์ */
+export function sessionFileName(s) { return String(s && s.id ? s.id : 'session') + '.json'; }
+
+/** ข้อความหนึ่งก้อน */
+export function newMessage(role, text, patch = {}) {
+  return {
+    id: 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    role, text: String(text ?? ''),
+    at: patch.at || new Date().toISOString(),
+    usage: patch.usage || null,
+    model: patch.model || '',
+    provider: patch.provider || '',
+    files: patch.files || [],
+    error: patch.error || '',
+  };
+}
+
+/** เพิ่มข้อความ (คืนเซสชันใหม่ · ไม่แก้ของเดิม) */
+export function addMessage(session, msg) {
+  const s = { ...session, messages: [...(session.messages || []), msg] };
+  s.updated = msg.at || new Date().toISOString();
+  // ชื่อเซสชันเริ่มต้น = ประโยคแรกที่ผู้ใช้พิมพ์ (แบบ opencode) จนกว่าจะเปลี่ยนชื่อเอง
+  if (msg.role === 'user' && isAutoTitle(session)) s.title = titleFromText(msg.text);
+  return s;
+}
+function isAutoTitle(s) {
+  return !s.titleSet && (!s.title || s.title === 'เซสชันใหม่');
+}
+/** ตัดข้อความแรกให้สั้นพอเป็นชื่อ (ไม่ตัดกลางคำอังกฤษ · ไทยตัดตรง ๆ ได้) */
+export function titleFromText(text, max = 40) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!t) return 'เซสชันใหม่';
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const sp = cut.lastIndexOf(' ');
+  return (sp > max * 0.6 ? cut.slice(0, sp) : cut) + '…';
+}
+
+/** เปลี่ยนชื่อเอง — ตั้ง titleSet ไว้ไม่ให้ถูกทับด้วยชื่ออัตโนมัติอีก */
+export function renameSession(session, title) {
+  return { ...session, title: String(title || '').trim() || session.title, titleSet: true,
+           updated: new Date().toISOString() };
+}
+export function archiveSession(session, on = true) {
+  return { ...session, archived: !!on, updated: new Date().toISOString() };
+}
+
+// ────────────────────────────────────────────────────────────────
+// สถิติของเซสชัน — ตัวเลขที่โผล่บน badge บริบท และในหน้า "รายละเอียด"
+// ────────────────────────────────────────────────────────────────
+const n = (v) => (typeof v === 'number' && isFinite(v) ? v : 0);
+
+/**
+ * รวมยอดทั้งเซสชัน
+ * @returns {{input,output,reasoning,cached,total,usd,userMsgs,agentMsgs,limit,percent}}
+ */
+export function sessionStats(session, { prices = null } = {}) {
+  const msgs = (session && session.messages) || [];
+  const out = { input: 0, output: 0, reasoning: 0, cached: 0, total: 0, usd: 0,
+                userMsgs: 0, agentMsgs: 0, limit: n(session && session.contextLimit), percent: 0 };
+  for (const m of msgs) {
+    if (m.role === 'user') out.userMsgs++;
+    else if (m.role === 'assistant') out.agentMsgs++;
+    const u = m.usage;
+    if (!u) continue;
+    out.input += n(u.input); out.output += n(u.output);
+    out.reasoning += n(u.reasoning); out.cached += n(u.cached);
+    out.total += n(u.total) || (n(u.input) + n(u.output));
+    out.usd += n(u.usd);
+  }
+  if (prices) out.usd = +costOf(out, prices).toFixed(6);
+  else out.usd = +out.usd.toFixed(6);
+  // "บริบทที่ใช้อยู่" = token ของคำขอครั้งล่าสุด (input+output) เทียบขีดจำกัดของโมเดล
+  const last = [...msgs].reverse().find((m) => m.usage);
+  out.context = last ? n(last.usage.input) + n(last.usage.output) : 0;
+  out.percent = out.limit > 0 ? Math.min(100, +((out.context / out.limit) * 100).toFixed(1)) : 0;
+  return out;
+}
+/** ราคา USD ต่อ 1M tokens → ต้นทุนจริง */
+export function costOf(stats, prices = { in: 0, out: 0 }) {
+  return ((n(stats.input) * n(prices.in)) + (n(stats.output) * n(prices.out))) / 1e6;
+}
+
+/** ข้อความสั้นบน badge — "12.3k / 200k" หรือ "12.3k" เมื่อยังไม่รู้ขีดจำกัด */
+export function contextLabel(stats) {
+  const c = compact(stats.context);
+  return stats.limit > 0 ? `${c} / ${compact(stats.limit)}` : c;
+}
+export function compact(v) {
+  const x = n(v);
+  if (x >= 1e6) return +(x / 1e6).toFixed(1) + 'M';
+  if (x >= 1000) return +(x / 1000).toFixed(1) + 'k';
+  return String(Math.round(x));
+}
+export function usd(v) { return '$' + n(v).toFixed(n(v) < 1 ? 4 : 2); }
+
+// ────────────────────────────────────────────────────────────────
+// รายการเซสชัน: เรียง · ค้นหา
+// ────────────────────────────────────────────────────────────────
+/** ใหม่สุดก่อน (ใช้ `updated` เป็นหลัก) */
+export function sortSessions(rows) {
+  return (rows || []).slice().sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')));
+}
+/**
+ * ค้นหาเซสชัน — ชื่อ + เนื้อความทุกข้อความ (ตัดคำไม่จำเป็น: ไทยไม่มีช่องว่าง จึงใช้ substring)
+ * `includeArchived=false` = ซ่อนอันที่จัดเก็บแล้ว (ยังค้นเจอได้ถ้าเปิดสวิตช์)
+ */
+export function searchSessions(rows, query, { includeArchived = false } = {}) {
+  const q = String(query || '').trim().toLowerCase();
+  const base = (rows || []).filter((s) => includeArchived || !s.archived);
+  if (!q) return sortSessions(base);
+  const hit = base.filter((s) => {
+    if (String(s.title || '').toLowerCase().includes(q)) return true;
+    return (s.messages || []).some((m) => String(m.text || '').toLowerCase().includes(q));
+  });
+  return sortSessions(hit);
+}
+
+/**
+ * ข้อความที่จะส่งให้โมเดล — ตัดประวัติเก่าทิ้งเมื่อยาวเกินงบ token
+ * เก็บ "คู่ล่าสุด" ไว้เสมอ (ตัดจากหัว) เพราะบทสนทนาต่อเนื่องอยู่ท้ายสุด
+ */
+export function chatMessages(session, { maxTokens = 6000, estimate = estimateTokens } = {}) {
+  const msgs = (session.messages || []).filter((m) => m.role === 'user' || m.role === 'assistant');
+  const out = [];
+  let budget = maxTokens;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const cost = estimate(msgs[i].text);
+    if (out.length && budget - cost < 0) break;
+    budget -= cost;
+    out.unshift({ role: msgs[i].role, content: msgs[i].text });
+  }
+  return out;
+}
+/** ประมาณ token (ไทยกินตัวอักษรต่อ token น้อยกว่าอังกฤษ ~3 vs ~4) */
+export function estimateTokens(text) {
+  if (!text) return 0;
+  const s = String(text);
+  const thai = (s.match(/[฀-๿]/g) || []).length;
+  return Math.max(1, Math.ceil(thai / 3 + (s.length - thai) / 4));
+}
+
+/** JSON ดิบสำหรับปุ่ม "แสดงข้อความดิบ" ในหน้ารายละเอียด */
+export function rawJson(session) { return JSON.stringify(session, null, 2); }
+
+/** ข้อความที่เอาไปแชร์ (คัดลอกเป็น Markdown อ่านง่าย) */
+export function shareMarkdown(session) {
+  const lines = ['# ' + (session.title || 'เซสชัน AI'), ''];
+  for (const m of session.messages || []) {
+    if (m.role === 'user') lines.push('**คุณ:** ' + m.text, '');
+    else if (m.role === 'assistant') lines.push('**ผู้ช่วย:** ' + m.text, '');
+  }
+  return lines.join('\n').trim() + '\n';
+}

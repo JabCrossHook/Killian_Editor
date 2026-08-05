@@ -299,6 +299,28 @@ check('[57a] paginate รองรับ element ใหม่ (ไม่หล�
     SF.textWidth(negM.paper, negM.margins) >= 0.5, SF.textWidth(negM.paper, negM.margins));
 }
 
+// ── [alpha.61 ข้อ 4] สวิตช์ "บังคับพิมพ์ใหญ่" — ปิดที่เดียวแล้วทุกทางออกต้องตาม ──
+{
+  const on = SF.mergeSpFormat({});
+  check('[61-4] ค่าเริ่มต้นยังบังคับพิมพ์ใหญ่ตามธรรมเนียมเดิม',
+    on.forceCase === true && on.styles.scene.screen.caps === true &&
+    on.styles.character.print.caps === true);
+  const off = SF.mergeSpFormat({ forceCase: false });
+  check('[61-4] ปิดสวิตช์ → caps เป็น false ทุก element ทั้งบนจอและตอนพิมพ์',
+    SF.SP_ELEMENT_KEYS.every((k) => off.styles[k].screen.caps === false && off.styles[k].print.caps === false));
+  const css = SF.spCss(off);
+  check('[61-4] CSS ที่สร้างไม่มี text-transform:uppercase เหลืออยู่เลย',
+    !/text-transform:uppercase/.test(css), (css.match(/text-transform:[a-z]+/g) || []).join(','));
+  check('[61-4] เปิดสวิตช์แล้ว CSS กลับมามี uppercase', /text-transform:uppercase/.test(SF.spCss(on)));
+  // ค่าที่ผู้ใช้ติ๊กเองต้องไม่ถูกลบทิ้ง — เปิดสวิตช์กลับต้องได้ของเดิมคืน
+  const userStyles = { character: { screen: { caps: false }, print: { caps: false } } };
+  const back = SF.mergeSpFormat({ forceCase: true, styles: userStyles });
+  check('[61-4] เปิดสวิตช์แล้วยังเคารพ caps รายบรรทัดที่ผู้ใช้ปิดเอง',
+    back.styles.character.screen.caps === false && back.styles.scene.screen.caps === true);
+  check('[61-4] ปิด caps ไม่ไปแตะ bold/italic/underline',
+    off.styles.scene.screen.bold === true && off.styles.parenthetical.screen.italic === true);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 try { fs.unlinkSync(tmp); } catch {}
 if (fail) process.exit(1);

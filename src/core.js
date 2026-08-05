@@ -72,8 +72,12 @@ export const GLOBAL_DEFAULTS = {
   homeThumb: 190, smartLearnMin: 2, heavyDocBlocks: 400, mdAlignStyle: 'frontmatter',
   // ปุ่มลัดตั้งเอง — อยู่กับผู้ใช้
   shortcuts: {},
-  // [alpha.60r ข้อ 1] แสดงหน้าแรกเมื่อเปิดโปรเจกต์ — ปิดแล้วเปิดโปรเจกต์ล่าสุดทันที
-  showHomeOnStartup: true,
+  // [alpha.61 ข้อ 1] ลำดับเปิดโปรแกรม: หน้าต่างรอโหลด → เข้าโปรแกรม → (เปิดโปรเจกต์ล่าสุด | หน้าแรก)
+  //   openLastProject = true  → เปิดโปรเจกต์ล่าสุดทันที "ข้ามหน้าแรก" (สลับที่ เมนูไฟล์)
+  //   showHomeOnStartup = true → บังคับให้เห็นหน้าแรกเสมอ แม้เปิดโปรเจกต์ล่าสุดไว้ (สลับที่ เมนูมุมมอง)
+  //   ทั้งคู่ปิด (ค่าเริ่มต้น) → เข้าหน้าแรกก่อน แล้วผู้ใช้เลือกโปรเจกต์เอง
+  openLastProject: false,
+  showHomeOnStartup: false,
   // [alpha.60r3 ข้อ 6] ซ่อนรหัสนำหน้าบรรทัด (. @ > $shot # …) ในตัวแก้ไขนิยาย — เปิดไว้เป็นค่าเริ่มต้น
   showMarkdownCodes: true,
 };
@@ -86,6 +90,12 @@ export const PROJECT_DEFAULTS = {
   // รูปแบบบทภาพยนตร์
   spElements: null, spStyles: null, spPageRules: null, spStrings: null,
   spCycle: null, spCycleKeys: null, spCycleEnabled: true,
+  // [alpha.61 ข้อ 4] "ให้อิสระเรื่องตัวพิมพ์" — ทั้งสามตัวนี้คือจุดที่บทหนังเคยบังคับ case
+  //   spForceCase      = บังคับ ALL-CAPS ตามรูปแบบบทมาตรฐาน (หัวฉาก · ชื่อตัวละคร · ทรานซิชัน)
+  //   spAutoCapitalize = แก้ตัวแรกของประโยคเป็นตัวใหญ่ให้อัตโนมัติขณะพิมพ์
+  //   spAutoCorrectI   = แก้ i เดี่ยว ๆ เป็น I ให้อัตโนมัติ
+  // ค่าเริ่มต้นยังเป็นธรรมเนียมเดิม แต่ตอนนี้ปิดได้ครบทั้งสามตัวจากหน้าตั้งค่า/เมนู "บท"
+  spForceCase: true,
   spAutoCapitalize: true, spAutoCorrectI: true,
   spShowFormat: false, spCheckBeforeExport: true, spLineLimits: null,
   spSceneNumbers: null, spPageNumbers: null,
@@ -127,10 +137,15 @@ export const DEFAULT_SP_CYCLE = {
 
 // [แก้ไข feature 1] ปุ่มที่ใช้สลับ element ในบทหนัง — ผู้ใช้เปลี่ยนได้ ไม่ผูกกับ Tab/Enter/Shift+Tab
 // เก็บเป็น e.code (ปุ่มกายภาพ) ตามหลัก "คีย์ลัดทำงานทุกแป้นพิมพ์"
+//
+// [alpha.61 ข้อ 3] ค่าเริ่มต้นของ "เลือกหมวด" ย้ายจาก Tab → **Ctrl+Tab / Ctrl+Shift+Tab**
+// เหตุผล: Tab เปล่าเป็นปุ่มพื้นฐานของตัวแก้ไข (เยื้องข้อความ) การยึดไว้ทำให้บทหนัง
+// "ไม่มี Tab" ทั้งโหมด — และการสลับ element ยังกดได้อีกทางที่ Ctrl+↑/↓ อยู่แล้ว
+// ผู้ใช้ที่ชินแบบ Final Draft ตั้งกลับเป็น Tab เปล่าได้ที่ ตั้งค่า → การเขียน
 export const DEFAULT_SP_CYCLE_KEYS = {
   enter:    { code: 'Enter', shift: false, ctrl: false, alt: false },
-  tab:      { code: 'Tab',   shift: false, ctrl: false, alt: false },
-  shiftTab: { code: 'Tab',   shift: true,  ctrl: false, alt: false },
+  tab:      { code: 'Tab',   shift: false, ctrl: true,  alt: false },
+  shiftTab: { code: 'Tab',   shift: true,  ctrl: true,  alt: false },
 };
 /** ปุ่มที่ใช้จริง = ค่าเริ่มต้น merge กับที่ผู้ใช้ตั้ง */
 export function spCycleKeys(settings) {
@@ -387,6 +402,8 @@ export const SHORTCUTS = [
   ['KeyB', true, true, 'export-blog'],
   ['Backslash', true, true, 'split-view'],
   ['KeyK', true, false, 'kanban'],
+  // [alpha.61 ข้อ 3] ลบทั้งบรรทัด — Ctrl+Shift+K ไม่ว่าง (จัดกึ่งกลาง) จึงใช้ Ctrl+Shift+Delete
+  ['Delete', true, true, 'delete-line'],
   ['KeyG', true, true, 'gallery'],
   // [95] Per-element shortcuts — Ctrl+4..9 (Ctrl+1/2/3 จัดการใน handleCommand)
   ['Digit4', true, false, 'sp-element', 'parenthetical'],

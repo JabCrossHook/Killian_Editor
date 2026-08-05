@@ -249,6 +249,15 @@ export const schema = new Schema({
     // [alpha.58r บั๊ก 27] เส้นคั่น + บล็อกโค้ด (เดิม schema ไม่มี → พิมพ์ ``` หรือ --- แล้วหายไปเฉย ๆ)
     horizontal_rule: { group: 'block', atom: true, selectable: true,
                        parseDOM: [{ tag: 'hr' }], toDOM: () => ['hr'] },
+    // [alpha.61 ข้อ 3] Shift+Enter = ขึ้นบรรทัดในย่อหน้าเดิม (ไม่กินระบบย่อหน้าของนิยาย)
+    hard_break: { group: 'inline', inline: true, selectable: false,
+                  parseDOM: [{ tag: 'br' }], toDOM: () => ['br'] },
+    // [alpha.61 ข้อ 3] Ctrl+Enter = ขึ้นหน้าใหม่ด้วยมือ (เส้นบังคับ · ไม่ใช่เส้นคั่นหน้าอัตโนมัติ)
+    page_break: { group: 'block', atom: true, selectable: true,
+                  parseDOM: [{ tag: 'div.k-manual-page-break' }],
+                  toDOM: () => ['div', { class: 'k-manual-page-break',
+                                         contenteditable: 'false',
+                                         'data-label': 'ขึ้นหน้าใหม่' }] },
     code_block: { group: 'block', content: 'text*', marks: '', code: true, defining: true,
                   attrs: { lang: { default: '' }, fence: { default: '```' } },
                   parseDOM: [{ tag: 'pre', preserveWhitespace: 'full',
@@ -290,6 +299,62 @@ function buildRules(s) {
     new InputRule(/^(?:-{3,}|\*{3,}|_{3,})$/, (state, match, start, end) =>
       state.tr.replaceRangeWith(start, end, s.nodes.horizontal_rule.create())),
   ] });
+}
+
+// ══════════ [alpha.61 ข้อ 3] คำสั่งพื้นฐานที่หายไป: Tab · Shift+Enter · Ctrl+Enter ══════════
+// ทั้งสามตัวเป็น PM command มาตรฐาน (state, dispatch) → คืน false เมื่อทำไม่ได้
+// เพื่อให้ chainCommands ส่งต่อให้ตัวถัดไป (เช่น Tab ในรายการ = ลดชั้น ไม่ใช่เยื้อง)
+
+/** Shift+Enter — ขึ้นบรรทัดใน "ย่อหน้าเดิม" (ไม่แตกย่อหน้า จึงไม่โดนย่อหน้าอัตโนมัติของนิยาย) */
+export function insertHardBreak(state, dispatch) {
+  const br = state.schema.nodes.hard_break;
+  if (!br) return false;
+  const { $from } = state.selection;
+  if (!$from.parent.type.spec.content || !$from.parent.inlineContent) return false;
+  if (dispatch) dispatch(state.tr.replaceSelectionWith(br.create()).scrollIntoView());
+  return true;
+}
+
+/** Ctrl+Enter — ขึ้นหน้าใหม่ด้วยมือ (แทรกบล็อก page_break แล้ววางเคอร์เซอร์ต่อท้าย) */
+export function insertPageBreak(state, dispatch) {
+  const pb = state.schema.nodes.page_break;
+  if (!pb) return false;
+  if (dispatch) {
+    let tr = state.tr.replaceSelectionWith(pb.create());
+    // หลังเส้นต้องมีย่อหน้าให้พิมพ์ต่อเสมอ ไม่งั้นเคอร์เซอร์ค้างบน atom
+    const end = tr.selection.to;
+    if (!tr.doc.resolve(Math.min(end, tr.doc.content.size)).nodeAfter) {
+      tr = tr.insert(end, state.schema.nodes.paragraph.create());
+    }
+    const $p = tr.doc.resolve(Math.min(tr.selection.to + 1, tr.doc.content.size));
+    dispatch(tr.setSelection(TextSelection.near($p, 1)).scrollIntoView());
+  }
+  return true;
+}
+
+/** Tab — เยื้องด้วยอักขระแท็บจริง (ไฟล์ .md เก็บได้ตรง ๆ · round-trip ไม่เพี้ยน) */
+export function insertTab(state, dispatch) {
+  if (!state.selection.$from.parent.inlineContent) return false;
+  if (dispatch) dispatch(state.tr.insertText('\t').scrollIntoView());
+  return true;
+}
+
+/** Shift+Tab — ถอนแท็บที่อยู่ก่อนเคอร์เซอร์ (หรือแท็บนำหน้าบรรทัด) */
+export function removeTab(state, dispatch) {
+  const { $from, empty } = state.selection;
+  if (!empty || !$from.parent.inlineContent) return false;
+  const off = $from.parentOffset;
+  const start = $from.start();
+  // ก่อนเคอร์เซอร์เป็นแท็บ → ลบตัวนั้น · ไม่งั้นลบแท็บนำหน้าบรรทัดหนึ่งตัว
+  if (off > 0 && $from.parent.textBetween(off - 1, off) === '\t') {
+    if (dispatch) dispatch(state.tr.delete(start + off - 1, start + off));
+    return true;
+  }
+  if ($from.parent.textBetween(0, Math.min(1, $from.parent.content.size)) === '\t') {
+    if (dispatch) dispatch(state.tr.delete(start, start + 1));
+    return true;
+  }
+  return false;
 }
 
 export class KEditor {
@@ -354,12 +419,16 @@ export class KEditor {
         buildRules(schema),
         keymap({
           // ขึ้นบรรทัดใหม่แล้วรูปแบบตัวอักษร (หนา/เอียง/ขีด) ต้องติดไปด้วย — แบบ Word
-          // ในบล็อกโค้ด Enter = ขึ้นบรรทัดใน pre (ไม่ใช่แตกบล็อก) · Shift+Enter = ออกจากบล็อก
+          // ในบล็อกโค้ด Enter = ขึ้นบรรทัดใน pre (ไม่ใช่แตกบล็อก)
           Enter: chainCommands(newlineInCode, splitListItem(schema.nodes.list_item), splitBlockKeepMarks),
-          'Shift-Enter': exitCode,
-          'Mod-Enter': exitCode,
-          Tab: sinkListItem(schema.nodes.list_item),
-          'Shift-Tab': liftListItem(schema.nodes.list_item),
+          // [alpha.61 ข้อ 3] Shift+Enter = ขึ้นบรรทัด "ในย่อหน้าเดิม" (bypass ระบบย่อหน้า)
+          //   ในบล็อกโค้ดยังเป็นทางออกจากบล็อกเหมือนเดิม (exitCode มาก่อน)
+          'Shift-Enter': chainCommands(exitCode, insertHardBreak),
+          // [alpha.61 ข้อ 3] Ctrl/⌘+Enter = ขึ้นหน้าใหม่ด้วยมือ
+          'Mod-Enter': chainCommands(insertPageBreak),
+          // [alpha.61 ข้อ 3] Tab = เยื้อง (ในรายการ = ลดชั้น) — เดิมไม่ทำอะไรแล้วโฟกัสหลุดไปแถบรูปแบบ
+          Tab: chainCommands(sinkListItem(schema.nodes.list_item), insertTab),
+          'Shift-Tab': chainCommands(liftListItem(schema.nodes.list_item), removeTab),
         }),
         keymap(baseKeymap),
         history(),

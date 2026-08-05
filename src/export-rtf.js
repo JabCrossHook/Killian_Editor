@@ -139,7 +139,10 @@ export function generateRtf(blocks, meta = {}, fmt = null, opts = {}) {
   // หน้าปก (ใส่เมื่อมีชื่อเรื่อง) — จบด้วย \page เพื่อขึ้นหน้าใหม่
   const title = titles.length ? '' : String(meta.title || '').trim();
   if (title) {
-    out.push('\\pard\\plain\\f0\\fs' + fs + '\\qc\\sb2880\\b ' + escapeRtf(title.toUpperCase()) + '\\b0\\par');
+    // [alpha.61 ข้อ 4] เดิมบังคับชื่อเรื่องเป็นตัวพิมพ์ใหญ่เสมอ ทั้งที่ผู้ใช้พิมพ์มาแบบไหนก็ตาม
+    // ตอนนี้ตามสวิตช์ "บังคับพิมพ์ใหญ่" ของรูปแบบบท (ปิด = ใช้ข้อความตามที่พิมพ์)
+    const titleTx = f.forceCase === false ? title : title.toUpperCase();
+    out.push('\\pard\\plain\\f0\\fs' + fs + '\\qc\\sb2880\\b ' + escapeRtf(titleTx) + '\\b0\\par');
     if (meta.author) {
       out.push('\\pard\\plain\\f0\\fs' + fs + '\\qc\\sb480 ' + escapeRtf('เขียนโดย') + '\\par');
       out.push('\\pard\\plain\\f0\\fs' + fs + '\\qc ' + escapeRtf(String(meta.author)) + '\\par');

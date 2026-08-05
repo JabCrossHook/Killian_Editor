@@ -43,9 +43,9 @@ import { STEP_DEFS, PRESETS, stepDef, mkStep, newWorkflow, cloneWorkflow, runWor
 import { TIMELINE_VERSION, mergeTimeline, groupByTrack, trackNames, newEvent, findClashes, sortEvents, ganttData, ganttBar, ganttTicks, normalizeRefs } from './timeline.js';
 import { MAPS_VERSION, PIN_COLORS, PIN_KIND, newMap, newPin, clamp, findMap, sortMaps, breadcrumb, rootMaps, pinStats, deleteMap } from './maps.js';
 import { $, el, state, smart, LOG_BUF, log, setStatus,
-         DEFAULT_SETTINGS, DEFAULT_GOALS, DEFAULT_SP_CYCLE, DEFAULT_SP_CYCLE_KEYS,
+         DEFAULT_SETTINGS, GLOBAL_DEFAULTS, DEFAULT_GOALS, DEFAULT_SP_CYCLE, DEFAULT_SP_CYCLE_KEYS,
          BASE_ED_FS, BASE_SP_FS, PT_PX, ptToPx, DEFAULT_SCRIPT_FONT,
-         spCycleKeys, spKeyLabel,
+         spCycleKeys, spKeyLabel, spKeyMatch,
          PAPER_SIZES, MARGIN_DEFAULTS, SP_ELEMENT_KEYS, mergeSpFormat, pageCssVars, spCss,
          linesPerPage, formatLines, lineHeightIn, paginate, pageCount, wrapLines,
          newRoster, normalizeRoster, rosterToText, textWidth,
@@ -99,7 +99,12 @@ import { renderCommentPanel, commentStore, migrateSceneComments, clearCommentAnc
 import { exportBlogHTML, buildBlogHtml, BLOG_THEMES } from './export-blog.js';
 import { thesaurusMenuItems } from './thesaurus.js';
 import { createProjectFromTemplate, showTemplateDialog } from './project.js';
-import { showAISettingsDialog, saveAISettings, saveApiKey, clearKeyCache } from './ai-settings.js';
+import { saveAISettings, saveApiKey, clearKeyCache } from './ai-settings.js';
+// [alpha.61 ข้อ 2] ผู้ให้บริการ AI ที่ผู้ใช้เพิ่มเอง + แผงแชทแบบ opencode
+import { showAISettingsDialog, providerList, currentProvider, clearKeysCache,
+         providerDialog } from './ai/ai-provider-ui.js';
+import { renderAIChatPanel, newChatSession, loadSessions, collectScope,
+         _chatState } from './ai/ai-chat-panel.js';
 import { showAISummary } from './ai-summary.js';
 import { showAITitleSuggestions, collectProjectText, hashText, pastTitlesFor,
          summaryCacheState, rememberTitles } from './ai-summary.js';
@@ -388,6 +393,8 @@ export function spFormatSettings() {
            elements: s.spElements, styles: s.spStyles, rules: s.spPageRules, strings: s.spStrings,
            sceneNumbers: s.spSceneNumbers, pageNumbers: s.spPageNumbers,
            continued: s.spContinued,              // [alpha.58 · 55–56]
+           // [alpha.61 ข้อ 4] สวิตช์ "บังคับพิมพ์ใหญ่ตามมาตรฐาน" — ปิดแล้วทุกทางออกเลิกบังคับพร้อมกัน
+           forceCase: s.spForceCase !== false,
            lineHeight: s.spLineHeight };          // [alpha.58r บั๊ก 5+9] ต้องเข้าไปใน fmt ด้วย
 }
 /** รูปแบบบทหนังที่ใช้จริง (merge กับค่ามาตรฐานแล้ว) — โมดูลอื่นเรียกตัวนี้ */
@@ -1297,7 +1304,7 @@ async function closeProjectIfAny() {
   }
   state.tabs.clear(); state.active = null; state.root = null;
   // ล้างดัชนี/เอนจินที่ผูกกับโปรเจกต์เดิม — ไม่งั้นโปรเจกต์ใหม่จะเห็นข้อมูล/คีย์ของเก่า
-  resetAutoLink(); resetTaskEngine(); clearKeyCache(); resetAI(); resetSplitSystem(); resetKanban();
+  resetAutoLink(); resetTaskEngine(); clearKeyCache(); clearKeysCache(); resetAI(); resetSplitSystem(); resetKanban();
   resetCentralize(); resetCommentStore(); _cmMigrated.clear(); clearCommentAnchors();
   imgURLBase.clear();
   clearFeaturePanels();                 // บั๊ก #18: เนื้อแผงฟีเจอร์เป็นของโปรเจกต์เดิม ต้องล้าง
@@ -1361,13 +1368,113 @@ export async function loadProject(root) {
   initThesaurus().catch(() => {});                   // Thesaurus engine
   ensureAutoLink().catch(() => {});                  // Backlinks index
   if (state.settings.autoSync) setAutoSync(true);    // auto-task: คืนสถานะที่ผู้ใช้เปิดไว้
-  // [alpha.60r ข้อ 1] แสดงหน้าแรกถ้าผู้ใช้เปิดไว้ (แต่ไม่รบกวนตอนเทส)
-  if (state.settings.showHomeOnStartup !== false && !location.search.includes('k2test')) {
-    try { const { showHomeDialog } = await import('./home-ui.js'); await showHomeDialog(); } catch {}
-  }
+  // [alpha.61 ข้อ 1] หน้าแรกไม่เด้งจากตรงนี้แล้ว — bootSequence() เป็นคนตัดสินลำดับเปิดโปรแกรม
+  //   (เดิม loadProject เด้งหน้าแรกทับทุกครั้ง ทำให้ "เปิดโปรเจกต์ล่าสุดโดยข้ามหน้าแรก" เป็นไปไม่ได้)
   // [alpha.60r ข้อ 8] ปิดหน้าจอรอโหลด
   hideLoader();
   setStatus('เปิดโปรเจกต์: ' + state.title);
+}
+
+// ---------------- [alpha.61 ข้อ 4] อิสระเรื่องตัวพิมพ์ใหญ่/เล็กในบทหนัง ----------------
+// สามสวิตช์ (spForceCase · spAutoCapitalize · spAutoCorrectI) ใช้ทางเดียวกันหมด:
+// พลิกค่า → applySettings (spCss สร้างใหม่ทันที) → บันทึกลงโปรเจกต์ → อัปเดตติ๊กในเมนู
+const SP_CASE_LABELS = {
+  spForceCase: 'บังคับพิมพ์ใหญ่ตามรูปแบบบทมาตรฐาน',
+  spAutoCapitalize: 'แก้ตัวแรกของประโยคเป็นตัวใหญ่อัตโนมัติ',
+  spAutoCorrectI: 'แก้ i เดี่ยว ๆ เป็น I อัตโนมัติ',
+};
+export function toggleSpCase(key, on) {
+  const v = on ?? !(state.settings[key] !== false);
+  state.settings[key] = v;
+  applySettings();                    // spForceCase มีผลทันทีผ่าน spCss()
+  saveProjectMeta();
+  syncMenuToggles();
+  setStatus(SP_CASE_LABELS[key] + ': ' + (v ? 'เปิด' : 'ปิด (พิมพ์อย่างไรก็เป็นอย่างนั้น)'));
+  return v;
+}
+
+// ---------------- [alpha.61 ข้อ 3] ลบทั้งบรรทัด (เมนู แก้ไข → ลบทั้งบรรทัด) ----------------
+// ทำงานทั้งนิยายและบทหนัง — ลบ "บล็อกระดับบน" ที่เคอร์เซอร์อยู่ทั้งใบ
+// ถ้าเป็นบล็อกเดียวที่เหลือ ให้เคลียร์เนื้อในแทนการลบ (doc ต้องมี block+ เสมอ ไม่งั้น schema พัง)
+export function deleteCurrentLine() {
+  const t = state.active;
+  const view = t?.editor?.view || t?.sp?.view;
+  if (!view) { setStatus('เปิดเอกสารก่อนจึงลบบรรทัดได้'); return false; }
+  const st = view.state;
+  const { $from, $to } = st.selection;
+  const d = Math.min($from.depth, $to.depth) || 1;
+  const from = $from.before(Math.min(d, $from.depth) || 1);
+  const to = $to.after(Math.min(d, $to.depth) || 1);
+  let tr;
+  if (from <= 0 && to >= st.doc.content.size) {
+    // บทหนังไม่มี node ชื่อ paragraph → ถามชนิดบล็อกเริ่มต้นจาก schema แทนการเดาชื่อ
+    const blockType = st.schema.nodes.paragraph || st.schema.topNodeType.contentMatch.defaultType;
+    const empty = blockType && blockType.createAndFill();
+    if (!empty) return false;
+    tr = st.tr.replaceWith(0, st.doc.content.size, empty);
+  } else {
+    tr = st.tr.delete(from, to);
+  }
+  view.dispatch(tr.scrollIntoView());
+  view.focus();
+  markDirty(t);
+  setStatus('ลบบรรทัดแล้ว');
+  return true;
+}
+
+// ---------------- [alpha.61 ข้อ 1] ลำดับเปิดโปรแกรม ----------------
+// กดเปิด → หน้าต่างรอโหลด → เข้าโปรแกรม → แยกทางตามตั้งค่า (global · ใช้ร่วมทุกโปรเจกต์):
+//   openLastProject=true  + มีโปรเจกต์ล่าสุด → เปิดเลย "ข้ามหน้าแรก"
+//   showHomeOnStartup=true                   → บังคับเห็นหน้าแรกเสมอ (แม้เปิดโปรเจกต์ล่าสุดไว้)
+//   ทั้งคู่ปิด                                 → หน้าแรกก่อน แล้วผู้ใช้เลือกเอง
+// อ่านค่าจาก userData/settings.json ตรง ๆ เพราะตอนนี้ยังไม่มีโปรเจกต์ → state.settings ยังว่าง
+export async function bootGlobalSettings() {
+  let g = {};
+  try { g = (await kapi.readGlobalSettings()) || {}; } catch {}
+  return { ...GLOBAL_DEFAULTS, ...g };
+}
+/** บันทึกค่า global ทีละคีย์ (สวิตช์ในเมนู) — merge ทับของเดิม ไม่ทับทั้งไฟล์ */
+export async function saveGlobalSetting(key, value) {
+  let g = {};
+  try { g = (await kapi.readGlobalSettings()) || {}; } catch {}
+  g[key] = value;
+  try { await kapi.writeGlobalSettings(g); } catch (e) { log('warn', 'บันทึก global settings ไม่สำเร็จ', e); }
+  state.settings[key] = value;
+  return value;
+}
+export async function bootSequence() {
+  showLoader('กำลังเริ่มโปรแกรม…');
+  const g = await bootGlobalSettings();
+  // ค่ายังไม่มีโปรเจกต์ → ยัดลง state.settings ไว้ก่อน เพื่อให้เมนู/สวิตช์อ่านค่าถูกตั้งแต่วินาทีแรก
+  state.settings = { ...DEFAULT_SETTINGS, ...g, ...state.settings };
+  syncMenuToggles();
+  let recent = [];
+  try { recent = (await kapi.listRecent()) || []; } catch {}
+  const openedLast = !!(g.openLastProject && recent[0]);
+  if (openedLast) await loadProject(recent[0]);
+  hideLoader();
+  // ไม่มีโปรเจกต์ล่าสุดให้เปิด หรือผู้ใช้สั่ง "แสดงหน้าแรกเสมอ" → เปิดหน้าแรก
+  if (!openedLast || g.showHomeOnStartup === true) {
+    try { const { showHomeDialog } = await import('./home-ui.js'); await showHomeDialog(); } catch {}
+  }
+  return { openedLast, showedHome: !openedLast || g.showHomeOnStartup === true };
+}
+/** สลับ "เปิดโปรเจกต์ล่าสุดเมื่อเริ่มโปรแกรม" (เมนูไฟล์) */
+export async function toggleOpenLastProject(on) {
+  const v = on ?? !(state.settings.openLastProject === true);
+  await saveGlobalSetting('openLastProject', v);
+  syncMenuToggles();
+  setStatus(v ? 'เริ่มโปรแกรม: เปิดโปรเจกต์ล่าสุดทันที (ข้ามหน้าแรก)'
+              : 'เริ่มโปรแกรม: แสดงหน้าแรกก่อน');
+  return v;
+}
+/** สลับ "แสดงหน้าแรกเสมอ" (เมนูมุมมอง) */
+export async function toggleShowHomeAlways(on) {
+  const v = on ?? !(state.settings.showHomeOnStartup === true);
+  await saveGlobalSetting('showHomeOnStartup', v);
+  syncMenuToggles();
+  setStatus(v ? 'แสดงหน้าแรกเสมอ: เปิด' : 'แสดงหน้าแรกเสมอ: ปิด');
+  return v;
 }
 
 // [alpha.60r ข้อ 2] บันทึกรายการแท็บที่เปิดอยู่ → project.khn.json → restore ตอนเปิดครั้งต่อไป
@@ -2959,6 +3066,13 @@ export function syncMenuToggles() {
       continueds: spContinuedOn(),                  // alpha.58 · 55–56
       typeSound: !!state.settings.typeSound,
       markdownCodes: showMarkdownCodes(),            // [60r3 ข้อ 6]
+      // [alpha.61 ข้อ 1] ลำดับเปิดโปรแกรม — เมนูไฟล์ / เมนูมุมมอง
+      openLastProject: state.settings.openLastProject === true,
+      showHomeAlways: state.settings.showHomeOnStartup === true,
+      // [alpha.61 ข้อ 4] อิสระเรื่องตัวพิมพ์ในบทหนัง
+      spForceCase: state.settings.spForceCase !== false,
+      spAutoCapitalize: state.settings.spAutoCapitalize !== false,
+      spAutoCorrectI: state.settings.spAutoCorrectI !== false,
       panels: { 'tree-panel': !!ps.tree, 'props-panel': !!ps.props,
                 'outline-panel': !!ps.outline, ...ps },
     };
@@ -6146,6 +6260,7 @@ const FEATURE_PANELS = {
   maps:      () => renderMapsPanel(),
   gallery:   () => renderGalleryPanel(),        // [alpha.60r1 ข้อ 21]
   'ai-analyzer': () => renderAIAnalyzerPanel($('#ai-analyzer-body')),   // [alpha.60r3 ข้อ 5]
+  'ai-chat':     () => renderAIChatPanel($('#ai-chat-body')),           // [alpha.61 ข้อ 2]
 };
 export function isFeaturePanel(id) { return !!FEATURE_PANELS[panelId(id)]; }
 // วาดค้างอยู่ = ใช้รอบเดียวกัน — openX() เรียก showPanel (hook เริ่มวาด) แล้ว await ต่อ
@@ -6400,6 +6515,15 @@ async function handleCommand(ch, ...a) {
     // แผงฟีเจอร์ (บั๊ก #18) วาดเนื้อหาผ่าน hook ใน showPanel แล้ว
     case 'toggle-panel': togglePanel(a[0]); syncMenuToggles(); break;
     case 'reset-panels': resetPanels(); syncMenuToggles(); break;
+    // [alpha.61 ข้อ 1] สวิตช์ลำดับเปิดโปรแกรม (เก็บที่ global settings — ใช้ร่วมทุกโปรเจกต์)
+    case 'delete-line': deleteCurrentLine(); break;
+    // [alpha.61 ข้อ 4] สวิตช์ตัวพิมพ์ใหญ่/เล็กของบทหนัง — เก็บที่ระดับโปรเจกต์
+    case 'sp-force-case': toggleSpCase('spForceCase'); break;
+    case 'sp-auto-capitalize': toggleSpCase('spAutoCapitalize'); break;
+    case 'sp-auto-correct-i': toggleSpCase('spAutoCorrectI'); break;
+    case 'toggle-open-last': await toggleOpenLastProject(); break;
+    case 'toggle-home-always': await toggleShowHomeAlways(); break;
+    case 'home': { const { showHomeDialog } = await import('./home-ui.js'); await showHomeDialog(); break; }
     case 'export-draft': exportDraft(); break;
     case 'zoom':
       if (a[0] === 'fit') zoomFitWidth();
@@ -6457,7 +6581,12 @@ async function handleCommand(ch, ...a) {
     case 'ai-consistency': { const t2 = state.active;
       openConsistencyCheck(t2?.file || ''); break; }
     case 'ai-world': openWorldGenerator(); break;
-    case 'ai-chat': openAIChat(); break;
+    // [alpha.61 ข้อ 2] แชท AI เป็น "แผง" แบบ opencode แล้ว — กล่องเดิมยังเรียกได้ที่ ai-chat-dialog
+    case 'ai-chat': showPanel('ai-chat'); await renderFeaturePanel('ai-chat');
+                    syncMenuToggles(); break;
+    case 'ai-chat-new': showPanel('ai-chat'); await newChatSession();
+                        syncMenuToggles(); break;
+    case 'ai-chat-dialog': openAIChat(); break;
     case 'auto-sync': setAutoSync(a[0] === undefined ? !isAutoSyncOn() : !!a[0]);
                       state.settings.autoSync = isAutoSyncOn(); saveProjectMeta(); break;
     // ---- alpha.57: มุมมองบท (57/59/60/61) · ไปยังหน้า-ฉาก (78) · ตรวจบท (54) · ส่งออก (67/68/70) ----
@@ -7137,7 +7266,7 @@ window.addEventListener('DOMContentLoaded', () => {
                                     markDirty(state.active); doFind(); };
   $('#find-repall').onclick = () => { const n = replaceAll(state.active?.editor?.view, $('#find-r').value);
                                       setStatus('แทนที่ ' + n + ' แห่ง'); markDirty(state.active); doFind(); };
-  if (!location.search.includes('k2test')) kapi.listRecent().then((r) => { if (r[0]) loadProject(r[0]); else { import('./home-ui.js').then(m => m.showHomeDialog()); } });
+  if (!location.search.includes('k2test')) bootSequence();
   // autosave ตั้งค่าได้ผ่านตั้งค่าโปรเจกต์ (restartAutosave เรียกจาก applySettings เมื่อเปิดโปรเจกต์)
   restartAutosave();
 });
@@ -13776,21 +13905,64 @@ async function runTest(projectPath) {
         check('#1 กล่องหน้าแรกมีกรอบเลื่อนแยก (กรอบนิ่ง เนื้อในเลื่อน)',
               !!ovH.querySelector('.home-dlg-scroll') && dlg.classList.contains('k-home-dlg'));
         const r1 = dlg.getBoundingClientRect();
-        // [alpha.60r3 ข้อ 9] ปุ่มสลับมุมมองย้ายจากแถวปุ่มขึ้นไปอยู่บนหัวกล่อง ข้างปุ่ม ✕
-        const viewBtn = [...ovH.querySelectorAll('.home-head button, .home-actions button')]
-          .find((b) => /📋|📱/.test(b.textContent));
-        check('#1 มีปุ่มสลับมุมมอง', !!viewBtn);
-        viewBtn.click(); await new Promise((r) => setTimeout(r, 120));
+        // ---- [alpha.61 ข้อ 1] แถบคำสั่งย้ายลงขอบล่าง · ไม่มี ✕ มุมขวาบน · มุมมองเป็น 2 ปุ่มโหมด ----
+        const actionsEl = ovH.querySelector('.home-actions');
+        check('[61-1] แถบคำสั่งอยู่ขอบล่างของกล่อง (เป็นลูกตัวสุดท้าย)',
+              !!actionsEl && dlg.lastElementChild === actionsEl,
+              dlg.lastElementChild && dlg.lastElementChild.className);
+        check('[61-1] ไม่มีปุ่ม ✕ มุมขวาบนแล้ว', !ovH.querySelector('.home-close-btn'));
+        check('[61-1] ยังปิดได้จากปุ่ม "✕ ปิด" ในแถบล่าง', !!ovH.querySelector('.home-btn-close'));
+        const cardBtn = ovH.querySelector('.home-view-mode[data-view="card"]');
+        const listBtn = ovH.querySelector('.home-view-mode[data-view="list"]');
+        check('[61-1] มุมมองเป็น 2 ปุ่มโหมด (การ์ด / รายการ)', !!cardBtn && !!listBtn);
+        check('[61-1] ปุ่มมุมมองอยู่ในแถบคำสั่งล่าง (ไม่ใช่หัวกล่อง)',
+              !!cardBtn && cardBtn.closest('.home-actions') === actionsEl);
+        check('[61-1] เริ่มต้นโหมดการ์ดติดอยู่', cardBtn.classList.contains('on') && !listBtn.classList.contains('on'));
+        listBtn.click(); await new Promise((r) => setTimeout(r, 120));
         const r2 = dlg.getBoundingClientRect();
+        check('[61-1] กดโหมดรายการ → ปุ่มรายการติด · ปุ่มการ์ดดับ (เป็นโหมด ไม่ใช่สวิตช์)',
+              listBtn.classList.contains('on') && !cardBtn.classList.contains('on'));
+        check('[61-1] ตารางเข้าโหมดรายการจริง', grid.classList.contains('list'));
         check('#1 สลับเป็นรายการแล้วกล่องขนาดเท่าเดิม',
               Math.abs(r1.width - r2.width) < 1 && Math.abs(r1.height - r2.height) < 1,
               `${Math.round(r1.width)}x${Math.round(r1.height)} → ${Math.round(r2.width)}x${Math.round(r2.height)}`);
-        viewBtn.click(); await new Promise((r) => setTimeout(r, 120));
+        // กดโหมดเดิมซ้ำต้องไม่สลับกลับ (พฤติกรรมของ "โหมด" ต่างจากสวิตช์)
+        listBtn.click(); await new Promise((r) => setTimeout(r, 60));
+        check('[61-1] กดโหมดเดิมซ้ำแล้วไม่สลับกลับ',
+              listBtn.classList.contains('on') && grid.classList.contains('list'));
+        cardBtn.click(); await new Promise((r) => setTimeout(r, 120));
         const r3 = dlg.getBoundingClientRect();
         check('#1 สลับกลับเป็นการ์ดแล้วยังขนาดเดิม',
               Math.abs(r1.width - r3.width) < 1 && Math.abs(r1.height - r3.height) < 1,
               `${Math.round(r1.height)} → ${Math.round(r3.height)}`);
         check('#1 ความกว้างกล่องพอดี 4 คอลัมน์', r1.width > 4 * 190, String(Math.round(r1.width)));
+        // ---- [alpha.61 ข้อ 1] ปุ่มค้นหาโปรเจกต์ ถัดจากปุ่มมุมมอง ----
+        const findBtn = ovH.querySelector('.home-btn-find');
+        const findInp = ovH.querySelector('.home-find-input');
+        check('[61-1] มีปุ่มค้นหาโปรเจกต์', !!findBtn && !!findInp);
+        check('[61-1] ปุ่มค้นหาอยู่ถัดจากกลุ่มปุ่มมุมมอง',
+              findBtn.previousElementSibling === ovH.querySelector('.home-view-modes'));
+        check('[61-1] ช่องค้นหาซ่อนอยู่ก่อนกด', findInp.style.display === 'none');
+        findBtn.click(); await new Promise((r) => setTimeout(r, 60));
+        check('[61-1] กดแล้วช่องค้นหาโผล่', findInp.style.display !== 'none');
+        const nCards = grid.querySelectorAll('.home-card').length;
+        check('[61-1] การ์ดมีคีย์ค้นหาติดมาด้วย (dataset.search)',
+              nCards === 0 || !!grid.querySelector('.home-card').dataset.search);
+        if (nCards) {
+          const key = grid.querySelector('.home-card').dataset.search.slice(0, 4);
+          findInp.value = 'ไม่มีทางเจอคำนี้แน่ ๆ zzzz';
+          findInp.oninput();
+          const shown = [...grid.querySelectorAll('.home-card')].filter((c) => c.style.display !== 'none').length;
+          check('[61-1] คำค้นที่ไม่ตรงอะไรเลย → ซ่อนการ์ดทุกใบ', shown === 0, String(shown));
+          findInp.value = key;
+          findInp.oninput();
+          const shown2 = [...grid.querySelectorAll('.home-card')].filter((c) => c.style.display !== 'none').length;
+          check('[61-1] คำค้นที่ตรง → การ์ดกลับมา', shown2 >= 1, String(shown2));
+        }
+        findBtn.click();                                  // ปิดช่องค้นหา = ล้างตัวกรอง
+        await new Promise((r) => setTimeout(r, 60));
+        check('[61-1] ปิดช่องค้นหาแล้วตัวกรองถูกล้าง',
+              [...grid.querySelectorAll('.home-card')].every((c) => c.style.display !== 'none'));
         ovH.remove();
         await new Promise((r) => setTimeout(r, 60));
       }
@@ -14226,9 +14398,18 @@ async function runTest(projectPath) {
 
         // ---- [1] ความกว้าง workspace วัดเป็นพิกเซล ไม่ใช่ % ใต้ CSS zoom ----
         check('[60r2-1] มีฟังก์ชัน syncWorkspaceWidths', typeof syncWorkspaceWidths === 'function');
+        // [alpha.61] บทเรียนเดิมข้อ "#3 ตำแหน่งเลื่อน": **ตัวแก้ไขที่มีโฟกัสจริงจะดึงจอกลับไปหาเคอร์เซอร์**
+        // เคอร์เซอร์อยู่ต้นเอกสาร = ขอบซ้าย → พอซูมจนกระดาษกว้างกว่าแผง มันลากกลับไป scrollLeft=0
+        // ทุกครั้ง ทำให้ที่ keepZoomCenter จัดกึ่งกลางไว้ถูกล้างทิ้ง
+        // บน Linux/xvfb หน้าต่างเทสไม่มีโฟกัสจริง อาการจึงไม่โผล่ · บน macOS โผล่ทุกครั้ง
+        // → ถอดโฟกัสก่อนวัด เพราะเทสนี้ตรวจ "การจัดกึ่งกลางตอนซูม" ไม่ใช่พฤติกรรมเคอร์เซอร์
+        try { document.activeElement && document.activeElement.blur(); } catch {}
         for (const z of [0.6, 1, 1.8]) {
           setPageScale(z);
           await new Promise((r) => setTimeout(r, 120));
+          try { document.activeElement && document.activeElement.blur(); } catch {}
+          centerPage(pane60);
+          await new Promise((r) => setTimeout(r, 40));
           const want = Math.round(pane60.clientWidth / pageScale);
           check(`[60r2-1] ซูม ${Math.round(pageScale * 100)}%: min-width ของ workspace = พื้นที่แผง ÷ ซูม`,
                 Math.abs(parseFloat(ws60.style.minWidth) - want) <= 2,
@@ -15228,15 +15409,18 @@ async function runTest(projectPath) {
           const acts = ov9.querySelector('.home-actions');
           check('[r3-9] กล่องหน้าแรกมีแถวปุ่ม', !!acts);
           const order = [...acts.children].map((c) => c.className.split(' ').pop());
-          check('[r3-9] เรียงปุ่มตามภาพ: ส่งออก · นำเข้า · ช่องว่าง · สร้างใหม่ · เปิด · ปิด',
-                JSON.stringify(order) === JSON.stringify(['home-btn-export', 'home-btn-import',
+          // [alpha.61 ข้อ 1] ลำดับใหม่: มุมมอง · ค้นหา · ส่งออก · นำเข้า · ช่องว่าง · สร้างใหม่ · เปิด · ปิด
+          check('[61-1] เรียงปุ่ม: มุมมอง · ค้นหา · ส่งออก · นำเข้า · ช่องว่าง · สร้างใหม่ · เปิด · ปิด',
+                JSON.stringify(order) === JSON.stringify(['home-view-modes', 'home-btn-find',
+                  'home-find-input', 'home-btn-export', 'home-btn-import',
                   'home-actions-spacer', 'home-btn-new', 'home-btn-open', 'home-btn-close']),
                 JSON.stringify(order));
           check('[r3-9] ปุ่มส่งออก/นำเข้ามีจริง',
                 !!acts.querySelector('.home-btn-export') && !!acts.querySelector('.home-btn-import'));
           check('[r3-9] ปุ่มปิดกล่องมีจริง', !!acts.querySelector('.home-btn-close'));
-          check('[r3-9] สวิตช์มุมมอง 📋 ย้ายขึ้นไปอยู่บนหัวกล่องแล้ว',
-                !!ov9.querySelector('.home-head .home-view-btn') && !acts.querySelector('.home-view-btn'));
+          check('[61-1] สวิตช์มุมมองแบบเดิม (📋 หัวกล่อง) ถูกแทนที่ด้วยปุ่มโหมด 2 ใบในแถบล่าง',
+                !ov9.querySelector('.home-view-btn') &&
+                acts.querySelectorAll('.home-view-mode').length === 2);
           // ปุ่มกว้างเท่ากัน (min-width จาก CSS) — ต่างกันได้เฉพาะปุ่มปิดที่ตั้งไว้แคบกว่า
           const wMain = ['home-btn-export', 'home-btn-import', 'home-btn-new', 'home-btn-open']
             .map((c) => Math.round(acts.querySelector('.' + c).getBoundingClientRect().width));
@@ -15251,6 +15435,288 @@ async function runTest(projectPath) {
           check('[r3-9] กดปุ่มปิดแล้วกล่องหายจริง', !document.body.contains(ov9));
           [...document.querySelectorAll('.k-overlay')].forEach((o) => o.remove());
         }
+      }
+
+
+      // ══════════════════════════ alpha.61 ══════════════════════════
+      // (บล็อกนี้อยู่นอกขอบเขตของ `S` ที่ประกาศไว้ในบล็อก alpha.56 → ประกาศของตัวเอง)
+      const S = state.settings;
+      // ---- [61-1] ลำดับเปิดโปรแกรม: หน้าต่างรอโหลด → เปิดล่าสุด / หน้าแรก ----
+      {
+        check('[61-1] ค่าเริ่มต้นคือ "ไม่เปิดโปรเจกต์ล่าสุด" และ "ไม่บังคับหน้าแรก"',
+              GLOBAL_DEFAULTS.openLastProject === false && GLOBAL_DEFAULTS.showHomeOnStartup === false,
+              JSON.stringify([GLOBAL_DEFAULTS.openLastProject, GLOBAL_DEFAULTS.showHomeOnStartup]));
+        check('[61-1] มีหน้าต่างรอโหลดในหน้า HTML', !!document.getElementById('k-loader'));
+        const keepA = S.openLastProject, keepB = S.showHomeOnStartup;
+        await toggleOpenLastProject(true);
+        check('[61-1] เปิดสวิตช์ "เปิดโปรเจกต์ล่าสุด" แล้วค่าเข้าสถานะจริง', S.openLastProject === true);
+        const g1 = await bootGlobalSettings();
+        check('[61-1] สวิตช์ถูกบันทึกลง global settings (ใช้ร่วมทุกโปรเจกต์)',
+              g1.openLastProject === true, JSON.stringify(g1.openLastProject));
+        await toggleOpenLastProject(false);
+        check('[61-1] กดซ้ำแล้วปิดกลับได้', S.openLastProject === false);
+        await toggleShowHomeAlways(true);
+        check('[61-1] สวิตช์ "แสดงหน้าแรกเสมอ" ทำงานและถูกบันทึก',
+              S.showHomeOnStartup === true && (await bootGlobalSettings()).showHomeOnStartup === true);
+        await toggleShowHomeAlways(false);
+        S.openLastProject = keepA; S.showHomeOnStartup = keepB;
+      }
+
+      // ---- [61-3] ฟังก์ชันพื้นฐานของตัวแก้ไข: Tab · Shift+Enter · Ctrl+Enter · ลบทั้งบรรทัด ----
+      {
+        const scEl = document.querySelector('#tree .scene:not(.add-row)');
+        if (scEl) { scEl.click(); await new Promise((r) => setTimeout(r, 400)); }
+        const tE = state.active;
+        check('[61-3] เปิดฉากเป็นตัวแก้ไขนิยายได้', !!(tE && tE.editor));
+        const { schema: pmSchema } = await import('./editor.js');
+        check('[61-3] schema มี hard_break (Shift+Enter) และ page_break (Ctrl+Enter)',
+              !!pmSchema.nodes.hard_break && !!pmSchema.nodes.page_break);
+
+        const ed = tE.editor;
+        ed.setMarkdown('บรรทัดทดสอบ');
+        await new Promise((r) => setTimeout(r, 80));
+        const view = ed.view;
+        const { TextSelection: TS61 } = await import('prosemirror-state');
+        const putCaretEnd = () => {
+          const end = view.state.doc.content.size - 1;
+          view.dispatch(view.state.tr.setSelection(TS61.near(view.state.doc.resolve(end), -1)));
+        };
+
+        // Tab = เยื้องด้วยแท็บจริง (เดิมไม่ทำอะไร แล้วโฟกัสหลุดไปแถบรูปแบบ)
+        putCaretEnd();
+        const { insertTab, insertHardBreak, insertPageBreak, removeTab } = await import('./editor.js');
+        check('[61-3] Tab แทรกอักขระแท็บจริง',
+              insertTab(view.state, view.dispatch) === true && ed.getMarkdown() === 'บรรทัดทดสอบ\t',
+              JSON.stringify(ed.getMarkdown()));
+        check('[61-3] Shift+Tab ถอนแท็บที่เพิ่งใส่',
+              removeTab(view.state, view.dispatch) === true && ed.getMarkdown() === 'บรรทัดทดสอบ',
+              JSON.stringify(ed.getMarkdown()));
+
+        // Shift+Enter = ขึ้นบรรทัดในย่อหน้าเดิม (ไม่แตกย่อหน้า)
+        putCaretEnd();
+        insertHardBreak(view.state, view.dispatch);
+        view.dispatch(view.state.tr.insertText('ต่อท้าย'));
+        check('[61-3] Shift+Enter ได้ hard break ในย่อหน้าเดียว ไม่ใช่ย่อหน้าใหม่',
+              view.state.doc.childCount === 1, String(view.state.doc.childCount));
+        check('[61-3] hard break เขียนลงไฟล์เป็นแบ็กสแลชท้ายบรรทัด (CommonMark)',
+              ed.getMarkdown() === 'บรรทัดทดสอบ\\\nต่อท้าย', JSON.stringify(ed.getMarkdown()));
+        // อ่านกลับต้องได้ย่อหน้าเดียวเหมือนเดิม (round-trip ผ่านตัวแก้ไขจริง)
+        const md61 = ed.getMarkdown();
+        ed.setMarkdown(md61);
+        await new Promise((r) => setTimeout(r, 60));
+        check('[61-3] อ่านไฟล์กลับแล้วยังเป็นย่อหน้าเดียว',
+              ed.view.state.doc.childCount === 1, String(ed.view.state.doc.childCount));
+        check('[61-3] ตัวแก้ไขวาด <br> จริงบนจอ', !!tE.pane.querySelector('.ProseMirror br'));
+
+        // Ctrl+Enter = ขึ้นหน้าใหม่ด้วยมือ
+        ed.setMarkdown('ก่อนขึ้นหน้า');
+        await new Promise((r) => setTimeout(r, 60));
+        const v2 = ed.view;
+        v2.dispatch(v2.state.tr.setSelection(TS61.near(v2.state.doc.resolve(v2.state.doc.content.size - 1), -1)));
+        check('[61-3] Ctrl+Enter แทรกเส้นขึ้นหน้าใหม่ได้', insertPageBreak(v2.state, v2.dispatch) === true);
+        check('[61-3] ขึ้นหน้าใหม่เก็บลงไฟล์เป็น <!--pagebreak--> (v1 เปิดได้ ไม่พัง)',
+              ed.getMarkdown().includes('<!--pagebreak-->'), JSON.stringify(ed.getMarkdown()));
+        check('[61-3] เส้นขึ้นหน้าใหม่โผล่บนจอจริง', !!tE.pane.querySelector('.k-manual-page-break'));
+        check('[61-3] หลังเส้นมีย่อหน้าให้พิมพ์ต่อเสมอ',
+              v2.state.doc.lastChild.type.name === 'paragraph', v2.state.doc.lastChild.type.name);
+
+        // ลบทั้งบรรทัด
+        ed.setMarkdown('บรรทัดหนึ่ง\nบรรทัดสอง\nบรรทัดสาม');
+        await new Promise((r) => setTimeout(r, 60));
+        const v3 = ed.view;
+        v3.dispatch(v3.state.tr.setSelection(TS61.near(v3.state.doc.resolve(1), 1)));
+        deleteCurrentLine();
+        check('[61-3] เมนู "ลบทั้งบรรทัด" ลบบล็อกที่เคอร์เซอร์อยู่',
+              ed.getMarkdown() === 'บรรทัดสอง\nบรรทัดสาม', JSON.stringify(ed.getMarkdown()));
+        ed.setMarkdown('บรรทัดเดียว');
+        await new Promise((r) => setTimeout(r, 60));
+        deleteCurrentLine();
+        check('[61-3] ลบบรรทัดสุดท้ายแล้วเอกสารยังใช้ได้ (ไม่เหลือ doc ว่างเปล่าที่ schema ไม่ยอม)',
+              ed.view.state.doc.childCount >= 1 && ed.getMarkdown() === '',
+              JSON.stringify(ed.getMarkdown()));
+        check('[61-3] คีย์ลัดลบทั้งบรรทัดลงทะเบียนแล้ว (Ctrl+Shift+Delete)',
+              SHORTCUTS.some((r2) => r2[0] === 'Delete' && r2[1] === true && r2[2] === true && r2[3] === 'delete-line'));
+      }
+
+      // ---- [61-3] บทหนัง: Tab ไม่ถูกยึดไว้เลือกหมวดอีกแล้ว ----
+      {
+        check('[61-3] ค่าเริ่มต้นของ "เลือกหมวด" ย้ายไป Ctrl+Tab แล้ว',
+              DEFAULT_SP_CYCLE_KEYS.tab.code === 'Tab' && DEFAULT_SP_CYCLE_KEYS.tab.ctrl === true &&
+              DEFAULT_SP_CYCLE_KEYS.shiftTab.ctrl === true && DEFAULT_SP_CYCLE_KEYS.shiftTab.shift === true,
+              JSON.stringify(DEFAULT_SP_CYCLE_KEYS));
+        check('[61-3] Tab เปล่าไม่ตรงกับปุ่มเลือกหมวดอีกต่อไป',
+              spKeyMatch(spCycleKeys({}).tab, { code: 'Tab', shiftKey: false, ctrlKey: false, altKey: false }) === false);
+        check('[61-3] Ctrl+Tab ตรงกับปุ่มเลือกหมวด',
+              spKeyMatch(spCycleKeys({}).tab, { code: 'Tab', shiftKey: false, ctrlKey: true, altKey: false }) === true);
+        check('[61-3] ผู้ใช้ตั้งกลับเป็น Tab เปล่าได้ (ยังยืดหยุ่นเหมือนเดิม)',
+              spKeyMatch(spCycleKeys({ spCycleKeys: { tab: { code: 'Tab', ctrl: false, shift: false, alt: false } } }).tab,
+                         { code: 'Tab', shiftKey: false, ctrlKey: false, altKey: false }) === true);
+      }
+
+      // ---- [61-4] อิสระเรื่องตัวพิมพ์ใหญ่/เล็กในบทหนัง ----
+      {
+        const keepFC = S.spForceCase;
+        toggleSpCase('spForceCase', false);
+        const cssOff = document.getElementById('k-sp-format').textContent;
+        check('[61-4] ปิดสวิตช์แล้ว CSS ของบททั้งชุดไม่มี uppercase เหลือ',
+              !/text-transform:uppercase/.test(cssOff));
+        check('[61-4] fmt ที่ใช้จริงรายงาน forceCase=false', spFormat().forceCase === false);
+        toggleSpCase('spForceCase', true);
+        check('[61-4] เปิดกลับแล้ว uppercase คืนมา',
+              /text-transform:uppercase/.test(document.getElementById('k-sp-format').textContent));
+        toggleSpCase('spAutoCapitalize', false);
+        check('[61-4] ปิดแก้ตัวพิมพ์อัตโนมัติได้', S.spAutoCapitalize === false);
+        toggleSpCase('spAutoCapitalize', true);
+        toggleSpCase('spAutoCorrectI', false);
+        check('[61-4] ปิดแก้ i→I ได้', S.spAutoCorrectI === false);
+        toggleSpCase('spAutoCorrectI', true);
+        S.spForceCase = keepFC;
+      }
+
+      // ---- [61-2] ตั้งค่า AI: ผู้ให้บริการที่ผู้ใช้เพิ่มเอง ----
+      {
+        const AP = await import('./ai/ai-providers.js');
+        const AU = await import('./ai/ai-provider-ui.js');
+        const ovAI = await AU.showAISettingsDialog();
+        await new Promise((r) => setTimeout(r, 120));
+        check('[61-2] กล่องตั้งค่า AI เปิดได้', !!ovAI && !!ovAI.querySelector('.k-ai-settings'));
+        check('[61-2] ผู้ให้บริการเป็น dropdown ที่ผู้ใช้เพิ่มเอง (มีปุ่ม ➕ เพิ่ม)',
+              !!ovAI.querySelector('.ai-prov-sel') && !!ovAI.querySelector('.ai-prov-add'));
+        check('[61-2] ยังไม่มีเจ้าไหน → บอกให้กดเพิ่ม (ไม่ใช่รายการสำเร็จรูป)',
+              ovAI.querySelector('.ai-prov-empty').style.display !== 'none');
+        check('[61-2] มีตัวเลือกปุ่มส่งของแชท (Enter / Shift+Enter)',
+              ovAI.querySelector('.ai-send-sel').options.length === 2);
+
+        // ป๊อปอัปผู้ให้บริการ — 4 ส่วนครบ
+        const pPromise = AU.providerDialog(null);
+        await new Promise((r) => setTimeout(r, 120));
+        const dlgP = document.querySelector('.k-ai-prov');
+        check('[61-2] ป๊อปอัปเพิ่มผู้ให้บริการเปิดได้', !!dlgP);
+        const secTitles = [...dlgP.querySelectorAll('.ai-sec-title')].map((x) => x.textContent);
+        check('[61-2] มี 4 ส่วนตามลำดับ: ชื่อ · Credential · Model · Parameters',
+              secTitles.length === 4 && secTitles[0].includes('ชื่อ') && secTitles[1].includes('Credential') &&
+              secTitles[2].includes('Model') && secTitles[3].includes('Parameters'), JSON.stringify(secTitles));
+        check('[61-2] Credential มีครบ: ชื่อ · API · Base URL · Allowed Domains · ทดสอบ · Save',
+              !!dlgP.querySelector('.ai-cred-name') && !!dlgP.querySelector('.ai-cred-key') &&
+              !!dlgP.querySelector('.ai-cred-base') && !!dlgP.querySelector('.ai-cred-domains') &&
+              !!dlgP.querySelector('.ai-cred-test') && !!dlgP.querySelector('.ai-cred-save'));
+        check('[61-2] ช่อง API เป็นแบบซ่อนค่า', dlgP.querySelector('.ai-cred-key').type === 'password');
+        check('[61-2] Model เป็น dropdown + มีปุ่มดึงรายชื่อจาก API',
+              dlgP.querySelector('.ai-model-sel').tagName === 'SELECT' && !!dlgP.querySelector('.ai-model-load'));
+        const paramKeys = [...dlgP.querySelectorAll('[data-param]')].map((x) => x.dataset.param);
+        check('[61-2] พารามิเตอร์ครบ 12 ตัวตามที่สั่ง',
+              JSON.stringify(paramKeys) === JSON.stringify(AP.PARAM_KEYS), JSON.stringify(paramKeys));
+        for (const want of ['Thinking mode', 'Frequency Penalty', 'Max Retries',
+                            'Maximum Number of Tokens', 'Presence Penalty', 'Reasoning Effort',
+                            'Response Format', 'Sampling Temperature', 'Timeout', 'Top K',
+                            'Top P', 'Custom Headers']) {
+          check('[61-2] มีพารามิเตอร์ "' + want + '"',
+                [...dlgP.querySelectorAll('.ai-param label')].some((l) => l.textContent.includes(want)));
+        }
+        // กรอกแล้วบันทึกจริง
+        dlgP.querySelector('.ai-prov-name').value = 'เจ้าทดสอบ';
+        dlgP.querySelector('.ai-cred-name').value = 'คีย์งาน';
+        dlgP.querySelector('.ai-cred-key').value = 'sk-ทดสอบลับสุดยอด';
+        dlgP.querySelector('.ai-cred-base').value = 'https://api.example.com/v1';
+        dlgP.querySelector('.ai-cred-domains').value = 'api.example.com';
+        dlgP.querySelector('[data-param="temperature"]').value = '0.25';
+        dlgP.querySelector('.k-dlg-btns .k-ok').click();
+        const saved = await pPromise;
+        check('[61-2] บันทึกผู้ให้บริการแล้วได้ข้อมูลกลับมาครบ',
+              !!saved && saved.name === 'เจ้าทดสอบ' && saved.credential.baseUrl === 'https://api.example.com/v1');
+        check('[61-2] พารามิเตอร์ที่กรอกถูกเก็บ', saved.params.temperature === 0.25, saved.params.temperature);
+        check('[61-2] API key ไม่ติดมากับข้อมูลที่จะลง project.khn.json',
+              !JSON.stringify(saved).includes('sk-ทดสอบลับสุดยอด'));
+        const keyPath = await kapi.join(state.root, 'ai-key.json');
+        check('[61-2] คีย์ถูกเก็บแยกที่ ai-key.json', await kapi.exists(keyPath));
+        const keyJson = await kapi.readJson(keyPath);
+        check('[61-2] ไฟล์คีย์เก็บตามรหัส Credential',
+              keyJson.keys[saved.credential.id] === 'sk-ทดสอบลับสุดยอด', JSON.stringify(Object.keys(keyJson.keys)));
+        check('[61-2] โดเมนนอกรายการถูกบล็อกก่อนยิงคำขอ',
+              (await AU.sendRequest({ credential: { allowedDomains: ['api.example.com'] } },
+                                    { url: 'https://evil.example.org/x' })).ok === false);
+        [...document.querySelectorAll('.k-overlay')].forEach((o) => o.remove());
+      }
+
+      // ---- [61-2] แผงแชท AI แบบ opencode ----
+      {
+        const AS = await import('./ai/ai-session.js');
+        check('[61-2] ลงทะเบียนแผงแชท AI แล้ว',
+              PANEL_DEFS.some((d) => d.id === 'ai-chat' && d.adopt === '#ai-chat-panel'));
+        showPanel('ai-chat');
+        await renderFeaturePanel('ai-chat');
+        await new Promise((r) => setTimeout(r, 200));
+        const host = document.getElementById('ai-chat-body');
+        check('[61-2] แผงแชทวาดเนื้อหาแล้ว', !!host && host.children.length > 0);
+        check('[61-2] หน้ารายการมีช่องค้นหาเซสชัน', !!host.querySelector('.ai-chat-search'));
+        check('[61-2] หน้ารายการมีปุ่มเพิ่มเซสชันใหม่', !!host.querySelector('.ai-chat-new'));
+
+        host.querySelector('.ai-chat-new').click();
+        await new Promise((r) => setTimeout(r, 200));
+        check('[61-2] กดเพิ่มแล้วเข้าเซสชันทันที', !!host.querySelector('.ai-chat-session'));
+        check('[61-2] มุมบนซ้าย = ชื่อเซสชัน', !!host.querySelector('.ai-chat-head .ai-chat-title'));
+        const ctxBadge = host.querySelector('.ai-chat-ctx');
+        check('[61-2] มุมบนขวา = ป้ายบริบท token', !!ctxBadge);
+        check('[61-2] hover ป้ายบริบทเห็นต้นทุน · การใช้งาน % · token',
+              ctxBadge.title.includes('ต้นทุน') && ctxBadge.title.includes('การใช้งาน') &&
+              ctxBadge.title.includes('โทเค็นที่ใช้'), ctxBadge.title);
+        check('[61-2] มีเมนู ⋯ ของเซสชัน (เปลี่ยนชื่อ · แชร์ · จัดเก็บ · ลบ)',
+              !!host.querySelector('.ai-chat-more'));
+        check('[61-2] กล่องพิมพ์มีปุ่มเพิ่มไฟล์', !!host.querySelector('.ai-chat-file'));
+        const modeSel = host.querySelector('.ai-chat-mode');
+        check('[61-2] มีโหมด plan (อ่านอย่างเดียว) กับ ช่วยเขียน (แก้ไขได้)',
+              modeSel.options.length === 2 && [...modeSel.options].map((o) => o.value).join() === 'plan,write');
+        check('[61-2] โมเดลของเซสชันเป็น override แยกจากตั้งค่า (มีตัวเลือก "ตามตั้งค่า AI")',
+              host.querySelector('.ai-chat-model').options[0].value === '');
+        const scopeSel = host.querySelector('.ai-chat-scope');
+        check('[61-2] ระดับการเข้าถึงครบ ทั้งโปรเจกต์/เล่ม/บท/ฉาก',
+              ['project', 'book', 'chapter', 'scene'].every((id) =>
+                [...scopeSel.options].some((o) => o.value === id)), scopeSel.options.length);
+        check('[61-2] มีปุ่มส่ง', !!host.querySelector('.ai-chat-send'));
+
+        // เซสชันถูกเก็บใน Sessions/ ของโปรเจกต์
+        const sdir = await kapi.join(state.root, AS.SESSION_DIR);
+        check('[61-2] เซสชันถูกเก็บในโฟลเดอร์ Sessions/ ของโปรเจกต์', await kapi.exists(sdir));
+        const sfiles = await kapi.listFiles(sdir);
+        check('[61-2] มีไฟล์เซสชันจริงอย่างน้อย 1 ไฟล์', sfiles.filter((f) => /\.json$/.test(f)).length >= 1,
+              JSON.stringify(sfiles));
+
+        // ป้ายบริบท → หน้ารายละเอียด
+        ctxBadge.click();
+        await new Promise((r) => setTimeout(r, 150));
+        const det = document.getElementById('ai-chat-body').querySelector('.ai-chat-detail');
+        check('[61-2] กดป้ายบริบทแล้วเข้าหน้ารายละเอียด', !!det);
+        const dtxt = det.textContent;
+        for (const want of ['ชื่อเซสชัน', 'ผู้ให้บริการ', 'โมเดล', 'ขีดจำกัด', 'โทเค็นที่ใช้',
+                            'การใช้งาน', 'โทเค็นนำเข้า', 'โทเค็นส่งออก', 'โทเค็นแบบใช้เหตุผล',
+                            'โทเค็นแคช', 'จำนวนข้อความผู้ใช้', 'จำนวนข้อความผู้ช่วย',
+                            'ต้นทุน (USD)', 'วันที่สร้างเซสชัน', 'ใช้งานล่าสุด']) {
+          check('[61-2] รายละเอียดมี "' + want + '"', dtxt.includes(want));
+        }
+        const rawBtn = det.querySelector('.ai-detail-raw');
+        check('[61-2] มีปุ่มแสดงข้อความดิบ', !!rawBtn);
+        rawBtn.click();
+        await new Promise((r) => setTimeout(r, 60));
+        const pre61 = det.querySelector('.ai-detail-json');
+        check('[61-2] ข้อความดิบเป็น JSON ที่อ่านกลับได้', pre61.style.display !== 'none' &&
+              !!JSON.parse(pre61.textContent).id);
+        check('[61-2] มีปุ่มปิดเพื่อกลับไปยังเซสชัน', !!det.querySelector('.ai-chat-close'));
+        det.querySelector('.ai-chat-close').click();
+        await new Promise((r) => setTimeout(r, 150));
+        check('[61-2] กดปิดแล้วกลับมาที่เซสชัน',
+              !!document.getElementById('ai-chat-body').querySelector('.ai-chat-session'));
+
+        // ระดับการเข้าถึง "ไม่ให้เลย" ต้องไม่รั่วเนื้อเรื่องออกไป
+        const st61 = _chatState();
+        st61.cur.scope = 'none';
+        check('[61-2] ระดับ "ไม่ให้เข้าถึงเลย" ไม่ส่งเนื้อหาโปรเจกต์ออกไปจริง',
+              (await collectScope(st61.cur)) === '');
+        st61.cur.scope = 'scene';
+        const ctxScene = await collectScope(st61.cur, { maxChars: 2000 });
+        check('[61-2] ระดับ "เฉพาะฉาก" ดึงเนื้อหาของฉากที่เปิดอยู่มาได้', typeof ctxScene === 'string');
+
+        hidePanel('ai-chat');
+        await new Promise((r) => setTimeout(r, 60));
       }
 
     out.push('ALL OK');

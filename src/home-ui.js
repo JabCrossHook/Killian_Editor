@@ -4,13 +4,31 @@ import { activate, closeTab, loadProject, newProject } from './app.js';
 // [alpha.60r3 ข้อ 9] ปุ่มส่งออก/นำเข้าโปรเจกต์บนหน้าแรก
 import { exportProjectZip, importProjectZip } from './export-zip.js';
 
+// [alpha.61 ข้อ 1] มุมมองหน้าแรกเป็น "โหมด" ไม่ใช่สวิตช์สลับ — 2 ปุ่มแยกกัน ติดสว่างอันที่ใช้อยู่
+export const HOME_VIEWS = [
+  { id: 'card', icon: '▦', label: 'การ์ด' },
+  { id: 'list', icon: '☰', label: 'รายการ' },
+];
+/** โหมดที่ผู้ใช้เลือกไว้ล่าสุด (localStorage) — ค่าที่อ่านไม่รู้จักถือเป็น 'card' */
+export function homeView() {
+  return localStorage.getItem('k2-home-view') === 'list' ? 'list' : 'card';
+}
+export function setHomeView(v) {
+  const mode = v === 'list' ? 'list' : 'card';
+  localStorage.setItem('k2-home-view', mode);
+  return mode;
+}
+
 /**
- * [alpha.60r3 ข้อ 9] แถวปุ่มมาตรฐานของหน้าแรก — ใช้ร่วมกันทั้ง 3 โหมดการวาด
- * (กล่อง overlay · แท็บหน้าแรก · แผงหน้าแรก) เพื่อไม่ให้หลุดที่ใดที่หนึ่งเหมือนรอบก่อน ๆ
+ * [alpha.61 ข้อ 1] แถบคำสั่งของหน้าแรก — ย้ายลง "ขอบล่าง" ของกล่อง (เดิมอยู่ใต้หัวเรื่อง)
+ * ใช้ร่วมกันทั้ง 3 โหมดการวาด (กล่อง overlay · แท็บหน้าแรก · แผงหน้าแรก)
  *
- * ลำดับตามภาพที่ผู้ใช้ส่งมา (DaVinci Resolve):
- *   [📤 ส่งออก] [📥 นำเข้า] ── ช่องว่างยืดได้ ── [➕ สร้างโปรเจกต์ใหม่] [📂 เปิดโปรเจกต์] [✕ ปิด]
- * @param {{onClose?:Function, afterOpen?:Function}} opts  ไม่มี onClose = ไม่แสดงปุ่มปิด
+ * ลำดับใหม่:
+ *   [▦ การ์ด] [☰ รายการ] [🔍 ค้นหา] │ [📤 ส่งออก] [📥 นำเข้า]
+ *      ── ช่องว่างยืดได้ ── [➕ สร้างโปรเจกต์ใหม่] [📂 เปิดโปรเจกต์] [✕ ปิด]
+ *
+ * @param {{onClose?:Function, grid?:HTMLElement}} opts
+ *        ไม่มี onClose = ไม่แสดงปุ่มปิด · grid = ตารางการ์ดที่ปุ่มมุมมอง/ค้นหาจะไปสั่ง
  */
 export function buildHomeActions(opts = {}) {
   const actions = el('div', 'home-actions');
@@ -19,12 +37,59 @@ export function buildHomeActions(opts = {}) {
     if (title) b.title = title;
     return b;
   };
+
+  // ── มุมมอง (โหมด · ไม่ใช่สวิตช์สลับ) ──
+  const viewWrap = el('div', 'home-view-modes');
+  const viewBtns = {};
+  for (const v of HOME_VIEWS) {
+    const b = mk('home-view-mode', v.icon + ' ' + v.label, 'มุมมอง' + v.label);
+    b.dataset.view = v.id;
+    b.onclick = () => applyView(v.id);
+    viewBtns[v.id] = b;
+    viewWrap.append(b);
+  }
+  // ── ค้นหาโปรเจกต์ (ถัดจากปุ่มมุมมอง) ──
+  const findBtn = mk('home-btn-find', '🔍 ค้นหา', 'ค้นหาโปรเจกต์จากชื่อ / ผู้เขียน / ที่อยู่ไฟล์');
+  const findInp = el('input', 'home-find-input');
+  findInp.type = 'search';
+  findInp.placeholder = 'ค้นหาโปรเจกต์…';
+  findInp.style.display = 'none';
+
   const exportBtn = mk('home-btn-export', tr('home.export', '📤 ส่งออก'), 'ส่งออกโปรเจกต์ที่เปิดอยู่เป็นไฟล์ .zip');
   const importBtn = mk('home-btn-import', tr('home.import', '📥 นำเข้า'), 'นำเข้าโปรเจกต์จากไฟล์ .zip');
   const spacer = el('div', 'home-actions-spacer');
   const newBtn = mk('k-ok home-btn-new', tr('home.newProject', '➕ สร้างโปรเจกต์ใหม่'));
   const openBtn = mk('home-btn-open', tr('home.openProject', '📂 เปิดโปรเจกต์'));
   const closeBtn = mk('home-btn-close', tr('home.close', '✕ ปิด'), 'ปิดหน้าแรก');
+
+  function applyView(mode) {
+    const m = setHomeView(mode);
+    for (const v of HOME_VIEWS) viewBtns[v.id].classList.toggle('on', v.id === m);
+    opts.grid?.classList.toggle('list', m === 'list');
+    return m;
+  }
+  /** กรองการ์ดตามคำค้น — ว่าง = แสดงทั้งหมด (ใช้ dataset.search ที่ createProjectCard ใส่ไว้) */
+  function applyFind(q) {
+    const key = String(q || '').trim().toLowerCase();
+    const grid = opts.grid;
+    if (!grid) return 0;
+    let shown = 0;
+    for (const c of grid.querySelectorAll('.home-card')) {
+      const hit = !key || (c.dataset.search || '').includes(key);
+      c.style.display = hit ? '' : 'none';
+      if (hit) shown++;
+    }
+    grid.classList.toggle('home-grid-filtered', !!key);
+    return shown;
+  }
+  findBtn.onclick = () => {
+    const on = findInp.style.display === 'none';
+    findInp.style.display = on ? '' : 'none';
+    findBtn.classList.toggle('on', on);
+    if (on) findInp.focus(); else { findInp.value = ''; applyFind(''); }
+  };
+  findInp.oninput = () => applyFind(findInp.value);
+  findInp.onkeydown = (e) => { if (e.key === 'Escape') { e.stopPropagation(); findBtn.onclick(); } };
 
   exportBtn.onclick = async () => {
     if (!state.root) { setStatus('เปิดโปรเจกต์ก่อน จึงจะส่งออกเป็น .zip ได้'); return; }
@@ -43,9 +108,11 @@ export function buildHomeActions(opts = {}) {
   };
   closeBtn.onclick = () => opts.onClose?.();
 
-  actions.append(exportBtn, importBtn, spacer, newBtn, openBtn);
+  actions.append(viewWrap, findBtn, findInp, exportBtn, importBtn, spacer, newBtn, openBtn);
   if (opts.onClose) actions.append(closeBtn); else closeBtn.remove();
-  return { actions, exportBtn, importBtn, spacer, newBtn, openBtn, closeBtn };
+  applyView(homeView());
+  return { actions, viewWrap, viewBtns, applyView, findBtn, findInp, applyFind,
+           exportBtn, importBtn, spacer, newBtn, openBtn, closeBtn };
 }
 
 // เปิดหน้า Home — สร้างแท็บใหม่ หรือเปิดแท็บที่มีอยู่แล้ว
@@ -79,15 +146,16 @@ export async function renderHome(pane) {
   const head = el('div', 'home-head');
   head.append(el('h1', 'home-title', 'Killian 2'));
   head.append(el('p', 'home-sub', 'โปรแกรมเขียนนิยาย+บทภาพยนตร์ แบบพกพา'));
-  
-  // [alpha.60r3 ข้อ 9] แถวปุ่มมาตรฐาน — ปิดแท็บหน้าแรกเมื่อกด ✕
-  const { actions } = buildHomeActions({ onClose: () => closeTab('::home::') });
 
   // คอนเทนเนอร์การ์ด (grid)
   const grid = el('div', 'home-grid');
   grid.id = 'home-grid';
 
-  wrap.append(head, actions, grid);
+  // [alpha.61 ข้อ 1] แถวปุ่มอยู่ "ขอบล่าง" — ปิดแท็บหน้าแรกเมื่อกด ✕
+  const { actions } = buildHomeActions({ onClose: () => closeTab('::home::'), grid });
+  actions.classList.add('home-actions-bottom');
+
+  wrap.append(head, grid, actions);
   pane.append(wrap);
 
   // --- โหลดรายการโปรเจกต์ ---
@@ -200,7 +268,10 @@ async function loadProjects(grid) {
 // สร้างการ์ดโปรเจกต์หนึ่งใบ · onOpen = เรียกก่อนโหลด (กล่อง Home ใช้ปิด overlay ตัวเอง)
 export function createProjectCard(project, onOpen) {
   const card = el('div', 'home-card');
-  
+  // [alpha.61 ข้อ 1] ปุ่มค้นหาโปรเจกต์กรองจากคีย์นี้ (ชื่อ · ผู้เขียน · ที่อยู่ไฟล์)
+  card.dataset.search = [project.title, project.author, project.root]
+    .filter(Boolean).join(' ').toLowerCase();
+
   // ส่วนปก (แสดง cover หรือ placeholder)
   const cover = el('div', 'home-card-cover');
   if (project.cover) {
@@ -266,39 +337,24 @@ export async function showHomeDialog() {
   // (เดิมกล่องหดตามเนื้อใน → สลับมุมมองทีกล่องกระตุกทั้งใบ · แบบ DaVinci Resolve คือกรอบนิ่ง เนื้อในเลื่อน)
   const box = el('div', 'k-dialog k-home-dlg');
   const head = el('div', 'home-head');
-  // [alpha.60r ข้อ 5] ปุ่มปิดกล่องหน้าแรก — overlay dialog
-  const closeBtn = el('span', 'home-close-btn', '✕');
-  closeBtn.title = 'ปิด';
-  closeBtn.onclick = () => ov.remove();
-  head.append(closeBtn);
+  // [alpha.61 ข้อ 1] เอาปุ่ม ✕ มุมขวาบนออก — ปิดได้ที่ปุ่ม "✕ ปิด" ในแถบล่าง (หรือ Esc)
   head.append(el('h2', 'home-title', 'Killian 2'));
-  // [alpha.60r3 ข้อ 9] สวิตช์มุมมอง (การ์ด/รายการ) ย้ายขึ้นมาอยู่บนหัวกล่อง ข้างปุ่ม ✕
-  // — แถวปุ่มด้านล่างจะได้เหลือเฉพาะคำสั่งที่ทำอะไรกับโปรเจกต์จริง ๆ
-  const viewBtn = el('button', 'home-view-btn', '📋');
-  viewBtn.title = 'สลับมุมมอง (การ์ด / รายการ)';
-  head.append(viewBtn);
-  const { actions } = buildHomeActions({ onClose: () => ov.remove() });
   const grid = el('div', 'home-grid');
   const scroll = el('div', 'home-dlg-scroll');   // กรอบคงที่ · เลื่อนเฉพาะรายการข้างใน
   scroll.append(grid);
-  box.append(head, actions, scroll);
+  // [alpha.61 ข้อ 1] แถบคำสั่ง (มุมมอง · ค้นหา · ส่งออก/นำเข้า · สร้าง/เปิด/ปิด) อยู่ขอบล่างของกล่อง
+  const { actions } = buildHomeActions({ onClose: () => ov.remove(), grid });
+  actions.classList.add('home-actions-bottom');
+  box.append(head, scroll, actions);
   ov.append(box);
   document.body.append(ov);
   ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
 
   document.addEventListener('keydown', function esc(e) { if (e.key === 'Escape') { ov.remove(); document.removeEventListener('keydown', esc); } });
 
-  // บั๊ก #12: ขนาดต้อง "นิ่ง" — จำมุมมองที่เลือกไว้ และตั้ง --home-thumb จากตั้งค่าโปรเจกต์
+  // บั๊ก #12: ขนาดต้อง "นิ่ง" — มุมมองที่เลือกไว้ถูกคืนสถานะโดย buildHomeActions แล้ว
   const thumb = Math.max(120, Math.min(400, parseInt(state.settings?.homeThumb, 10) || 190));
   box.style.setProperty('--home-thumb', thumb + 'px');
-  const listOn = localStorage.getItem('k2-home-view') === 'list';
-  grid.classList.toggle('list', listOn);
-  viewBtn.textContent = listOn ? '📱' : '📋';
-  viewBtn.onclick = () => {
-    const on = grid.classList.toggle('list');
-    localStorage.setItem('k2-home-view', on ? 'list' : 'card');
-    viewBtn.textContent = on ? '📱' : '📋';
-  };
   await loadPanelProjects(grid, () => ov.remove());   // เปิดโปรเจกต์แล้วต้องปิดกล่อง ไม่งั้นค้างทับหน้าจอ
   return ov;
 }
@@ -309,10 +365,11 @@ export async function renderHomePanel(host) {
   const wrap = el('div', 'home-wrap');
   const head = el('div', 'home-head');
   head.append(el('h2', 'home-title', 'Killian 2'));
-  // แผงหน้าแรกปิดด้วยปุ่ม ✕ บนหัวแผงอยู่แล้ว → ไม่ต้องมีปุ่มปิดซ้ำในแถวคำสั่ง
-  const { actions } = buildHomeActions();
   const list = el('div', 'home-grid');
-  wrap.append(head, actions, list);
+  // แผงหน้าแรกปิดด้วยปุ่ม ✕ บนหัวแผงอยู่แล้ว → ไม่ต้องมีปุ่มปิดซ้ำในแถวคำสั่ง
+  const { actions } = buildHomeActions({ grid: list });
+  actions.classList.add('home-actions-bottom');
+  wrap.append(head, list, actions);
   host.append(wrap);
 
   await loadPanelProjects(list);
