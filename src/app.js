@@ -10433,15 +10433,19 @@ async function runTest(projectPath) {
       const ndirty = [...state.tabs.values()].filter((t) => t.dirty).length;
       check('markDirty แล้วมีแท็บ dirty', ndirty > dirtyBefore, 'dirty=' + ndirty);
       window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyS', ctrlKey: true, shiftKey: true, bubbles: true }));
-      await new Promise((r) => setTimeout(r, 120));
       // บั๊ก #3: คีย์ลัดขึ้นกล่องรายการไฟล์ก่อน แล้วค่อยบันทึกเมื่อยืนยัน
+      for (let i = 0; i < 40 && !document.querySelector('.k-dialog.k-saveall'); i++) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
       const scDlg = document.querySelector('.k-dialog.k-saveall');
       check('Ctrl+Shift+S → ขึ้นกล่องรายการไฟล์ที่ยังไม่บันทึก', !!scDlg);
       scDlg.querySelector('.k-dlg-btns .k-ok').click();
       // [alpha.60r2] เดิมรอตายตัว 250ms — saveAllTabs เขียนไฟล์แบบ async
       // เครื่องช้า/ไฟล์เยอะแล้วรอไม่ทัน = FAIL ปลอม (ไม่ใช่บั๊กของโปรแกรม)
       // → รอจน "ไม่เหลือแท็บค้าง" จริง ๆ แล้วค่อยตัดสิน (มีเพดานกันค้าง)
-      for (let i = 0; i < 40 && [...state.tabs.values()].some((x) => x.dirty); i++) {
+      // [alpha.62] ขยายเพดานเป็น 8 วินาที — รันจาก .app ที่ build แล้วบนเครื่องที่มีงานอื่นอยู่
+      //            การเขียนไฟล์ + สแนปช็อตต่อแท็บใช้เวลาเกิน 2 วินาทีได้จริง
+      for (let i = 0; i < 160 && [...state.tabs.values()].some((x) => x.dirty); i++) {
         await new Promise((r) => setTimeout(r, 50));
       }
       check('Ctrl+Shift+S → บันทึกทั้งหมด (ไม่มีแท็บ dirty)',
