@@ -495,7 +495,16 @@ export function showPanel(id, opts = {}) {
   const pid = panelId(id);
   const def = m.registry.get(pid) || {};
   let ok;
-  if (m.isDocked(pid) && !m.isCollapsed(pid)) { m.activatePanel(pid); ok = true; }
+  // [alpha.62 บั๊ก 21] **มีสล็อตในต้นไม้อยู่แล้ว → ถอดธงแล้วจบ**
+  // ไม่แตะ homes ไม่ dock ใหม่ ไม่ applyRatio — ตำแหน่ง ทิศ ลำดับ และ sizes อยู่ครบเหมือนตอนปิด
+  // (เงื่อนไขนี้ต้องมาก่อน เพราะ opts.side/targetId ที่ผู้เรียกใส่มาเป็นแค่ "ค่าเริ่มต้นตอนยังไม่มีที่อยู่")
+  if (m.isDocked(pid) && opts.forceMove && (opts.targetId || opts.side)) {
+    // สั่งย้ายจริง (ลากวาง / เทส) — ต้องถอดออกแล้วผนึกใหม่ ไม่ใช่แค่ถอดธง
+    ok = m.dockPanel(pid, opts.side || def.defaultSide || 'left', opts.targetId);
+  }
+  else if (m.isDocked(pid)) {
+    ok = m.showPanel(pid);
+  }
   else if (m.isCollapsed(pid)) { m.collapsePanel(pid, false); ok = true; }
   else {
     const home = homes.get(pid);

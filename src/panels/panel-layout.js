@@ -205,12 +205,53 @@ export function isCollapsed(root, id) {
   return !!(p && p.collapsed);
 }
 
+// ───────── [alpha.62 บั๊ก 21] ปิดแผง = ติดธง `hidden` — **โหนดยังอยู่ที่เดิมในต้นไม้** ─────────
+//
+// ของเดิม `hidePanel` เรียก `removePanel()` = ตัดโหนดทิ้งจริง ๆ แล้วผลตามมา 2 อย่าง:
+//   1) **สล็อตหาย** — เปิดกลับต้องเดาตำแหน่งใหม่จาก `homes` (targetId + side)
+//      ตัวเดายึด "เพื่อนบ้านที่มุมซ้ายบนใกล้ที่สุด" ซึ่งเลือกผิดตัวได้ง่ายมาก:
+//      แผงที่ผนึกไว้ "ขอบบนของเอกสาร" (dock แนวตั้ง) มีมุมซ้ายบนใกล้แผงโปรเจกต์ฝั่งซ้าย
+//      มากกว่าใกล้แผงเอกสารที่มันเกาะอยู่จริง → เปิดกลับแล้วไปโผล่ "ขวาของแผงโปรเจกต์" = ฝั่งซ้ายจอ
+//   2) **พี่น้องโดนเกลี่ยขนาดใหม่** — `keepSizes()` แจกส่วนของตัวที่หายให้ตัวที่เหลือ
+//      แล้วตอนเปิดกลับ `insertSize()` ก็หักส่วนคืนแบบเฉลี่ย → ratio ของแผงอื่นขยับทุกครั้งที่เปิด/ปิด
+//
+// ติดธงแทนการตัดทิ้ง = ทั้งตำแหน่ง ทิศ ลำดับพี่น้อง และ `sizes` ของ dock **ไม่ถูกแตะเลย**
+// เปิดกลับ = ถอดธง แล้วได้ทุกอย่างคืนเป๊ะโดยไม่ต้องเดาอะไรเลย (และแผงอื่นไม่ขยับ)
+export function setPanelHidden(root, id, hidden) {
+  root = clone(root);
+  const p = findPanel(root, id);
+  if (!p) return root;
+  if (hidden) p.hidden = true; else delete p.hidden;
+  return root;
+}
+export function isPanelHidden(root, id) {
+  const p = findPanel(root, id);
+  return !!(p && p.hidden);
+}
+/** โหนดนี้ถูกซ่อนอยู่ไหม (ใช้ในตัววาด — รับโหนดตรง ๆ ไม่ต้องค้นทั้งต้นไม้) */
+export function nodeHidden(node) {
+  if (!node) return true;
+  if (node.type === 'panel') return !!node.hidden;
+  // container ที่ลูกถูกซ่อนหมด = ไม่มีอะไรให้แสดง → ซ่อนตัวเองด้วย (ไม่งั้นกินที่ว่างเปล่า)
+  return (node.children || []).every(nodeHidden);
+}
+/** id ของ panel ที่ "เห็นอยู่จริง" (ไม่รวมที่ถูกซ่อน) */
+export function visiblePanelIds(root) {
+  const ids = [];
+  walk(root, (n) => { if (n.type === 'panel' && !n.hidden) ids.push(n.id); });
+  return ids;
+}
+
 // ───────── ถอด panel ออกจากต้นไม้ (ไปทำเป็นแผงลอย) ─────────
 // คืน { root, detached } — detached = โหนด panel ตัวเดิม (หรือ null ถ้าไม่เจอ)
 export function detachPanel(root, id) {
   const p = findPanel(root, id);
   if (!p) return { root: clone(root), detached: null };
-  return { root: removePanel(root, id), detached: { ...p, collapsed: false } };
+  // [alpha.62 บั๊ก 21] ย้ายที่/ทำเป็นแผงลอย = ผู้ใช้ตั้งใจ "เอามาวางตรงนี้" → ต้องเห็นเสมอ
+  // (ถ้าพาธง hidden ติดไปด้วย จะได้แผงที่ลากไปวางแล้วมองไม่เห็น)
+  const detached = { ...p, collapsed: false };
+  delete detached.hidden;
+  return { root: removePanel(root, id), detached };
 }
 
 // ───────── remove + ยุบโหนดว่าง ─────────
@@ -262,13 +303,23 @@ function rootFirstPanelId(root) {
 // ที่จับอยู่ระหว่างลูก index กับ index+1 → แบ่งเฉพาะผลรวมของสองตัวนี้ (pair) ใหม่ตาม ratio
 // ลูกตัวอื่นในแถวเดียวกันไม่ถูกแตะ และผลรวมทั้ง dock ยังเท่าเดิม (ถูกแล้ว — อย่าเปลี่ยนเป็น normalize ทั้งแถว)
 export function resizeDock(root, dockId, index, ratio) {
+  return resizeDockPair(root, dockId, index, index + 1, ratio);
+}
+/**
+ * [alpha.62 บั๊ก 21] เวอร์ชันที่ระบุ "คู่" ได้เอง
+ * แผงที่ถูกซ่อนยังอยู่ในต้นไม้ → ลูกที่อยู่ติดกัน**บนจอ**อาจไม่ใช่ index กับ index+1
+ * (มีตัวที่ซ่อนคั่นอยู่) · ตัววาดจึงส่งดัชนีจริงของทั้งสองฝั่งมาให้
+ */
+export function resizeDockPair(root, dockId, i, j, ratio) {
   root = clone(root);
   let d = null; walk(root, (n) => { if (n.id === dockId && n.type === 'dock') d = n; });
-  if (!d || index < 0 || index >= d.sizes.length - 1) return root;
-  const pair = d.sizes[index] + d.sizes[index + 1];
+  if (!d || !d.sizes) return root;
+  const n = d.sizes.length;
+  if (i < 0 || j < 0 || i >= n || j >= n || i === j) return root;
+  const pair = d.sizes[i] + d.sizes[j];
   ratio = Math.max(0.05, Math.min(0.95, ratio));
-  d.sizes[index] = +(pair * ratio).toFixed(4);
-  d.sizes[index + 1] = +(pair * (1 - ratio)).toFixed(4);
+  d.sizes[i] = +(pair * ratio).toFixed(4);
+  d.sizes[j] = +(pair * (1 - ratio)).toFixed(4);
   return root;
 }
 

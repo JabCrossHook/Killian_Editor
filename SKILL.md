@@ -108,7 +108,15 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
     · **[alpha.62] `aiConfigured()` ใน `ai-settings.js` = จุดเดียวที่ทุกฟีเจอร์ถามว่า "ตั้งค่าครบหรือยัง"**
       (คืน `{ok, why}` — ห้ามเขียนตัวเช็คคีย์เองในไฟล์อื่นอีก)
   - **`search-engine.js`** (alpha.39, บริสุทธิ์) — ค้นหาเต็มข้อความทั้งโปรเจกต์: tokenizer ไทย (`Intl.Segmenter('th')`+bigram fallback) → inverted index → `SearchIndex.build/search` (คำเดียว/AND/OR/NOT/`field:`) → snippet+line+score. `indexProject(root,kapi,parseMd)` เป็น integration layer. **unit test แยก · ค้น 1,000 ไฟล์ ~16ms/คิวรี**
-  - **`panels/panel-layout.js` + `panel-store.js`** (alpha.39, บริสุทธิ์ · **ห้ามแก้**) — layout tree ของ panel: `snapZone`,`dockPanel`,`addAsTab/moveTab/splitTab`,`resizeDock`,`removePanel`(+collapse) · store: `serializeLayout`/versioning/migrate + `PanelStore`(รับ storage adapter) + `PanelManager`
+  - **`panels/panel-layout.js` + `panel-store.js`** (alpha.39, บริสุทธิ์) — layout tree ของ panel: `snapZone`,`dockPanel`,`addAsTab/moveTab/splitTab`,`resizeDock`,`removePanel`(+collapse) · store: `serializeLayout`/versioning/migrate + `PanelStore`(รับ storage adapter) + `PanelManager`
+    · **[alpha.62 บั๊ก 21] ปิดแผง = ติดธง `hidden` — ไม่ตัดโหนดออกจากต้นไม้อีกแล้ว**
+      `setPanelHidden`/`isPanelHidden`/`nodeHidden`/`visiblePanelIds` + `resizeDockPair(root,dock,i,j,r)`
+      **คำที่ต้องแยกให้ขาด**: `isDocked` = "มีสล็อตในต้นไม้" · `isHidden` = "ปิดอยู่" ·
+      `isOpen` = `isDocked && !isHidden` (หรือลอยอยู่) — ใช้ผิดตัวแล้วเมนู/ปุ่มสวิตช์เพี้ยนทันที
+      `panelIds()` คืน**ทุกตัวรวมที่ซ่อน** (prune/หาสล็อตต้องใช้) · `visiblePanelIds()` คืนเฉพาะที่เห็น
+      ตัววาดต้องข้ามตัวที่ซ่อน **ทั้ง 3 ที่**: ไม่วาด · ไม่นับใน `growSum` · ไม่วางที่จับข้าง ๆ
+      (ที่จับส่งดัชนีจริงของทั้งสองฝั่งเข้า `resizeDockPair` เพราะอาจมีตัวที่ซ่อนคั่นอยู่)
+      `detachPanel` ต้อง **ลบธง hidden ทิ้ง** — ลากไปวางแล้วต้องเห็นเสมอ
   - **`panels/panel-renderer.js` + `panel-drag.js` + `panel-ui.js`** (alpha.46) — **UI จริงของ Panel System** (ดูหัวข้อด้านล่าง)
     · **[alpha.62 บั๊ก 12] `currentRatio()` = `treeRatio() || domRatio()` — อ่านจาก layout tree ก่อนเสมอ**
       วัดจาก DOM ไม่ได้เพราะ `dock.width` รวม `.k-resize-handle` ที่คั่นอยู่ → ค่าต่ำกว่าจริงทุกครั้ง
@@ -698,6 +706,22 @@ grep -E "FAIL|STOP" /tmp/k2result.txt | head -3
    `Get-Process | ? {$_.MainWindowTitle}` → ถ้าเห็น title `Error` = มีกล่อง native ค้างอยู่ ·
    อ่านข้อความในกล่องด้วย UIAutomation (`AutomationElement` + `PropertyCondition` บน `ProcessIdProperty`)
 
+90. **[alpha.62] "ปิดแผง" ที่ตัดโหนดออกจากต้นไม้ = ทิ้งข้อมูลตำแหน่งทั้งก้อน แล้วต้องเดาใหม่** ⚠ ตัวแม่
+   `hidePanel()` เรียก `removePanel()` → เสีย 2 อย่างพร้อมกัน:
+   **(ก) สล็อตหาย** — เปิดกลับต้องเดาจาก `homes {targetId, side}` ที่จดตอนปิด
+   ตัวเดายึด "เพื่อนบ้านที่**มุมซ้ายบน**ใกล้ที่สุด" (`Math.hypot(r2.left-r.left, r2.top-r.top)`)
+   ซึ่งเลือกผิดตัวง่ายมาก: แผงที่ผนึกไว้ **ขอบบนของเอกสาร** (dock แนวตั้ง กว้างเต็มจอ)
+   มีมุมซ้ายบนใกล้ **แผงโปรเจกต์ฝั่งซ้าย** มากกว่าใกล้แผงเอกสารที่มันเกาะอยู่จริง
+   → เปิดกลับแล้วไปโผล่ "ขวาของแผงโปรเจกต์" = **ย้ายจากขอบบนไปกองอยู่ฝั่งซ้าย**
+   **(ข) พี่น้องโดนเกลี่ยขนาดใหม่** — `keepSizes()` แจกส่วนของตัวที่หายให้ตัวที่เหลือ
+   แล้วตอนเปิดกลับ `insertSize()` หักคืนแบบเฉลี่ย → **ratio ของแผงที่ไม่เกี่ยวข้องเลยก็ขยับ**
+   **แก้ที่รากเดียว: อย่าตัดโหนดทิ้ง — ติดธง `hidden` แล้วให้ตัววาดข้ามไป**
+   ตำแหน่ง ทิศ ลำดับพี่น้อง และ `sizes` อยู่ครบเหมือนตอนปิด · เปิดกลับ = ถอดธง **ไม่ต้องเดาอะไรเลย**
+   (มีของเดิมเป็นแบบอย่างอยู่แล้ว — ธง `collapsed` ของปุ่ม ▾ ก็ทำแบบนี้)
+   · **บทเรียนกว้างกว่านั้น**: ถ้าฟีเจอร์ต้อง "จำที่เดิม" อย่าเก็บเป็น *คำอธิบายเชิงสัมพัทธ์*
+     (ใกล้ใคร ฝั่งไหน) แล้วประกอบใหม่ทีหลัง — **เก็บของจริงไว้ที่เดิม** แล้วแค่ซ่อนการแสดงผล
+     บทเรียน 87/88 (ดริฟต์เพราะวัด DOM · เทียบแกนเดียว) คือ*อาการ*ของรากเดียวกันนี้
+
 87. **[alpha.62] "วัดจาก DOM แล้วจดกลับ" = ลูปดริฟต์ที่กัดกินค่าทีละนิดทุกครั้ง**
    `currentRatio()` วัด `panel.width / dock.width` — แต่ `dock.width` **รวม `.k-resize-handle`**
    ที่คั่นระหว่างแผงไว้ด้วย → ค่าที่วัดได้เตี้ยกว่าสัดส่วนจริงในต้นไม้เสมอ (.200 → .196)
@@ -833,7 +857,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ---
 
-## เวอร์ชัน (ล่าสุด alpha.62 · e2e 1,954 + unit 1,296)
+## เวอร์ชัน (ล่าสุด alpha.62 · e2e 1,960 + unit 1,296)
 
 .13–.22 (v1→v2 พื้นฐาน): snapshot, line numbers, spellcheck ไทย+Chromium, ปุ่มลัดตั้งเอง, mac build, บทหนัง Ctrl+arrow, relationship sync, floating format bar, sidebar resize, SmartType Final Draft, wiki gallery/lightbox, explorer search+tags, panel docking, tree float+snap
 .24 batch 8 (drag-move explorer, panel snap, split compare, version tracking, scene lock, screenplay Final Draft look, screenplay images, wiki links) · .25–.27 **Planner board** (fabric.js) · .28 **floating windows** · .29 memo-in-chapter + scoped search
@@ -1206,7 +1230,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
     · `settings.spForceCase`/`spAutoCapitalize`/`spAutoCorrectI` → เมนู **บท → 🔠 ตัวพิมพ์ใหญ่/เล็ก (ให้อิสระ)**
     · แก้จุดฮาร์ดโค้ดที่เหลือ: `export-rtf.js` เคย `title.toUpperCase()` เสมอบนหน้าปก
 
-.62 **รอบเก็บบั๊กจาก human test 20 ข้อ** (e2e 1,842 → **1,954** · unit 1,296)
+.62 **รอบเก็บบั๊กจาก human test 21 ข้อ** (e2e 1,842 → **1,960** · unit 1,296)
   **[1] หน้าแรกกว้างขึ้น 30%** — `--home-dlg-w` (= สูตรเดิม × 1.3) · `.home-wrap` 1100 → 1430px
     → แถบคำสั่งล่าง (มุมมอง · ค้นหา · ส่งออก · นำเข้า · สร้างใหม่ · เปิด · ปิด) อยู่บรรทัดเดียว
   **[2] ปุ่ม 💬 เป็นสวิตช์ของแผง "AI ผู้ช่วยเขียน"** — คำสั่งใหม่ `ai-chat-toggle` · `.tb-toggle` + จุด ●
@@ -1249,6 +1273,13 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
   **[19] `smartDirty()` ไม่มีอยู่จริง** ⚠ — ต้นเหตุ "ลบ element ตามประเภทใช้ไม่ได้"
     ReferenceError ใน onclick async ที่ไม่มีใครจับ → ลบสำเร็จแต่กล่องค้างเงียบ ๆ (บทเรียน 89)
     · อีกจุดอยู่ใน `revertTab` → บทหนังที่กด Revert แล้วพิมพ์ต่อ พังทุก keystroke
+  **[21] ⚠ รากจริงของ 12+13: ปิดแผง = `removePanel()` ตัดโหนดออกจากต้นไม้**
+    → สล็อตหาย (ต้องเดาตำแหน่งใหม่จาก "เพื่อนบ้านที่มุมซ้ายบนใกล้ที่สุด" ซึ่งเลือกผิดตัว:
+    แผงที่ขอบบนของเอกสารมีมุมซ้ายบนใกล้แผงโปรเจกต์ฝั่งซ้ายมากกว่า → เปิดกลับไปโผล่ฝั่งซ้าย)
+    + พี่น้องโดน `keepSizes`/`insertSize` เกลี่ยใหม่ทุกครั้ง
+    **แก้: ติดธง `hidden` แทนการตัดทิ้ง** (แนวเดียวกับธง `collapsed` ที่มีอยู่แล้ว) —
+    ตำแหน่ง/ทิศ/ลำดับ/`sizes` อยู่ครบ · เปิดกลับ = ถอดธง ไม่ต้องเดาอะไรเลย · ธงรอดการบันทึกด้วย
+    (บทเรียน 90 · unit +14 · e2e [62-13] วางแผงบนขอบบนจริงแล้วปิด-เปิด)
   เก็บกวาด: `getBoard()` ของ Kanban เลือกเล่มแรกที่ **มีฉบับร่างจริง** (บทเรียน 82) ·
     e2e 3 จุดเปลี่ยนจากรอเวลาคงที่เป็นรอเงื่อนไขจริง (กล่องตั้งค่า · สถิติจัดการเล่ม · บันทึกทั้งหมด)
 

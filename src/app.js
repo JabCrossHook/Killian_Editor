@@ -16345,48 +16345,73 @@ async function runTest(projectPath) {
         S.spStyles = keepStyles; S.spForceCase = keepFC11; applySettings();
       }
 
-      // ---- [62-12] ปิด-เปิดแผงแล้วสัดส่วนต้องนิ่ง (ไม่ดริฟต์ทุกครั้ง) ----
+      // ---- [62-12] ปิด-เปิดแผงแล้วต้องไม่ไปแตะขนาดของแผงอื่นเลย ----
       {
         showPanel('tree'); showPanel('props');
         await until62(() => isPanelOpen('tree') && isPanelOpen('props'));
-        await wait62(320);                       // รอ scheduleRemember (250ms) จดค่าตั้งต้น
+        await wait62(320);
         const widthOf = (id) => {
           const n = document.querySelector(`#app-root .k-panel[data-panel-id="${id}"]`);
           return n ? Math.round(n.getBoundingClientRect().width) : 0;
         };
-        const w0 = widthOf('tree');
-        check('[62-12] แผงโปรเจกต์วัดความกว้างได้', w0 > 40, String(w0));
-        // ปิด-เปิด 3 รอบ — ของเดิมหดลงทีละนิดทุกรอบเพราะ currentRatio วัดจาก DOM รวมที่จับ
+        const w0 = widthOf('tree'), d0 = widthOf('docs');
+        check('[62-12] วัดความกว้างแผงโปรเจกต์/เอกสารได้', w0 > 40 && d0 > 40, `${w0} / ${d0}`);
+        // ปิด "คุณสมบัติ" แล้วเปิดกลับ — ของเดิม removePanel เกลี่ยส่วนของมันให้พี่น้อง
+        // แล้วตอนเปิดกลับก็หักคืนแบบเฉลี่ย → tree/docs ขยับทุกครั้ง
         for (let i = 0; i < 3; i++) {
-          hidePanel('tree'); await wait62(140);
-          showPanel('tree');  await wait62(320);
+          hidePanel('props'); await wait62(160);
+          showPanel('props'); await wait62(320);
         }
-        const w1 = widthOf('tree');
-        const drift = w0 ? Math.abs(w1 - w0) / w0 : 1;
-        check('[62-12] ปิด-เปิด 3 รอบแล้วความกว้างยังเท่าเดิม (คลาดไม่เกิน 4%)',
-              drift <= 0.04, `${w0}px → ${w1}px (${(drift * 100).toFixed(1)}%)`);
+        const w1 = widthOf('tree'), d1 = widthOf('docs');
+        check('[62-12] ปิด-เปิดแผงอื่น 3 รอบ แล้วแผงโปรเจกต์ต้องกว้างเท่าเดิมเป๊ะ',
+              Math.abs(w1 - w0) <= 2, `${w0}px → ${w1}px`);
+        check('[62-12] แผงเอกสารก็ต้องกว้างเท่าเดิมเป๊ะ',
+              Math.abs(d1 - d0) <= 2, `${d0}px → ${d1}px`);
+        // ตัวที่ถูกปิด-เปิดเองก็ต้องกลับมาขนาดเดิม
+        const p0 = widthOf('props');
+        hidePanel('props'); await wait62(160);
+        showPanel('props'); await wait62(320);
+        check('[62-12] แผงที่ถูกปิด-เปิดเอง กลับมาขนาดเดิม',
+              Math.abs(widthOf('props') - p0) <= 2, `${p0}px → ${widthOf('props')}px`);
       }
 
-      // ---- [62-13] แผงที่ผนึกแนวตั้งต้องกลับมาอยู่ที่เดิม ----
+      // ---- [62-13] แผงที่ผนึก "ขอบบน" ต้องกลับมาอยู่บนเหมือนเดิม (อาการที่ Top ส่งรูปมา) ----
       {
-        // เอาแผงบันทึกไปไว้ "ใต้" แผงเอกสาร แล้วปิด-เปิด → ต้องกลับไปอยู่ใต้เหมือนเดิม
-        showPanel('log', { targetId: 'docs', side: 'bottom' });
-        await until62(() => isPanelOpen('log'));
-        await wait62(340);
         const rectOf = (id) => {
           const n = document.querySelector(`#app-root .k-panel[data-panel-id="${id}"]`);
           return n ? n.getBoundingClientRect() : null;
         };
-        const rl0 = rectOf('log'), rd0 = rectOf('docs');
-        const wasBelow = !!(rl0 && rd0) && rl0.top >= rd0.top + rd0.height - 4;
-        check('[62-13] วางแผงบันทึกไว้ใต้แผงเอกสารได้จริง', wasBelow,
-              rl0 && rd0 ? `log.top=${Math.round(rl0.top)} docs.bottom=${Math.round(rd0.top + rd0.height)}` : 'null');
-        hidePanel('log'); await wait62(160);
-        showPanel('log');  await wait62(340);
-        const rl1 = rectOf('log'), rd1 = rectOf('docs');
-        check('[62-13] ปิด-เปิดแล้วยังอยู่ "ใต้" เหมือนเดิม (เดิมเด้งไปอยู่ซ้ายเพราะจำแค่ซ้าย/ขวา)',
-              !!(rl1 && rd1) && rl1.top >= rd1.top + rd1.height - 8,
-              rl1 && rd1 ? `log.top=${Math.round(rl1.top)} docs.bottom=${Math.round(rd1.top + rd1.height)}` : 'null');
+        // วางแผงบันทึกไว้ "เหนือ" แผงเอกสาร = dock แนวตั้ง (forceMove = สั่งย้ายจริง ไม่ใช่แค่เปิด)
+        showPanel('log', { targetId: 'docs', side: 'top', forceMove: true });
+        await until62(() => isPanelOpen('log'));
+        await wait62(340);
+        const rl0 = rectOf('log'), rd0 = rectOf('docs'), rt0 = rectOf('tree');
+        const above = !!(rl0 && rd0) && rl0.top + rl0.height <= rd0.top + 6
+                      && Math.abs(rl0.left - rd0.left) <= 6;      // ซ้อนแนวตั้ง ไม่ใช่วางข้างกัน
+        check('[62-13] วางแผงบันทึกไว้เหนือแผงเอกสารได้จริง (dock แนวตั้ง)', above,
+              rl0 && rd0 ? `log=[${Math.round(rl0.left)},${Math.round(rl0.top)},${Math.round(rl0.height)}] ` +
+                           `docs=[${Math.round(rd0.left)},${Math.round(rd0.top)}]` : 'null');
+        const logH0 = rl0 ? Math.round(rl0.height) : 0;
+
+        // ปิดแล้วเปิดใหม่แบบที่ผู้ใช้ทำจริง (ปุ่ม/ถาดแผง — ไม่ได้บอกตำแหน่ง)
+        hidePanel('log'); await wait62(200);
+        check('[62-13] ปิดแล้วหายไปจริง', !isPanelOpen('log'));
+        check('[62-13] ปิดแล้วสล็อตยังอยู่ในต้นไม้ (ไม่ถูกตัดทิ้ง)',
+              getPanelManager().isDocked('log') && getPanelManager().isHidden('log'));
+        showPanel('log'); await wait62(340);
+
+        const rl1 = rectOf('log'), rd1 = rectOf('docs'), rt1 = rectOf('tree');
+        check('[62-13] เปิดกลับ → ยังอยู่ "เหนือ" เอกสารเหมือนเดิม ไม่เด้งไปฝั่งซ้าย',
+              !!(rl1 && rd1) && rl1.top + rl1.height <= rd1.top + 6
+              && Math.abs(rl1.left - rd1.left) <= 6,
+              rl1 && rd1 ? `log=[${Math.round(rl1.left)},${Math.round(rl1.top)}] ` +
+                           `docs=[${Math.round(rd1.left)},${Math.round(rd1.top)}]` : 'null');
+        check('[62-13] เปิดกลับ → ความสูงเท่าเดิม (สัดส่วนไม่ถูกเกลี่ยใหม่)',
+              Math.abs(Math.round(rl1.height) - logH0) <= 2,
+              `${logH0}px → ${Math.round(rl1.height)}px`);
+        check('[62-13] เปิด-ปิดแผงนี้ไม่ไปขยับแผงโปรเจกต์เลย',
+              !!(rt0 && rt1) && Math.abs(rt1.width - rt0.width) <= 2,
+              rt0 && rt1 ? `${Math.round(rt0.width)}px → ${Math.round(rt1.width)}px` : 'null');
         hidePanel('log'); await wait62(140);
       }
 
