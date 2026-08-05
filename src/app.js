@@ -56,7 +56,8 @@ import { $, el, state, smart, LOG_BUF, log, setStatus,
          SCENE_STATUSES, SCENE_COLORS, STATUS_COLORS, BUILTIN_CATS, CAT_ICON,
          REL_TYPES, REL_COLOR, REL_LABEL, categorizeRole, categorizeWith,
          t, i18n, loadLanguage, applyDataI18n, onLanguageChanged, SHORTCUTS, SHORTCUT_LABELS, shortcutId,
-         formatShortcut, accelText, withShortcut, num } from './core.js';
+         formatShortcut, accelText, withShortcut, num,
+         setBusy, clearBusy, busyMsg, withBusy } from './core.js';
 import { sceneProps } from './scene-props.js';
 // [alpha.60r3 ข้อ 2] ปุ่ม ✨ ให้ AI เขียนเรื่องย่อ/POV/อารมณ์/ความขัดแย้ง
 import { attachAiFieldButton, generateSceneSynopsis, fieldPrompt, cleanResult,
@@ -1324,13 +1325,24 @@ async function closeProjectIfAny() {
 }
 
 export async function loadProject(root) {
-  // [alpha.60r ข้อ 8] แสดงหน้าจอรอโหลด
-  showLoader('กำลังเปิดโปรเจกต์…');
+  // [alpha.62 บั๊ก 9] ครอบทั้งก้อนด้วย try/finally — ถ้าโยน error กลางทาง ตัวบอกสถานะต้องไม่ค้าง
+  try { return await loadProjectInner(root); }
+  finally { clearBusy(); }
+}
+async function loadProjectInner(root) {
+  // [alpha.60r ข้อ 8 → alpha.62] รายงานที่แถบสถานะล่าง (ไม่ใช่หน้าจอเต็มจอ)
+  setBusy('กำลังเปิดโปรเจกต์…');
   if (!(await kapi.exists(await kapi.join(root, 'project.khn.json')))) {
+    // ตรวจก่อน "ก่อน" ถามบันทึก — จะได้ไม่ทำผู้ใช้เสียเวลาตอบกล่องแล้วค่อยรู้ว่าโฟลเดอร์ผิด
+    clearBusy();
     alert('โฟลเดอร์นี้ไม่ใช่โปรเจกต์ Killian (ไม่พบ project.khn.json)');
-    hideLoader(); return;
+    return;
   }
-  if (!(await closeProjectIfAny())) { hideLoader(); return; }
+  // [alpha.62 บั๊ก 9] กล่อง "บันทึกก่อนปิด?" เด้งตรงนี้ — ต้องล้างตัวบอกสถานะก่อน
+  //   ไม่งั้นสปินเนอร์หมุนค้างระหว่างรอผู้ใช้ตอบ ดูเหมือนโปรแกรมแฮงก์
+  clearBusy();
+  if (!(await closeProjectIfAny())) return;
+  setBusy('กำลังอ่านข้อมูลโปรเจกต์…');
   const meta = await kapi.readJson(await kapi.join(root, 'project.khn.json'));
   state.root = root; state.title = meta.title || 'โปรเจกต์';
   loadSettings(meta);
@@ -1342,15 +1354,15 @@ export async function loadProject(root) {
   // ---- โหลดภาษาของโปรเจกต์ (ถ้าเลือกไว้) ----
   const projLang = state.settings.language || 'en';
   if (projLang !== i18n.lang) {
-    showLoader('กำลังโหลดภาษา…');
+    setBusy('กำลังโหลดภาษา…');
     await loadLanguage(projLang, root);
   }
   applyDataI18n();
   initIcons();
   applyToolbarShortcutTitles();
-  showLoader('กำลังตรวจสอบไฟล์…');
+  setBusy('กำลังตรวจสอบไฟล์…');
   await purgeRecycle(root);                          // ล้างถังขยะเก่าก่อนสร้างต้นไม้
-  showLoader('กำลังสร้างโครงสร้างโปรเจกต์…');
+  setBusy('กำลังสร้างโครงสร้างโปรเจกต์…');
   await buildTree();
   buildFilterBar().catch(() => {});             // แถบกรอง
   updateSummaryBar().catch(() => {});            // สรุปด่วนเหนือ tree
@@ -1364,9 +1376,11 @@ export async function loadProject(root) {
   // [alpha.57a ข้อ 5] ฟอนต์ตามภาษาของโปรเจกต์ (ต้องรู้ path จริงก่อนจึงสร้าง @font-face ได้)
   preloadLangFontUrls().then(() => applySettings()).catch(() => {});
   loadSpellDict(root);                               // โหลดคลังคำตรวจคำผิด (async, ไม่บล็อก)
+  setBusy('กำลังโหลดเทมเพลต…');
   await loadTemplates();                            // default templates ถูกฝังลงโปรเจกต์ทันที
   warmInverse(); loadPlugins();
   // ---- เริ่มระบบใหม่ (Part 1+2) ----
+  setBusy('กำลังจัดวางแผงและแท็บ…');
   initPanelSystem();                                 // Panel System
   // sync toolbar toggle .on states + [60r2 ข้อ 1/11] ความกว้าง workspace และรางเลขบรรทัด
   onPanelLayoutChange(() => { refreshToolbar(); syncWorkspaceWidths(); scheduleLineGutter(); });
@@ -1380,8 +1394,7 @@ export async function loadProject(root) {
   if (state.settings.autoSync) setAutoSync(true);    // auto-task: คืนสถานะที่ผู้ใช้เปิดไว้
   // [alpha.61 ข้อ 1] หน้าแรกไม่เด้งจากตรงนี้แล้ว — bootSequence() เป็นคนตัดสินลำดับเปิดโปรแกรม
   //   (เดิม loadProject เด้งหน้าแรกทับทุกครั้ง ทำให้ "เปิดโปรเจกต์ล่าสุดโดยข้ามหน้าแรก" เป็นไปไม่ได้)
-  // [alpha.60r ข้อ 8] ปิดหน้าจอรอโหลด
-  hideLoader();
+  clearBusy();                                       // [alpha.62] เลิกแสดง "กำลังทำอะไรอยู่"
   setStatus('เปิดโปรเจกต์: ' + state.title);
 }
 
@@ -1453,7 +1466,7 @@ export async function saveGlobalSetting(key, value) {
   return value;
 }
 export async function bootSequence() {
-  showLoader('กำลังเริ่มโปรแกรม…');
+  setBusy('กำลังเริ่มโปรแกรม…');
   const g = await bootGlobalSettings();
   // ค่ายังไม่มีโปรเจกต์ → ยัดลง state.settings ไว้ก่อน เพื่อให้เมนู/สวิตช์อ่านค่าถูกตั้งแต่วินาทีแรก
   state.settings = { ...DEFAULT_SETTINGS, ...g, ...state.settings };
@@ -1462,7 +1475,7 @@ export async function bootSequence() {
   try { recent = (await kapi.listRecent()) || []; } catch {}
   const openedLast = !!(g.openLastProject && recent[0]);
   if (openedLast) await loadProject(recent[0]);
-  hideLoader();
+  clearBusy();
   // ไม่มีโปรเจกต์ล่าสุดให้เปิด หรือผู้ใช้สั่ง "แสดงหน้าแรกเสมอ" → เปิดหน้าแรก
   if (!openedLast || g.showHomeOnStartup === true) {
     try { const { showHomeDialog } = await import('./home-ui.js'); await showHomeDialog(); } catch {}
@@ -3595,24 +3608,26 @@ export async function openCompileDialog() {
   const btns = el('div', 'k-dlg-btns');
   const bPrev = el('button', null, '👁 ดูตัวอย่าง');
   bPrev.onclick = async () => {
-    const r = await doRun();
+    const r = await withBusy('กำลังประมวลผลเวิร์กโฟลว์…', doRun);
     prev.textContent = r.text.slice(0, 4000) + (r.text.length > 4000 ? '\n…' : '');
     if (r.warnings.length) setStatus(r.warnings.join(' · '));
   };
   const bGo = el('button', 'k-ok', 'ส่งออก…');
   bGo.onclick = async () => {
-    const r = await doRun();
+    // [alpha.62 บั๊ก 10] ประมวลผลก่อน → เคลียร์ตัวบอกสถานะ → ค่อยเปิดกล่องบันทึก
+    //   (บทเรียนเดียวกับบั๊ก 1: อย่าให้มีอะไรหมุนค้างตอนรอผู้ใช้ตอบกล่อง)
+    const r = await withBusy('กำลังประมวลผลเวิร์กโฟลว์…', doRun);
     const dest = r.ext === 'pdf'
       ? await kapi.savePdfDialog(safeName(state.title) + '.pdf')
       : await kapi.saveAsDialog(safeName(state.title) + '.' + r.ext, r.ext);
     if (!dest) return;
     // [alpha.59 · 69] ปลายทาง .pdf → ตัวสร้าง PDF ในโปรแกรม (ไบนารี ต้องผ่าน writeBytes — กฎ 10)
     if (r.ext === 'pdf') {
-      const made = await writeCompiledPdf(dest, r, state.title);
+      const made = await withBusy('กำลังสร้างไฟล์ PDF…', () => writeCompiledPdf(dest, r, state.title));
       ov.remove(); setStatus(`ส่งออก PDF แล้ว (${made.pageCount} หน้า): ` + dest);
       return;
     }
-    await kapi.writeFile(dest, finalizeCompiled(r));
+    await withBusy('กำลังเขียนไฟล์…', () => kapi.writeFile(dest, finalizeCompiled(r)));
     ov.remove(); setStatus('ส่งออกแล้ว: ' + dest);
   };
   const bClose = el('button', 'k-cancel', 'ปิด');
@@ -3633,10 +3648,10 @@ async function exportDraft() {
     : await pickFromList('ส่งออกฉบับร่างไหน', drafts.map((d) => d.label));
   if (!pick) return;
   const { secName, dPath } = drafts.find((d) => d.label === pick);
-  const text = await compileDraftText(dPath);
+  const text = await withBusy('กำลังรวมฉบับร่าง…', () => compileDraftText(dPath));
   const dest = await kapi.saveAsDialog(safeName(state.title) + '.md');
   if (!dest) return;
-  await kapi.writeFile(dest, text);
+  await withBusy('กำลังเขียนไฟล์…', () => kapi.writeFile(dest, text));
   setStatus('ส่งออกรวมแล้ว: ' + dest);
   return dest;
 }
@@ -5295,10 +5310,14 @@ async function saveAllTabs(silent = false) {
     if (!dirty.length) return 0;
   }
   let n = 0;
-  for (const t of dirty) {
-    try { await saveTab(t); n++; }
-    catch (err) { log('error', 'saveAll ล้มเหลว: ' + (t.file || t.title), err); }
-  }
+  // [alpha.62 บั๊ก 10] บอกที่แถบล่างว่ากำลังบันทึกไฟล์ไหน อยู่ที่เท่าไรของทั้งหมด
+  try {
+    for (const t of dirty) {
+      setBusy(`กำลังบันทึก ${n + 1}/${dirty.length} — ${t.title || t.file || ''}`);
+      try { await saveTab(t); n++; }
+      catch (err) { log('error', 'saveAll ล้มเหลว: ' + (t.file || t.title), err); }
+    }
+  } finally { clearBusy(); }
   setStatus(`บันทึกทั้งหมดแล้ว (${n} ไฟล์)`);
   updateDirtyBadge();
   refreshStatusBar();
@@ -6872,18 +6891,13 @@ function syncFloatBarVisible() {
 
 
 // ---------------- Tooltip ระบบเดียว KTooltip (ข้อ 16) ----------------
-// [alpha.60r ข้อ 8] หน้าจอรอโหลด
-export function showLoader(msg) {
-  const el = document.getElementById('k-loader');
-  if (!el) return;
-  el.style.display = 'flex';
-  const prog = document.getElementById('k-loader-prog');
-  if (prog && msg) prog.textContent = msg;
-}
-export function hideLoader() {
-  const el = document.getElementById('k-loader');
-  if (el) el.style.display = 'none';
-}
+// [alpha.60r ข้อ 8 → alpha.62 บั๊ก 1+2] เดิมเป็นหน้าจอรอโหลดเต็มจอ (#k-loader)
+// มันวางทับทุกอย่างด้วย z-index 999 รวมถึงกล่อง "บันทึกก่อนปิด?" (k-overlay z-index 80)
+// ที่ closeProjectIfAny() เด้งขึ้นมาระหว่างเปิดโปรเจกต์ → กดปุ่มไม่ได้ ต้อง force quit
+// ตอนนี้รายงานที่แถบสถานะล่างแทน (setBusy) — ไม่มีอะไรทับ ไม่มีอะไรบล็อก
+// คงชื่อ showLoader/hideLoader ไว้เพื่อไม่ต้องไล่แก้จุดเรียกทั้งหมด
+export function showLoader(msg) { return setBusy(msg || 'กำลังทำงาน…'); }
+export function hideLoader() { return clearBusy(); }
 // วาง tooltip "เหนือ" ตัว trigger เสมอ (ใช้ getBoundingClientRect + flip)
 // ไม่หน่วงเวลา — แสดงทันที · รองรับข้อความยาว · ธีมตาม CSS
 const TIP_GAP = 6;
@@ -15480,7 +15494,7 @@ async function runTest(projectPath) {
         check('[61-1] ค่าเริ่มต้นคือ "ไม่เปิดโปรเจกต์ล่าสุด" และ "ไม่บังคับหน้าแรก"',
               GLOBAL_DEFAULTS.openLastProject === false && GLOBAL_DEFAULTS.showHomeOnStartup === false,
               JSON.stringify([GLOBAL_DEFAULTS.openLastProject, GLOBAL_DEFAULTS.showHomeOnStartup]));
-        check('[61-1] มีหน้าต่างรอโหลดในหน้า HTML', !!document.getElementById('k-loader'));
+        // [alpha.62 บั๊ก 9] หน้าจอรอโหลดเต็มจอถูกถอดออก — ย้ายไปเช็คที่บล็อก alpha.62 ข้างล่าง
         const keepA = S.openLastProject, keepB = S.showHomeOnStartup;
         await toggleOpenLastProject(true);
         check('[61-1] เปิดสวิตช์ "เปิดโปรเจกต์ล่าสุด" แล้วค่าเข้าสถานะจริง', S.openLastProject === true);
@@ -16015,6 +16029,86 @@ async function runTest(projectPath) {
         await wait62(120);
         t8.editor.setMarkdown(t8.body || '');
         t8.dirty = false;
+      }
+
+      // ---- [62-9] หน้าจอ loading เต็มจอถูกถอดออก (มันทับกล่องบันทึกจนต้อง force quit) ----
+      {
+        check('[62-9] ไม่มี #k-loader ในหน้า HTML อีกแล้ว',
+              !document.getElementById('k-loader'));
+        check('[62-9] ไม่มี .k-loader-spin/.k-loader-text หลงเหลือ',
+              !document.querySelector('.k-loader-spin, .k-loader-text'));
+        // showLoader/hideLoader ยังเรียกได้ (จุดเรียกเดิมไม่ต้องแก้) แต่ต้องไม่สร้างอะไรมาทับจอ
+        showLoader('ทดสอบว่าไม่ทับจอ');
+        check('[62-9] showLoader() ไม่สร้าง element เต็มจออีกแล้ว',
+              !document.getElementById('k-loader') && busyMsg() === 'ทดสอบว่าไม่ทับจอ', busyMsg());
+        // ── ตัวบั๊กจริง: กล่อง k-overlay ต้องคลิกได้ทั้งที่ "กำลังทำงาน" อยู่ ──
+        const ov9 = el('div', 'k-overlay');
+        const box9 = el('div', 'k-dialog');
+        const btn9 = el('button', 'k-ok', 'บันทึก');
+        box9.append(btn9); ov9.append(box9); document.body.append(ov9);
+        await wait62(60);
+        const r9 = btn9.getBoundingClientRect();
+        check('[62-9] กล่องจำลองถูกวาดจริง (มีขนาด)', r9.width > 0 && r9.height > 0,
+              `${Math.round(r9.width)}×${Math.round(r9.height)}`);
+        const hit9 = document.elementFromPoint(r9.left + r9.width / 2, r9.top + r9.height / 2);
+        check('[62-9] ระหว่าง "กำลังทำงาน" ปุ่มบันทึกยังกดได้ (เดิมโดน #k-loader ทับจนต้อง force quit)',
+              !!hit9 && (hit9 === btn9 || btn9.contains(hit9)),
+              hit9 ? (hit9.id || hit9.className || hit9.tagName) : 'null');
+        let clicked9 = false;
+        btn9.onclick = () => { clicked9 = true; };
+        btn9.click();
+        check('[62-9] กดปุ่มแล้วเหตุการณ์ถึงปุ่มจริง', clicked9);
+        ov9.remove();
+        hideLoader();
+        check('[62-9] hideLoader() ล้างตัวบอกสถานะ', busyMsg() === '', busyMsg());
+      }
+
+      // ---- [62-10] แถบล่างบอกว่าโปรแกรมกำลังทำอะไรอยู่ ----
+      {
+        const bw = $('#status-busy');
+        check('[62-10] มีช่อง "กำลังทำอะไรอยู่" ในหน้า HTML', !!bw);
+        check('[62-10] ช่องนี้อยู่ในแถบสถานะล่าง จริง ๆ',
+              !!bw && !!bw.closest('#statusbar'));
+        check('[62-10] มีสปินเนอร์บอกว่ายังทำงานอยู่', !!bw.querySelector('.k-busy-spin'));
+        // ปิดอยู่ตอนไม่มีอะไรทำ
+        clearBusy();
+        check('[62-10] ว่างงาน = ซ่อนไว้', getComputedStyle(bw).display === 'none',
+              getComputedStyle(bw).display);
+        // ตั้งข้อความแล้วต้องโผล่ พร้อมข้อความที่ส่งไป
+        setStatus('สถานะเดิมของแถบล่าง');
+        setBusy('กำลังทดสอบระบบ…');
+        check('[62-10] ตั้งข้อความแล้วแสดงผลจริง', getComputedStyle(bw).display !== 'none',
+              getComputedStyle(bw).display);
+        check('[62-10] ข้อความตรงกับที่ส่งไป',
+              $('#status-busy-text').textContent === 'กำลังทดสอบระบบ…',
+              $('#status-busy-text').textContent);
+        check('[62-10] busyMsg() อ่านค่าปัจจุบันได้', busyMsg() === 'กำลังทดสอบระบบ…');
+        check('[62-10] ไม่ไปทับข้อความสถานะเดิม (คนละช่องกัน)',
+              $('#status').textContent === 'สถานะเดิมของแถบล่าง', $('#status').textContent);
+        check('[62-10] ไม่กินคลิกของแถบสถานะ (pointer-events:none)',
+              getComputedStyle(bw).pointerEvents === 'none', getComputedStyle(bw).pointerEvents);
+        // เรียกซ้อนได้ — ข้อความล่าสุดชนะ (loadProject เรียกหลายรอบตามขั้นตอน)
+        setBusy('ขั้นตอนถัดไป…');
+        check('[62-10] เรียกซ้ำ = ข้อความล่าสุดชนะ', busyMsg() === 'ขั้นตอนถัดไป…');
+        clearBusy();
+        check('[62-10] clearBusy() แล้วซ่อนกลับ',
+              busyMsg() === '' && getComputedStyle(bw).display === 'none');
+        // withBusy: ตั้งระหว่างทำงาน · เคลียร์เสมอแม้งานโยน error
+        let during10 = '';
+        const ret10 = await withBusy('กำลังทำงานยาว…', async () => { during10 = busyMsg(); return 42; });
+        check('[62-10] withBusy ตั้งข้อความระหว่างทำงาน', during10 === 'กำลังทำงานยาว…', during10);
+        check('[62-10] withBusy คืนค่าที่งานคืนมา', ret10 === 42, String(ret10));
+        check('[62-10] withBusy เคลียร์หลังทำงานเสร็จ', busyMsg() === '', busyMsg());
+        let threw10 = false;
+        try { await withBusy('งานที่จะพัง…', async () => { throw new Error('พัง'); }); }
+        catch { threw10 = true; }
+        check('[62-10] withBusy ปล่อย error ออกมาตามเดิม', threw10);
+        check('[62-10] งานพังแล้วตัวบอกสถานะต้องไม่ค้าง (สำคัญที่สุด)',
+              busyMsg() === '' && getComputedStyle(bw).display === 'none', busyMsg());
+        // จุดเรียกจริงต้องถูกเดินสายไว้แล้ว — ตรวจจากซอร์สของ bundle ไม่ได้ จึงเช็คพฤติกรรม:
+        // loadProject จบแล้วต้องไม่เหลือข้อความค้าง (โปรเจกต์เทสถูกเปิดไปแล้วตั้งแต่ต้นการทดสอบ)
+        check('[62-10] หลังเปิดโปรเจกต์เสร็จ ไม่มีข้อความค้างบนแถบล่าง', busyMsg() === '');
+        setStatus('พร้อม');
       }
 
     out.push('ALL OK');

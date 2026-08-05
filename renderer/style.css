@@ -1222,7 +1222,7 @@ body.paper-mode .sp-raw { color:#888; }
 
 /* ====== กลุ่ม 1: Home Screen ====== */
 /* [alpha.61 ข้อ 1] flex column — แถบคำสั่งท้ายกล่องดันตัวเองไปชิดขอบล่างด้วย margin-top:auto */
-/* [alpha.62 บั๊ก 1] กว้างขึ้น 30% — แถบคำสั่งท้ายกล่องมี 8 ปุ่ม + ช่องค้นหา
+/* [alpha.62 บั๊ก 9] กว้างขึ้น 30% — แถบคำสั่งท้ายกล่องมี 8 ปุ่ม + ช่องค้นหา
    ที่ 1100px ปุ่มตกลงไปบรรทัดที่สองเสมอ (ปุ่มละ min-width 120px) */
 .home-wrap { max-width:1430px; margin:0 auto; padding:40px 32px 24px; overflow-y:auto; height:100%;
   display:flex; flex-direction:column; }
@@ -2304,7 +2304,7 @@ body.paper-mode .roster-page { background:var(--paper); color:var(--paper-ink); 
 
 /* 0.56a #1: กล่องหน้าแรกขนาดคงที่ (แบบ DaVinci Resolve — กรอบนิ่ง เนื้อในเลื่อน)
    ความกว้างคิดจากขนาดการ์ด 4 คอลัมน์พอดี → เปลี่ยน --home-thumb แล้วกล่องยังพอดีเสมอ */
-/* [alpha.62 บั๊ก 1] × 1.3 — แถบคำสั่งล่างต้องอยู่บรรทัดเดียว (ดู --home-dlg-w) */
+/* [alpha.62 บั๊ก 9] × 1.3 — แถบคำสั่งล่างต้องอยู่บรรทัดเดียว (ดู --home-dlg-w) */
 :root { --home-dlg-w:calc((var(--home-thumb, 190px) * 4 + 18px * 3 + 64px) * 1.3); }
 .k-dialog.k-home-dlg {
   width:var(--home-dlg-w);
@@ -2644,24 +2644,21 @@ body.paper-mode .sp-cont-mark { color:#6b6552; }
 .k-pdf-omit-item { display:flex; align-items:center; gap:4px; }
 .k-pdf-prog { min-height:1.4em; margin-top:8px; }
 
-/* [alpha.60r ข้อ 8] หน้าจอรอโหลด */
-#k-loader {
-  position:fixed; inset:0; z-index:999;
-  background:rgba(22,21,18,.92);
-  display:flex; flex-direction:column;
-  align-items:center; justify-content:center;
-  gap:16px;
+/* [alpha.62 บั๊ก 9+10] หน้าจอรอโหลดเต็มจอ (#k-loader) ถูกถอดออก — มันทับกล่อง "บันทึกก่อนปิด?"
+   จนคลิกไม่ได้ ต้อง force quit · แทนที่ด้วยตัวบอกสถานะเล็ก ๆ ในแถบล่าง ซึ่งไม่บังอะไรเลย */
+#status-busy {
+  display:none; align-items:center; gap:6px; margin-left:12px;
+  color:var(--accent); font-size:calc(11.5px * var(--ui-scale, 1));
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:42vw;
+  pointer-events:none;            /* ห้ามกินคลิกของแถบสถานะ */
 }
-.k-loader-spin {
-  width:48px; height:48px;
-  border:4px solid var(--border);
+.k-busy-spin {
+  flex:none; width:11px; height:11px;
+  border:2px solid var(--border);
   border-top-color:var(--accent);
   border-radius:50%;
-  animation:k-spin .8s linear infinite;
+  animation:k-spin .8s linear infinite;   /* @keyframes k-spin ประกาศไว้แล้วที่ .k-tree-refresh-btn */
 }
-@keyframes k-spin { to { transform:rotate(360deg); } }
-.k-loader-text { color:var(--bright); font-size:calc(18px * var(--uis, 1)); }
-#k-loader-prog { color:#999; font-size:calc(13px * var(--uis, 1)); }
 
 /* [alpha.60r ข้อ 5] ปุ่มปิดกล่องหน้าแรก */
 .home-close-btn {

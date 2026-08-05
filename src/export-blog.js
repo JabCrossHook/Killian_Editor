@@ -1,7 +1,7 @@
 // export-blog.js — ส่งออกเป็น HTML สำหรับบล็อก (Medium/WordPress) · Ctrl+Shift+B
 // เดิมยัด markdown ดิบ (รวม frontmatter) ลง <div> → บล็อกได้ตัวอักษร # ** ติดไปด้วย
 // รอบนี้: เลือกธีม/หัวบท/หัวฉากได้ + ฝังรูปเป็น data URI (อัปโหลดที่เดียวจบ ไม่ต้องแนบรูปแยก)
-import { el, state, setStatus, log } from './core.js';
+import { el, state, setStatus, log, setBusy, clearBusy } from './core.js';
 import { mdToHtmlBody, escapeHtml, stripComments, stripMentions } from './compile.js';
 import { parseMdFile } from './md.js';
 
@@ -175,13 +175,15 @@ export async function exportBlogHTML(preset) {
   if (!state.root) { setStatus('ยังไม่ได้เปิดโปรเจกต์'); return false; }
   const o = preset || await optionsDialog();
   if (!o) return false;
-  setStatus('กำลังสร้าง HTML…');
+  setBusy('กำลังสร้าง HTML…');                       // [alpha.62 บั๊ก 10] ฝังรูปทำให้ช้าได้เป็นนาที
   try {
     // จำตัวเลือกไว้ใช้ครั้งหน้า
     state.meta.blogExport = o;
     const { html, nScenes, nImages } = await buildBlogHtml(o);
+    clearBusy();                                     // เคลียร์ก่อนเปิดกล่องบันทึกเสมอ
     const dest = await kapi.saveAsDialog((state.title || 'blog') + '-blog.html', 'html');
     if (!dest) return false;
+    setBusy('กำลังเขียนไฟล์ HTML…');
     await kapi.writeFile(dest, html);
     try { const { saveProjectMeta } = await import('./app.js'); await saveProjectMeta(); } catch {}
     setStatus(`ส่งออก HTML สำหรับบล็อกแล้ว (${nScenes} ฉาก${nImages ? ` · ฝังรูป ${nImages} ไฟล์` : ''}): ` + dest);
@@ -190,5 +192,5 @@ export async function exportBlogHTML(preset) {
     log('error', 'export-blog failed', e);
     setStatus('ส่งออก HTML ล้มเหลว');
     return false;
-  }
+  } finally { clearBusy(); }
 }

@@ -201,6 +201,9 @@
     <div id="ai-chat-panel" class="k-featpanel"><div id="ai-chat-body"></div></div>
 </div>
 <div id="statusbar"><span id="status" data-i18n="app.ready">พร้อม</span>
+  <!-- [alpha.62 บั๊ก 9+10] "กำลังทำอะไรอยู่" — แทนหน้าจอ loading เต็มจอที่เคยทับกล่องบันทึก
+       จนคลิกไม่ได้ (ต้อง force quit) · ตัวนี้ไม่บล็อกการคลิกอะไรเลย -->
+  <span id="status-busy" style="display:none"><span class="k-busy-spin"></span><span id="status-busy-text"></span></span>
   <span id="status-center"></span>
   <div id="status-right">
     <span id="wc"></span>
@@ -231,11 +234,6 @@
   <div class="k-menu-item" data-action="memo"><span data-icon="clipboard" data-icon-size="16"></span> <span data-i18n="panel.fabMemo">สร้าง Memo</span></div>
 </div>
 <script src="bundle.js"></script>
-<!-- [alpha.60r ข้อ 8] หน้าจอรอโหลด — แสดงตอนเปิดโปรเจกต์ -->
-<div id="k-loader" style="display:none">
-  <div class="k-loader-spin"></div>
-  <div class="k-loader-text">กำลังโหลด…</div>
-  <div id="k-loader-prog"></div>
-</div>
+<!-- [alpha.62 บั๊ก 9] หน้าจอรอโหลด (#k-loader) ถูกลบทิ้งแล้ว — ดู #status-busy ที่แถบสถานะล่างแทน -->
 </body>
 </html>

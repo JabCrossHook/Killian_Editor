@@ -2,7 +2,7 @@
 // หลักสำคัญ 2 ข้อ:
 //  1) เรียก API ผ่าน main process (kapi.httpFetch) — fetch จาก renderer โดน CORS (origin เป็น file://)
 //  2) API key ไม่เก็บใน project.khn.json (ไฟล์ที่ตั้งใจให้ก๊อป/แชร์) → เก็บแยกที่ <root>/ai-key.json
-import { $, el, state, setStatus, log } from './core.js';
+import { $, el, state, setStatus, log, withBusy } from './core.js';
 
 const KEY_FILE = 'ai-key.json';
 let _keyCache = null;       // { apiKey } — อ่านครั้งเดียวต่อโปรเจกต์
@@ -148,8 +148,9 @@ function recordUsage(tokens, provider, model) {
 }
 
 export async function testAIConnection() {
-  setStatus('กำลังทดสอบเชื่อมต่อ AI…');
-  const result = await callAI('ตอบกลับคำว่า ok เท่านั้น', '');
+  // [alpha.62 บั๊ก 10] เครือข่ายช้าได้เป็นสิบวินาที — ต้องเห็นว่าโปรแกรมยังทำงานอยู่
+  const result = await withBusy('กำลังทดสอบเชื่อมต่อ AI…',
+                                () => callAI('ตอบกลับคำว่า ok เท่านั้น', ''));
   const ok = !!result && result.toLowerCase().includes('ok');
   setStatus(ok ? '✅ AI: เชื่อมต่อสำเร็จ' : '❌ AI: ทดสอบล้มเหลว');
   return ok;

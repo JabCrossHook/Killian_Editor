@@ -80,6 +80,12 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
   - `wiki.js` — `WikiEditor` + `imageLightbox`
   - `gallery.js`, `network.js`, `ui.js` (**`window.prompt()` = no-op ใน Electron!** ใช้ ask/confirmBox)
   - **`core.js`** — แกนกลางที่ทุกโมดูลใช้ร่วม: `$`,`el`,`state`,`smart`,`log`,`setStatus` + ค่าคงที่ (`DEFAULT_SETTINGS`,`SCENE_STATUSES`,`SCENE_COLORS`,`BUILTIN_CATS`,`CAT_ICON`,`BASE_ED_FS`,`ZOOM_*`) — **ทุกไฟล์ใหม่ import จากนี่**
+    · **[alpha.62 บั๊ก 9+10] `setBusy(msg)`/`clearBusy()`/`busyMsg()`/`withBusy(msg,fn)`** = ตัวบอก "กำลังทำอะไรอยู่"
+      ที่ **`#status-busy` ในแถบสถานะล่าง** (สปินเนอร์เล็ก + ข้อความ · `pointer-events:none`)
+      **หน้าจอ loading เต็มจอ `#k-loader` ถูกลบทิ้งแล้ว — ห้ามเอากลับมา** (ดูบทเรียน 85)
+      `showLoader`/`hideLoader` ใน app.js เหลือเป็นแค่ชื่อเก่าที่ชี้มาที่ `setBusy`/`clearBusy`
+      **กฎเหล็ก: ก่อนเปิดกล่องที่ต้องรอผู้ใช้ตอบ (บันทึก/ยืนยัน/เลือกไฟล์) ต้อง `clearBusy()` ก่อนเสมอ**
+      และงานยาวทุกอันครอบด้วย `withBusy` หรือ `try/finally` — ล้มแล้วต้องไม่เหลือสปินเนอร์ค้าง
   - `app.js` (~5,300 บรรทัด: bootstrap/explorer(buildTree)/tabs/toolbar(floatBar)/zoom(pageZoom)/commands/shortcuts/**selftest**) — orchestrator
   - **แยกจาก app.js แล้ว (alpha.39, feature modules):** `dashboard.js` · `books.js` · `timeline-ui.js` · `maps-ui.js` · `wiki-ui.js` · `scene-ops.js` · `section-ops.js` · `scene-props.js` · `dialogs.js` · `recycle.js` — จุดที่ feature ใหม่มาต่อยอด (ดู **AGENTS.md** สำหรับกฎ import/circular/CommonJS ก่อนแก้)
   - **โมดูล feature รอบ .39–.40 (ต่อเมนูครบแล้วทุกตัว):** `home-ui.js` · `tag-pane.js` · `global-search.js` · `scene-table.js` · `scratchpad.js` · `quick-open.js` (fuse.js) · `custom-status.js` (`allStatuses()` = มาตรฐาน+ที่ผู้ใช้เพิ่ม — scene-ops/scene-props ใช้ตัวนี้) · `focus-mode.js` (มี `cursorBlock()` ที่ typewriter ใช้ร่วม) · `typewriter.js` · `word-history.js` · `backup.js` (`backupIfDue` รายวัน) · `export-zip.js` (jszip + `writeBytes`) · `export-blog.js` · `comments/comment-core.js`+`comment-ui.js` (แผงคอมเมนต์ · เก็บท้ายไฟล์ .md — `comments.js` เดิมถูกลบใน .48) · `thesaurus.js` (คืน menu items ให้เมนูคลิกขวาเดิม) · `project.js` (เทมเพลตโปรเจกต์) · `ai-settings.js`+`ai-summary.js` (key แยกไฟล์ · `kapi.httpFetch`) · `branching-ui.js` · `floorplan-ui.js` · `player-choices.js` · `visual-tags.js` (ชิปสีในตารางฉาก) · `session-notes.js` · `centralize-ui.js`
@@ -314,6 +320,20 @@ $env:KILLIAN_TEST="1"; $env:KILLIAN_TEST_PROJECT=$p
 ```
 **ต้องสร้าง fixture ใหม่ทุกครั้ง** — เทสรูป ("รูป render จริง") พังถ้าใช้โปรเจกต์ที่รันไปแล้วซ้ำ (เทสคลังรูปย้ายไฟล์)
 หน้าต่างไม่ปิดเองหลังจบ → รอจน `tail -1 C:\tmp\k2result.txt` = `ALL OK` แล้วค่อยฆ่า process
+
+**รัน e2e จาก build ที่แพ็กแล้ว** (verify ตัวที่จะส่งจริง — ทำก่อน ship ทุกครั้ง):
+```powershell
+Get-Process "Killian 2" -EA SilentlyContinue | Stop-Process -Force
+$p="$env:TEMP\k2proj2"; Remove-Item -Recurse -Force $p -EA SilentlyContinue; node test/fixture.js $p
+Remove-Item -Force C:\tmp\k2result.txt -EA SilentlyContinue
+$env:KILLIAN_TEST="1"; $env:KILLIAN_TEST_PROJECT=$p
+Start-Process -FilePath ".\dist\win-unpacked\Killian 2.exe" -ArgumentList "--no-sandbox","--disable-gpu" `
+  -RedirectStandardOutput C:\tmp\k2app.log -RedirectStandardError C:\tmp\k2app.err
+```
+> ⚠ **ห้ามใช้ `& ".\…\Killian 2.exe" *> log` ใน task ที่รันเบื้องหลัง** — ดูบทเรียน 86
+> (stdout ถูกปิดตอน launcher คืนค่า → main process ตายด้วย EPIPE แล้วค้างที่กล่อง "Error")
+> วิธีดูว่าค้างเพราะกล่อง native: `Get-Process | ? MainWindowTitle` — เห็น title = `Error`
+> อ่านข้อความในกล่องด้วย UIAutomation (`FindAll` ControlType::Text ตาม ProcessId)
 เทคนิค: ไฟล์ src เป็น ES module แต่ root ไม่ใช่ `type:module` → test เป็น `.cjs` ที่ `esbuild.buildSync({format:'cjs'})` แปลงชั่วคราวแล้ว `require`. โมดูลบริสุทธิ์ (ไม่ import DOM/kapi) จึงเทสได้ตรง ๆ — เพิ่ม unit test ทุกครั้งที่เพิ่ม logic ในไฟล์เหล่านี้
 
 ```bash
@@ -647,6 +667,29 @@ grep -E "FAIL|STOP" /tmp/k2result.txt | head -3
    หน้าต่างไร้ขอบ + แผงลอยที่เพิ่งถูกคลิก มักยังไม่ได้โฟกัส → reject เงียบ ๆ (และ `document.execCommand('copy')`
    ก็ล้มด้วยเหตุเดียวกัน) **แก้: คัดลอกผ่าน main process** (`clipboard.writeText` ของ electron →
    `kapi.clipboardWrite`) แล้วค่อยตกไปทางเบราว์เซอร์เป็นทางสำรอง
+85. **[alpha.62] แผ่นเต็มจอ "ระหว่างรอ" = กับดักที่ทำให้ผู้ใช้ต้อง force quit** ⚠ ร้ายแรงที่สุดของรอบนี้
+   `#k-loader` เป็น `position:fixed; inset:0; z-index:999` · `loadProject()` เปิดมันแล้วเรียก
+   `closeProjectIfAny()` ซึ่ง**เด้งกล่อง "บันทึกก่อนปิด?"** — กล่องนั้นคือ `.k-overlay` ที่ **z-index 80**
+   → อยู่ใต้แผ่น loading · คลิกปุ่มไม่ได้ · ปิดโปรแกรมตามปกติก็ไม่ได้ → **force quit ทิ้งงานที่ยังไม่บันทึก**
+   **แก้: ลบหน้าจอ loading ทิ้งทั้งชุด** แล้วรายงานที่แถบสถานะล่างแทน (`setBusy` ใน core.js)
+   **กฎที่ต้องจำ 3 ข้อ**
+   · ตัวบอกความคืบหน้า **ห้ามบล็อกอะไรทั้งสิ้น** — ถ้าจะวางทับจอ ต้องตอบให้ได้ก่อนว่ากล่องไหนบ้างเด้งได้ระหว่างนั้น
+   · **`clearBusy()` ก่อนเปิดกล่องที่ต้องรอผู้ใช้ตอบเสมอ** (บันทึก · ยืนยัน · เลือกไฟล์) —
+     สปินเนอร์หมุนค้างระหว่างรอ = ผู้ใช้อ่านว่า "แฮงก์" แล้วกด force quit อยู่ดี
+   · งานยาวครอบ **`withBusy` / `try…finally`** — ล้มกลางทางแล้วห้ามเหลือสถานะค้าง
+   **เทสที่จับบั๊กนี้ได้จริง**: วาง `.k-overlay` จำลอง → `setBusy(...)` → `document.elementFromPoint()`
+   ที่กลางปุ่มต้องคืน **ตัวปุ่ม** (ดู `[62-9]` ใน selftest) — เช็คแค่ "ไม่มี #k-loader" ไม่พอ
+
+86. **[alpha.62] รัน e2e บน Windows แล้วแอปค้างที่กล่อง "Error" — EPIPE ไม่ใช่บั๊กของแอป**
+   สั่ง `& ".\dist\win-unpacked\Killian 2.exe" *> C:\tmp\k2app.log` ใน task ที่รันเบื้องหลัง →
+   launcher คืนค่าทันที **แล้ว stdout ที่ต่อไว้ถูกปิด** · พอ main process เรียก `console.error`
+   (เช่นตอน IPC handler reject) ก็ได้ `EPIPE: broken pipe` เป็น **uncaught exception ใน main**
+   → Electron เด้งกล่อง native "A JavaScript error occurred in the main process" **ซึ่งบล็อกทุกอย่าง**
+   เทสหยุดนิ่งกลางคัน ไม่มี FAIL ไม่มี STOP — ดูเหมือนโปรแกรมแฮงก์เฉย ๆ
+   **แก้: `Start-Process … -RedirectStandardOutput <file> -RedirectStandardError <file>`** (ไฟล์จริง ไม่ใช่ pipe)
+   **วิธีวินิจฉัยเร็ว** (ใช้ได้กับอาการ "e2e ค้างไม่บอกอะไรเลย" ทุกแบบ):
+   `Get-Process | ? {$_.MainWindowTitle}` → ถ้าเห็น title `Error` = มีกล่อง native ค้างอยู่ ·
+   อ่านข้อความในกล่องด้วย UIAutomation (`AutomationElement` + `PropertyCondition` บน `ProcessIdProperty`)
 
 78. **[alpha.61] ไฟล์ที่ working tree เป็น CRLF ทั้งไฟล์ ทำให้ diff จริงถูกกลบ**
    `main.js` ถูกบันทึกเป็น CRLF มาก่อนเริ่มงาน → `git diff --stat` ขึ้น 766+/766- ทั้งที่ไม่มีอะไรเปลี่ยน
@@ -750,7 +793,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ---
 
-## เวอร์ชัน (ล่าสุด alpha.62 · e2e 1,883 + unit)
+## เวอร์ชัน (ล่าสุด alpha.62 · e2e 1,906 + unit)
 
 .13–.22 (v1→v2 พื้นฐาน): snapshot, line numbers, spellcheck ไทย+Chromium, ปุ่มลัดตั้งเอง, mac build, บทหนัง Ctrl+arrow, relationship sync, floating format bar, sidebar resize, SmartType Final Draft, wiki gallery/lightbox, explorer search+tags, panel docking, tree float+snap
 .24 batch 8 (drag-move explorer, panel snap, split compare, version tracking, scene lock, screenplay Final Draft look, screenplay images, wiki links) · .25–.27 **Planner board** (fabric.js) · .28 **floating windows** · .29 memo-in-chapter + scoped search
@@ -1123,7 +1166,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
     · `settings.spForceCase`/`spAutoCapitalize`/`spAutoCorrectI` → เมนู **บท → 🔠 ตัวพิมพ์ใหญ่/เล็ก (ให้อิสระ)**
     · แก้จุดฮาร์ดโค้ดที่เหลือ: `export-rtf.js` เคย `title.toUpperCase()` เสมอบนหน้าปก
 
-.62 **รอบเก็บบั๊กจาก human test 8 ข้อ** (e2e 1,842 → **1,883**)
+.62 **รอบเก็บบั๊กจาก human test 10 ข้อ** (e2e 1,842 → **1,906**)
   **[1] หน้าแรกกว้างขึ้น 30%** — `--home-dlg-w` (= สูตรเดิม × 1.3) · `.home-wrap` 1100 → 1430px
     → แถบคำสั่งล่าง (มุมมอง · ค้นหา · ส่งออก · นำเข้า · สร้างใหม่ · เปิด · ปิด) อยู่บรรทัดเดียว
   **[2] ปุ่ม 💬 เป็นสวิตช์ของแผง "AI ผู้ช่วยเขียน"** — คำสั่งใหม่ `ai-chat-toggle` · `.tb-toggle` + จุด ●
@@ -1139,6 +1182,14 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
     · ปุ่ม ✨ (`generateSceneField`) เลิกเขียนทับข้อความบอกสาเหตุจริงด้วย "AI ไม่ได้ส่ง…กลับมา"
   **[7][8] `scroll-behavior:smooth` ออกจาก `.pane`/`#panes`** — ต้นเหตุเดียวของทั้ง "ขยับแผงแล้ว
     หน้ากระดาษเลื่อนเอง" และ "ซูมแล้วไหลไปชิดขอบซ้าย" (บทเรียน 80)
+  **[9] ลบหน้าจอ loading เต็มจอทิ้ง** ⚠ ร้ายแรงที่สุดของรอบนี้ — `#k-loader` (z-index 999) ทับกล่อง
+    "บันทึกก่อนปิด?" (`.k-overlay` z-index 80) ที่ `closeProjectIfAny()` เด้งระหว่าง `loadProject()`
+    → กดอะไรไม่ได้เลย **ต้อง force quit** (บทเรียน 85) · ลบทั้ง HTML + CSS ·
+    `showLoader`/`hideLoader` เหลือเป็นชื่อเก่าที่ชี้ไป `setBusy`/`clearBusy` · `loadProject` ครอบ try/finally
+  **[10] แถบล่างบอกว่ากำลังทำอะไรอยู่** — `#status-busy` + API กลางใน core.js
+    (`setBusy`/`clearBusy`/`busyMsg`/**`withBusy`**) · `pointer-events:none` ไม่บังอะไรเลย ·
+    เดินสายแล้วที่: เปิดโปรเจกต์ (ทีละขั้น) · บันทึกทั้งหมด (`n/ทั้งหมด` + ชื่อไฟล์) ·
+    ส่งออกเวิร์กโฟลว์/PDF/ZIP/JSON/HTML · นำเข้า ZIP/Scrivener · **ทุกคำขอ AI ผ่าน `sendRequest()` จุดเดียว**
   เก็บกวาด: `getBoard()` ของ Kanban เลือกเล่มแรกที่ **มีฉบับร่างจริง** (บทเรียน 82) ·
     e2e 3 จุดเปลี่ยนจากรอเวลาคงที่เป็นรอเงื่อนไขจริง (กล่องตั้งค่า · สถิติจัดการเล่ม · บันทึกทั้งหมด)
 

@@ -50,6 +50,31 @@ window.addEventListener('unhandledrejection', (e) => {
 // ---- แถบสถานะล่าง ----
 export function setStatus(s) { $('#status').textContent = s; }
 
+// ---------------- [alpha.62 บั๊ก 9+10] ตัวบอก "กำลังทำอะไรอยู่" ที่แถบสถานะล่าง ----------------
+// เดิมเป็นหน้าจอ loading เต็มจอ (#k-loader, z-index 999) — มันทับ "กล่องบันทึกก่อนปิด" (k-overlay z-index 80)
+// จนคลิกปุ่มไม่ได้เลย ผู้ใช้ต้อง force quit → ตัดหน้าจอนั้นทิ้ง แล้วรายงานที่แถบสถานะแทน
+// หลักการ: **ห้ามบล็อกอะไรทั้งสิ้น** — เป็นแค่ข้อความ + สปินเนอร์เล็ก ๆ มุมซ้ายล่าง
+//   setBusy(msg)  — ข้อความล่าสุดชนะ (เรียกซ้อนได้ เหมือน showLoader เดิมที่เรียกหลายรอบ)
+//   clearBusy()   — ล้างทั้งหมด · busyMsg() — อ่านข้อความปัจจุบัน (เทสใช้)
+//   withBusy(msg, fn) — ครอบงานยาว ๆ · finally เสมอ ต่อให้ fn โยน error ก็ไม่ค้าง
+let _busyMsg = '';
+export function setBusy(msg) {
+  _busyMsg = msg == null ? '' : String(msg);
+  const wrap = $('#status-busy');
+  if (!wrap) return _busyMsg;                        // หน้า HTML เก่า/เทสหน่วย → เงียบ ๆ ไม่พัง
+  const txt = $('#status-busy-text');
+  if (txt) txt.textContent = _busyMsg;
+  wrap.style.display = _busyMsg ? 'inline-flex' : 'none';
+  return _busyMsg;
+}
+export function clearBusy() { return setBusy(''); }
+export function busyMsg() { return _busyMsg; }
+export async function withBusy(msg, fn) {
+  setBusy(msg);
+  try { return await fn(); }
+  finally { clearBusy(); }
+}
+
 // ---- ค่าตั้งต้น settings/goals (โครงเดียวกับ v1 — เก็บครบใน project.khn.json) ----
 // [alpha.60 ข้อ 94] แยกเป็น 2 ระดับ:
 //   global (user) — เก็บใน %APPDATA%/Killian2/settings.json · ใช้ร่วมกันทุกโปรเจกต์
