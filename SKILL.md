@@ -1354,6 +1354,8 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
   เก็บกวาด: **บั๊กเก่า `sectionProps` ตั้งปกเล่มไม่เคยได้ผล** (`String(f)` บนออบเจกต์ → `"[object Object]"`) ·
     `pickImage()` คืน path สัมพัทธ์กับ `Images/` แล้ว · `resolveImg()` หา ​รูปที่ย้ายเข้าอัลบั้มเจอเอง ·
     Explorer เห็นรูปในอัลบั้มย่อยพร้อมหัวข้ออัลบั้ม · เมนู มุมมอง → คลังรูปภาพ เป็นเมนูย่อย 6 รายการ
+  แพ็กแล้ว: `dist/Killian2-2.0.0-alpha.63-mac-intel.dmg` (127MB · x86_64) — **รัน e2e จาก `.app` ที่แพ็กแล้วผ่าน 2,009 ALL OK ด้วย**
+  บน GitHub: branch `alpha-63` (`JabCrossHook/Killian_Editor`)
 
 **ยังเหลือ**: `search-engine.js` ยังเป็น orphan — Global Search (`global-search.js`) ยังสแกนไฟล์ตรง ๆ ไม่ได้ใช้ inverted index (ควรสลับมาใช้เพื่อความเร็ว) · multiple-drafts-per-book UI (โครงรองรับแล้ว), screenplay align persistence, Campaign/D&D mode, **code signing** + `.icns`/`.ico` icon (electron-builder ใช้ได้แล้ว แต่ยังไม่เซ็นและใช้ไอคอนเริ่มต้นของ Electron), native arm64 build. Top เคยบอก paper/indent "อาจต้องปรับปรุง ไว้ก่อน"
 
