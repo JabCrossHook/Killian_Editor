@@ -70,6 +70,13 @@ export const PANEL_DEFS = [
   // [alpha.61 ข้อ 2] แชทกับ AI แบบ opencode — เซสชันเก็บใน Sessions/ ของโปรเจกต์
   { id: 'ai-chat',   title: '💬 AI ผู้ช่วยเขียน',       icon: 'chat',        adopt: '#ai-chat-panel', defaultSide: 'right', closable: true, floatable: true, i18n: 'panel.aiChatTitle',
     desc: 'คุยกับ AI เรื่องงานเขียนของคุณ — แยกเป็นเซสชันเหมือน opencode · เลือกโหมด (วางแผน/ช่วยเขียน) · เลือกโมเดล · กำหนดได้ว่าจะให้เห็นข้อมูลระดับไหน (ทั้งโปรเจกต์/เล่ม/บท/ฉาก)' },
+  // ── [alpha.62 บั๊ก 16] 3 ฟีเจอร์สุดท้ายที่ยังเป็นแท็บเอกสาร ──
+  { id: 'network',   title: 'Story Network',   icon: 'share',        adopt: '#net-panel',     defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.networkTitle',
+    desc: 'ผังความสัมพันธ์ของตัวละคร/สถานที่/สิ่งของ — ลากโหนดจัดวางเอง · สีเส้นบอกประเภทความสัมพันธ์ · ดับเบิลคลิกเปิดหน้า Wiki นั้น' },
+  { id: 'planner',   title: 'Planner',         icon: 'grid',         adopt: '#planner-panel', defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.plannerTitle',
+    desc: 'กระดานวางแผนแบบการ์ดอิสระ — วางโน้ต รูป และลิงก์ไปฉากได้ทุกที่บนผืนผ้าใบ · ใช้ปะติดปะต่อโครงเรื่องก่อนลงมือเขียน' },
+  { id: 'floorplan', title: '📍 ผังพื้นที่',      icon: 'map',          adopt: '#floor-panel',   defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.floorplanTitle',
+    desc: 'ฉากนี้เกิดที่ไหน — แผนที่ + หมุด "คุณอยู่ที่นี่" + เส้นเวลาของสถานที่นั้น + สิ่งที่เห็น/ได้ยิน/พบ ของฉากที่เปิดอยู่' },
 ];
 // ชื่อแผงตามภาษาที่โหลดอยู่ (fallback = ชื่อไทยในตาราง) — เรียกใหม่ทุกครั้งที่ render
 function titleOf(d) { return d.i18n ? t(d.i18n, d.title) : d.title; }
@@ -388,7 +395,7 @@ function rememberHome(pid) {
       const r2 = n2 && n2.getBoundingClientRect();
       if (!r2 || !r2.width) continue;
       const d = Math.hypot(r2.left - r.left, r2.top - r.top);
-      if (!best || d < best.d) best = { d, id: s, side: r2.left < r.left ? 'right' : 'left' };
+      if (!best || d < best.d) best = { d, id: s, side: sideBetween(r, r2) };
     }
   }
   homes.set(pid, { targetId: best ? best.id : 'docs', side: best ? best.side : sideOf({ id: pid }),
@@ -396,13 +403,58 @@ function rememberHome(pid) {
   saveHomes();
 }
 
+/**
+ * [alpha.62 บั๊ก 13] แผงเราอยู่ "ฝั่งไหน" ของเพื่อนบ้าน — ต้องตอบได้ทั้ง 4 ทิศ
+ *
+ * ของเดิมเขียนไว้ว่า `r2.left < r.left ? 'right' : 'left'` = **คิดแค่แกนนอน**
+ * แผงที่ผู้ใช้ผนึกไว้ **แนวตั้ง** (บน/ล่างของกัน — dock dir='col') มี left เท่ากันเป๊ะ
+ * → ตกเข้าเงื่อนไข else ได้ 'left' เสมอ · ปิดแล้วเปิดกลับ แผงจึงเด้งไปอยู่ "ซ้ายของเพื่อนบ้าน"
+ * แทนที่จะกลับไปอยู่ข้างบน/ข้างล่างเหมือนเดิม (ตำแหน่งหาย + สัดส่วนเลยเพี้ยนตาม)
+ * ตอนนี้เทียบว่าจุดศูนย์กลางห่างกันทางไหนมากกว่า แล้วค่อยเลือกแกน
+ */
+function sideBetween(r, r2) {
+  const dx = (r.left + r.width / 2) - (r2.left + r2.width / 2);
+  const dy = (r.top + r.height / 2) - (r2.top + r2.height / 2);
+  if (Math.abs(dy) > Math.abs(dx)) return dy > 0 ? 'bottom' : 'top';   // เราอยู่ล่าง/บนของเขา
+  return dx > 0 ? 'right' : 'left';                                     // เราอยู่ขวา/ซ้ายของเขา
+}
+
 // ───────── [alpha.60r1 · ข้อ 22] จำ "สัดส่วน" ของแผง ไม่ใช่แค่ตำแหน่ง ─────────
 // เลย์เอาต์ที่ผนึกอยู่เก็บ sizes ไว้ในต้นไม้แล้ว (serializeLayout เก็บทั้ง root)
 // แต่แผงที่ "ปิดแล้วเปิดใหม่" จะถูกยัดกลับเข้า dock ด้วยสัดส่วนเฉลี่ยเสมอ
 // → ผู้ใช้ที่ย่อแผงโปรเจกต์ให้แคบไว้ ต้องมาลากใหม่ทุกครั้งที่ปิด-เปิด
 
-/** สัดส่วนของแผงเทียบพี่น้องใน dock เดียวกัน (วัดจาก DOM · 0 = วัดไม่ได้) */
-function currentRatio(pid) {
+/**
+ * สัดส่วนของแผงเทียบพี่น้องใน dock เดียวกัน (0 = หาไม่ได้)
+ *
+ * [alpha.62 บั๊ก 12] **ต้องอ่านจาก layout tree ไม่ใช่วัดจาก DOM**
+ * ของเดิมวัด `node.width / dock.width` ซึ่งรวม **ที่จับปรับขนาด** (`.k-resize-handle`) ที่คั่นอยู่
+ * ไว้ในตัวหารด้วย → ค่าที่วัดได้เตี้ยกว่าสัดส่วนจริงในต้นไม้เสมอ (เช่น .200 → .196)
+ * แล้ว `rememberOpenPanels()` ก็เอาค่าเตี้ยนั้นไปทับของเดิมทุก 250ms หลังวาด
+ * ปิด-เปิดแผงทีหนึ่ง `applyRatio` จึงหดลงอีกนิด — **ทุกครั้ง สะสมไปเรื่อย ๆ**
+ * ผลที่ผู้ใช้เห็น: "แผงไม่ถูกล็อก กดเปิดปิดทีไรขนาดขยับตลอด"
+ * ต้นไม้เป็นแหล่งความจริง (คนลากที่จับ commit ลงต้นไม้อยู่แล้วผ่าน `pm.resize`)
+ * → อ่านจากต้นไม้ = ค่าคงที่เป๊ะ ไม่ดริฟต์ · ถอยไปวัด DOM เฉพาะตอนหาในต้นไม้ไม่เจอ
+ */
+function treeRatio(pid) {
+  const m = getPanelManager();
+  if (!m.root) return 0;
+  let hit = null;
+  PL.walk(m.root, (n) => {
+    if (hit || n.type !== 'dock') return;
+    const i = (n.children || []).findIndex((c) => c.type === 'panel' && c.id === pid);
+    if (i >= 0 && n.children.length > 1) hit = { node: n, index: i };
+  });
+  if (!hit) return 0;
+  const { node, index } = hit;
+  const n = node.children.length;
+  const sizes = PL.normalizeSizes(
+    node.sizes && node.sizes.length === n ? node.sizes : new Array(n).fill(1 / n));
+  const v = sizes[index];
+  return Number.isFinite(v) && v > 0 ? Math.max(0.05, Math.min(0.95, v)) : 0;
+}
+/** สำรอง: วัดจาก DOM (ใช้เมื่อแผงอยู่ในกลุ่มแท็บ/ลอย จึงไม่มีสัดส่วนในต้นไม้) */
+function domRatio(pid) {
   const node = document.querySelector(`#${HOST_ID} .k-panel[data-panel-id="${pid}"]`);
   const dockEl = node && node.closest('.k-dock');
   if (!node || !dockEl) return 0;
@@ -413,6 +465,7 @@ function currentRatio(pid) {
   if (!(total > 0) || !(mine > 0)) return 0;
   return Math.max(0.05, Math.min(0.95, mine / total));
 }
+function currentRatio(pid) { return treeRatio(pid) || domRatio(pid); }
 
 /** ตั้งสัดส่วนของแผงใน dock แม่ให้เท่ากับ ratio (พี่น้องแบ่งส่วนที่เหลือตามอัตราเดิม) */
 function applyRatio(pid, ratio) {
@@ -442,7 +495,16 @@ export function showPanel(id, opts = {}) {
   const pid = panelId(id);
   const def = m.registry.get(pid) || {};
   let ok;
-  if (m.isDocked(pid) && !m.isCollapsed(pid)) { m.activatePanel(pid); ok = true; }
+  // [alpha.62 บั๊ก 21] **มีสล็อตในต้นไม้อยู่แล้ว → ถอดธงแล้วจบ**
+  // ไม่แตะ homes ไม่ dock ใหม่ ไม่ applyRatio — ตำแหน่ง ทิศ ลำดับ และ sizes อยู่ครบเหมือนตอนปิด
+  // (เงื่อนไขนี้ต้องมาก่อน เพราะ opts.side/targetId ที่ผู้เรียกใส่มาเป็นแค่ "ค่าเริ่มต้นตอนยังไม่มีที่อยู่")
+  if (m.isDocked(pid) && opts.forceMove && (opts.targetId || opts.side)) {
+    // สั่งย้ายจริง (ลากวาง / เทส) — ต้องถอดออกแล้วผนึกใหม่ ไม่ใช่แค่ถอดธง
+    ok = m.dockPanel(pid, opts.side || def.defaultSide || 'left', opts.targetId);
+  }
+  else if (m.isDocked(pid)) {
+    ok = m.showPanel(pid);
+  }
   else if (m.isCollapsed(pid)) { m.collapsePanel(pid, false); ok = true; }
   else {
     const home = homes.get(pid);

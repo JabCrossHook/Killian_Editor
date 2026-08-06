@@ -171,7 +171,16 @@ check('ungroupPanel → แยกออกจากกลุ่ม', (() => {
 })());
 
 pm.hidePanel('notes');
-check('hidePanel (✕) → ปิดจริง', !pm.isOpen('notes') && PL.panelIds(pm.root).sort().join() === 'outline,tree');
+// [alpha.62 บั๊ก 21] ปิดแผง = ติดธง hidden — โหนดยัง "จองสล็อต" อยู่ในต้นไม้
+// (เดิมตัดออกจากต้นไม้จริง ๆ แล้วตำแหน่ง/สัดส่วนหายทุกครั้ง)
+check('hidePanel (✕) → ไม่แสดงผลแล้ว', !pm.isOpen('notes'));
+check('hidePanel → สล็อตยังอยู่ในต้นไม้ (ไม่ถูกตัดทิ้ง)',
+  pm.isDocked('notes') && pm.isHidden('notes'), JSON.stringify(pm.root).slice(0, 120));
+check('hidePanel → เหลือแผงที่เห็นอยู่แค่ 2 ตัว',
+  PL.visiblePanelIds(pm.root).sort().join() === 'outline,tree',
+  PL.visiblePanelIds(pm.root).join());
+check('hidePanel → panelIds ยังนับตัวที่ถูกซ่อนด้วย (ใช้ prune/ค้นสล็อต)',
+  PL.panelIds(pm.root).sort().join() === 'notes,outline,tree', PL.panelIds(pm.root).join());
 
 // persist + prune ตอน load
 let notify = 0; pm.onChange(() => notify++);
@@ -188,9 +197,13 @@ const { pm: pm3 } = mkMgr();
 pm3.registerPanel('a', {});
 pm3.showPanel('a');
 pm3.hidePanel('a');
-check('ปิดแผงสุดท้าย → root ว่าง (null)', pm3.root === null && pm3.openIds().length === 0);
+// [alpha.62 บั๊ก 21] ปิดตัวสุดท้ายแล้ว root **ไม่กลายเป็น null อีกแล้ว** — โหนดยังอยู่ แค่ติดธง
+// (ดีกว่าเดิมด้วย: บั๊ก #19 เคยกลัว root เป็น null แล้วรอบถัดไปรีเซ็ตเป็นเลย์เอาต์ตั้งต้น)
+check('ปิดแผงสุดท้าย → ไม่มีแผงที่เห็นอยู่ แต่ต้นไม้ไม่หาย',
+  pm3.openIds().length === 0 && pm3.root && pm3.root.id === 'a' && pm3.isHidden('a'));
 pm3.showPanel('a');
-check('เปิดใหม่หลังปิดหมด → กลับมาได้', pm3.root && pm3.root.id === 'a');
+check('เปิดใหม่หลังปิดหมด → กลับมาที่สล็อตเดิม',
+  pm3.root && pm3.root.id === 'a' && pm3.isOpen('a') && !pm3.isHidden('a'));
 
 // ══ บั๊ก #16: สัดส่วนที่ผู้ใช้ปรับเองต้องไม่ถูกล้างตอนเปิด/ปิดแผง ══
 {
@@ -321,6 +334,93 @@ check('[60r2] LAYOUT_VERSION = 2', PS.LAYOUT_VERSION === 2, PS.LAYOUT_VERSION);
         JSON.parse(stR.getItem('pm-test')).splitRatios.tree === 0.24);
   pmR.reset();
   check('[60r2] reset ล้างสัดส่วนด้วย', pmR.savedRatio('tree') === 0);
+}
+
+// ══ [alpha.62 บั๊ก 21] ปิด-เปิดแผงต้องกลับที่เดิมเป๊ะ และไม่ไปแตะแผงอื่น ══
+// อาการที่ผู้ใช้เจอ: เอาแผง AI ไปไว้ "ขอบบนของเอกสาร" (dock แนวตั้ง) ปิดแล้วเปิดใหม่
+// → ไปโผล่ฝั่งซ้ายจอ เพราะสล็อตถูกตัดทิ้งแล้วต้องเดาตำแหน่งใหม่จากเพื่อนบ้านที่ใกล้ที่สุด
+{
+  const { pm: pmH } = mkMgr();
+  for (const id of ['tree', 'docs', 'ai']) pmH.registerPanel(id, { title: id });
+  // โครงจำลองหน้าจอจริง: [ tree | (ai อยู่บน / docs อยู่ล่าง) ]
+  pmH.showPanel('tree');
+  pmH.dockPanel('docs', 'right', 'tree');       // ลำดับพารามิเตอร์: (id, side, targetId)
+  pmH.dockPanel('ai', 'top', 'docs');
+  const dockOf = (id) => {
+    let hit = null;
+    PL.walk(pmH.root, (n) => {
+      if (n.type !== 'dock') return;
+      const i = (n.children || []).findIndex((c) => c.type === 'panel' && c.id === id);
+      if (i >= 0) hit = { dir: n.dir, index: i, dockId: n.id, sizes: (n.sizes || []).slice() };
+    });
+    return hit;
+  };
+  const before = dockOf('ai');
+  check('[62-21] วางแผง AI ไว้ "บน" เอกสารได้ (dock แนวตั้ง)',
+        !!before && before.dir === 'col' && before.index === 0, JSON.stringify(before));
+  // ปรับสัดส่วนเองก่อน แล้วค่อยปิด-เปิด — ค่าที่ลากไว้ต้องรอด
+  pmH.resize(before.dockId, 0, 0.3);
+  const sizesSet = dockOf('ai').sizes.slice();
+  const treeDockBefore = dockOf('tree');
+
+  pmH.hidePanel('ai');
+  check('[62-21] ปิดแล้วไม่แสดงผล', !pmH.isOpen('ai'));
+  check('[62-21] ปิดแล้ว "สล็อต" ยังอยู่ที่เดิมเป๊ะ (dock เดิม · ดัชนีเดิม)',
+        JSON.stringify(dockOf('ai')) === JSON.stringify({ ...before, sizes: sizesSet }),
+        JSON.stringify(dockOf('ai')));
+  check('[62-21] ปิดแล้ว dock ของแผงอื่นไม่ถูกแตะเลย',
+        JSON.stringify(dockOf('tree')) === JSON.stringify(treeDockBefore),
+        JSON.stringify(dockOf('tree')));
+
+  pmH.showPanel('ai');
+  const after = dockOf('ai');
+  check('[62-21] เปิดกลับ → อยู่ "บน" เอกสารเหมือนเดิม ไม่เด้งไปฝั่งซ้าย',
+        after.dir === 'col' && after.index === 0 && after.dockId === before.dockId,
+        JSON.stringify(after));
+  check('[62-21] เปิดกลับ → สัดส่วนที่ลากไว้เท่าเดิมเป๊ะ (ไม่ถูกเกลี่ยใหม่)',
+        JSON.stringify(after.sizes) === JSON.stringify(sizesSet),
+        `${JSON.stringify(after.sizes)} vs ${JSON.stringify(sizesSet)}`);
+  check('[62-21] เปิดกลับ → แผงอื่นยังอยู่ที่เดิม ขนาดเดิม',
+        JSON.stringify(dockOf('tree')) === JSON.stringify(treeDockBefore),
+        JSON.stringify(dockOf('tree')));
+
+  // ปิด-เปิดรัว ๆ 5 รอบ ต้องนิ่งสนิท (อาการเดิมคือ "ขยับทุกครั้ง" สะสมไปเรื่อย ๆ)
+  const snap = JSON.stringify(pmH.root);
+  for (let i = 0; i < 5; i++) { pmH.hidePanel('ai'); pmH.showPanel('ai'); }
+  check('[62-21] ปิด-เปิด 5 รอบ ต้นไม้เหมือนเดิมทุกไบต์',
+        JSON.stringify(pmH.root) === snap);
+
+  // ค่าที่บันทึกลง storage ต้องพาธง hidden ไปด้วย → เปิดโปรแกรมใหม่ก็ยังจำว่าปิดไว้ + จำที่อยู่
+  pmH.hidePanel('ai');
+  const raw = JSON.parse(JSON.stringify(pmH.layout().root));
+  const back = PS.deserializeLayout(PS.serializeLayout({ root: raw, floats: [], splitRatios: {} }));
+  check('[62-21] ธง hidden รอดการบันทึก/อ่านกลับ (workspace ถูกจำจริง)',
+        PL.isPanelHidden(back.root, 'ai') && !PL.isPanelHidden(back.root, 'docs'));
+  const afterLoad = (() => { let h = null;
+    PL.walk(back.root, (n) => { if (n.type === 'dock') {
+      const i = (n.children || []).findIndex((c) => c.type === 'panel' && c.id === 'ai');
+      if (i >= 0) h = { dir: n.dir, index: i }; } });
+    return h; })();
+  check('[62-21] อ่านกลับแล้วสล็อตยังอยู่ "บน" เหมือนเดิม',
+        afterLoad && afterLoad.dir === 'col' && afterLoad.index === 0, JSON.stringify(afterLoad));
+}
+
+// ที่จับปรับขนาดต้องข้ามแผงที่ถูกซ่อน (ไม่งั้นลากแล้วไปแบ่งกับตัวที่มองไม่เห็น)
+{
+  const root = PL.dock('row', [PL.panel('a'), PL.panel('b'), PL.panel('c')]);
+  const hid = PL.setPanelHidden(root, 'b', true);
+  check('[62-21] nodeHidden รู้จักแผงที่ซ่อน', PL.nodeHidden(PL.findPanel(hid, 'b')));
+  check('[62-21] container ที่ลูกถูกซ่อนหมด = ถือว่าซ่อนด้วย',
+        PL.nodeHidden(PL.setPanelHidden(PL.setPanelHidden(PL.dock('col', [PL.panel('x'), PL.panel('y')]), 'x', true), 'y', true)));
+  // a กับ c ติดกันบนจอ (b ซ่อนอยู่) → ลากที่จับต้องแบ่งระหว่าง index 0 กับ 2
+  const rs = PL.resizeDockPair(hid, hid.id, 0, 2, 0.25);
+  const total = rs.sizes[0] + rs.sizes[2];
+  check('[62-21] resizeDockPair แบ่งเฉพาะคู่ที่ระบุ (ข้ามตัวที่ซ่อน)',
+        Math.abs(rs.sizes[0] / total - 0.25) < 0.001 && rs.sizes[1] === hid.sizes[1],
+        JSON.stringify(rs.sizes));
+  check('[62-21] resizeDock เดิมยังทำงานเหมือนเดิม (คู่ติดกัน)',
+        Math.abs(PL.resizeDock(root, root.id, 0, 0.5).sizes[0]
+                 - PL.resizeDock(root, root.id, 0, 0.5).sizes[1]) < 0.001);
 }
 
 console.log(`\npanel: ${pass} ผ่าน, ${fail} ล้มเหลว`);

@@ -11,32 +11,31 @@ import { listScenes, listEntities, findScenePath } from './project-scan.js';
 import { getFutureNotes } from './session-notes.js';
 import { choiceStats } from './player-choices.js';
 
-const KEY = '::centralize::';
+// [alpha.62 บั๊ก 15] ศูนย์รวมไม่ใช่หน้าของตัวเองอีกแล้ว — เป็นส่วนล่างของ "แดชบอร์ด"
+// (สองหน้านี้ตอบคำถามเดียวกันและนับจากไฟล์ชุดเดียวกัน · แยกกันอยู่ทำให้ตัวเลขไม่ตรงกัน)
 const REFRESH_DELAY = 1500;   // ms — หน่วงก่อนสร้างดัชนีใหม่ (บันทึกรัว ๆ จะได้ไม่สแกนซ้ำทุกครั้ง)
 let stale = true;             // ดัชนีล้าสมัยหรือยัง (ตั้งเมื่อมีการบันทึกไฟล์)
 let timer = null;
 
 /**
- * เรียกจาก saveTab: ข้อมูลเปลี่ยนแล้ว → ครั้งถัดไปที่เห็นแท็บนี้ให้สร้างดัชนีใหม่
- * ถ้าแท็บศูนย์รวมแสดงอยู่ตอนนี้ ก็อัปเดตให้เห็นเลย แต่ **หน่วงและรวบการเรียกซ้ำ** —
+ * เรียกจาก saveTab: ข้อมูลเปลี่ยนแล้ว → ครั้งถัดไปที่เห็นแดชบอร์ดให้สร้างดัชนีใหม่
+ * ถ้าแผงแดชบอร์ดเปิดอยู่ตอนนี้ ก็อัปเดตให้เห็นเลย แต่ **หน่วงและรวบการเรียกซ้ำ** —
  * การสร้างดัชนีอ่านไฟล์ฉากทั้งโปรเจกต์ ถ้ายิงทุกครั้งที่ autosave จะหน่วงทั้งแอป
  */
 export function markCentralizeStale() {
   stale = true;
-  const tab = state.tabs.get(KEY);
-  if (!tab || state.active !== tab) return;
   if (timer) clearTimeout(timer);
   timer = setTimeout(() => {
     timer = null;
-    const t = state.tabs.get(KEY);
-    if (t && state.active === t && stale) renderCentralize(t.pane);
+    if (!stale) return;
+    import('./dashboard.js').then((m) => m.refreshDashboardIfOpen()).catch(() => {});
   }, REFRESH_DELAY);
 }
 
-/** เรียกจาก activate(): กลับมาที่แท็บศูนย์รวม → รีเฟรชถ้าข้อมูลเปลี่ยนไปแล้ว */
+/** เรียกจาก activate(): กลับมาดูแดชบอร์ด → รีเฟรชถ้าข้อมูลเปลี่ยนไปแล้ว */
 export function onCentralizeShown() {
-  const tab = state.tabs.get(KEY);
-  if (tab && stale) renderCentralize(tab.pane);
+  if (!stale) return;
+  import('./dashboard.js').then((m) => m.refreshDashboardIfOpen()).catch(() => {});
 }
 
 /** เปลี่ยนโปรเจกต์ → ทิ้งสถานะเก่า */
@@ -45,23 +44,20 @@ export function resetCentralize() {
   if (timer) { clearTimeout(timer); timer = null; }
 }
 
+/**
+ * [alpha.62 บั๊ก 15] เมนู "ศูนย์รวม" เดิม → เปิดแดชบอร์ดแล้วเลื่อนลงไปที่ส่วนศูนย์รวม
+ * (คงคำสั่งเดิมไว้เพื่อไม่ให้เมนู/คีย์ลัด/ปลั๊กอินที่เรียกอยู่พัง)
+ */
 export async function openCentralizeUI() {
   if (!state.root) { setStatus('ยังไม่ได้เปิดโปรเจกต์'); return; }
-  const { activate, closeTab } = await import('./app.js');
-  if (state.tabs.has(KEY)) { activate(KEY); onCentralizeShown(); return; }
-  const pane = el('div', 'pane');
-  $('#panes').append(pane);
-  const tabBtn = el('div', 'tab');
-  tabBtn.append(el('span', 'tab-title', '📊 ศูนย์รวม'));
-  const x = el('span', 'tab-x', '×'); tabBtn.append(x);
-  $('#tabs').append(tabBtn);
-  const tab = { file: KEY, title: 'ศูนย์รวม', pane, tabBtn, dirty: false,
-                editor: null, plain: null, wiki: null, gal: null, dash: true };
-  tabBtn.onclick = (e) => { if (e.target !== x) activate(KEY); };
-  x.onclick = () => closeTab(KEY);
-  state.tabs.set(KEY, tab);
-  activate(KEY);
-  await renderCentralize(pane);
+  const { openDashboard } = await import('./dashboard.js');
+  await openDashboard();
+  // วาดเสร็จแล้วค่อยเลื่อน — ส่วนศูนย์รวมอยู่ท้ายสุดของแผง
+  setTimeout(() => {
+    const sec = document.querySelector('#dash-body .dash-cent');
+    if (sec) sec.scrollIntoView({ block: 'start' });
+  }, 60);
+  setStatus('ศูนย์รวมอยู่ในแดชบอร์ดแล้ว (ส่วนล่างของแผง)');
 }
 
 // เปิดฉากจาก sceneId (ผลลัพธ์ของ auto-link เก็บเป็น id ไม่ใช่ path)
@@ -73,9 +69,13 @@ async function openSceneById(sceneId, fallbackTitle) {
   } else setStatus('ไม่พบไฟล์ฉาก');
 }
 
-export async function renderCentralize(pane) {
+/**
+ * @param {HTMLElement} pane ที่วาด
+ * @param {{embedded?:boolean}} [opts] `embedded` = อยู่ในแดชบอร์ด (ใส่เส้นคั่น ไม่ใช่หน้าเต็ม)
+ */
+export async function renderCentralize(pane, opts = {}) {
   pane.innerHTML = '';
-  const wrap = el('div', 'cent-wrap');
+  const wrap = el('div', 'cent-wrap' + (opts.embedded ? ' cent-embedded' : ''));
   pane.append(wrap);
 
   const headRow = el('div', 'cent-head');
@@ -84,7 +84,7 @@ export async function renderCentralize(pane) {
   liveDot.title = 'อัปเดตอัตโนมัติทุกครั้งที่บันทึกไฟล์';
   headRow.append(liveDot);
   const refreshB = el('button', 'cent-refresh', '🔄 สร้างดัชนีใหม่');
-  refreshB.onclick = () => { resetAutoLink(); stale = true; renderCentralize(pane); };
+  refreshB.onclick = () => { resetAutoLink(); stale = true; renderCentralize(pane, opts); };
   headRow.append(refreshB);
   wrap.append(headRow);
 

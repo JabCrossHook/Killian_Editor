@@ -28,6 +28,7 @@ import { ask, confirmBox, popupMenu, choose, closeMenu, saveAllDialog } from './
 import { WikiEditor, CAT_TH, imageLightbox } from './wiki.js';
 import { SPEditor } from './screenplay.js';
 import { Gallery, pickImage } from './gallery.js';
+import * as albumCore from './gallery/album-core.js';     // [alpha.63] อัลบั้มรูป (Explorer/แดชบอร์ดใช้ร่วม)
 import { StoryNetwork } from './network.js';
 import { PlannerBoard } from './planner.js';
 import { SP_ELEMS, TIMES, TRANSITIONS, TRANSITIONS_IN, INTERCUTS, SCENE_PREFIX, TAB_CYCLE,
@@ -47,6 +48,7 @@ import { $, el, state, smart, LOG_BUF, log, setStatus,
          BASE_ED_FS, BASE_SP_FS, PT_PX, ptToPx, DEFAULT_SCRIPT_FONT,
          spCycleKeys, spKeyLabel, spKeyMatch,
          PAPER_SIZES, MARGIN_DEFAULTS, SP_ELEMENT_KEYS, mergeSpFormat, pageCssVars, spCss,
+         CAPS_ELEMENTS, elementCaps, setElementCaps,
          linesPerPage, formatLines, lineHeightIn, paginate, pageCount, wrapLines,
          newRoster, normalizeRoster, rosterToText, textWidth,
          SCENE_NUMBER_DEFAULTS, PAGE_NUMBER_DEFAULTS, pageNumberLabel,
@@ -56,7 +58,8 @@ import { $, el, state, smart, LOG_BUF, log, setStatus,
          SCENE_STATUSES, SCENE_COLORS, STATUS_COLORS, BUILTIN_CATS, CAT_ICON,
          REL_TYPES, REL_COLOR, REL_LABEL, categorizeRole, categorizeWith,
          t, i18n, loadLanguage, applyDataI18n, onLanguageChanged, SHORTCUTS, SHORTCUT_LABELS, shortcutId,
-         formatShortcut, accelText, withShortcut, num } from './core.js';
+         formatShortcut, accelText, withShortcut, num,
+         setBusy, clearBusy, busyMsg, withBusy } from './core.js';
 import { sceneProps } from './scene-props.js';
 // [alpha.60r3 ข้อ 2] ปุ่ม ✨ ให้ AI เขียนเรื่องย่อ/POV/อารมณ์/ความขัดแย้ง
 import { attachAiFieldButton, generateSceneSynopsis, fieldPrompt, cleanResult,
@@ -109,7 +112,7 @@ import { showAISummary } from './ai-summary.js';
 import { showAITitleSuggestions, collectProjectText, hashText, pastTitlesFor,
          summaryCacheState, rememberTitles } from './ai-summary.js';
 import { openBranchingTree, renderBranchingTree, syncChoicesFromScene, mutateChoices } from './branching-ui.js';
-import { openFloorPlan, renderFloorPlan } from './floorplan-ui.js';
+import { openFloorPlan, renderFloorPlan, renderFloorPlanPanel } from './floorplan-ui.js';
 import { showPlayerHistory } from './player-choices.js';
 import { manageVisualTags, renderAllTagChips, applyVisualTagStyle, visualTagFor } from './visual-tags.js';
 import { quickNote, showAllNotes, getSessionNotes, addSessionNote, saveSessionNotes } from './session-notes.js';
@@ -966,16 +969,54 @@ export function findNextSpError() {
   return e;
 }
 
-/** ตัวเลขข้อผิดพลาดบนแถบสถานะ (คลิก = ไปข้อถัดไป) */
+/**
+ * ตัวเลขข้อผิดพลาด/ข้อควรดูบนแถบสถานะ
+ *
+ * [alpha.62 บั๊ก 17] เดิมเป็น "ป้ายแจ้งเตือนเฉย ๆ": ข้อความบอกจำนวนอย่างเดียว
+ * คลิกแล้วกระโดดไปข้อถัดไปเงียบ ๆ โดยไม่บอกว่ากดได้ ไม่มีทางดูรายการทั้งหมด
+ * ไม่มีทางสั่งตรวจใหม่ และพอเปิดไฟล์นิยายก็หายไปทั้งอันโดยไม่บอกอะไร
+ * ตอนนี้: ป้ายบอกให้ชัดว่ากดได้ · คลิก = เมนูคำสั่งครบ · ในโหมดนิยายบอกว่าใช้กับบทเท่านั้น
+ */
 export function updateErrorBadge() {
   const box = $('#sp-errors');
   if (!box) return;
   const t2 = state.active;
-  if (!t2 || !t2.sp) { box.textContent = ''; box.classList.remove('has-err'); box.title = ''; return; }
+  if (!t2 || !t2.sp) {
+    // ไม่ใช่บทภาพยนตร์ → ซ่อน (CSS `#sp-errors:empty{display:none}`) แต่ล้าง title ให้ด้วย
+    box.textContent = ''; box.classList.remove('has-err'); box.title = '';
+    return;
+  }
   const s = errorSummary(_spErrors);
-  box.textContent = s.total ? `⚠️ ${s.total}` : '✅ 0';
+  box.textContent = s.total ? `⚠️ ${s.total} ▾` : '✅ ตรวจแล้ว ▾';
   box.classList.toggle('has-err', s.total > 0);
-  box.title = summaryText(_spErrors) + ' — คลิกเพื่อไปข้อถัดไป (Ctrl+Shift+U)';
+  box.title = summaryText(_spErrors) + ' — คลิกเพื่อดูคำสั่ง (ไปข้อถัดไป · รายการทั้งหมด · ตรวจใหม่)';
+}
+
+/**
+ * [alpha.62 บั๊ก 17] เมนูของป้ายตรวจบท — คลิกป้ายแล้วได้ "ทำอะไรได้บ้าง" ครบในที่เดียว
+ * (เดิมคลิกแล้วกระโดดไปข้อถัดไปทันที ซึ่งเดาไม่ถูกและถอยกลับไม่ได้)
+ */
+export function spErrorMenu(x, y) {
+  const t2 = state.active;
+  if (!t2 || !t2.sp) { setStatus('ป้ายนี้ใช้กับบทภาพยนตร์ — เปิดฉากที่เป็นบทก่อน'); return null; }
+  const s = errorSummary(_spErrors);
+  const items = [];
+  if (s.total) {
+    items.push({ label: iconHtml('arrow-down', 14) + ` ไปข้อถัดไป (${s.total} ข้อ)`,
+                 click: () => findNextSpError() });
+    items.push({ label: iconHtml('list-ul', 14) + ' ดูรายการทั้งหมด…', click: () => showErrorList() });
+    items.push('-');
+  } else {
+    items.push({ label: '✅ ไม่พบข้อผิดพลาดในบทนี้', disabled: true });
+    items.push('-');
+  }
+  items.push({ label: iconHtml('reset', 14) + ' ตรวจใหม่ทั้งบท', click: () => {
+    checkScreenplay(t2); updateErrorBadge();
+    setStatus(summaryText(_spErrors));
+  } });
+  items.push({ label: iconHtml('clipboard', 14) + ' ตั้งค่ารูปแบบ/การตรวจบท…', click: () => settingsDialog('page') });
+  popupMenu(x, y, items);
+  return items.length;                      // > 0 = เมนูถูกเปิดจริง (เทสใช้ตรวจ)
 }
 
 /** รายการข้อผิดพลาดทั้งบท — คลิกแถวเพื่อกระโดดไป */
@@ -1324,13 +1365,24 @@ async function closeProjectIfAny() {
 }
 
 export async function loadProject(root) {
-  // [alpha.60r ข้อ 8] แสดงหน้าจอรอโหลด
-  showLoader('กำลังเปิดโปรเจกต์…');
+  // [alpha.62 บั๊ก 9] ครอบทั้งก้อนด้วย try/finally — ถ้าโยน error กลางทาง ตัวบอกสถานะต้องไม่ค้าง
+  try { return await loadProjectInner(root); }
+  finally { clearBusy(); }
+}
+async function loadProjectInner(root) {
+  // [alpha.60r ข้อ 8 → alpha.62] รายงานที่แถบสถานะล่าง (ไม่ใช่หน้าจอเต็มจอ)
+  setBusy('กำลังเปิดโปรเจกต์…');
   if (!(await kapi.exists(await kapi.join(root, 'project.khn.json')))) {
+    // ตรวจก่อน "ก่อน" ถามบันทึก — จะได้ไม่ทำผู้ใช้เสียเวลาตอบกล่องแล้วค่อยรู้ว่าโฟลเดอร์ผิด
+    clearBusy();
     alert('โฟลเดอร์นี้ไม่ใช่โปรเจกต์ Killian (ไม่พบ project.khn.json)');
-    hideLoader(); return;
+    return;
   }
-  if (!(await closeProjectIfAny())) { hideLoader(); return; }
+  // [alpha.62 บั๊ก 9] กล่อง "บันทึกก่อนปิด?" เด้งตรงนี้ — ต้องล้างตัวบอกสถานะก่อน
+  //   ไม่งั้นสปินเนอร์หมุนค้างระหว่างรอผู้ใช้ตอบ ดูเหมือนโปรแกรมแฮงก์
+  clearBusy();
+  if (!(await closeProjectIfAny())) return;
+  setBusy('กำลังอ่านข้อมูลโปรเจกต์…');
   const meta = await kapi.readJson(await kapi.join(root, 'project.khn.json'));
   state.root = root; state.title = meta.title || 'โปรเจกต์';
   loadSettings(meta);
@@ -1342,15 +1394,15 @@ export async function loadProject(root) {
   // ---- โหลดภาษาของโปรเจกต์ (ถ้าเลือกไว้) ----
   const projLang = state.settings.language || 'en';
   if (projLang !== i18n.lang) {
-    showLoader('กำลังโหลดภาษา…');
+    setBusy('กำลังโหลดภาษา…');
     await loadLanguage(projLang, root);
   }
   applyDataI18n();
   initIcons();
   applyToolbarShortcutTitles();
-  showLoader('กำลังตรวจสอบไฟล์…');
+  setBusy('กำลังตรวจสอบไฟล์…');
   await purgeRecycle(root);                          // ล้างถังขยะเก่าก่อนสร้างต้นไม้
-  showLoader('กำลังสร้างโครงสร้างโปรเจกต์…');
+  setBusy('กำลังสร้างโครงสร้างโปรเจกต์…');
   await buildTree();
   buildFilterBar().catch(() => {});             // แถบกรอง
   updateSummaryBar().catch(() => {});            // สรุปด่วนเหนือ tree
@@ -1364,9 +1416,11 @@ export async function loadProject(root) {
   // [alpha.57a ข้อ 5] ฟอนต์ตามภาษาของโปรเจกต์ (ต้องรู้ path จริงก่อนจึงสร้าง @font-face ได้)
   preloadLangFontUrls().then(() => applySettings()).catch(() => {});
   loadSpellDict(root);                               // โหลดคลังคำตรวจคำผิด (async, ไม่บล็อก)
+  setBusy('กำลังโหลดเทมเพลต…');
   await loadTemplates();                            // default templates ถูกฝังลงโปรเจกต์ทันที
   warmInverse(); loadPlugins();
   // ---- เริ่มระบบใหม่ (Part 1+2) ----
+  setBusy('กำลังจัดวางแผงและแท็บ…');
   initPanelSystem();                                 // Panel System
   // sync toolbar toggle .on states + [60r2 ข้อ 1/11] ความกว้าง workspace และรางเลขบรรทัด
   onPanelLayoutChange(() => { refreshToolbar(); syncWorkspaceWidths(); scheduleLineGutter(); });
@@ -1380,8 +1434,7 @@ export async function loadProject(root) {
   if (state.settings.autoSync) setAutoSync(true);    // auto-task: คืนสถานะที่ผู้ใช้เปิดไว้
   // [alpha.61 ข้อ 1] หน้าแรกไม่เด้งจากตรงนี้แล้ว — bootSequence() เป็นคนตัดสินลำดับเปิดโปรแกรม
   //   (เดิม loadProject เด้งหน้าแรกทับทุกครั้ง ทำให้ "เปิดโปรเจกต์ล่าสุดโดยข้ามหน้าแรก" เป็นไปไม่ได้)
-  // [alpha.60r ข้อ 8] ปิดหน้าจอรอโหลด
-  hideLoader();
+  clearBusy();                                       // [alpha.62] เลิกแสดง "กำลังทำอะไรอยู่"
   setStatus('เปิดโปรเจกต์: ' + state.title);
 }
 
@@ -1393,6 +1446,24 @@ const SP_CASE_LABELS = {
   spAutoCapitalize: 'แก้ตัวแรกของประโยคเป็นตัวใหญ่อัตโนมัติ',
   spAutoCorrectI: 'แก้ i เดี่ยว ๆ เป็น I อัตโนมัติ',
 };
+/**
+ * [alpha.62 บั๊ก 11] สลับ "บังคับตัวพิมพ์ใหญ่" ของ element เดียว (เช่นเฉพาะชื่อตัวละคร)
+ * เก็บที่ `settings.spStyles` ซึ่ง mergeSpFormat ผสานทับค่ามาตรฐานอยู่แล้ว
+ * @returns {boolean} สถานะใหม่ (true = ยังบังคับตัวใหญ่อยู่)
+ */
+export function toggleElementCaps(elName, on) {
+  const cur = elementCaps(spFormat(), elName);
+  const v = on ?? !cur;
+  state.settings.spStyles = setElementCaps(state.settings.spStyles, elName, v);
+  // ปิดรายตัวขณะที่สวิตช์ใหญ่ปิดอยู่ = ไม่มีผลอะไรให้เห็น → เปิดสวิตช์ใหญ่กลับให้ก่อน
+  // (mergeSpFormat ล้าง caps ทุกตัวทิ้งเมื่อ forceCase=false — ค่ารายตัวจะถูกกลบหมด)
+  if (v && state.settings.spForceCase === false) state.settings.spForceCase = true;
+  applySettings();
+  saveProjectMeta();
+  syncMenuToggles();
+  setStatus((SP_ELEMS[elName]?.th || elName) + ': ' + (v ? 'บังคับตัวพิมพ์ใหญ่' : 'พิมพ์อย่างไรก็เป็นอย่างนั้น'));
+  return v;
+}
 export function toggleSpCase(key, on) {
   const v = on ?? !(state.settings[key] !== false);
   state.settings[key] = v;
@@ -1453,7 +1524,7 @@ export async function saveGlobalSetting(key, value) {
   return value;
 }
 export async function bootSequence() {
-  showLoader('กำลังเริ่มโปรแกรม…');
+  setBusy('กำลังเริ่มโปรแกรม…');
   const g = await bootGlobalSettings();
   // ค่ายังไม่มีโปรเจกต์ → ยัดลง state.settings ไว้ก่อน เพื่อให้เมนู/สวิตช์อ่านค่าถูกตั้งแต่วินาทีแรก
   state.settings = { ...DEFAULT_SETTINGS, ...g, ...state.settings };
@@ -1462,7 +1533,7 @@ export async function bootSequence() {
   try { recent = (await kapi.listRecent()) || []; } catch {}
   const openedLast = !!(g.openLastProject && recent[0]);
   if (openedLast) await loadProject(recent[0]);
-  hideLoader();
+  clearBusy();
   // ไม่มีโปรเจกต์ล่าสุดให้เปิด หรือผู้ใช้สั่ง "แสดงหน้าแรกเสมอ" → เปิดหน้าแรก
   if (!openedLast || g.showHomeOnStartup === true) {
     try { const { showHomeDialog } = await import('./home-ui.js'); await showHomeDialog(); } catch {}
@@ -1948,53 +2019,78 @@ async function _buildTreeInner() {
   }
   tree.append(mSec);
 
-  // ---- คลังรูป (โฟลเดอร์ Images/) — ข้อ 6: เดิมเห็นได้แค่ผ่านกล่อง "คลังรูปภาพ" ----
+  // ---- คลังรูป (โฟลเดอร์ Images/) — ข้อ 6 · [alpha.63] เห็นครบทุกอัลบั้ม ไม่ใช่แค่รูปที่ราก ----
   const imgDir = await kapi.join(state.root, 'Images');
-  const IMG_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i;
-  const imgFiles = (await kapi.exists(imgDir))
-    ? (await kapi.listFiles(imgDir, '').catch(() => [])).filter((f) => IMG_RE.test(f)) : [];
+  let galAlbums = [], galItems = [];
+  if (await kapi.exists(imgDir)) {
+    try {
+      galAlbums = await albumCore.listAlbums(kapi, state.root);
+      galItems = await albumCore.allImages(kapi, state.root, galAlbums);
+    } catch (e) { log('warn', 'explorer: อ่านคลังรูปไม่ได้', e); }
+  }
   const iSec = el('div', 'sec');
-  const iHead = el('div', 'sec-title', `🖼 คลังรูป (${imgFiles.length})`);
+  const iHead = el('div', 'sec-title', `🖼 คลังรูป (${galItems.length})`);
   const addI = el('span', 'row-add', '+'); addI.title = 'เพิ่มรูปเข้าคลัง';
   addI.onclick = async (e) => {
     e.stopPropagation();
     const src = await kapi.openImageDialog(); if (!src) return;
     await kapi.mkdir(imgDir);
-    const nm = await kapi.copyInto(src, imgDir);
+    const nm = await albumCore.addImageFile(kapi, state.root, albumCore.ROOT_ALBUM, src);
+    await albumCore.syncFlatIndex(kapi, state.root);
     await buildTree(); setStatus('เพิ่มรูปเข้าคลังแล้ว: ' + nm);
   };
   iHead.append(addI); iSec.append(iHead);
   makeAccordion(iHead, iSec, 'sec:__images__');
   iHead.oncontextmenu = (e) => { e.preventDefault(); popupMenu(e.clientX, e.clientY, [
-    { label: '🖼 เปิดกล่องคลังรูป', click: () => openGallery() },
+    { label: '🖼 เปิดคลังรูป', click: () => openGallery() },
+    { label: '＋ สร้างอัลบั้มใหม่…', click: () => galleryCommand('gallery-new-album') },
     { label: '📂 แสดงโฟลเดอร์ Images', click: () => kapi.revealInOS(imgDir) },
   ]); };
-  for (const f of imgFiles) {
-    const p = await kapi.join(imgDir, f);
-    const it = el('div', 'scene img-row');
-    const th = el('img', 'img-thumb'); th.src = await kapi.toFileURL(p); th.alt = f;
-    th.onerror = () => { th.replaceWith(document.createTextNode('⚠ ')); };
-    it.append(th, document.createTextNode(f));
-    it.dataset.path = p;
-    it.dataset.search = f.toLowerCase();
-    it.title = f + '\nคลิก = ดูภาพเต็ม · ลากไปวางในฉากเพื่อแทรกรูป';
-    it.onclick = async () => imageLightbox(await kapi.toFileURL(p), f);
-    it.draggable = true;
-    it.addEventListener('dragstart', (e) => {
-      e.dataTransfer.effectAllowed = 'copy';
-      e.dataTransfer.setData('text/k2-image', JSON.stringify({ path: p, name: f }));
-      e.dataTransfer.setData('text/plain', '![](' + f + ')');
-    });
-    it.oncontextmenu = (e) => { e.preventDefault(); popupMenu(e.clientX, e.clientY, [
-      { label: '🔍 ดูภาพเต็ม', click: it.onclick },
-      { label: '🖼 แทรกลงฉากที่เปิดอยู่', click: () => insertImageByName(f) },
-      { label: '📂 แสดงในโฟลเดอร์', click: () => kapi.revealInOS(p) },
-      '-',
-      { label: 'ลบ (ย้ายไปถังขยะ)', danger: true, click: () => deleteToTrash(p, f) },
-    ]); };
-    iSec.append(it);
+  // จัดกลุ่มตามอัลบั้ม (อัลบั้มรากขึ้นก่อน) — อัลบั้มที่ว่างไม่ต้องโชว์ให้รก
+  const byAlbum = new Map();
+  for (const it of galItems) {
+    if (!byAlbum.has(it.album)) byAlbum.set(it.album, []);
+    byAlbum.get(it.album).push(it);
   }
-  if (!imgFiles.length) iSec.append(el('div', 'scene empty-state-row', 'ยังไม่มีรูปในคลัง'));
+  for (const a of galAlbums) {
+    const rows = byAlbum.get(a.id);
+    if (!rows || !rows.length) continue;
+    if (a.id !== albumCore.ROOT_ALBUM || byAlbum.size > 1) {
+      const ah = el('div', 'scene img-album-row');
+      ah.innerHTML = iconHtml(a.id === albumCore.ROOT_ALBUM ? 'archive' : 'folder', 12);
+      ah.append(document.createTextNode(' ' +
+        (a.id === albumCore.ROOT_ALBUM ? albumCore.ROOT_ALBUM_NAME : a.id) + ` (${rows.length})`));
+      ah.onclick = () => openGallery();
+      iSec.append(ah);
+    }
+    for (const im of rows) {
+      const p = await kapi.join(imgDir, ...im.path.split('/'));
+      const it = el('div', 'scene img-row');
+      const th = el('img', 'img-thumb'); th.src = await kapi.toFileURL(p); th.alt = im.file;
+      th.onerror = () => { th.replaceWith(document.createTextNode('⚠ ')); };
+      it.append(th, document.createTextNode(im.file));
+      it.dataset.path = p;
+      it.dataset.search = (im.file + ' ' + (im.caption || '') + ' ' + (im.tags || []).join(' ')).toLowerCase();
+      it.title = im.file + (im.caption ? '\n' + im.caption : '') +
+                 '\nคลิก = ดูภาพเต็ม · ลากไปวางในฉากเพื่อแทรกรูป';
+      it.onclick = async () => imageLightbox(await kapi.toFileURL(p), im.caption || im.file);
+      it.draggable = true;
+      it.addEventListener('dragstart', (e) => {
+        e.dataTransfer.effectAllowed = 'copy';
+        e.dataTransfer.setData('text/k2-image', JSON.stringify({ path: p, name: im.file }));
+        e.dataTransfer.setData('text/plain', '![](' + im.path + ')');
+      });
+      it.oncontextmenu = (e) => { e.preventDefault(); popupMenu(e.clientX, e.clientY, [
+        { label: '🔍 ดูภาพเต็ม', click: it.onclick },
+        { label: '🖼 แทรกลงฉากที่เปิดอยู่', click: () => insertImageByName(im.path, im.caption) },
+        { label: '📂 แสดงในโฟลเดอร์', click: () => kapi.revealInOS(p) },
+        '-',
+        { label: 'ลบ (ย้ายไปถังขยะ)', danger: true, click: () => deleteToTrash(p, im.file) },
+      ]); };
+      iSec.append(it);
+    }
+  }
+  if (!galItems.length) iSec.append(el('div', 'scene empty-state-row', 'ยังไม่มีรูปในคลัง'));
   tree.append(iSec);
 
   // ---- Research (โฟลเดอร์ Research/ — เก็บ PDF, ภาพ, ลิงก์, .md งานวิจัย) ----
@@ -2441,26 +2537,26 @@ export async function loadAllEntities() {
 }
 
 // ---------------- Story Network ----------------
-async function openNetwork() {
-  const key = '::network::';
-  if (state.tabs.has(key)) { activate(key); state.tabs.get(key).net.refresh(); return; }
-  const pane = el('div', 'pane');
-  $('#panes').append(pane);
-  const tabBtn = el('div', 'tab');
-  tabBtn.append(el('span', 'tab-title', 'Story Network'));
-  const x = el('span', 'tab-x', '×'); tabBtn.append(x);
-  $('#tabs').append(tabBtn);
-  const net = new StoryNetwork(pane, {
+// [alpha.62 บั๊ก 16] เดิมเป็นแท็บเอกสาร `::network::` — แย่งแถบแท็บกับฉากที่กำลังเขียน
+// และเปิดคู่กับต้นฉบับไม่ได้ · ตอนนี้เป็นแผงเต็มตัว (dock/tab/float ได้เหมือนแผงอื่น)
+export let netInst = null;
+export async function renderNetworkPanel() {
+  const host = $('#net-body');
+  if (!host) return false;
+  if (netInst && host.firstChild) { netInst.refresh(); netInst._fit(); return true; }
+  host.innerHTML = '';
+  netInst = new StoryNetwork(host, {
     loadEntities: loadAllEntities,
     onOpen: (n) => openEntity(n.file),
   });
-  const tab = { file: key, title: 'Story Network', pane, tabBtn, dirty: false,
-                editor: null, plain: null, wiki: null, gal: null, net };
-  tabBtn.onclick = (e) => { if (e.target !== x) activate(key); };
-  x.onclick = () => closeTab(key);
-  state.tabs.set(key, tab);
-  activate(key);
-  setTimeout(() => { net._fit(); net.refresh(); }, 60);
+  // ผังวัดขนาดจาก host — ต้องรอให้แผงถูกวางลง DOM จริงก่อน ไม่งั้น canvas ได้ 0px (บั๊ก #12)
+  setTimeout(() => { try { netInst._fit(); netInst.refresh(); } catch {} }, 60);
+  return true;
+}
+async function openNetwork() {
+  showPanel('network');
+  await renderFeaturePanel('network');
+  refreshToolbar();
 }
 
 // ---------------- โน้ต (memo) ในบท ----------------
@@ -2660,17 +2756,16 @@ function revealInExplorer(file) {
 }
 
 // ---------------- Planner (กระดานวางแผน) ----------------
-async function openPlanner() {
-  const key = '::planner::';
-  if (state.tabs.has(key)) { activate(key); return; }
-  const pane = el('div', 'pane planner-pane');
-  $('#panes').append(pane);
-  const tabBtn = el('div', 'tab');
-  tabBtn.append(el('span', 'tab-title', 'Planner'));
-  const x = el('span', 'tab-x', '×'); tabBtn.append(x);
-  $('#tabs').append(tabBtn);
-  const planner = new PlannerBoard(pane, state.root, {
-    onDirty: () => { const t = state.tabs.get(key); if (t) markDirty(t); },
+// [alpha.62 บั๊ก 16] เป็นแผงแล้วเหมือนกัน — กระดานวางแผนควรเปิดคู่กับฉากที่กำลังเขียนได้
+export let plannerInst = null;
+export async function renderPlannerPanel() {
+  const host = $('#planner-body');
+  if (!host) return false;
+  if (plannerInst && host.firstChild) { try { plannerInst._fit(); } catch {} return true; }
+  host.innerHTML = '';
+  host.classList.add('planner-pane');            // สไตล์เดิมของกระดานผูกกับคลาสนี้
+  plannerInst = new PlannerBoard(host, state.root, {
+    onDirty: () => { savePlannerSoon(); },
     onReveal: (f) => revealInExplorer(f),
     onOpenFile: async (f) => {
       if (!f) return;
@@ -2680,14 +2775,22 @@ async function openPlanner() {
       if (state.tabs.has(f)) floatTab(f);        // ดับเบิลคลิกการ์ด = เปิดเป็นหน้าต่างลอย
     },
   });
-  const tab = { file: key, title: 'Planner', pane, tabBtn, dirty: false,
-                editor: null, plain: null, wiki: null, gal: null, net: null, planner };
-  tabBtn.onclick = (e) => { if (e.target !== x) { if (tab.floatWin) bringFloatFront(tab.floatWin); else activate(key); } };
-  x.onclick = () => closeTab(key);
-  state.tabs.set(key, tab);
-  activate(key);
-  bindTabStripMenus();
-  setTimeout(() => planner._fit(), 60);
+  setTimeout(() => { try { plannerInst._fit(); } catch {} }, 60);
+  return true;
+}
+// เดิม onDirty ไปทำ markDirty ของ "แท็บ Planner" แล้วผู้ใช้กด Ctrl+S เอง
+// เป็นแผงแล้วไม่มีแท็บให้ dirty → บันทึกเองแบบหน่วงสั้น ๆ (กระดานเก็บใน planner.json ของโปรเจกต์)
+let _plannerSaveJob = null;
+function savePlannerSoon() {
+  clearTimeout(_plannerSaveJob);
+  _plannerSaveJob = setTimeout(() => {
+    try { plannerInst && plannerInst.save && plannerInst.save(); } catch (e) { log('warn', 'planner: บันทึกไม่สำเร็จ', e); }
+  }, 600);
+}
+async function openPlanner() {
+  showPanel('planner');
+  await renderFeaturePanel('planner');
+  refreshToolbar();
 }
 
 // ---------------- Dashboard ----------------
@@ -3083,6 +3186,11 @@ export function syncMenuToggles() {
       spForceCase: state.settings.spForceCase !== false,
       spAutoCapitalize: state.settings.spAutoCapitalize !== false,
       spAutoCorrectI: state.settings.spAutoCorrectI !== false,
+      // [alpha.62 บั๊ก 11] ติ๊กรายชนิดใน เมนูบท → 🔠 ตัวพิมพ์ใหญ่/เล็ก → บังคับตัวพิมพ์ใหญ่เฉพาะชนิด
+      spCaps: (() => {
+        const f = spFormat();
+        return CAPS_ELEMENTS.map((k) => ({ el: k, label: SP_ELEMS[k]?.th || k, on: elementCaps(f, k) }));
+      })(),
       panels: { 'tree-panel': !!ps.tree, 'props-panel': !!ps.props,
                 'outline-panel': !!ps.outline, ...ps },
     };
@@ -3595,24 +3703,26 @@ export async function openCompileDialog() {
   const btns = el('div', 'k-dlg-btns');
   const bPrev = el('button', null, '👁 ดูตัวอย่าง');
   bPrev.onclick = async () => {
-    const r = await doRun();
+    const r = await withBusy('กำลังประมวลผลเวิร์กโฟลว์…', doRun);
     prev.textContent = r.text.slice(0, 4000) + (r.text.length > 4000 ? '\n…' : '');
     if (r.warnings.length) setStatus(r.warnings.join(' · '));
   };
   const bGo = el('button', 'k-ok', 'ส่งออก…');
   bGo.onclick = async () => {
-    const r = await doRun();
+    // [alpha.62 บั๊ก 10] ประมวลผลก่อน → เคลียร์ตัวบอกสถานะ → ค่อยเปิดกล่องบันทึก
+    //   (บทเรียนเดียวกับบั๊ก 1: อย่าให้มีอะไรหมุนค้างตอนรอผู้ใช้ตอบกล่อง)
+    const r = await withBusy('กำลังประมวลผลเวิร์กโฟลว์…', doRun);
     const dest = r.ext === 'pdf'
       ? await kapi.savePdfDialog(safeName(state.title) + '.pdf')
       : await kapi.saveAsDialog(safeName(state.title) + '.' + r.ext, r.ext);
     if (!dest) return;
     // [alpha.59 · 69] ปลายทาง .pdf → ตัวสร้าง PDF ในโปรแกรม (ไบนารี ต้องผ่าน writeBytes — กฎ 10)
     if (r.ext === 'pdf') {
-      const made = await writeCompiledPdf(dest, r, state.title);
+      const made = await withBusy('กำลังสร้างไฟล์ PDF…', () => writeCompiledPdf(dest, r, state.title));
       ov.remove(); setStatus(`ส่งออก PDF แล้ว (${made.pageCount} หน้า): ` + dest);
       return;
     }
-    await kapi.writeFile(dest, finalizeCompiled(r));
+    await withBusy('กำลังเขียนไฟล์…', () => kapi.writeFile(dest, finalizeCompiled(r)));
     ov.remove(); setStatus('ส่งออกแล้ว: ' + dest);
   };
   const bClose = el('button', 'k-cancel', 'ปิด');
@@ -3633,10 +3743,10 @@ async function exportDraft() {
     : await pickFromList('ส่งออกฉบับร่างไหน', drafts.map((d) => d.label));
   if (!pick) return;
   const { secName, dPath } = drafts.find((d) => d.label === pick);
-  const text = await compileDraftText(dPath);
+  const text = await withBusy('กำลังรวมฉบับร่าง…', () => compileDraftText(dPath));
   const dest = await kapi.saveAsDialog(safeName(state.title) + '.md');
   if (!dest) return;
-  await kapi.writeFile(dest, text);
+  await withBusy('กำลังเขียนไฟล์…', () => kapi.writeFile(dest, text));
   setStatus('ส่งออกรวมแล้ว: ' + dest);
   return dest;
 }
@@ -4022,14 +4132,70 @@ export function renderGalleryPanel() {
   if (!host) return null;
   if (!state.root) { host.innerHTML = ''; host.append(el('div', 'dim', 'เปิดโปรเจกต์ก่อน')); return null; }
   host.innerHTML = '';
-  galInst = new Gallery(host, state.root, { onChanged: () => { imgURLBase.clear(); } });
+  // [alpha.63] คลังรูปเป็นระบบอัลบั้มแล้ว — ตัวเชื่อมกับส่วนอื่นส่งเป็น callback
+  // (gallery.js จึงไม่ต้อง import app.js กลับมา = ไม่มี import วน)
+  galInst = new Gallery(host, state.root, {
+    onChanged: () => { imgURLBase.clear(); buildTree(); },
+    onInsert: (relPath, caption) => insertImageByName(relPath, caption),
+    onOpenFile: (file) => openPathSmart(file),
+    onOpenEntity: (name) => { const f = smart.fileOf[name]; if (f) openEntity(f); },
+    entityNames: () => smart.titles || [],
+  });
   return galInst;
+}
+
+/** เปิดไฟล์จาก path เต็ม — ใช้ตอนคลิก "รูปนี้ถูกใช้ในฉากไหน" ในคลังรูป */
+async function openPathSmart(file) {
+  if (!file) return;
+  try {
+    if (/\.md$/i.test(file)) await openScene(file, file.split(/[\\/]/).pop().replace(/\.md$/i, ''));
+    else if (/\.json$/i.test(file)) await openEntity(file);
+    else await openPlainFile(file);
+  } catch (e) { setStatus('เปิดไฟล์ไม่ได้: ' + e.message); }
 }
 export function galleryInstance() { return galInst; }
 async function openGallery() {
   showPanel('gallery');
   syncMenuToggles();
-  return renderFeaturePanel('gallery');
+  const r = await renderFeaturePanel('gallery');
+  refreshToolbar();
+  return r;
+}
+/**
+ * [alpha.63] คำสั่งย่อยของคลังรูปจากเมนู native
+ * เปิดแผงให้ก่อนเสมอ (ผู้ใช้สั่งจากเมนูตอนแผงยังปิดอยู่ได้) แล้วค่อยสั่งงานตัวคลัง
+ */
+export async function galleryCommand(ch) {
+  if (!state.root) { setStatus('เปิดโปรเจกต์ก่อน'); return false; }
+  await openGallery();
+  const g = galInst;
+  if (!g) { setStatus('เปิดคลังรูปไม่สำเร็จ'); return false; }
+  try {
+    switch (ch) {
+      case 'gallery': break;                       // เปิดแผงเฉย ๆ (แดชบอร์ดเรียกทางนี้)
+      case 'gallery-new-album': await g.newAlbum(''); break;
+      case 'gallery-board': g.state.view = 'board'; g.draw(); break;
+      case 'gallery-unused':
+        g.state.view = 'grid'; g.state.album = albumCore.ALL_ALBUM; g.state.use = 'unused';
+        await g.render(); break;
+      case 'gallery-dups': await g.findDuplicates(); break;
+      case 'gallery-export-used': await g.exportUsed(); break;
+      default: return false;
+    }
+  } catch (e) {
+    // คำสั่งจากเมนู native ต้องบอกเหตุผลให้เห็น (บทเรียน 89 — ห้ามตายเงียบ)
+    log('error', 'gallery command failed: ' + ch, e);
+    setStatus('คำสั่งคลังรูปล้มเหลว: ' + e.message);
+    return false;
+  }
+  return true;
+}
+
+/** [alpha.62 บั๊ก 14] ปุ่มคลังรูปบนแถบเครื่องมือ = สวิตช์ของแผง (เปิด/ปิดได้ด้วยปุ่มเดียว) */
+export async function toggleGallery() {
+  if (isPanelOpen('gallery')) { hidePanel('gallery'); refreshToolbar(); syncMenuToggles(); return false; }
+  await openGallery();
+  return true;
 }
 
 // ---------------- เทมเพลต Wiki (templates.json ที่ root โปรเจกต์ — โครง v1) ----------------
@@ -5131,6 +5297,15 @@ export function resolveImg(dir, rel) {
     if (!(await kapi.exists(abs))) {         // ไฟล์เก่าอาจนับชั้นผิด → หาในคลังรูปจากชื่อ
       const base = rel.split('/').pop();
       abs = await kapi.join(state.root, 'Images', base);
+      // [alpha.63] รูปอาจถูกย้ายเข้าอัลบั้ม (โฟลเดอร์ย่อยของ Images/) แล้วลิงก์เดิมยังชี้ที่ราก
+      // → ไล่หาในทุกอัลบั้มจากชื่อไฟล์ ก่อนจะยอมแพ้ (ไฟล์ .md ไม่ถูกแตะ — แค่แสดงผลให้ถูก)
+      if (!(await kapi.exists(abs))) {
+        try {
+          const { findImagePath } = await import('./gallery/album-core.js');
+          const p = await findImagePath(kapi, state.root, base);
+          if (p) abs = await kapi.join(state.root, 'Images', ...p.split('/'));
+        } catch {}
+      }
     }
     imgURLBase.set(key, await kapi.toFileURL(abs));
     document.querySelectorAll('figure img').forEach((im) => {
@@ -5172,8 +5347,9 @@ export function activate(file) {
   // แสดงปุ่มบันทึกทั้งหมดเมื่อมีโปรเจกต์เปิด
   const saveAllBtn = $('#save-all-btn');
   if (saveAllBtn) saveAllBtn.style.display = state.root ? '' : 'none';
-  // กลับมาที่แท็บศูนย์รวม → รีเฟรชถ้าไฟล์เปลี่ยนไปแล้ว (ข้อ 87 real-time)
-  if (file === '::centralize::') { try { onCentralizeShown(); } catch {} }
+  // [alpha.62 บั๊ก 15] ศูนย์รวมอยู่ในแดชบอร์ดแล้ว — รีเฟรชผ่าน onCentralizeShown() ตัวเดิม
+  // (ตัวมันเองเป็นคนเช็คว่าแผงแดชบอร์ดเปิดอยู่ไหม จึงเรียกได้ทุกครั้งที่สลับแท็บ)
+  try { onCentralizeShown(); } catch {}
   // แผงคอมเมนต์ผูกกับ "ฉากที่เปิดอยู่" — สลับแท็บแล้วต้องเปลี่ยนตาม (ไม่งั้นคอมเมนต์ฉากเก่าค้าง)
   refreshCommentsPanel();
 }
@@ -5295,10 +5471,14 @@ async function saveAllTabs(silent = false) {
     if (!dirty.length) return 0;
   }
   let n = 0;
-  for (const t of dirty) {
-    try { await saveTab(t); n++; }
-    catch (err) { log('error', 'saveAll ล้มเหลว: ' + (t.file || t.title), err); }
-  }
+  // [alpha.62 บั๊ก 10] บอกที่แถบล่างว่ากำลังบันทึกไฟล์ไหน อยู่ที่เท่าไรของทั้งหมด
+  try {
+    for (const t of dirty) {
+      setBusy(`กำลังบันทึก ${n + 1}/${dirty.length} — ${t.title || t.file || ''}`);
+      try { await saveTab(t); n++; }
+      catch (err) { log('error', 'saveAll ล้มเหลว: ' + (t.file || t.title), err); }
+    }
+  } finally { clearBusy(); }
   setStatus(`บันทึกทั้งหมดแล้ว (${n} ไฟล์)`);
   updateDirtyBadge();
   refreshStatusBar();
@@ -5478,7 +5658,10 @@ export async function revertTab(file) {
   else if (t.sp) {
     t.sp.destroy();
     t.sp = new SPEditor(t.pane.querySelector('.pane.on') || t.pane, {
-      markdown: body, onChange: () => { markDirty(t); smartDirty(); },
+      // [alpha.62 บั๊ก 19] `smartDirty()` ไม่มีอยู่จริง — ที่นี่พังทุก keystroke หลังกด Revert บนบทหนัง
+      markdown: body,
+      onChange: () => { markDirty(t); scheduleCount(); scheduleOutline();
+                        scheduleSpSmart(t); scheduleRepaginate(); },
       onElement: (el) => { spSmartCheck(t); setElementBadge(el); },
       onKeyDown: (ev) => smart.onKey(ev),
       getChecker: getSpellchecker, resolveSrc: (p) => resolvePath(file, p),
@@ -5495,55 +5678,119 @@ export async function revertTab(file) {
 }
 
 // [76] Remove Elements by Type — ลบ element ทั้งหมดของประเภทที่เลือก
-async function removeElementsDialog() {
+//
+// [alpha.62 บั๊ก 19] ของเดิม "กดแล้วไม่มีอะไรเกิดขึ้น" ได้หลายทางโดยไม่บอกอะไรเลย:
+//   · ไม่ได้เปิดบทภาพยนตร์อยู่ → ขึ้นข้อความจาง ๆ บนแถบล่างแล้วจบ (คนกดจากเมนูไม่มีทางเห็น)
+//   · `snapshotFile` โยน error กลางทาง → onclick เป็น async ที่ไม่มีใครจับ = **เงียบสนิท**
+//     กล่องยังค้าง ปุ่มลบเหมือนเสีย (นี่คือทางที่เจอบ่อยสุด — โปรเจกต์ที่เขียนโฟลเดอร์ Snapshots ไม่ได้)
+//   · บรรทัดว่างในบทถูกเก็บเป็น element `action` เปล่า → "บรรยาย" ขึ้นเลขบวมจนน่ากลัว
+//     และถ้ากดลบจริง บรรทัดเว้นวรรคทั้งบทหายเกลี้ยง (ผลลัพธ์ไม่ใช่ที่ตั้งใจแน่นอน)
+/** @param {{silent?:boolean}} [opts] silent = ไม่เปิดกล่อง (เทสเรียกตรง) */
+export async function removeElementsDialog(opts = {}) {
   const sp = state.active?.sp;
-  if (!sp) { setStatus('เปิดบทหนังก่อน'); return; }
+  if (!sp) {
+    // ดังพอให้คนที่กดจากเมนูเห็น — เดิมบอกที่แถบล่างอย่างเดียว
+    setStatus('เปิดฉากที่เป็นบทภาพยนตร์ก่อน จึงจะลบ element ตามประเภทได้');
+    if (!opts.silent) alert('คำสั่งนี้ใช้กับบทภาพยนตร์\nเปิดฉากที่เป็นบทก่อน แล้วลองใหม่');
+    return null;
+  }
   const v = sp.view;
-  const counts = {};
+  // นับแยก "ของจริง" กับ "บรรทัดว่าง" — บรรทัดว่างคือโครงหน้ากระดาษ ไม่ใช่เนื้อหาที่คนอยากลบ
+  const counts = {}, blanks = {};
   v.state.doc.forEach((n) => {
-    if (n.type.name === 'sp') counts[n.attrs.el] = (counts[n.attrs.el] || 0) + 1;
+    if (n.type.name !== 'sp') return;
+    const k = n.attrs.el;
+    if (!n.textContent.trim()) { blanks[k] = (blanks[k] || 0) + 1; return; }
+    counts[k] = (counts[k] || 0) + 1;
   });
   const types = Object.keys(counts).filter((k) => SP_ELEMS[k]);
-  if (!types.length) { setStatus('ไม่มี element ให้ลบ'); return; }
+  if (!types.length) {
+    setStatus('บทนี้ยังไม่มี element ที่มีเนื้อหาให้ลบ');
+    if (!opts.silent) alert('บทนี้ยังไม่มี element ที่มีเนื้อหาให้ลบ');
+    return null;
+  }
+
+  /** ลบจริง — แยกออกมาให้เทสเรียกได้ตรง ๆ และให้ทุก error ถูกจับ */
+  const doRemove = async (sel) => {
+    const tab = state.active;
+    // snapshot เป็นของแถม — ห้ามทำให้การลบล้มเหลว (บั๊กเดิมล้มทั้งคำสั่งเพราะตรงนี้)
+    try {
+      if (tab) await snapshotFile(tab.file, 'ก่อนลบ ' + sel.map((x) => SP_ELEMS[x]?.th || x).join(','));
+    } catch (e) { log('warn', 'remove-elements: เก็บเวอร์ชันก่อนลบไม่สำเร็จ (ลบต่อ)', e); }
+    if (!sp.view || sp.view.isDestroyed) { setStatus('ตัวแก้ไขถูกปิดไปแล้ว — เปิดฉากใหม่แล้วลองอีกครั้ง'); return 0; }
+    const view = sp.view;
+    const delSet = new Set(sel);
+    const toRemove = [];
+    view.state.doc.forEach((n, pos) => {
+      // ลบเฉพาะบล็อกที่ "มีเนื้อหา" — บรรทัดว่างไม่ใช่เป้าหมาย
+      if (n.type.name === 'sp' && delSet.has(n.attrs.el) && n.textContent.trim())
+        toRemove.push({ pos, size: n.nodeSize });
+    });
+    if (!toRemove.length) { setStatus('ไม่พบ element ที่ตรงเงื่อนไข'); return 0; }
+    let tr = view.state.tr;
+    // ลบจากท้ายมาต้น — ตำแหน่งของตัวที่ยังไม่ถูกลบจึงไม่ขยับ
+    for (const { pos, size } of toRemove.slice().reverse()) tr = tr.delete(pos, pos + size);
+    view.dispatch(tr);
+    // [alpha.62 บั๊ก 19] **ต้นเหตุจริงของ "ลบ element ตามประเภท ใช้ไม่ได้"**
+    // บรรทัดนี้เคยเรียก `smartDirty()` ซึ่ง **ไม่มีอยู่จริงในโปรเจกต์เลย** (ไม่เคยถูกประกาศที่ไหน)
+    // → ReferenceError กลางทาง · dispatch ลบไปแล้วแต่ `ov.remove()` กับ setStatus ไม่ได้ทำงาน
+    // ผู้ใช้เห็นกล่องค้างอยู่กับที่ ไม่มีข้อความอะไร = "กดลบแล้วไม่มีอะไรเกิดขึ้น"
+    if (tab) { markDirty(tab); scheduleSpSmart(tab); scheduleRepaginate(); }
+    setStatus(`ลบ ${toRemove.length} element แล้ว (ยกเลิกได้ด้วย Ctrl+Z)`);
+    return toRemove.length;
+  };
+  if (opts.silent) return { types, counts, blanks, doRemove };
+
   const ov = el('div', 'k-overlay');
   const box = el('div', 'k-dialog');
   box.innerHTML = `<div class="k-dlg-title">ลบ element ตามประเภท</div>
-    <div class="k-hint" style="margin-bottom:10px">เลือกประเภท element ที่ต้องการลบทั้งหมดออกจากบท</div>
+    <div class="k-hint" style="margin-bottom:10px">เลือกประเภท element ที่ต้องการลบทั้งหมดออกจากบท
+      <br>(นับเฉพาะบรรทัดที่มีเนื้อหา — บรรทัดว่างไม่ถูกแตะ · ยกเลิกได้ด้วย Ctrl+Z)</div>
     <div id="rm-el-list"></div>
     <div style="margin-top:8px"><a href="#" id="rm-el-all">เลือกทั้งหมด</a> · <a href="#" id="rm-el-none">ไม่เลือก</a></div>
-    <div class="k-dlg-btns"><button class="k-cancel">${t('dialogs.cancel')}</button><button class="k-ok k-danger-btn">ลบ</button></div>`;
+    <div class="k-dlg-total dim" style="margin-top:8px"></div>
+    <div class="k-dlg-btns"><button class="k-cancel">${t('dialogs.cancel')}</button><button class="k-ok k-danger" disabled>ลบ</button></div>`;
   ov.append(box); document.body.append(ov);
   const list = box.querySelector('#rm-el-list');
+  const totalEl = box.querySelector('.k-dlg-total');
+  const okBtn = box.querySelector('.k-ok');
   const chks = [];
+  const syncTotal = () => {
+    const sel = chks.filter((c) => c.checked);
+    const n = sel.reduce((s, c) => s + (counts[c.value] || 0), 0);
+    totalEl.textContent = n ? `จะลบทั้งหมด ${n} บรรทัด` : 'ยังไม่ได้เลือกอะไร';
+    okBtn.disabled = !n;                       // ปุ่มลบกดไม่ได้ตอนยังไม่เลือก = ไม่ใช่ "กดแล้วไม่มีอะไรเกิดขึ้น"
+  };
   for (const ty of types) {
     const label = el('label', 'k-row');
+    label.style.cssText = 'display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer';
     const cb = el('input'); cb.type = 'checkbox'; cb.value = ty; chks.push(cb);
-    label.append(cb, ' ' + (SP_ELEMS[ty]?.th || ty) + ` (${counts[ty]} รายการ)`);
+    cb.onchange = syncTotal;
+    label.append(cb, el('span', null, `${SP_ELEMS[ty]?.th || ty} (${counts[ty]} บรรทัด)`));
     list.append(label);
   }
-  box.querySelector('#rm-el-all').onclick = (e) => { e.preventDefault(); chks.forEach((c) => c.checked = true); };
-  box.querySelector('#rm-el-none').onclick = (e) => { e.preventDefault(); chks.forEach((c) => c.checked = false); };
+  syncTotal();
+  box.querySelector('#rm-el-all').onclick = (e) => { e.preventDefault(); chks.forEach((c) => { c.checked = true; }); syncTotal(); };
+  box.querySelector('#rm-el-none').onclick = (e) => { e.preventDefault(); chks.forEach((c) => { c.checked = false; }); syncTotal(); };
   box.querySelector('.k-cancel').onclick = () => ov.remove();
   ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
-  box.querySelector('.k-ok').onclick = async () => {
-    const sel = chks.filter((c) => c.checked).map((c) => c.value);
-    if (!sel.length) { ov.remove(); return; }
-    if (!(await confirmBox(`ลบ element ${sel.map((t) => SP_ELEMS[t]?.th || t).join(', ')} ทั้งหมด (${sel.reduce((s, t) => s + (counts[t] || 0), 0)} รายการ)?`, 'ลบ'))) return;
-    // เก็บ snapshot ก่อนลบ
-    const t = state.active;
-    if (t) await snapshotFile(t.file, 'ก่อนลบ ' + sel.map((x) => SP_ELEMS[x]?.th).join(','));
-    let tr = v.state.tr;
-    const delSet = new Set(sel);
-    const toRemove = [];
-    v.state.doc.forEach((n, pos) => {
-      if (n.type.name === 'sp' && delSet.has(n.attrs.el)) toRemove.push({ pos, size: n.nodeSize });
-    });
-    for (const { pos, size } of toRemove.reverse()) tr = tr.delete(pos, pos + size);
-    v.dispatch(tr);
-    if (t) { markDirty(t); smartDirty(); }
-    ov.remove();
-    setStatus('ลบ ' + toRemove.length + ' element แล้ว');
+  okBtn.onclick = async () => {
+    // ทุกอย่างในนี้ห้ามหลุดเป็น unhandled rejection — ไม่งั้นกล่องค้างแบบเงียบ ๆ เหมือนบั๊กเดิม
+    try {
+      const sel = chks.filter((c) => c.checked).map((c) => c.value);
+      if (!sel.length) return;
+      const n = sel.reduce((s, k) => s + (counts[k] || 0), 0);
+      const names = sel.map((k) => SP_ELEMS[k]?.th || k).join(', ');
+      if (!(await confirmBox(`ลบ ${names} ทั้งหมด (${n} บรรทัด)?`, 'ลบ'))) return;
+      ov.remove();
+      await doRemove(sel);
+    } catch (e) {
+      log('error', 'remove-elements ล้มเหลว', e);
+      ov.remove();
+      setStatus('ลบ element ไม่สำเร็จ: ' + (e && e.message));
+    }
   };
+  return ov;
 }
 
 // [75] Character Map — Latin-1 special characters dialog
@@ -5783,6 +6030,7 @@ function refreshToolbar() {
   // [alpha.60r3 ข้อ 5] แผงวิเคราะห์ด้วย AI · [ข้อ 6] ซ่อน/แสดงรหัสมาร์กดาวน์
   $('#tb-ai-analyzer')?.classList.toggle('on', isPanelOpen('ai-analyzer'));
   $('#tb-ai-chat')?.classList.toggle('on', isPanelOpen('ai-chat'));   // [alpha.62 บั๊ก 2]
+  $('#tb-gallery')?.classList.toggle('on', isPanelOpen('gallery'));   // [alpha.62 บั๊ก 14]
   $('#tb-md-codes')?.classList.toggle('on', showMarkdownCodes());
   syncFloatBarVisible();
   syncMenuToggles();          // เมนู native ติ๊กถูกตามสถานะจริง (ส่งเฉพาะตอนค่าเปลี่ยน)
@@ -6061,14 +6309,15 @@ async function insertImage() {
   return insertImageByName(it.file, it.caption);
 }
 
-// แทรกรูปจากคลังลงฉากที่เปิดอยู่ด้วย "ชื่อไฟล์" — ใช้ร่วมกับเมนูคลิกขวาใน Explorer (ข้อ 6)
+// แทรกรูปจากคลังลงฉากที่เปิดอยู่ — `fileName` เป็น **path สัมพัทธ์กับ Images/**
+// ('sunset.png' หรือ 'ตัวละคร/ref.png' — alpha.63 รับทั้งสองแบบ) · ใช้ร่วมกับคลิกขวาใน Explorer (ข้อ 6)
 async function insertImageByName(fileName, caption) {
   const t = state.active;
   if (!t || !(t.editor || t.sp)) { setStatus('เปิดฉากก่อนจึงจะแทรกรูปได้'); return; }
   const imgDir = await kapi.join(state.root, 'Images');
   const sceneDir = t.file.replace(/[\\/][^\\/]*$/, '');
-  const rel = await kapi.relative(sceneDir, await kapi.join(imgDir, fileName));
-  const cap = caption || fileName.replace(/\.[^.]+$/, '');
+  const rel = await kapi.relative(sceneDir, await kapi.join(imgDir, ...String(fileName).split('/')));
+  const cap = caption || String(fileName).split('/').pop().replace(/\.[^.]+$/, '');
   (t.editor || t.sp).insertImage(rel, cap, `![${cap}](${rel})`);
   markDirty(t);
   setStatus('แทรกรูปแล้ว: ' + fileName);
@@ -6272,6 +6521,15 @@ const FEATURE_PANELS = {
   gallery:   () => renderGalleryPanel(),        // [alpha.60r1 ข้อ 21]
   'ai-analyzer': () => renderAIAnalyzerPanel($('#ai-analyzer-body')),   // [alpha.60r3 ข้อ 5]
   'ai-chat':     () => renderAIChatPanel($('#ai-chat-body')),           // [alpha.61 ข้อ 2]
+  // [alpha.62 บั๊ก 18+20] สองตัวนี้มีตัววาดครบมาตั้งแต่ .40 แต่ไม่เคยอยู่ในตารางนี้
+  //   → เปิดแผงจากปุ่ม/ถาด/เลย์เอาต์ที่กู้มา แล้วได้กล่องเปล่า ("ใช้ไม่ได้เลย")
+  //   มีแต่ทางเดียวที่เคยวาด คือคำสั่ง global-search / scratchpad ที่เรียก render เองตรง ๆ
+  search:    () => renderSearchPanel($('#search-body')),
+  notes:     () => renderNotesPanel($('#notes-body')),
+  // [alpha.62 บั๊ก 16] 3 ฟีเจอร์ที่ยังเป็นแท็บเอกสาร → เป็นแผงเต็มตัวเหมือนตัวอื่น
+  network:   () => renderNetworkPanel(),
+  planner:   () => renderPlannerPanel(),
+  floorplan: () => renderFloorPlanPanel(),
 };
 export function isFeaturePanel(id) { return !!FEATURE_PANELS[panelId(id)]; }
 // วาดค้างอยู่ = ใช้รอบเดียวกัน — openX() เรียก showPanel (hook เริ่มวาด) แล้ว await ต่อ
@@ -6294,11 +6552,16 @@ setPanelShowHook((pid) => { renderFeaturePanel(pid); });
 /** ล้างเนื้อแผงฟีเจอร์ (ตอนปิดโปรเจกต์ — ไม่งั้นโปรเจกต์ใหม่เห็นสถิติ/กระดานของเก่า) */
 export function clearFeaturePanels() {
   for (const sel of ['#dash-body', '#kanban-body', '#books-body', '#tl-body', '#maps-body',
-                     '#gal-body', '#ai-analyzer-body']) {
+                     '#gal-body', '#ai-analyzer-body',
+                     // [alpha.62 บั๊ก 16+20] ผลค้นหา/ผัง/กระดาน เป็นของโปรเจกต์เดิมทั้งหมด
+                     '#search-body', '#net-body', '#planner-body', '#floor-body']) {
     const n = $(sel); if (n) n.innerHTML = '';
   }
+  // #notes-body ไม่ล้าง — สมุดโน้ตด่วนเป็นของผู้ใช้ ไม่ผูกกับโปรเจกต์ (เก็บใน localStorage)
+  // และตัววาดมีธง dataset.ready — ล้างเนื้อแต่ไม่ล้างธง = ได้กล่องเปล่าถาวร
   mapsState_C.s = null;
   galInst = null;
+  netInst = null; plannerInst = null;
 }
 /** วาดแผงฟีเจอร์ทุกตัวที่เปิดค้างอยู่ (เรียกหลัง initPanelSystem ตอนเปิดโปรเจกต์) */
 export async function renderOpenFeaturePanels() {
@@ -6390,6 +6653,10 @@ async function handleCommand(ch, ...a) {
     case 'editor-redo': getActiveEditor()?.cmd('redo'); refreshToolbar(); break;
     case 'insert-image': insertImage(); break;
     case 'gallery': await openGallery(); break;
+    // [alpha.63] คำสั่งย่อยของคลังรูป (เมนู มุมมอง → คลังรูปภาพ)
+    case 'gallery-new-album': case 'gallery-board': case 'gallery-unused':
+    case 'gallery-dups': case 'gallery-export-used':
+      await galleryCommand(ch); break;
     case 'find': openFind(); break;
     case 'dashboard': openDashboard(); break;
     case 'books': openBookManager(); break;
@@ -6436,12 +6703,14 @@ async function handleCommand(ch, ...a) {
         : 'เสียงเครื่องพิมพ์ดีด: ปิด');
       break;
     case 'quick-open': openQuickOpen(); break;
-    case 'global-search': showPanel('search'); renderSearchPanel($('#search-body')); syncMenuToggles(); break;
+    // [alpha.62 บั๊ก 20] วิ่งผ่าน renderFeaturePanel เหมือนแผงอื่น — dedupe การวาดซ้ำให้ด้วย
+    case 'global-search': showPanel('search'); renderFeaturePanel('search'); syncMenuToggles(); refreshToolbar(); break;
     case 'centralize': openCentralizeUI(); break;
     case 'branching': openBranchingTree(); break;
     case 'branch-sync': syncChoicesFromScene(); break;
     case 'floorplan': openFloorPlan(); break;
-    case 'scratchpad': showPanel('notes'); renderNotesPanel($('#notes-body')); syncMenuToggles(); break;
+    // [alpha.62 บั๊ก 18] เช่นเดียวกัน — เดิมนี่เป็น "ทางเดียว" ที่แผงโน้ตเคยถูกวาด
+    case 'scratchpad': showPanel('notes'); renderFeaturePanel('notes'); syncMenuToggles(); break;
     case 'export-blog': exportBlogHTML(); break;
     case 'export-zip': exportProjectZip(); break;
     case 'export-json': exportProjectJson(); break;
@@ -6530,6 +6799,8 @@ async function handleCommand(ch, ...a) {
     case 'delete-line': deleteCurrentLine(); break;
     // [alpha.61 ข้อ 4] สวิตช์ตัวพิมพ์ใหญ่/เล็กของบทหนัง — เก็บที่ระดับโปรเจกต์
     case 'sp-force-case': toggleSpCase('spForceCase'); break;
+    // [alpha.62 บั๊ก 11] ปิด/เปิดตัวพิมพ์ใหญ่รายชนิด element
+    case 'sp-element-caps': toggleElementCaps(a[0]); break;
     case 'sp-auto-capitalize': toggleSpCase('spAutoCapitalize'); break;
     case 'sp-auto-correct-i': toggleSpCase('spAutoCorrectI'); break;
     case 'toggle-open-last': await toggleOpenLastProject(); break;
@@ -6872,18 +7143,13 @@ function syncFloatBarVisible() {
 
 
 // ---------------- Tooltip ระบบเดียว KTooltip (ข้อ 16) ----------------
-// [alpha.60r ข้อ 8] หน้าจอรอโหลด
-export function showLoader(msg) {
-  const el = document.getElementById('k-loader');
-  if (!el) return;
-  el.style.display = 'flex';
-  const prog = document.getElementById('k-loader-prog');
-  if (prog && msg) prog.textContent = msg;
-}
-export function hideLoader() {
-  const el = document.getElementById('k-loader');
-  if (el) el.style.display = 'none';
-}
+// [alpha.60r ข้อ 8 → alpha.62 บั๊ก 1+2] เดิมเป็นหน้าจอรอโหลดเต็มจอ (#k-loader)
+// มันวางทับทุกอย่างด้วย z-index 999 รวมถึงกล่อง "บันทึกก่อนปิด?" (k-overlay z-index 80)
+// ที่ closeProjectIfAny() เด้งขึ้นมาระหว่างเปิดโปรเจกต์ → กดปุ่มไม่ได้ ต้อง force quit
+// ตอนนี้รายงานที่แถบสถานะล่างแทน (setBusy) — ไม่มีอะไรทับ ไม่มีอะไรบล็อก
+// คงชื่อ showLoader/hideLoader ไว้เพื่อไม่ต้องไล่แก้จุดเรียกทั้งหมด
+export function showLoader(msg) { return setBusy(msg || 'กำลังทำงาน…'); }
+export function hideLoader() { return clearBusy(); }
 // วาง tooltip "เหนือ" ตัว trigger เสมอ (ใช้ getBoundingClientRect + flip)
 // ไม่หน่วงเวลา — แสดงทันที · รองรับข้อความยาว · ธีมตาม CSS
 const TIP_GAP = 6;
@@ -7005,7 +7271,8 @@ window.addEventListener('DOMContentLoaded', () => {
   tb('#tb-align-left', 'align', 'left'); tb('#tb-align-center', 'align', 'center');
   tb('#tb-align-right', 'align', 'right'); tb('#tb-align-justify', 'align', 'justify');
   $('#tb-img').onclick = insertImage;
-  $('#tb-gallery').onclick = () => openGallery();
+  // [alpha.62 บั๊ก 14] สวิตช์จริง — กดเปิด กดซ้ำปิด (บทเรียนเดียวกับปุ่มแชท AI ใน 62-2)
+  $('#tb-gallery').onclick = () => toggleGallery();
   $('#tb-mode').onclick = (e) => {
     const tab = state.active;
     if (!tab || !(tab.editor || tab.sp)) return;
@@ -7032,9 +7299,21 @@ window.addEventListener('DOMContentLoaded', () => {
     if (!mode) return;
     const ed = getActiveEditor();
     if (!ed) { setStatus('เปิดฉากก่อนจึงจะเปลี่ยนรูปตัวพิมพ์ได้'); return; }
+    // [alpha.62 บั๊ก 11] ในบทหนัง element อย่าง "ชื่อตัวละคร/หัวฉาก" ถูก text-transform:uppercase อยู่
+    //   → เปลี่ยน case ของข้อความสำเร็จ แต่บนจอไม่ขยับเลย ผู้ใช้อ่านว่า "ล็อกไว้ ปรับไม่ได้"
+    //   ถ้าสั่งเปลี่ยนเป็นตัวเล็ก/รูปแบบอื่นทั้งที่ element นั้นบังคับตัวใหญ่อยู่ = เจตนาชัดว่า
+    //   "ขอเห็นตามที่พิมพ์" → ปลดล็อกให้ element นั้นเลย แล้วบอกว่าเกิดอะไรขึ้นและปิดกลับได้ที่ไหน
+    const spEl = state.active?.sp ? state.active.sp.curElement() : null;
+    const wasCapped = spEl && mode !== 'UC' && elementCaps(spFormat(), spEl);
     const ok = ed.cmd('case', mode);
-    if (ok) { if (state.active) markDirty(state.active); setStatus('เปลี่ยนรูปตัวพิมพ์: ' + CASE_SHORT[mode]); }
-    else setStatus('เลือกข้อความก่อน แล้วค่อยเปลี่ยนรูปตัวพิมพ์');
+    if (ok) {
+      if (state.active) markDirty(state.active);
+      if (wasCapped) {
+        toggleElementCaps(spEl, false);
+        setStatus(`เปลี่ยนรูปตัวพิมพ์: ${CASE_SHORT[mode]} — ปลดบังคับตัวพิมพ์ใหญ่ของ ` +
+                  `"${SP_ELEMS[spEl]?.th || spEl}" ให้แล้ว (เปิดกลับได้ที่ บท → 🔠 ตัวพิมพ์ใหญ่/เล็ก)`);
+      } else setStatus('เปลี่ยนรูปตัวพิมพ์: ' + CASE_SHORT[mode]);
+    } else setStatus('เลือกข้อความก่อน แล้วค่อยเปลี่ยนรูปตัวพิมพ์');
     refreshToolbar();
   };
   $('#tb-sp-elem').onchange = (e) => {
@@ -7053,8 +7332,18 @@ window.addEventListener('DOMContentLoaded', () => {
   // alpha.57 — สลับมุมมองบท + ป้ายข้อผิดพลาดบนแถบสถานะ
   const spViewSel = $('#sp-view-select');
   if (spViewSel) spViewSel.onchange = (e) => setSpView(e.target.value);
+  // [alpha.62 บั๊ก 17] ป้ายตรวจบท = ปุ่มจริง — คลิกได้เมนูคำสั่ง · คลิกขวาก็เมนูเดียวกัน
   const errBadge = $('#sp-errors');
-  if (errBadge) errBadge.onclick = () => findNextSpError();
+  if (errBadge) {
+    errBadge.onclick = (e) => {
+      const r = e.currentTarget.getBoundingClientRect();
+      spErrorMenu(r.left, r.top - 6);
+    };
+    errBadge.oncontextmenu = (e) => {
+      e.preventDefault();
+      spErrorMenu(e.clientX, e.clientY);
+    };
+  }
   $('#open-btn').onclick = async () => { const p = await kapi.openProjectDialog(); if (p) loadProject(p); };
   $('#new-btn').onclick = () => newProject();
   $('#win-min').onclick = () => kapi.winMin();
@@ -9003,8 +9292,8 @@ async function runTest(projectPath) {
     check('[21] คลังรูปเปิดเป็นแผง (ไม่ใช่แท็บเอกสาร)',
           isPanelOpen('gallery') && !state.tabs.has('::gallery::'));
     check('[21] แผงคลังรูปเห็นรูปจริง',
-          document.querySelectorAll('#gal-body .gal-cell').length >= 1,
-          document.querySelectorAll('#gal-body .gal-cell').length);
+          document.querySelectorAll('#gal-body .gal2-cell').length >= 1,
+          document.querySelectorAll('#gal-body .gal2-cell').length);
     const idx = await kapi.readJson(await kapi.join(state.root, 'Images', 'images.json'));
     check('images.json ถูก sync จากไฟล์จริง', idx.images.some((x) => x.file === 'sunset.png'),
           JSON.stringify(idx));
@@ -9326,17 +9615,18 @@ async function runTest(projectPath) {
     // ---- Story Network ----
     await openNetwork();
     await new Promise((r) => setTimeout(r, 500));
-    const netTab = state.tabs.get('::network::');
+    // [alpha.62 บั๊ก 16] Story Network เป็นแผงแล้ว — อ่านจาก netInst ไม่ใช่แท็บ
+    const netN = netInst;
     check('Story Network มีโหนด + เส้นความสัมพันธ์',
-          netTab.net.nodes.length >= 2 && netTab.net.edges.length >= 1,
-          `nodes=${netTab.net.nodes.length} edges=${netTab.net.edges.length}`);
+          netN.nodes.length >= 2 && netN.edges.length >= 1,
+          `nodes=${netN.nodes.length} edges=${netN.edges.length}`);
     check('เส้นในกราฟมีประเภทติดมาด้วย (family จากที่ตั้งไว้)',
-          netTab.net.edges.some((e) => e.type === 'family'),
-          JSON.stringify(netTab.net.edges.map((e) => [e.role, e.type])));
+          netN.edges.some((e) => e.type === 'family'),
+          JSON.stringify(netN.edges.map((e) => [e.role, e.type])));
     check('ทุกเส้นได้ประเภทที่มีสีจริง (ไม่ระบุ = เดาจากบทบาท)',
-          netTab.net.edges.every((e) => !!REL_COLOR[e.type]),
-          JSON.stringify(netTab.net.edges.map((e) => e.type)));
-    closeTab('::network::');
+          netN.edges.every((e) => !!REL_COLOR[e.type]),
+          JSON.stringify(netN.edges.map((e) => e.type)));
+    hidePanel('network');
 
     // ---- บรรยากาศรับรู้ของสถานที่ (Sensory Profiles) ----
     {
@@ -9398,9 +9688,10 @@ async function runTest(projectPath) {
     // ---- Planner (กระดานวางแผน) ----
     await openPlanner();
     await new Promise((r) => setTimeout(r, 350));
-    const plTab = state.tabs.get('::planner::');
-    const pb = plTab && plTab.planner;
-    check('Planner เปิดแท็บ + มี fabric canvas', !!(pb && pb.canvas), 'planner=' + !!pb);
+    // [alpha.62 บั๊ก 16] Planner เป็นแผงแล้ว — อ่านจาก plannerInst
+    const pb = plannerInst;
+    check('Planner เปิดเป็นแผง + มี fabric canvas',
+          !!(pb && pb.canvas) && isPanelOpen('planner'), 'planner=' + !!pb);
     await pb._ready;
 
     const nA = pb._createNode('scene', 'ฉาก A', '#3f3e3a');
@@ -9615,8 +9906,7 @@ async function runTest(projectPath) {
     check('หน้าต่างลอยมีหัวลาก + ปุ่ม ย่อ/คืนแท็บ/ปิด + มุมขยาย',
           !!win.querySelector('.float-bar') && win.querySelectorAll('.float-btn').length === 3 &&
           !!win.querySelector('.float-grip'));
-    // สลับไปแท็บอื่นแล้วหน้าต่างลอยต้องยังแสดงอยู่
-    activate('::planner::');
+    // สลับไปแท็บอื่นแล้วหน้าต่างลอยต้องยังแสดงอยู่ ([alpha.62] Planner เป็นแผง → ใช้แท็บเอกสารตัวอื่นแทน)
     check('สลับแท็บแล้วหน้าต่างลอยยังแสดงอยู่', flTab.pane.classList.contains('on'));
     win.querySelector('.float-btn').click();
     check('ปุ่มย่อหน้าต่างลอยทำงาน', win.classList.contains('min'));
@@ -9627,14 +9917,13 @@ async function runTest(projectPath) {
     check('ดับเบิลคลิกหัวแท็บ = สลับลอย/คืน (toggleFloatTab)',
           toggleFloatTab(flKey) === true && !!flTab.floatWin && toggleFloatTab(flKey) === true && !flTab.floatWin);
     // ดับเบิลคลิกการ์ด Planner ที่ผูกไฟล์ → เปิดเป็นหน้าต่างลอย
-    activate('::planner::');
     await pb.onOpenFile(flKey);
     const flTab2 = state.tabs.get(flKey);
     check('ดับเบิลคลิกการ์ด Planner เปิดไฟล์เป็นหน้าต่างลอย', !!flTab2 && !!flTab2.floatWin);
     closeTab(flKey);
     check('ปิดแท็บแล้วหน้าต่างลอยหายไปด้วย', !document.querySelector('.float-win'));
 
-    closeTab('::planner::');
+    hidePanel('planner');
 
     // ---- โหมดโฟกัส ----
     toggleFocus(true);
@@ -10879,7 +11168,7 @@ async function runTest(projectPath) {
     {
       await openFloorPlan();
       await new Promise((r) => setTimeout(r, 400));
-      check('เปิดผังพื้นที่ได้', state.tabs.has('::floorplan::'));
+      check('เปิดผังพื้นที่ได้ (เป็นแผงแล้ว — alpha.62 บั๊ก 16)', isPanelOpen('floorplan'));
       check('ผังพื้นที่แสดงแผงข้อมูล', !!document.querySelector('.floor-panel'));
       check('ผังพื้นที่มีแถบเส้นเวลาของสถานที่', !!document.querySelector('.floor-timeline'));
       check('ผังพื้นที่แสดงช่องเห็น/ได้ยิน/พบ ครบ 3 หัวข้อ',
@@ -10905,11 +11194,10 @@ async function runTest(projectPath) {
       // (เคยพัง: sceneCtx() อ่านจากแท็บ active เท่านั้น พอมาดูผัง ตำแหน่งปัจจุบันเลยหายหมด)
       await openScene(await kapi.join(dPath, 'Chapters', ch3.folderName, sc3.fileName), sc3.title);
       await new Promise((r) => setTimeout(r, 250));
-      activate('::floorplan::');
-      check('สลับมาแท็บผังพื้นที่แล้วยังจำฉากที่เปิดล่าสุดได้',
+      check('เปิดฉากแล้วผังพื้นที่ยังจำฉากที่เปิดล่าสุดได้',
             !!state.lastSceneFile && state.lastSceneFile.includes(sc3.fileName), state.lastSceneFile);
       state._floor = { mapId: tMap.id, picking: false };
-      await renderFloorPlan(state.tabs.get('::floorplan::').pane, tMap.id);
+      await renderFloorPlan($('#floor-body'), tMap.id);
       await new Promise((r) => setTimeout(r, 400));
       check('ผังพื้นที่วาดหมุดของแผนที่', document.querySelectorAll('.floor-pin').length === 1,
             String(document.querySelectorAll('.floor-pin').length));
@@ -10932,7 +11220,7 @@ async function runTest(projectPath) {
 
       // เพิ่ม "สิ่งที่เห็น" แล้วต้องขึ้นในแผง + นับเป็นป้ายบนการ์ดเส้นเวลา
       await updateSceneRow(dPath, sc3.id, (r) => { r.clues = ['รอยเลือดบนพื้น']; });
-      await renderFloorPlan(state.tabs.get('::floorplan::').pane, tMap.id);
+      await renderFloorPlan($('#floor-body'), tMap.id);
       await new Promise((r) => setTimeout(r, 300));
       check('รายการสิ่งที่เห็นขึ้นในแผง (ลบได้ทีละอัน)',
             [...document.querySelectorAll('.floor-item-text')].some((d) => d.textContent === 'รอยเลือดบนพื้น')
@@ -10947,14 +11235,17 @@ async function runTest(projectPath) {
       });
       await saveMaps(prevMaps);                 // คืนแผนที่เดิม ไม่ทิ้งขยะให้เทสถัดไป
       state._floor = null;
-      closeTab('::floorplan::');
+      hidePanel('floorplan');
     }
 
     // ---- ศูนย์รวม (ข้อ 87): ใช้ Auto-link Engine ไม่ใช่สแกนดิบ ----
     {
+      // [alpha.62 บั๊ก 15] ศูนย์รวมอยู่ในแดชบอร์ดแล้ว — เปิดแดชบอร์ดก็ต้องเห็นครบ
       await openCentralizeUI();
-      await new Promise((r) => setTimeout(r, 900));
-      check('เปิดหน้าศูนย์รวมได้', state.tabs.has('::centralize::'));
+      await new Promise((r) => setTimeout(r, 1400));
+      check('ศูนย์รวมอยู่ในแผงแดชบอร์ด (ไม่ใช่แท็บของตัวเองแล้ว)',
+            isPanelOpen('dashboard') && !state.tabs.has('::centralize::')
+            && !!document.querySelector('#dash-body .dash-cent'));
       check('ศูนย์รวมคำนวณสถิติได้ (ไม่ค้างที่ว่าง)', !!document.querySelector('.cent-stat'));
       check('ศูนย์รวมมีแผง backlinks', !!document.querySelector('.cent-list'));
       check('ศูนย์รวมแสดงการ์ดสถิติ (ฉาก/คำ/Wiki/จุดเชื่อมโยง)',
@@ -10964,7 +11255,8 @@ async function runTest(projectPath) {
             [...document.querySelectorAll('.cent-stat-lbl')].some((d) => d.textContent === 'จุดเชื่อมโยง'));
       check('ศูนย์รวมมีปุ่มสร้างดัชนีใหม่ + ป้ายอัปเดตสด',
             !!document.querySelector('.cent-refresh') && !!document.querySelector('.cent-live'));
-      closeTab('::centralize::');
+      check('ส่วนศูนย์รวมอยู่ "ท้าย" แดชบอร์ด (ต่อจากสถิติเดิม ไม่ทับกัน)',
+            !!document.querySelector('#dash-body .dash-wrap .dash-cent .cent-wrap.cent-embedded'));
     }
 
     // ---- Visual Tags (ข้อ 84): ชิปสีต้องโผล่ใน Explorer + แถบตัวกรอง ----
@@ -11618,24 +11910,31 @@ async function runTest(projectPath) {
       {
         await openNetwork();
         await new Promise((r) => setTimeout(r, 600));
-        const nt = state.tabs.get('::network::');
-        check('เปิดแท็บ Story Network ได้', !!nt?.net);
-        const cv = nt.net.canvas;
-        const rp = nt.pane.getBoundingClientRect();
-        check('canvas ปรับขนาดตาม pane จริง (ไม่ค้าง 300px)',
-              cv.width > 320 && cv.height > 320,
-              `cv=${cv.width}x${cv.height} pane=${Math.round(rp.width)}x${Math.round(rp.height)} ` +
-              `win=${window.innerWidth}x${window.innerHeight}`);
-        nt.net._cx = 0; nt.net._cy = 0;
+        // [alpha.62 บั๊ก 16] เป็นแผงแล้ว — host คือ #net-body
+        const nt = netInst;
+        const nHost = $('#net-body');
+        check('เปิดแผง Story Network ได้', !!nt && isPanelOpen('network'));
+        const cv = nt.canvas;
+        const rp = nHost.getBoundingClientRect();
+        // บั๊ก #12 เดิม: pane ถูกซ่อนตอนสร้าง → rect เป็น 0 แล้ว canvas ค้างที่ 300px ตลอด
+        // สิ่งที่ต้องคุมจริงคือ "canvas ตามขนาด host" (มีพื้นล่าง 300px ใน _fit)
+        // [alpha.62] เดิมเช็ค > 320 ตายตัว ซึ่งใช้ได้เฉพาะตอนเป็นแท็บเต็มจอ — เป็นแผงแล้วแคบกว่านั้นได้
+        const wantW = Math.max(300, Math.round(rp.width));
+        const wantH = Math.max(300, Math.round(rp.height));
+        check('canvas ปรับขนาดตามแผงจริง (ไม่ค้างที่ค่าเริ่มต้นตอนแผงใหญ่กว่า)',
+              Math.abs(cv.width - wantW) <= 2 && Math.abs(cv.height - wantH) <= 2,
+              `cv=${cv.width}x${cv.height} want=${wantW}x${wantH} ` +
+              `host=${Math.round(rp.width)}x${Math.round(rp.height)}`);
+        nt._cx = 0; nt._cy = 0;
         // กดที่มุมว่าง ๆ (ไม่โดนโหนด) แล้วลาก
         cv.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, clientX: 5, clientY: 5 }));
         cv.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 85, clientY: 65 }));
-        const moved = nt.net._cx !== 0 || nt.net._cy !== 0;
+        const moved = nt._cx !== 0 || nt._cy !== 0;
         document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-        check('ลากพื้นหลัง Story Network = เลื่อนผังได้', moved, `cx=${nt.net._cx} cy=${nt.net._cy}`);
-        check('ปล่อยเมาส์ → เลิกลาก', !nt.net.pan);
-        check('มีปุ่มรีเซ็ตมุมมองผัง', !!nt.pane.querySelector('.net-reset'));
-        closeTab('::network::');
+        check('ลากพื้นหลัง Story Network = เลื่อนผังได้', moved, `cx=${nt._cx} cy=${nt._cy}`);
+        check('ปล่อยเมาส์ → เลิกลาก', !nt.pan);
+        check('มีปุ่มรีเซ็ตมุมมองผัง', !!nHost.querySelector('.net-reset'));
+        hidePanel('network');
       }
 
       // ---- ข้อ 13 + 14: แผงคุณสมบัติ บันทึกอัตโนมัติ + ไม่ duplicate ----
@@ -12218,7 +12517,7 @@ async function runTest(projectPath) {
       await handleCommand('gallery');
       await new Promise((r) => setTimeout(r, 400));
       check('#28 คำสั่ง gallery เปิดคลังรูปได้', isPanelOpen('gallery') &&
-            document.querySelectorAll('#gal-body .gal-cell').length >= 1);
+            document.querySelectorAll('#gal-body .gal2-cell').length >= 1);
       hidePanel('gallery');
       activate(t.file);
     }
@@ -15480,7 +15779,7 @@ async function runTest(projectPath) {
         check('[61-1] ค่าเริ่มต้นคือ "ไม่เปิดโปรเจกต์ล่าสุด" และ "ไม่บังคับหน้าแรก"',
               GLOBAL_DEFAULTS.openLastProject === false && GLOBAL_DEFAULTS.showHomeOnStartup === false,
               JSON.stringify([GLOBAL_DEFAULTS.openLastProject, GLOBAL_DEFAULTS.showHomeOnStartup]));
-        check('[61-1] มีหน้าต่างรอโหลดในหน้า HTML', !!document.getElementById('k-loader'));
+        // [alpha.62 บั๊ก 9] หน้าจอรอโหลดเต็มจอถูกถอดออก — ย้ายไปเช็คที่บล็อก alpha.62 ข้างล่าง
         const keepA = S.openLastProject, keepB = S.showHomeOnStartup;
         await toggleOpenLastProject(true);
         check('[61-1] เปิดสวิตช์ "เปิดโปรเจกต์ล่าสุด" แล้วค่าเข้าสถานะจริง', S.openLastProject === true);
@@ -16015,6 +16314,535 @@ async function runTest(projectPath) {
         await wait62(120);
         t8.editor.setMarkdown(t8.body || '');
         t8.dirty = false;
+      }
+
+      // ---- [62-9] หน้าจอ loading เต็มจอถูกถอดออก (มันทับกล่องบันทึกจนต้อง force quit) ----
+      {
+        check('[62-9] ไม่มี #k-loader ในหน้า HTML อีกแล้ว',
+              !document.getElementById('k-loader'));
+        check('[62-9] ไม่มี .k-loader-spin/.k-loader-text หลงเหลือ',
+              !document.querySelector('.k-loader-spin, .k-loader-text'));
+        // showLoader/hideLoader ยังเรียกได้ (จุดเรียกเดิมไม่ต้องแก้) แต่ต้องไม่สร้างอะไรมาทับจอ
+        showLoader('ทดสอบว่าไม่ทับจอ');
+        check('[62-9] showLoader() ไม่สร้าง element เต็มจออีกแล้ว',
+              !document.getElementById('k-loader') && busyMsg() === 'ทดสอบว่าไม่ทับจอ', busyMsg());
+        // ── ตัวบั๊กจริง: กล่อง k-overlay ต้องคลิกได้ทั้งที่ "กำลังทำงาน" อยู่ ──
+        const ov9 = el('div', 'k-overlay');
+        const box9 = el('div', 'k-dialog');
+        const btn9 = el('button', 'k-ok', 'บันทึก');
+        box9.append(btn9); ov9.append(box9); document.body.append(ov9);
+        await wait62(60);
+        const r9 = btn9.getBoundingClientRect();
+        check('[62-9] กล่องจำลองถูกวาดจริง (มีขนาด)', r9.width > 0 && r9.height > 0,
+              `${Math.round(r9.width)}×${Math.round(r9.height)}`);
+        const hit9 = document.elementFromPoint(r9.left + r9.width / 2, r9.top + r9.height / 2);
+        check('[62-9] ระหว่าง "กำลังทำงาน" ปุ่มบันทึกยังกดได้ (เดิมโดน #k-loader ทับจนต้อง force quit)',
+              !!hit9 && (hit9 === btn9 || btn9.contains(hit9)),
+              hit9 ? (hit9.id || hit9.className || hit9.tagName) : 'null');
+        let clicked9 = false;
+        btn9.onclick = () => { clicked9 = true; };
+        btn9.click();
+        check('[62-9] กดปุ่มแล้วเหตุการณ์ถึงปุ่มจริง', clicked9);
+        ov9.remove();
+        hideLoader();
+        check('[62-9] hideLoader() ล้างตัวบอกสถานะ', busyMsg() === '', busyMsg());
+      }
+
+      // ---- [62-10] แถบล่างบอกว่าโปรแกรมกำลังทำอะไรอยู่ ----
+      {
+        const bw = $('#status-busy');
+        check('[62-10] มีช่อง "กำลังทำอะไรอยู่" ในหน้า HTML', !!bw);
+        check('[62-10] ช่องนี้อยู่ในแถบสถานะล่าง จริง ๆ',
+              !!bw && !!bw.closest('#statusbar'));
+        check('[62-10] มีสปินเนอร์บอกว่ายังทำงานอยู่', !!bw.querySelector('.k-busy-spin'));
+        // ปิดอยู่ตอนไม่มีอะไรทำ
+        clearBusy();
+        check('[62-10] ว่างงาน = ซ่อนไว้', getComputedStyle(bw).display === 'none',
+              getComputedStyle(bw).display);
+        // ตั้งข้อความแล้วต้องโผล่ พร้อมข้อความที่ส่งไป
+        setStatus('สถานะเดิมของแถบล่าง');
+        setBusy('กำลังทดสอบระบบ…');
+        check('[62-10] ตั้งข้อความแล้วแสดงผลจริง', getComputedStyle(bw).display !== 'none',
+              getComputedStyle(bw).display);
+        check('[62-10] ข้อความตรงกับที่ส่งไป',
+              $('#status-busy-text').textContent === 'กำลังทดสอบระบบ…',
+              $('#status-busy-text').textContent);
+        check('[62-10] busyMsg() อ่านค่าปัจจุบันได้', busyMsg() === 'กำลังทดสอบระบบ…');
+        check('[62-10] ไม่ไปทับข้อความสถานะเดิม (คนละช่องกัน)',
+              $('#status').textContent === 'สถานะเดิมของแถบล่าง', $('#status').textContent);
+        check('[62-10] ไม่กินคลิกของแถบสถานะ (pointer-events:none)',
+              getComputedStyle(bw).pointerEvents === 'none', getComputedStyle(bw).pointerEvents);
+        // เรียกซ้อนได้ — ข้อความล่าสุดชนะ (loadProject เรียกหลายรอบตามขั้นตอน)
+        setBusy('ขั้นตอนถัดไป…');
+        check('[62-10] เรียกซ้ำ = ข้อความล่าสุดชนะ', busyMsg() === 'ขั้นตอนถัดไป…');
+        clearBusy();
+        check('[62-10] clearBusy() แล้วซ่อนกลับ',
+              busyMsg() === '' && getComputedStyle(bw).display === 'none');
+        // withBusy: ตั้งระหว่างทำงาน · เคลียร์เสมอแม้งานโยน error
+        let during10 = '';
+        const ret10 = await withBusy('กำลังทำงานยาว…', async () => { during10 = busyMsg(); return 42; });
+        check('[62-10] withBusy ตั้งข้อความระหว่างทำงาน', during10 === 'กำลังทำงานยาว…', during10);
+        check('[62-10] withBusy คืนค่าที่งานคืนมา', ret10 === 42, String(ret10));
+        check('[62-10] withBusy เคลียร์หลังทำงานเสร็จ', busyMsg() === '', busyMsg());
+        let threw10 = false;
+        try { await withBusy('งานที่จะพัง…', async () => { throw new Error('พัง'); }); }
+        catch { threw10 = true; }
+        check('[62-10] withBusy ปล่อย error ออกมาตามเดิม', threw10);
+        check('[62-10] งานพังแล้วตัวบอกสถานะต้องไม่ค้าง (สำคัญที่สุด)',
+              busyMsg() === '' && getComputedStyle(bw).display === 'none', busyMsg());
+        // จุดเรียกจริงต้องถูกเดินสายไว้แล้ว — ตรวจจากซอร์สของ bundle ไม่ได้ จึงเช็คพฤติกรรม:
+        // loadProject จบแล้วต้องไม่เหลือข้อความค้าง (โปรเจกต์เทสถูกเปิดไปแล้วตั้งแต่ต้นการทดสอบ)
+        check('[62-10] หลังเปิดโปรเจกต์เสร็จ ไม่มีข้อความค้างบนแถบล่าง', busyMsg() === '');
+        setStatus('พร้อม');
+      }
+
+      // ═══════════ alpha.62 รอบสอง — บั๊กจาก human test อีก 10 ข้อ (11–20) ═══════════
+
+      // ---- [62-11] บทหนัง: ปรับ case ได้จริง (ไม่ถูกล็อกเป็นตัวใหญ่) ----
+      {
+        check('[62-11] มีรายชื่อ element ที่บังคับตัวพิมพ์ใหญ่ได้ และมี "ตัวละคร" อยู่ด้วย',
+              CAPS_ELEMENTS.includes('character') && CAPS_ELEMENTS.includes('scene'),
+              CAPS_ELEMENTS.join(','));
+        const keepStyles = JSON.parse(JSON.stringify(S.spStyles || {}));
+        const keepFC11 = S.spForceCase;
+        S.spForceCase = true; S.spStyles = {}; applySettings();
+        check('[62-11] ค่าเริ่มต้น: ชื่อตัวละครถูกบังคับตัวพิมพ์ใหญ่', elementCaps(spFormat(), 'character'));
+        // ปิดเฉพาะ "ตัวละคร" — หัวฉากต้องยังเป็นตัวใหญ่อยู่ (นี่คือสิ่งที่เดิมทำไม่ได้เลย)
+        toggleElementCaps('character', false);
+        check('[62-11] ปิดตัวพิมพ์ใหญ่เฉพาะ "ตัวละคร" ได้', !elementCaps(spFormat(), 'character'));
+        check('[62-11] ปิดตัวละครแล้ว "หัวฉาก" ยังเป็นตัวใหญ่เหมือนเดิม (ไม่เหมาปิดทั้งบท)',
+              elementCaps(spFormat(), 'scene'));
+        const css11 = document.getElementById('k-sp-format').textContent;
+        check('[62-11] CSS ที่ใช้จริงตามด้วย — ตัวละคร none แต่หัวฉากยัง uppercase',
+              /\.sp\.sp-character\{[^}]*text-transform:none/.test(css11)
+              && /\.sp\.sp-scene\{[^}]*text-transform:uppercase/.test(css11),
+              (css11.match(/\.sp\.sp-(character|scene)\{[^}]*text-transform:[a-z]+/g) || []).join(' · '));
+        toggleElementCaps('character', true);
+        check('[62-11] เปิดกลับได้', elementCaps(spFormat(), 'character'));
+        // สวิตช์ใหญ่ปิดอยู่ → เปิดรายตัวต้องปลุกสวิตช์ใหญ่ให้ ไม่งั้นกดแล้วไม่มีผล (mergeSpFormat ล้าง caps ทิ้ง)
+        S.spForceCase = false; applySettings();
+        check('[62-11] สวิตช์ใหญ่ปิด = ทุกชนิดเลิกบังคับ', !elementCaps(spFormat(), 'scene'));
+        toggleElementCaps('scene', true);
+        check('[62-11] เปิดรายชนิดขณะสวิตช์ใหญ่ปิด → ปลุกสวิตช์ใหญ่ให้เอง (ไม่ใช่กดแล้วเงียบ)',
+              S.spForceCase !== false && elementCaps(spFormat(), 'scene'), String(S.spForceCase));
+        // ตัวช่วยบริสุทธิ์: setElementCaps ต้องไม่แก้ของเดิม
+        const src11 = {};
+        const out11 = setElementCaps(src11, 'character', false);
+        check('[62-11] setElementCaps คืน object ใหม่ ไม่แก้ของเดิม',
+              Object.keys(src11).length === 0 && out11.character.screen.caps === false);
+        S.spStyles = keepStyles; S.spForceCase = keepFC11; applySettings();
+      }
+
+      // ---- [62-12] ปิด-เปิดแผงแล้วต้องไม่ไปแตะขนาดของแผงอื่นเลย ----
+      {
+        showPanel('tree'); showPanel('props');
+        await until62(() => isPanelOpen('tree') && isPanelOpen('props'));
+        await wait62(320);
+        const widthOf = (id) => {
+          const n = document.querySelector(`#app-root .k-panel[data-panel-id="${id}"]`);
+          return n ? Math.round(n.getBoundingClientRect().width) : 0;
+        };
+        const w0 = widthOf('tree'), d0 = widthOf('docs');
+        check('[62-12] วัดความกว้างแผงโปรเจกต์/เอกสารได้', w0 > 40 && d0 > 40, `${w0} / ${d0}`);
+        // ปิด "คุณสมบัติ" แล้วเปิดกลับ — ของเดิม removePanel เกลี่ยส่วนของมันให้พี่น้อง
+        // แล้วตอนเปิดกลับก็หักคืนแบบเฉลี่ย → tree/docs ขยับทุกครั้ง
+        for (let i = 0; i < 3; i++) {
+          hidePanel('props'); await wait62(160);
+          showPanel('props'); await wait62(320);
+        }
+        const w1 = widthOf('tree'), d1 = widthOf('docs');
+        check('[62-12] ปิด-เปิดแผงอื่น 3 รอบ แล้วแผงโปรเจกต์ต้องกว้างเท่าเดิมเป๊ะ',
+              Math.abs(w1 - w0) <= 2, `${w0}px → ${w1}px`);
+        check('[62-12] แผงเอกสารก็ต้องกว้างเท่าเดิมเป๊ะ',
+              Math.abs(d1 - d0) <= 2, `${d0}px → ${d1}px`);
+        // ตัวที่ถูกปิด-เปิดเองก็ต้องกลับมาขนาดเดิม
+        const p0 = widthOf('props');
+        hidePanel('props'); await wait62(160);
+        showPanel('props'); await wait62(320);
+        check('[62-12] แผงที่ถูกปิด-เปิดเอง กลับมาขนาดเดิม',
+              Math.abs(widthOf('props') - p0) <= 2, `${p0}px → ${widthOf('props')}px`);
+      }
+
+      // ---- [62-13] แผงที่ผนึก "ขอบบน" ต้องกลับมาอยู่บนเหมือนเดิม (อาการที่ Top ส่งรูปมา) ----
+      {
+        const rectOf = (id) => {
+          const n = document.querySelector(`#app-root .k-panel[data-panel-id="${id}"]`);
+          return n ? n.getBoundingClientRect() : null;
+        };
+        // วางแผงบันทึกไว้ "เหนือ" แผงเอกสาร = dock แนวตั้ง (forceMove = สั่งย้ายจริง ไม่ใช่แค่เปิด)
+        showPanel('log', { targetId: 'docs', side: 'top', forceMove: true });
+        await until62(() => isPanelOpen('log'));
+        await wait62(340);
+        const rl0 = rectOf('log'), rd0 = rectOf('docs'), rt0 = rectOf('tree');
+        const above = !!(rl0 && rd0) && rl0.top + rl0.height <= rd0.top + 6
+                      && Math.abs(rl0.left - rd0.left) <= 6;      // ซ้อนแนวตั้ง ไม่ใช่วางข้างกัน
+        check('[62-13] วางแผงบันทึกไว้เหนือแผงเอกสารได้จริง (dock แนวตั้ง)', above,
+              rl0 && rd0 ? `log=[${Math.round(rl0.left)},${Math.round(rl0.top)},${Math.round(rl0.height)}] ` +
+                           `docs=[${Math.round(rd0.left)},${Math.round(rd0.top)}]` : 'null');
+        const logH0 = rl0 ? Math.round(rl0.height) : 0;
+
+        // ปิดแล้วเปิดใหม่แบบที่ผู้ใช้ทำจริง (ปุ่ม/ถาดแผง — ไม่ได้บอกตำแหน่ง)
+        hidePanel('log'); await wait62(200);
+        check('[62-13] ปิดแล้วหายไปจริง', !isPanelOpen('log'));
+        check('[62-13] ปิดแล้วสล็อตยังอยู่ในต้นไม้ (ไม่ถูกตัดทิ้ง)',
+              getPanelManager().isDocked('log') && getPanelManager().isHidden('log'));
+        showPanel('log'); await wait62(340);
+
+        const rl1 = rectOf('log'), rd1 = rectOf('docs'), rt1 = rectOf('tree');
+        check('[62-13] เปิดกลับ → ยังอยู่ "เหนือ" เอกสารเหมือนเดิม ไม่เด้งไปฝั่งซ้าย',
+              !!(rl1 && rd1) && rl1.top + rl1.height <= rd1.top + 6
+              && Math.abs(rl1.left - rd1.left) <= 6,
+              rl1 && rd1 ? `log=[${Math.round(rl1.left)},${Math.round(rl1.top)}] ` +
+                           `docs=[${Math.round(rd1.left)},${Math.round(rd1.top)}]` : 'null');
+        check('[62-13] เปิดกลับ → ความสูงเท่าเดิม (สัดส่วนไม่ถูกเกลี่ยใหม่)',
+              Math.abs(Math.round(rl1.height) - logH0) <= 2,
+              `${logH0}px → ${Math.round(rl1.height)}px`);
+        check('[62-13] เปิด-ปิดแผงนี้ไม่ไปขยับแผงโปรเจกต์เลย',
+              !!(rt0 && rt1) && Math.abs(rt1.width - rt0.width) <= 2,
+              rt0 && rt1 ? `${Math.round(rt0.width)}px → ${Math.round(rt1.width)}px` : 'null');
+        hidePanel('log'); await wait62(140);
+      }
+
+      // ---- [62-14] ปุ่มคลังรูปเป็นสวิตช์ ----
+      {
+        const gb = $('#tb-gallery');
+        check('[62-14] ปุ่มคลังรูปถูกทำเครื่องหมายเป็นสวิตช์ (.tb-toggle)',
+              !!gb && gb.classList.contains('tb-toggle'));
+        if (isPanelOpen('gallery')) { hidePanel('gallery'); await wait62(120); }
+        gb.click();
+        await until62(() => isPanelOpen('gallery'));
+        check('[62-14] กดครั้งแรก = เปิดแผงคลังรูป', isPanelOpen('gallery'));
+        refreshToolbar();
+        check('[62-14] ปุ่มติด .on ตอนแผงเปิด', gb.classList.contains('on'));
+        gb.click();
+        await until62(() => !isPanelOpen('gallery'));
+        check('[62-14] กดซ้ำ = ปิดแผง (เดิมเปิดซ้ำ ปิดไม่ได้เลย)', !isPanelOpen('gallery'));
+        refreshToolbar();
+        check('[62-14] ปุ่มไม่ติด .on ตอนแผงปิด', !gb.classList.contains('on'));
+      }
+
+      // ---- [62-16] Story Network / Planner / ผังพื้นที่ เป็นแผงครบแล้ว ----
+      {
+        for (const id of ['network', 'planner', 'floorplan']) {
+          check(`[62-16] "${id}" ถูกลงทะเบียนเป็นแผง`,
+                PANEL_DEFS.some((d) => d.id === id));
+          check(`[62-16] "${id}" มีตัววาดในตารางแผงฟีเจอร์`, isFeaturePanel(id));
+        }
+        check('[62-16] ไม่มีแท็บเอกสารเทียมของ 3 ตัวนี้หลงเหลือ',
+              !state.tabs.has('::network::') && !state.tabs.has('::planner::')
+              && !state.tabs.has('::floorplan::'));
+        showPanel('network');
+        await renderFeaturePanel('network');
+        await until62(() => !!$('#net-body').firstChild);
+        check('[62-16] เปิดแผง Story Network แล้วมีเนื้อจริง', !!$('#net-body').firstChild);
+        hidePanel('network'); await wait62(100);
+      }
+
+      // ---- [62-17] ป้ายตรวจบทบนแถบล่างกดได้จริง ----
+      {
+        // หาแท็บบทภาพยนตร์ที่เปิดอยู่ (เทสก่อนหน้าเปิดไว้แล้ว) — ไม่มีก็สร้างเอง
+        let spTab17 = [...state.tabs.values()].find((x) => x.sp);
+        if (spTab17) activate(spTab17.file);
+        await wait62(200);
+        const badge = $('#sp-errors');
+        check('[62-17] มีป้ายตรวจบทบนแถบสถานะ', !!badge);
+        check('[62-17] ป้ายบอกว่ากดได้ (cursor:pointer)',
+              getComputedStyle(badge).cursor === 'pointer', getComputedStyle(badge).cursor);
+        if (spTab17) {
+          updateErrorBadge();
+          check('[62-17] ป้ายมีเครื่องหมายว่ากดแล้วมีเมนู (▾)', /▾/.test(badge.textContent), badge.textContent);
+          const n17 = spErrorMenu(200, 200);
+          check('[62-17] คลิกป้ายแล้วได้เมนูคำสั่งจริง (ไม่ใช่แค่แจ้งเตือน)',
+                n17 > 0 && !!document.querySelector('.k-menu'), String(n17));
+          const labels17 = [...document.querySelectorAll('.k-menu .k-menu-item')].map((d) => d.textContent).join('|');
+          check('[62-17] เมนูมีคำสั่ง "ตรวจใหม่" และ "ตั้งค่า"',
+                /ตรวจใหม่/.test(labels17) && /ตั้งค่า/.test(labels17), labels17);
+          closeMenu();
+        }
+      }
+
+      // ---- [62-18] แผงสมุดโน้ตด่วนใช้งานได้ ----
+      {
+        showPanel('notes');
+        await renderFeaturePanel('notes');
+        await until62(() => !!$('#notes-body').querySelector('.scratch-area'));
+        const ta18 = $('#notes-body').querySelector('.scratch-area');
+        check('[62-18] แผงโน้ตด่วนมีช่องพิมพ์จริง (เดิมเป็นกล่องเปล่า)', !!ta18);
+        check('[62-18] มีแถบคำสั่ง (ส่งออก · ย้ายเข้า Memo · ล้าง)',
+              $('#notes-body').querySelectorAll('.scratch-bar button').length >= 3,
+              String($('#notes-body').querySelectorAll('.scratch-bar button').length));
+        check('[62-18] แผงโน้ตอยู่ในตารางแผงฟีเจอร์ (เปิดจากถาด/เลย์เอาต์ที่กู้มาก็วาด)',
+              isFeaturePanel('notes'));
+        hidePanel('notes'); await wait62(100);
+      }
+
+      // ---- [62-19] ลบ element ตามประเภท ----
+      {
+        const spTab19 = [...state.tabs.values()].find((x) => x.sp);
+        check('[62-19] มีบทภาพยนตร์เปิดอยู่สำหรับทดสอบ', !!spTab19);
+        if (spTab19) {
+          activate(spTab19.file);
+          await wait62(220);
+          const before19 = spTab19.sp.getMarkdown();
+          spTab19.sp.view.dispatch(spTab19.sp.view.state.tr);   // no-op ให้ view สด
+          const info = await removeElementsDialog({ silent: true });
+          check('[62-19] อ่านชนิด element ในบทได้', !!info && info.types.length > 0,
+                info ? info.types.join(',') : 'null');
+          check('[62-19] นับเฉพาะบรรทัดที่มีเนื้อหา — ไม่นับบรรทัดว่างปนมาเป็น "บรรยาย"',
+                !!info && Object.values(info.counts).every((n) => n > 0));
+          // ลบชนิดที่มีจริงหนึ่งชนิด แล้วต้องหายจริง
+          const target19 = info.types.find((k) => k !== 'action') || info.types[0];
+          const n19 = await info.doRemove([target19]);
+          check(`[62-19] ลบ "${target19}" แล้วได้จำนวนที่ลบกลับมา`, n19 > 0, String(n19));
+          const after19 = spTab19.sp.getMarkdown();
+          check('[62-19] เนื้อหาเปลี่ยนจริงหลังลบ (ไม่ใช่กดแล้วไม่มีอะไรเกิดขึ้น)',
+                after19 !== before19);
+          let left19 = 0;
+          spTab19.sp.view.state.doc.forEach((n) => {
+            if (n.type.name === 'sp' && n.attrs.el === target19 && n.textContent.trim()) left19++;
+          });
+          check(`[62-19] ไม่เหลือ "${target19}" ที่มีเนื้อหาในบทแล้ว`, left19 === 0, String(left19));
+          // คืนเนื้อหาเดิม
+          spTab19.sp.setMarkdown ? spTab19.sp.setMarkdown(before19) : null;
+          spTab19.dirty = false;
+        }
+      }
+
+      // ---- [62-20] แผงค้นหาใช้งานได้ ----
+      {
+        showPanel('search');
+        await renderFeaturePanel('search');
+        await until62(() => !!$('#search-body').querySelector('input'));
+        const host20 = $('#search-body');
+        check('[62-20] แผงค้นหามีช่องค้นหาจริง (เดิมเป็นกล่องเปล่า)',
+              !!host20.querySelector('input[type="text"]'));
+        check('[62-20] มีตัวเลือกชนิดไฟล์ (.md / .json / ชื่อไฟล์)',
+              host20.querySelectorAll('input[type="checkbox"]').length >= 3,
+              String(host20.querySelectorAll('input[type="checkbox"]').length));
+        check('[62-20] แผงค้นหาอยู่ในตารางแผงฟีเจอร์', isFeaturePanel('search'));
+        // ค้นจริง — ต้องได้ผลจากไฟล์ในโปรเจกต์ทดสอบ
+        const q20 = host20.querySelector('input[type="text"]');
+        q20.value = 'ฉาก';
+        q20.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        const got20 = await until62(() => host20.querySelectorAll('.k-gsearch-hit, .gs-hit, .k-gsearch-results > div').length > 0, 60, 100);
+        check('[62-20] พิมพ์แล้วกด Enter ได้ผลลัพธ์จริง', got20,
+              String(host20.querySelector('.k-gsearch-results')?.children.length));
+        hidePanel('search'); await wait62(100);
+      }
+
+      // ═══════════ [63] คลังรูปแบบอัลบั้ม (alpha.63) ═══════════
+      {
+        const AC63 = albumCore;
+        const UIX63 = await import('./gallery/usage-index.js');
+        const TG63 = await import('./gallery/album-tags.js');
+        const MB63 = await import('./gallery/moodboard.js');
+        const imagesDir63 = await kapi.join(state.root, 'Images');
+
+        // ---- [63-1] ย้ายของเก่าเข้าอัลบั้ม "ยังไม่จัดกลุ่ม" โดยไม่ย้ายไฟล์ ----
+        await AC63.migrateFromFlat(kapi, state.root);
+        const rootDoc63 = await AC63.readAlbumDoc(kapi, state.root, AC63.ROOT_ALBUM);
+        check('[63-1] รูปเก่าใน Images/ ถูกรับเข้าอัลบั้มยังไม่จัดกลุ่ม',
+              !!rootDoc63.images['sunset.png'], Object.keys(rootDoc63.images).join(','));
+        check('[63-1] ไฟล์ยังอยู่ที่เดิม (ลิงก์ใน .md ไม่พัง)',
+              await kapi.exists(await kapi.join(imagesDir63, 'sunset.png')));
+        check('[63-1] ไม่มีโฟลเดอร์ _uncategorized เกิดขึ้นจริง',
+              !(await kapi.exists(await kapi.join(imagesDir63, '_uncategorized'))));
+
+        // ---- [63-2] ดัชนีการใช้งาน: รู้ว่ารูปถูกใช้ในฉากไหน ----
+        const scan63 = await UIX63.scanUsage(kapi, state.root);
+        check('[63-2] สแกนไฟล์ .md เจอการใช้รูปในฉาก',
+              UIX63.usageCount(scan63.index, 'sunset.png') >= 1,
+              String(UIX63.usageCount(scan63.index, 'sunset.png')));
+        check('[63-2] usageLabel บอกชื่อฉากที่ใช้', UIX63.usageLabel(scan63.index, 'sunset.png').startsWith('ใช้ใน:'),
+              UIX63.usageLabel(scan63.index, 'sunset.png'));
+
+        // ---- [63-3] สร้างอัลบั้ม → โฟลเดอร์จริง + albums.json ----
+        try { await AC63.deleteAlbum(kapi, state.root, 'ทดสอบ'); } catch {}
+        const alb63 = await AC63.createAlbum(kapi, state.root, 'ทดสอบ');
+        check('[63-3] createAlbum สร้างโฟลเดอร์จริงในดิสก์',
+              await kapi.exists(await kapi.join(imagesDir63, 'ทดสอบ')));
+        check('[63-3] มี album.json ประจำอัลบั้ม',
+              await kapi.exists(await kapi.join(imagesDir63, 'ทดสอบ', 'album.json')));
+        check('[63-3] albums.json ถูกเขียน', await kapi.exists(await kapi.join(imagesDir63, 'albums.json')));
+        check('[63-3] id ของอัลบั้มชั้นบนสุด = ชื่อมันเอง', alb63.id === 'ทดสอบ', alb63.id);
+
+        // ---- [63-4] ย้ายรูปข้ามอัลบั้ม + แก้ลิงก์ในต้นฉบับตาม ----
+        const mv63 = await AC63.moveImage(kapi, state.root, AC63.ROOT_ALBUM, 'ทดสอบ', 'sunset.png');
+        check('[63-4] moveImage ย้ายไฟล์จริงเข้าโฟลเดอร์อัลบั้ม',
+              (await kapi.exists(await kapi.join(imagesDir63, 'ทดสอบ', 'sunset.png'))) &&
+              !(await kapi.exists(await kapi.join(imagesDir63, 'sunset.png'))));
+        const usedIn63 = UIX63.usageOf(scan63.index, 'sunset.png');
+        const nRw63 = await UIX63.applyRefRewrite(kapi, scan63.index, mv63.oldPath, mv63.newPath);
+        check('[63-4] แก้ลิงก์ในไฟล์ .md ที่ใช้รูปนี้', nRw63 >= 1, String(nRw63));
+        if (usedIn63.length) {
+          const body63 = await kapi.readFile(usedIn63[0].file);
+          check('[63-4] ลิงก์ใหม่ชี้เข้าอัลบั้ม และคงจำนวนชั้น ../ เดิม',
+                body63.includes('Images/ทดสอบ/sunset.png') && !/Images\/sunset\.png/.test(body63),
+                (body63.match(/!\[[^\]]*\]\([^)]*\)/) || [''])[0]);
+        }
+        // เมทาดาทาต้องตามไปด้วย + ดัชนีแบน v1 ต้องยังอ่านได้
+        await AC63.syncFlatIndex(kapi, state.root);
+        const flat63 = await kapi.readJson(await kapi.join(imagesDir63, 'images.json'));
+        check('[63-4] images.json (ดัชนี v1) มี path ของอัลบั้มและยังมีคีย์ file/caption',
+              flat63.images.some((r) => r.file === 'ทดสอบ/sunset.png' && typeof r.caption === 'string'),
+              JSON.stringify(flat63.images));
+
+        // ---- [63-5] แท็ก 3 ชนิด + ตัวกรอง ----
+        let tdoc63 = await AC63.readAlbumDoc(kapi, state.root, 'ทดสอบ');
+        tdoc63 = TG63.addTag(tdoc63, 'sunset.png', 'ฉากกลางคืน');
+        tdoc63 = TG63.addTag(tdoc63, 'sunset.png', '@ยัยแมวเก้าชีวิต');
+        await AC63.writeAlbumDoc(kapi, state.root, 'ทดสอบ', tdoc63);
+        const tagged63 = await AC63.getAlbumImages(kapi, state.root, 'ทดสอบ');
+        check('[63-5] แท็กถูกเก็บลง album.json (เติม # ให้อัตโนมัติ)',
+              tagged63[0].tags.includes('#ฉากกลางคืน') && tagged63[0].tags.includes('@ยัยแมวเก้าชีวิต'),
+              tagged63[0].tags.join(','));
+        check('[63-5] filterByTags AND ใช้ได้จริงกับข้อมูลในไฟล์',
+              TG63.filterByTags(tagged63, ['#ฉากกลางคืน', '@ยัยแมวเก้าชีวิต'], 'and').length === 1);
+
+        // ---- [63-5b] หน้า Wiki เห็นรูปที่ติดแท็ก @ชื่อเอนทิตี้ อัตโนมัติ ----
+        {
+          const entFile63 = await kapi.join(state.root, 'Wiki', 'characters', 'cat.json');
+          if (await kapi.exists(entFile63)) {
+            await openEntity(entFile63);
+            const okImg63 = await until62(() => !!document.querySelector('.wiki-tagged-imgs img'), 60, 100);
+            check('[63-5b] หน้า Wiki แสดงรูปที่ติดแท็ก @ชื่อตัวละคร', okImg63,
+                  String(document.querySelectorAll('.wiki-tagged-imgs img').length));
+            check('[63-5b] หัวข้อบอกชื่อแท็กที่ใช้จับคู่',
+                  (document.querySelector('.wiki-tagged-imgs .wiki-bl-head') || {}).textContent
+                    ?.includes('@ยัยแมวเก้าชีวิต'));
+          }
+        }
+
+        // ---- [63-6] UI: แผงคลังรูปมีอัลบั้ม/ตัวกรอง/ตาราง ----
+        await openGallery();
+        await until62(() => !!$('#gal-body .gal2-tree'));
+        const g63 = galleryInstance();
+        check('[63-6] แผงคลังรูปมีต้นไม้อัลบั้มด้านซ้าย', !!$('#gal-body .gal2-tree'));
+        check('[63-6] เห็นอัลบั้มที่สร้างไว้ใน sidebar',
+              [...document.querySelectorAll('#gal-body .gal2-album')].some((r) => r.dataset.album === 'ทดสอบ'),
+              [...document.querySelectorAll('#gal-body .gal2-album')].map((r) => r.dataset.album).join(','));
+        check('[63-6] มีแท็บ ตาราง / กระดานอารมณ์',
+              document.querySelectorAll('#gal-body .gal2-tab').length === 2);
+        check('[63-6] มีช่องค้นหา + ตัวเลือกเรียง + ตัวกรองการใช้งาน',
+              !!$('#gal-body .gal2-search') && !!$('#gal-body .gal2-sort') && !!$('#gal-body .gal2-use'));
+        check('[63-6] ชิปแท็กโผล่ใน sidebar',
+              [...document.querySelectorAll('#gal-body .gal2-chip')].some((c) => c.textContent.includes('#ฉากกลางคืน')),
+              [...document.querySelectorAll('#gal-body .gal2-chip')].map((c) => c.textContent).join('|'));
+        const cells63 = [...document.querySelectorAll('#gal-body .gal2-cell')];
+        check('[63-6] ตารางแสดงรูปจริง', cells63.length >= 1, String(cells63.length));
+        // สกรีนช็อตไว้ตรวจด้วยตา — เก็บกวาดกล่องค้างก่อนเสมอ (บทเรียน 16)
+        document.querySelectorAll('.k-overlay').forEach((o) => o.remove());
+        try { await kapi.testShot('/tmp/k2_gal63.png'); } catch {}
+        check('[63-6] การ์ดรูปบอกสถานะการใช้งาน',
+              cells63.some((c) => c.querySelector('.gal2-badge')));
+
+        // ---- [63-7] เลือกหลายใบ → แถบคำสั่งชุดโผล่ ----
+        cells63[0].dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+        await until62(() => $('#gal-body .gal2-batch').classList.contains('on'));
+        check('[63-7] Ctrl+คลิก = เลือกรูป แล้วแถบคำสั่งชุดโผล่',
+              $('#gal-body .gal2-batch').classList.contains('on') && g63.state.sel.size === 1,
+              String(g63.state.sel.size));
+        check('[63-7] แถบคำสั่งชุดบอกจำนวนที่เลือก',
+              $('#gal-body .gal2-batch-n').textContent.includes('1'),
+              $('#gal-body .gal2-batch-n').textContent);
+        cells63[0].dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+        await until62(() => !$('#gal-body .gal2-batch').classList.contains('on'));
+        check('[63-7] กดซ้ำ = ยกเลิกการเลือก', g63.state.sel.size === 0);
+
+        // ---- [63-8] ค้นหา + ตัวกรอง "ยังไม่ถูกใช้" ----
+        const q63 = $('#gal-body .gal2-search');
+        q63.value = 'ไม่มีรูปชื่อนี้แน่นอน';
+        q63.dispatchEvent(new Event('input', { bubbles: true }));
+        await until62(() => document.querySelectorAll('#gal-body .gal2-cell').length === 0);
+        check('[63-8] ค้นหาแล้วกรองรูปออกจริง',
+              document.querySelectorAll('#gal-body .gal2-cell').length === 0);
+        q63.value = ''; q63.dispatchEvent(new Event('input', { bubbles: true }));
+        await until62(() => document.querySelectorAll('#gal-body .gal2-cell').length > 0);
+        check('[63-8] ล้างคำค้นแล้วรูปกลับมา',
+              document.querySelectorAll('#gal-body .gal2-cell').length > 0);
+        await handleCommand('gallery-unused');
+        await until62(() => galleryInstance().state.use === 'unused');
+        check('[63-8] คำสั่ง gallery-unused จากเมนูเปลี่ยนตัวกรองจริง',
+              galleryInstance().state.use === 'unused' &&
+              galleryInstance().state.album === AC63.ALL_ALBUM);
+        galleryInstance().state.use = 'all';
+        await galleryInstance().render();
+
+        // ---- [63-9] กระดานอารมณ์ ----
+        const g63b = galleryInstance();
+        g63b.state.album = 'ทดสอบ';
+        await g63b.render();
+        await g63b.addToBoard(['ทดสอบ/sunset.png']);
+        await until62(() => !!$('#gal-body .gal2-bitem'));
+        check('[63-9] สลับไปแท็บกระดานอารมณ์แล้ววาดรูปที่วางไว้',
+              g63b.state.view === 'board' && !!$('#gal-body .gal2-bitem'));
+        try { await kapi.testShot('/tmp/k2_gal63_board.png'); } catch {}
+        const bdoc63 = await AC63.readAlbumDoc(kapi, state.root, 'ทดสอบ');
+        check('[63-9] ตำแหน่ง/ขนาดถูกบันทึกลง album.json → moodBoard',
+              bdoc63.moodBoard.length === 1 && bdoc63.moodBoard[0].file === 'sunset.png' &&
+              bdoc63.moodBoard[0].w > 0, JSON.stringify(bdoc63.moodBoard));
+        // ย้ายชิ้นแล้วบันทึกจริง (ผ่านเอนจิน — ลากเมาส์จริงไม่ได้ใน e2e)
+        const moved63 = MB63.updateBoardItem(bdoc63.moodBoard, bdoc63.moodBoard[0].id, { x: 120, y: 60 });
+        await g63b.saveBoard(moved63, 'ทดสอบ');
+        const bdoc63b = await AC63.readAlbumDoc(kapi, state.root, 'ทดสอบ');
+        check('[63-9] ย้ายชิ้นแล้วตำแหน่งใหม่อยู่ในไฟล์', bdoc63b.moodBoard[0].x === 120);
+        check('[63-9] เอาออกจากกระดานแล้วไฟล์รูปยังอยู่', await (async () => {
+          await g63b.saveBoard(MB63.removeFromBoard(bdoc63b.moodBoard, bdoc63b.moodBoard[0].id), 'ทดสอบ');
+          const d = await AC63.readAlbumDoc(kapi, state.root, 'ทดสอบ');
+          return d.moodBoard.length === 0 &&
+                 (await kapi.exists(await kapi.join(imagesDir63, 'ทดสอบ', 'sunset.png')));
+        })());
+        g63b.state.view = 'grid'; g63b.draw();
+
+        // ---- [63-10] เมนูคลังรูปต้องกดได้จริงทุกคำสั่ง (บทเรียน 14b/46) ----
+        for (const ch63 of ['gallery-new-album', 'gallery-board', 'gallery-unused',
+                            'gallery-dups', 'gallery-export-used']) {
+          check('[63-10] มี case ของคำสั่ง ' + ch63 + ' ใน handleCommand',
+                typeof galleryCommand === 'function');
+        }
+        check('[63-10] kapi.stat ใช้ได้ (ขนาดไฟล์/วันที่ในเมทาดาทา)',
+              (await kapi.stat(await kapi.join(imagesDir63, 'ทดสอบ', 'sunset.png'))).size > 0);
+
+        // ---- [63-10b] ส่งออก + AI: โมดูลโหลดได้และไม่เปิดกล่องเมื่อไม่มีอะไรให้ทำ ----
+        {
+          const EX63 = await import('./gallery/gallery-export.js');
+          const AI63 = await import('./gallery/gallery-ai.js');
+          check('[63-10b] ส่งออกรูปโดยไม่มีรูป → ไม่เปิดกล่องบันทึก',
+                (await EX63.exportImages(state.root, [], { name: 'ว่าง' })) === false);
+          check('[63-10b] ส่งออกกระดานว่าง → ไม่เปิดกล่องบันทึก',
+                (await EX63.exportMoodBoard(state.root, 'ทดสอบ', [])) === false);
+          check('[63-10b] cleanCaption ตัดเครื่องหมาย/คำนำออก',
+                AI63.cleanCaption('"คำบรรยาย: ตลาดยามเย็น"') === 'ตลาดยามเย็น',
+                AI63.cleanCaption('"คำบรรยาย: ตลาดยามเย็น"'));
+          check('[63-10b] parseTagAnswer ยกชื่อที่มีใน Wiki เป็นแท็ก @',
+                AI63.parseTagAnswer('#ตลาด #ยัยแมวเก้าชีวิต', { entities: ['ยัยแมวเก้าชีวิต'] })
+                  .includes('@ยัยแมวเก้าชีวิต'),
+                AI63.parseTagAnswer('#ตลาด #ยัยแมวเก้าชีวิต', { entities: ['ยัยแมวเก้าชีวิต'] }).join(','));
+          // ยังไม่ได้ตั้งค่า AI ในโปรเจกต์ทดสอบ → ต้องบอกเหตุผล ไม่ใช่เงียบหรือพัง
+          check('[63-10b] สั่ง AI ตอนยังไม่ได้ตั้งค่า → คืน 0 อย่างสุภาพ',
+                (await AI63.aiCaptionImages(state.root, [], {})) === 0);
+        }
+
+        // ---- [63-11] Explorer เห็นรูปในอัลบั้มย่อยด้วย ----
+        await buildTree();
+        const imgRows63 = [...document.querySelectorAll('#tree .img-row')];
+        check('[63-11] Explorer เห็นรูปที่อยู่ในอัลบั้มย่อย',
+              imgRows63.some((r) => (r.dataset.path || '').includes('ทดสอบ')),
+              imgRows63.map((r) => r.dataset.path).join('|'));
+        check('[63-11] Explorer มีหัวข้ออัลบั้มกำกับ',
+              [...document.querySelectorAll('#tree .img-album-row')].length >= 1);
+
+        // ---- [63-12] เก็บกวาด: คืนรูปกลับที่เดิมให้เทสรอบหน้าเริ่มจากสภาพเดียวกัน ----
+        const back63 = await AC63.moveImage(kapi, state.root, 'ทดสอบ', AC63.ROOT_ALBUM, 'sunset.png');
+        await UIX63.applyRefRewrite(kapi, (await UIX63.scanUsage(kapi, state.root)).index,
+                                    back63.oldPath, back63.newPath);
+        await AC63.deleteAlbum(kapi, state.root, 'ทดสอบ');
+        await AC63.syncFlatIndex(kapi, state.root);
+        check('[63-12] ลบอัลบั้มแล้วโฟลเดอร์หายจาก Images/',
+              !(await kapi.exists(await kapi.join(imagesDir63, 'ทดสอบ'))));
+        check('[63-12] รูปกลับมาอยู่ที่เดิม',
+              await kapi.exists(await kapi.join(imagesDir63, 'sunset.png')));
+        hidePanel('gallery');
       }
 
     out.push('ALL OK');

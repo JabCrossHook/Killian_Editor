@@ -56,7 +56,7 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
 ## สถาปัตยกรรม (เสถียร)
 
 - **main.js** — electron main: IPC `H('channel', fn)` (fs/dialog/print/printToPdf/recent/spell/mtime/writeImageData), frameless titlebar (`frame:false`), contextIsolation
-- **preload.js** — บริดจ์ `kapi` (readFile/writeFile/readJson/exists/join/mkdir/move/remove/listFiles/listDirs/mtime/copyInto/writeImageData/spellBase/spellExtra/spellAddWord/spellDownload/spellHasBase/testShot/**openFileDialog**/**openDirDialog**/**pdfFromHtml**/**clipboardWrite**). **ไม่มี writeJson** (ใช้ writeFile + JSON.stringify) · `saveAsDialog(name, kind?)` เลือกฟิลเตอร์ตามนามสกุลให้เอง (มี fdx/rtf แล้ว) · `pdfFromHtml(html,out,{width,height,margins})` = เขียน HTML ลงไฟล์ชั่วคราวแล้ว `printToPDF` ใน **BrowserWindow ซ่อน** (data: URL ยาวไม่พอ + `@font-face` file:// ต้องมี origin จริง)
+- **preload.js** — บริดจ์ `kapi` (readFile/writeFile/readJson/exists/join/mkdir/move/remove/listFiles/listDirs/mtime/copyInto/writeImageData/spellBase/spellExtra/spellAddWord/spellDownload/spellHasBase/testShot/**openFileDialog**/**openDirDialog**/**pdfFromHtml**/**clipboardWrite**/**stat** [alpha.63]). **ไม่มี writeJson** (ใช้ writeFile + JSON.stringify) · `saveAsDialog(name, kind?)` เลือกฟิลเตอร์ตามนามสกุลให้เอง (มี fdx/rtf แล้ว) · `pdfFromHtml(html,out,{width,height,margins})` = เขียน HTML ลงไฟล์ชั่วคราวแล้ว `printToPDF` ใน **BrowserWindow ซ่อน** (data: URL ยาวไม่พอ + `@font-face` file:// ต้องมี origin จริง)
 - **src/** (esbuild → `renderer/bundle.js`):
   - `md.js` — พาร์เซอร์ .md ↔ doc (พอร์ตตรงจาก v1 → ไฟล์เข้ากันได้ 100%)
   - `editor.js` — `KEditor` (นิยาย): schema + `mentionPlugin` + `spellPlugin` + export `imageLightbox`
@@ -80,6 +80,12 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
   - `wiki.js` — `WikiEditor` + `imageLightbox`
   - `gallery.js`, `network.js`, `ui.js` (**`window.prompt()` = no-op ใน Electron!** ใช้ ask/confirmBox)
   - **`core.js`** — แกนกลางที่ทุกโมดูลใช้ร่วม: `$`,`el`,`state`,`smart`,`log`,`setStatus` + ค่าคงที่ (`DEFAULT_SETTINGS`,`SCENE_STATUSES`,`SCENE_COLORS`,`BUILTIN_CATS`,`CAT_ICON`,`BASE_ED_FS`,`ZOOM_*`) — **ทุกไฟล์ใหม่ import จากนี่**
+    · **[alpha.62 บั๊ก 9+10] `setBusy(msg)`/`clearBusy()`/`busyMsg()`/`withBusy(msg,fn)`** = ตัวบอก "กำลังทำอะไรอยู่"
+      ที่ **`#status-busy` ในแถบสถานะล่าง** (สปินเนอร์เล็ก + ข้อความ · `pointer-events:none`)
+      **หน้าจอ loading เต็มจอ `#k-loader` ถูกลบทิ้งแล้ว — ห้ามเอากลับมา** (ดูบทเรียน 85)
+      `showLoader`/`hideLoader` ใน app.js เหลือเป็นแค่ชื่อเก่าที่ชี้มาที่ `setBusy`/`clearBusy`
+      **กฎเหล็ก: ก่อนเปิดกล่องที่ต้องรอผู้ใช้ตอบ (บันทึก/ยืนยัน/เลือกไฟล์) ต้อง `clearBusy()` ก่อนเสมอ**
+      และงานยาวทุกอันครอบด้วย `withBusy` หรือ `try/finally` — ล้มแล้วต้องไม่เหลือสปินเนอร์ค้าง
   - `app.js` (~5,300 บรรทัด: bootstrap/explorer(buildTree)/tabs/toolbar(floatBar)/zoom(pageZoom)/commands/shortcuts/**selftest**) — orchestrator
   - **แยกจาก app.js แล้ว (alpha.39, feature modules):** `dashboard.js` · `books.js` · `timeline-ui.js` · `maps-ui.js` · `wiki-ui.js` · `scene-ops.js` · `section-ops.js` · `scene-props.js` · `dialogs.js` · `recycle.js` — จุดที่ feature ใหม่มาต่อยอด (ดู **AGENTS.md** สำหรับกฎ import/circular/CommonJS ก่อนแก้)
   - **โมดูล feature รอบ .39–.40 (ต่อเมนูครบแล้วทุกตัว):** `home-ui.js` · `tag-pane.js` · `global-search.js` · `scene-table.js` · `scratchpad.js` · `quick-open.js` (fuse.js) · `custom-status.js` (`allStatuses()` = มาตรฐาน+ที่ผู้ใช้เพิ่ม — scene-ops/scene-props ใช้ตัวนี้) · `focus-mode.js` (มี `cursorBlock()` ที่ typewriter ใช้ร่วม) · `typewriter.js` · `word-history.js` · `backup.js` (`backupIfDue` รายวัน) · `export-zip.js` (jszip + `writeBytes`) · `export-blog.js` · `comments/comment-core.js`+`comment-ui.js` (แผงคอมเมนต์ · เก็บท้ายไฟล์ .md — `comments.js` เดิมถูกลบใน .48) · `thesaurus.js` (คืน menu items ให้เมนูคลิกขวาเดิม) · `project.js` (เทมเพลตโปรเจกต์) · `ai-settings.js`+`ai-summary.js` (key แยกไฟล์ · `kapi.httpFetch`) · `branching-ui.js` · `floorplan-ui.js` · `player-choices.js` · `visual-tags.js` (ชิปสีในตารางฉาก) · `session-notes.js` · `centralize-ui.js`
@@ -102,8 +108,23 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
     · **[alpha.62] `aiConfigured()` ใน `ai-settings.js` = จุดเดียวที่ทุกฟีเจอร์ถามว่า "ตั้งค่าครบหรือยัง"**
       (คืน `{ok, why}` — ห้ามเขียนตัวเช็คคีย์เองในไฟล์อื่นอีก)
   - **`search-engine.js`** (alpha.39, บริสุทธิ์) — ค้นหาเต็มข้อความทั้งโปรเจกต์: tokenizer ไทย (`Intl.Segmenter('th')`+bigram fallback) → inverted index → `SearchIndex.build/search` (คำเดียว/AND/OR/NOT/`field:`) → snippet+line+score. `indexProject(root,kapi,parseMd)` เป็น integration layer. **unit test แยก · ค้น 1,000 ไฟล์ ~16ms/คิวรี**
-  - **`panels/panel-layout.js` + `panel-store.js`** (alpha.39, บริสุทธิ์ · **ห้ามแก้**) — layout tree ของ panel: `snapZone`,`dockPanel`,`addAsTab/moveTab/splitTab`,`resizeDock`,`removePanel`(+collapse) · store: `serializeLayout`/versioning/migrate + `PanelStore`(รับ storage adapter) + `PanelManager`
+  - **`panels/panel-layout.js` + `panel-store.js`** (alpha.39, บริสุทธิ์) — layout tree ของ panel: `snapZone`,`dockPanel`,`addAsTab/moveTab/splitTab`,`resizeDock`,`removePanel`(+collapse) · store: `serializeLayout`/versioning/migrate + `PanelStore`(รับ storage adapter) + `PanelManager`
+    · **[alpha.62 บั๊ก 21] ปิดแผง = ติดธง `hidden` — ไม่ตัดโหนดออกจากต้นไม้อีกแล้ว**
+      `setPanelHidden`/`isPanelHidden`/`nodeHidden`/`visiblePanelIds` + `resizeDockPair(root,dock,i,j,r)`
+      **คำที่ต้องแยกให้ขาด**: `isDocked` = "มีสล็อตในต้นไม้" · `isHidden` = "ปิดอยู่" ·
+      `isOpen` = `isDocked && !isHidden` (หรือลอยอยู่) — ใช้ผิดตัวแล้วเมนู/ปุ่มสวิตช์เพี้ยนทันที
+      `panelIds()` คืน**ทุกตัวรวมที่ซ่อน** (prune/หาสล็อตต้องใช้) · `visiblePanelIds()` คืนเฉพาะที่เห็น
+      ตัววาดต้องข้ามตัวที่ซ่อน **ทั้ง 3 ที่**: ไม่วาด · ไม่นับใน `growSum` · ไม่วางที่จับข้าง ๆ
+      (ที่จับส่งดัชนีจริงของทั้งสองฝั่งเข้า `resizeDockPair` เพราะอาจมีตัวที่ซ่อนคั่นอยู่)
+      `detachPanel` ต้อง **ลบธง hidden ทิ้ง** — ลากไปวางแล้วต้องเห็นเสมอ
   - **`panels/panel-renderer.js` + `panel-drag.js` + `panel-ui.js`** (alpha.46) — **UI จริงของ Panel System** (ดูหัวข้อด้านล่าง)
+    · **[alpha.62 บั๊ก 12] `currentRatio()` = `treeRatio() || domRatio()` — อ่านจาก layout tree ก่อนเสมอ**
+      วัดจาก DOM ไม่ได้เพราะ `dock.width` รวม `.k-resize-handle` ที่คั่นอยู่ → ค่าต่ำกว่าจริงทุกครั้ง
+      แล้ว `rememberOpenPanels()` (ทุก 250ms หลังวาด) เอาไปทับ → ปิด-เปิดแผงทีหนึ่งหดลงอีกนิด **สะสม**
+    · **[alpha.62 บั๊ก 13] `sideBetween(r, r2)` ตอบ 4 ทิศ** — `rememberHome` เดิมคิดแค่แกนนอน
+      แผงที่ผนึกแนวตั้ง (dock `col`) มี `left` เท่ากัน → ได้ `'left'` เสมอ ตำแหน่งหายทุกครั้งที่ปิด-เปิด
+    · **[alpha.62 บั๊ก 16] แผงครบวงแล้ว** — `network` · `planner` · `floorplan` เข้ามาเป็นแผงชุดสุดท้าย
+      (ไม่เหลือแท็บเอกสารเทียม `::xxx::` ของฟีเจอร์ที่ไม่ใช่เอกสารอีกแล้ว ยกเว้น `::branching::`)
   - **`layout/split-layout.js`** (alpha.39, บริสุทธิ์) — recursive split tree: `splitPane`(ลากขอบ→row/col),`resizeSplit`(+snap 50%),`removeLeaf`(+collapse), `leaf.tabId` เชื่อมกับ Panel System · store: `serializeSplit`/`SplitStore`. UI = `split-ui.js` (`renderSplitTree`/`initSplitSystem` + โหมดเทียบ 2 ช่องแบบเดิม)
   - `compile.js` — **เอนจินเวิร์กโฟลว์ส่งออก** (บริสุทธิ์ ไม่แตะ DOM/fs): `STEP_DEFS` 3 stage (model/render/text), `PRESETS`×7, `runWorkflow(model,wf,{spFormat})`, `mdToHtml`, strip helpers — มี unit test แยก
     · **alpha.58**: ขั้นตอน `sp-continued` (stage text · ปิดไว้ทุกพรีเซ็ต) + `insertContinueds(text, fmt)`
@@ -243,10 +264,37 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
     เอาวงศ์รวมไปนำหน้า `--ed-font`/`--sp-font` · `normalizeRange`/`cssFamilyName` กันสตริงหลุดไปเขียนกฎ CSS อื่น ·
     ฝั่ง app.js: `preloadLangFontUrls()` (kapi เป็น async แต่ CSS ต้องการ URL แบบ sync) → `applyProjectLangFonts()`
     · **unit test 39 ข้อ**
+  - **`gallery/` (alpha.63 — คลังรูปแบบอัลบั้ม · ยกเครื่องทั้งระบบ)**
+    · **`gallery/album-core.js`** — โครงอัลบั้ม + CRUD (ส่วนบริสุทธิ์ + ชั้นไฟล์ที่ **รับ `api` เข้ามา**
+      → unit test รันด้วย node ได้ตรง ๆ ด้วย kapi ปลอมบน fs จริง):
+      `ROOT_ALBUM='_uncategorized'`/`ALL_ALBUM='__all__'` · `sanitizeAlbumName`/`albumId`/`albumRel` ·
+      `normalizeAlbums`/`albumTree`/`childrenOf`/`descendantIds`/`renameAlbumIn`/`moveAlbumIn`/`removeAlbumIn` ·
+      `normalizeAlbumDoc`/`syncAlbumDoc`/`albumEntries`/`setImageMeta`/`reorderImages` ·
+      `flatIndexFrom` (สร้าง `images.json` ให้ v1) · `sortImages`/`searchImages`/`galleryStats`/`formatBytes` ·
+      ชั้นไฟล์: `listAlbums` (รับโฟลเดอร์ที่ผู้ใช้สร้างเองในดิสก์ด้วย) · `createAlbum`/`renameAlbum`/`moveAlbum`/`deleteAlbum` ·
+      `getAlbumImages`/`allImages`/`addImageFile`/`moveImage`/`deleteImage`/`updateImage`/`findImagePath` ·
+      `migrateFromFlat`/`syncFlatIndex`
+      · **⚠ `_uncategorized` ชี้ไปที่ `Images/` เอง ไม่ใช่โฟลเดอร์จริง — ห้ามเปลี่ยนโดยไม่อ่านบทเรียน 91**
+    · **`gallery/album-tags.js`** — `TAG_KINDS` (`#`ทั่วไป `@`เอนทิตี้ `~`ฉาก) · `normalizeTag`/`parseTags` ·
+      `addTag/removeTag/setTags/addTagMany/renameTagIn` · `getAllTags`/`filterByTags`(AND/OR) ·
+      `imagesForEntity` (หน้า Wiki ใช้) · `suggestTags`
+    · **`gallery/usage-index.js`** — `extractImageRefs` (md + `<img>` · ข้าม http/data) ·
+      `buildUsageIndex` (**คีย์ด้วย basename** — แต่ละฉากอ้างรูปด้วยจำนวนชั้น `../` ไม่เท่ากัน) ·
+      `usageCount`/`usageOf`/`usageLabel`/`attachUsage`/`filterByUsage` ·
+      **`rewriteImageRefs`/`applyRefRewrite`** (ย้ายรูปแล้วแก้ลิงก์ในไฟล์ .md ตาม — คงจำนวนชั้น `../` เดิม) ·
+      `scanUsage(api, root)`
+    · **`gallery/moodboard.js`** — `newBoardItem`/`addToBoard`/`addManyToBoard`/`updateBoardItem`/`removeFromBoard` ·
+      `boardOrder`/`boardItemAt`/`boardBounds`/`fitScale`/`fitView`/**`zoomAt`**(ยึดจุดใต้เมาส์)/`toBoard`/`toScreen`/`snap`/`tidyBoard`
+    · **`gallery/image-hash.js`** — average hash 64 บิต: `aHash(pixels)` (รับ RGBA 8×8 จาก canvas · โปร่งใสนับเป็นขาว) ·
+      `hamming`/`similarity`/`similarImages`/`findDuplicates`/`avgColor` — **"หารูปคล้าย" ไม่ต้องใช้ AI ไม่ต้องต่อเน็ต**
+    · `gallery/gallery-export.js` (zip อัลบั้ม/ที่เลือก/ที่ใช้จริง + กระดานเป็น .png) ·
+      `gallery/gallery-ai.js` (`aiCaptionImages`/`aiTagImages` — ลอง vision ก่อน ตกไปใช้บริบทจริง · `cleanCaption`/`parseTagAnswer`)
+    · `gallery.js` = **ตัววาดอย่างเดียว** · ตัวเชื่อมส่งเข้ามาเป็น callback (`onInsert`/`onOpenFile`/`onOpenEntity`/`entityNames`)
+      → ไม่ import app.js กลับ · **unit test `test/album.test.cjs` 199 ข้อ**
   - `maps.js` — **เอนจินแผนที่** (บริสุทธิ์): `newMap/newPin`, `breadcrumb` (ลำดับชั้น world→city→room ตาม portal), `rootMaps`, `pinStats`, `deleteMap` (ล้าง portal ค้าง), `PIN_COLORS/PIN_KIND`
 - **build**: `node build.js` (esbuild bundle src/app.js) — dict แยกไฟล์ไม่ฝัง bundle
 
-โครงโปรเจกต์: `<root>/{project.khn.json, <Section>/{section.json (มี title/order/status/cover/blurb), Draft/<name>/{draft.json, scenes.json, Chapters/<folder>/*.md}}, Wiki|Bible/{characters,locations,items,lore,<หมวดเอง>}/*.json, Images/, Memos/, Snapshots/, Recycle/, timeline.json, maps.json, dictionary.json, Plugins/dictionaries/*.txt}`
+โครงโปรเจกต์: `<root>/{project.khn.json, <Section>/{section.json (มี title/order/status/cover/blurb), Draft/<name>/{draft.json, scenes.json, Chapters/<folder>/*.md}}, Wiki|Bible/{characters,locations,items,lore,<หมวดเอง>}/*.json, Images/{albums.json, album.json, images.json, <อัลบั้ม>/{album.json,*.png}}, Memos/, Snapshots/, Recycle/, timeline.json, maps.json, dictionary.json, Plugins/dictionaries/*.txt}`
 - `project.khn.json` เก็บ settings + `compileWorkflows[]` (เวิร์กโฟลว์ผู้ใช้) + `wikiCats[{key,label,icon}]` (หมวด Wiki สร้างเอง)
 - `scenes.json` แต่ละ scene row มี `storyDate` (เวลาในเรื่อง สำหรับเส้นเวลา) เพิ่มจากเดิม
 
@@ -279,6 +327,7 @@ node test/wiki-images.test.cjs     # 43 checks — migrate string→object/capti
 node test/scene-meta.test.cjs      # 56 checks — frontmatter ชนะ index/bool จากสตริง/ลบคีย์ว่าง (alpha.60r2 · 13)
 node test/margin-presets.test.cjs  # 45 checks — 8 ชุด/จับคู่กลับ/ค่าที่ผู้ใช้ตั้งเอง (alpha.60r2 · 6)
 node test/i18n-csv.test.cjs      # 61 checks — flatten/CSV quote+BOM/round-trip ไฟล์ภาษาจริง (alpha.60r3 · 4)
+node test/album.test.cjs           # 199 checks — อัลบั้ม/CRUD บนดิสก์จริง/แท็ก/ดัชนีการใช้งาน/กระดาน/แฮชรูป (alpha.63)
 node test/ai-providers.test.cjs    # 110 checks — provider/param/โดเมน/ความลับ/models/chat + session/สถิติ/ค้นหา/เริ่มใหม่ (alpha.61–62)
 ```
 `npm run test:unit` รันชุดบริสุทธิ์ทั้งหมดรวดเดียว (**1,282 บรรทัด PASS**)
@@ -314,6 +363,20 @@ $env:KILLIAN_TEST="1"; $env:KILLIAN_TEST_PROJECT=$p
 ```
 **ต้องสร้าง fixture ใหม่ทุกครั้ง** — เทสรูป ("รูป render จริง") พังถ้าใช้โปรเจกต์ที่รันไปแล้วซ้ำ (เทสคลังรูปย้ายไฟล์)
 หน้าต่างไม่ปิดเองหลังจบ → รอจน `tail -1 C:\tmp\k2result.txt` = `ALL OK` แล้วค่อยฆ่า process
+
+**รัน e2e จาก build ที่แพ็กแล้ว** (verify ตัวที่จะส่งจริง — ทำก่อน ship ทุกครั้ง):
+```powershell
+Get-Process "Killian 2" -EA SilentlyContinue | Stop-Process -Force
+$p="$env:TEMP\k2proj2"; Remove-Item -Recurse -Force $p -EA SilentlyContinue; node test/fixture.js $p
+Remove-Item -Force C:\tmp\k2result.txt -EA SilentlyContinue
+$env:KILLIAN_TEST="1"; $env:KILLIAN_TEST_PROJECT=$p
+Start-Process -FilePath ".\dist\win-unpacked\Killian 2.exe" -ArgumentList "--no-sandbox","--disable-gpu" `
+  -RedirectStandardOutput C:\tmp\k2app.log -RedirectStandardError C:\tmp\k2app.err
+```
+> ⚠ **ห้ามใช้ `& ".\…\Killian 2.exe" *> log` ใน task ที่รันเบื้องหลัง** — ดูบทเรียน 86
+> (stdout ถูกปิดตอน launcher คืนค่า → main process ตายด้วย EPIPE แล้วค้างที่กล่อง "Error")
+> วิธีดูว่าค้างเพราะกล่อง native: `Get-Process | ? MainWindowTitle` — เห็น title = `Error`
+> อ่านข้อความในกล่องด้วย UIAutomation (`FindAll` ControlType::Text ตาม ProcessId)
 เทคนิค: ไฟล์ src เป็น ES module แต่ root ไม่ใช่ `type:module` → test เป็น `.cjs` ที่ `esbuild.buildSync({format:'cjs'})` แปลงชั่วคราวแล้ว `require`. โมดูลบริสุทธิ์ (ไม่ import DOM/kapi) จึงเทสได้ตรง ๆ — เพิ่ม unit test ทุกครั้งที่เพิ่ม logic ในไฟล์เหล่านี้
 
 ```bash
@@ -647,6 +710,93 @@ grep -E "FAIL|STOP" /tmp/k2result.txt | head -3
    หน้าต่างไร้ขอบ + แผงลอยที่เพิ่งถูกคลิก มักยังไม่ได้โฟกัส → reject เงียบ ๆ (และ `document.execCommand('copy')`
    ก็ล้มด้วยเหตุเดียวกัน) **แก้: คัดลอกผ่าน main process** (`clipboard.writeText` ของ electron →
    `kapi.clipboardWrite`) แล้วค่อยตกไปทางเบราว์เซอร์เป็นทางสำรอง
+85. **[alpha.62] แผ่นเต็มจอ "ระหว่างรอ" = กับดักที่ทำให้ผู้ใช้ต้อง force quit** ⚠ ร้ายแรงที่สุดของรอบนี้
+   `#k-loader` เป็น `position:fixed; inset:0; z-index:999` · `loadProject()` เปิดมันแล้วเรียก
+   `closeProjectIfAny()` ซึ่ง**เด้งกล่อง "บันทึกก่อนปิด?"** — กล่องนั้นคือ `.k-overlay` ที่ **z-index 80**
+   → อยู่ใต้แผ่น loading · คลิกปุ่มไม่ได้ · ปิดโปรแกรมตามปกติก็ไม่ได้ → **force quit ทิ้งงานที่ยังไม่บันทึก**
+   **แก้: ลบหน้าจอ loading ทิ้งทั้งชุด** แล้วรายงานที่แถบสถานะล่างแทน (`setBusy` ใน core.js)
+   **กฎที่ต้องจำ 3 ข้อ**
+   · ตัวบอกความคืบหน้า **ห้ามบล็อกอะไรทั้งสิ้น** — ถ้าจะวางทับจอ ต้องตอบให้ได้ก่อนว่ากล่องไหนบ้างเด้งได้ระหว่างนั้น
+   · **`clearBusy()` ก่อนเปิดกล่องที่ต้องรอผู้ใช้ตอบเสมอ** (บันทึก · ยืนยัน · เลือกไฟล์) —
+     สปินเนอร์หมุนค้างระหว่างรอ = ผู้ใช้อ่านว่า "แฮงก์" แล้วกด force quit อยู่ดี
+   · งานยาวครอบ **`withBusy` / `try…finally`** — ล้มกลางทางแล้วห้ามเหลือสถานะค้าง
+   **เทสที่จับบั๊กนี้ได้จริง**: วาง `.k-overlay` จำลอง → `setBusy(...)` → `document.elementFromPoint()`
+   ที่กลางปุ่มต้องคืน **ตัวปุ่ม** (ดู `[62-9]` ใน selftest) — เช็คแค่ "ไม่มี #k-loader" ไม่พอ
+
+86. **[alpha.62] รัน e2e บน Windows แล้วแอปค้างที่กล่อง "Error" — EPIPE ไม่ใช่บั๊กของแอป**
+   สั่ง `& ".\dist\win-unpacked\Killian 2.exe" *> C:\tmp\k2app.log` ใน task ที่รันเบื้องหลัง →
+   launcher คืนค่าทันที **แล้ว stdout ที่ต่อไว้ถูกปิด** · พอ main process เรียก `console.error`
+   (เช่นตอน IPC handler reject) ก็ได้ `EPIPE: broken pipe` เป็น **uncaught exception ใน main**
+   → Electron เด้งกล่อง native "A JavaScript error occurred in the main process" **ซึ่งบล็อกทุกอย่าง**
+   เทสหยุดนิ่งกลางคัน ไม่มี FAIL ไม่มี STOP — ดูเหมือนโปรแกรมแฮงก์เฉย ๆ
+   **แก้: `Start-Process … -RedirectStandardOutput <file> -RedirectStandardError <file>`** (ไฟล์จริง ไม่ใช่ pipe)
+   **วิธีวินิจฉัยเร็ว** (ใช้ได้กับอาการ "e2e ค้างไม่บอกอะไรเลย" ทุกแบบ):
+   `Get-Process | ? {$_.MainWindowTitle}` → ถ้าเห็น title `Error` = มีกล่อง native ค้างอยู่ ·
+   อ่านข้อความในกล่องด้วย UIAutomation (`AutomationElement` + `PropertyCondition` บน `ProcessIdProperty`)
+
+90. **[alpha.62] "ปิดแผง" ที่ตัดโหนดออกจากต้นไม้ = ทิ้งข้อมูลตำแหน่งทั้งก้อน แล้วต้องเดาใหม่** ⚠ ตัวแม่
+   `hidePanel()` เรียก `removePanel()` → เสีย 2 อย่างพร้อมกัน:
+   **(ก) สล็อตหาย** — เปิดกลับต้องเดาจาก `homes {targetId, side}` ที่จดตอนปิด
+   ตัวเดายึด "เพื่อนบ้านที่**มุมซ้ายบน**ใกล้ที่สุด" (`Math.hypot(r2.left-r.left, r2.top-r.top)`)
+   ซึ่งเลือกผิดตัวง่ายมาก: แผงที่ผนึกไว้ **ขอบบนของเอกสาร** (dock แนวตั้ง กว้างเต็มจอ)
+   มีมุมซ้ายบนใกล้ **แผงโปรเจกต์ฝั่งซ้าย** มากกว่าใกล้แผงเอกสารที่มันเกาะอยู่จริง
+   → เปิดกลับแล้วไปโผล่ "ขวาของแผงโปรเจกต์" = **ย้ายจากขอบบนไปกองอยู่ฝั่งซ้าย**
+   **(ข) พี่น้องโดนเกลี่ยขนาดใหม่** — `keepSizes()` แจกส่วนของตัวที่หายให้ตัวที่เหลือ
+   แล้วตอนเปิดกลับ `insertSize()` หักคืนแบบเฉลี่ย → **ratio ของแผงที่ไม่เกี่ยวข้องเลยก็ขยับ**
+   **แก้ที่รากเดียว: อย่าตัดโหนดทิ้ง — ติดธง `hidden` แล้วให้ตัววาดข้ามไป**
+   ตำแหน่ง ทิศ ลำดับพี่น้อง และ `sizes` อยู่ครบเหมือนตอนปิด · เปิดกลับ = ถอดธง **ไม่ต้องเดาอะไรเลย**
+   (มีของเดิมเป็นแบบอย่างอยู่แล้ว — ธง `collapsed` ของปุ่ม ▾ ก็ทำแบบนี้)
+   · **บทเรียนกว้างกว่านั้น**: ถ้าฟีเจอร์ต้อง "จำที่เดิม" อย่าเก็บเป็น *คำอธิบายเชิงสัมพัทธ์*
+     (ใกล้ใคร ฝั่งไหน) แล้วประกอบใหม่ทีหลัง — **เก็บของจริงไว้ที่เดิม** แล้วแค่ซ่อนการแสดงผล
+     บทเรียน 87/88 (ดริฟต์เพราะวัด DOM · เทียบแกนเดียว) คือ*อาการ*ของรากเดียวกันนี้
+
+87. **[alpha.62] "วัดจาก DOM แล้วจดกลับ" = ลูปดริฟต์ที่กัดกินค่าทีละนิดทุกครั้ง**
+   `currentRatio()` วัด `panel.width / dock.width` — แต่ `dock.width` **รวม `.k-resize-handle`**
+   ที่คั่นระหว่างแผงไว้ด้วย → ค่าที่วัดได้เตี้ยกว่าสัดส่วนจริงในต้นไม้เสมอ (.200 → .196)
+   แล้ว `rememberOpenPanels()` เอาค่าเตี้ยไปทับของเดิมทุก 250ms หลังวาด
+   ปิด-เปิดแผงทีหนึ่ง `applyRatio` จึงหดลงอีกนิด **ทุกครั้ง สะสมไปเรื่อย ๆ**
+   **กฎ: ถ้ามี "แหล่งความจริง" (layout tree) อยู่แล้ว ห้ามวัดจาก DOM กลับมาเขียนทับมัน**
+   วัดจาก DOM ได้เฉพาะตอนไม่มีค่าในแหล่งความจริง (แผงในกลุ่มแท็บ/ลอย) และต้องเป็นทางสำรองเท่านั้น
+   · อาการที่ผู้ใช้บอก: "ไม่ถูกล็อก กดเปิดปิดทีไรขนาดขยับตลอด" — ไม่ใช่ค่าเพี้ยนทีเดียว แต่ **ค่อย ๆ เพี้ยน**
+88. **[alpha.62] เทียบตำแหน่ง element ด้วยแกนเดียว = พังทันทีที่มีเลย์เอาต์อีกแกน**
+   `rememberHome` เขียน `r2.left < r.left ? 'right' : 'left'` ซึ่งใช้ได้เฉพาะแผงที่เรียงแนวนอน
+   แผงที่ผนึกแนวตั้ง (dock `col`) มี `left` เท่ากันเป๊ะ → ตกเข้า else ได้ `'left'` เสมอ
+   **แก้: เทียบระยะจุดศูนย์กลางทั้ง 2 แกน แล้วเลือกทิศจากแกนที่ห่างกว่า** (`sideBetween()`)
+89. **[alpha.62] `onclick = async () => {…}` ที่ไม่มี try/catch = ฟีเจอร์ตายเงียบ** ⚠ กัดมานาน
+   "ลบ element ตามประเภท" พังเพราะเรียก **`smartDirty()` ที่ไม่มีอยู่จริงในโปรเจกต์เลย**
+   (ไม่เคยถูกประกาศที่ไหน — grep ทั้ง src เจอแค่ 2 จุดที่ *เรียก* มัน)
+   `v.dispatch(tr)` ลบไปแล้ว แต่ ReferenceError บรรทัดถัดมาทำให้ `ov.remove()`/`setStatus()` ไม่ทำงาน
+   → กล่องค้าง ไม่มีข้อความ ผู้ใช้อ่านว่า "กดแล้วไม่มีอะไรเกิดขึ้น" ทั้งที่ลบสำเร็จ
+   อีกจุดอยู่ใน `revertTab` (onChange ของ SPEditor) → บทหนังที่กด Revert แล้วพิมพ์ต่อ พังทุก keystroke
+   **วิธีจับก่อนถึงมือผู้ใช้: `grep -rn "ชื่อฟังก์ชัน" src/` ต้องเจอทั้งที่ประกาศและที่เรียก**
+   ถ้าเจอแต่ที่เรียก = ตายแน่ · esbuild ไม่ฟ้อง เพราะเป็น global lookup ตอน runtime
+   **กฎ 2 ข้อ**: (1) handler ที่เป็น async **ต้องมี try/catch ครอบทั้งก้อน** เสมอ
+   (2) **งานเสริม (snapshot/สถิติ/แคช) ห้ามทำให้งานหลักล้ม** — ครอบ try/catch ของตัวเองแล้วทำต่อ
+   · และ "ทางออกเงียบ ๆ" (`setStatus()` แล้ว return) ใช้ไม่ได้กับคำสั่งที่เรียกจาก **เมนู native** —
+   ผู้ใช้ไม่ได้มองแถบล่างอยู่ ต้อง `alert()` หรือเปิดกล่องบอกเหตุผล
+
+91. **[alpha.63] "จัดระเบียบไฟล์ให้ผู้ใช้" = ทำลิงก์ในต้นฉบับพังทั้งโปรเจกต์** ⚠ ตัวใหญ่ของรอบนี้
+   สเปกอัลบั้มรูปเขียนว่า `_uncategorized/` เป็นโฟลเดอร์จริง แล้ว migrate ย้ายรูปเก่าทุกใบลงไป
+   แต่ไฟล์ .md ทั้งโปรเจกต์อ้างรูปเป็น **path สัมพัทธ์** (`![](../../../Images/sunset.png)`)
+   → ย้ายเมื่อไร รูปหายจากต้นฉบับทุกฉากทันที · และไฟล์ที่เปิดนอกโปรแกรม (v1 / โปรแกรม md อื่น) ก็หาไม่เจอ
+   **แก้: อัลบั้ม `_uncategorized` ชี้ไปที่ `Images/` เอง ไม่สร้างโฟลเดอร์ ไม่ย้ายไฟล์แม้แต่ใบเดียว**
+   อัลบั้มที่ผู้ใช้สร้างเองเป็นโฟลเดอร์จริง · **การย้ายไฟล์เกิดเฉพาะตอนผู้ใช้สั่ง** แล้วถามก่อนว่า
+   จะให้แก้ลิงก์ในไฟล์ .md ตามไหม (`applyRefRewrite`) + `resolveImg()` มีทางสำรองไล่หาในทุกอัลบั้ม
+   **กฎกว้างกว่านั้น: การย้าย/เปลี่ยนชื่อไฟล์ของผู้ใช้เป็น side effect ที่ต้องขออนุญาต ไม่ใช่ผลพลอยได้ของการอัปเกรด**
+92. **[alpha.63] ดัชนีที่คีย์ด้วย path เต็มใช้ไม่ได้กับรูป — ต้องคีย์ด้วยชื่อไฟล์**
+   ฉากแต่ละฉากอยู่ลึกไม่เท่ากัน (`Chapters/บทที่1/ฉาก.md`) จึงอ้างรูปเดียวกันด้วยจำนวนชั้น `../` ต่างกัน
+   และรูปย้ายอัลบั้มได้ตลอด → เทียบ path ตรง ๆ พลาดทุกครั้ง · **`buildUsageIndex` คีย์ด้วย `basename`**
+   (คลังรูปกันชื่อชนอยู่แล้วตอน copy/ย้าย จึงปลอดภัย) · ตอนแก้ลิงก์ก็ **คงส่วนหน้า `…/Images/` เดิมไว้**
+   แล้วต่อ path ใหม่ท้าย — ไม่ไปคำนวณ `../` ใหม่เอง
+93. **[alpha.63] ทุกฟังก์ชันที่แตะไฟล์ควรรับ `api` เข้ามา ไม่ใช่เรียก `kapi` ตรง ๆ**
+   `album-core.js` ทั้งไฟล์รับ `api` เป็นพารามิเตอร์แรก → unit test เอา kapi ปลอมที่หนุนด้วย fs จริง
+   ยัดเข้าไปได้ ทดสอบ CRUD/ย้ายไฟล์/ถังขยะ ครบโดยไม่ต้องเปิด electron (199 checks รันใน ~1 วินาที)
+   · **กับดักที่เจอทันที: `kapi.join` เป็น async** — เขียน `J(api, a, b)` แล้วลืม `await`
+     ได้ Promise ไปเป็น path (บทเรียน 14e ซ้ำ) · esbuild ไม่ฟ้อง เจอตอนรันเทสเท่านั้น
+94. **[alpha.63] แผงที่ผนึกข้างเดียวกว้างแค่ ~340px — หัวแผงที่ออกแบบบนจอกว้างจะพังเงียบ ๆ**
+   ข้อความสรุป ("2 รูป · ยังไม่ถูกใช้ 1 · 598 B") ไม่มี `white-space:nowrap` → ห่อเป็น **ตัวอักษรแนวตั้ง**
+   ดันหัวแผงสูงจนปุ่มเบียดกันหมด · **แก้: `nowrap` + `text-overflow:ellipsis` + `@container` ซ่อนของที่ไม่จำเป็น**
+   (`container-type:inline-size` บนตัวแผง — ไม่ใช่ media query เพราะขนาดหน้าต่างไม่ได้บอกความกว้างแผง)
 
 78. **[alpha.61] ไฟล์ที่ working tree เป็น CRLF ทั้งไฟล์ ทำให้ diff จริงถูกกลบ**
    `main.js` ถูกบันทึกเป็น CRLF มาก่อนเริ่มงาน → `git diff --stat` ขึ้น 766+/766- ทั้งที่ไม่มีอะไรเปลี่ยน
@@ -725,6 +875,14 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
   - **เนื้อแผง = element เดิมใน index.html** (`#tree-panel` `#outline-panel` `#props-panel` `#content` `#toolbar` `#statusbar`)
     พักอยู่ที่ `#k-panel-src` (hidden) แล้วถูก "ย้าย" เข้าแผง — **ห้ามสร้างใหม่** (ทั้งโปรเจกต์อ้าง `#panes` `#tabs` `#tree` `#props-body`)
   - โหมดอ่าน/โฟกัส/พิมพ์: ซ่อน `.k-dock > *:not(.k-holds-docs)` (ไม่มี `#sidebar` แล้ว)
+  - **`FEATURE_PANELS` ใน app.js = ตารางที่บอกว่า "แผงไหนวาดด้วยฟังก์ชันอะไร"**
+    · **[alpha.62 บั๊ก 18+20] แผงที่ไม่อยู่ในตารางนี้ = กล่องเปล่าถาวร** — `search`/`notes` มีตัววาดครบ
+      ตั้งแต่ .40 แต่ไม่เคยถูกใส่ → เปิดจากปุ่ม/ถาดแผง/เลย์เอาต์ที่กู้มา ไม่มีอะไรวาดให้เลย
+      (มีทางเดียวที่เคยวาดคือคำสั่งในเมนูที่เรียก `renderXxxPanel()` เองตรง ๆ)
+      **เพิ่มแผงใหม่ = เพิ่ม 3 ที่เสมอ: `PANEL_DEFS` + markup ใน index.html + `FEATURE_PANELS`**
+    · `clearFeaturePanels()` ล้างเนื้อแผงตอนเปลี่ยนโปรเจกต์ — **ยกเว้น `#notes-body`**
+      (สมุดโน้ตด่วนเป็นของผู้ใช้ ไม่ผูกโปรเจกต์ · และตัววาดมีธง `dataset.ready` —
+      ล้างเนื้อแต่ไม่ล้างธง = ได้กล่องเปล่าถาวร)
 - **Floating format bar**: `setupFloatingFormatBar()` ย้ายปุ่มจัดรูปแบบ (id เดิม + #tb-source) เข้าแถบลอยใน #content. dblclick grip=reset. `syncFloatBarVisible()` ใน refreshToolbar
 - **UI layout persist**: localStorage `k2-ui-layout` (ก้อนเดียว) ผ่าน `uiLayout()/saveUiLayout()`
 - **สลับนิยาย↔บทหนัง**: `switchFormat()` — ใช้ `tab.body` verbatim ตอน !dirty (fountain round-trip ข้าม grammar ไม่ได้)
@@ -750,7 +908,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ---
 
-## เวอร์ชัน (ล่าสุด alpha.62 · e2e 1,883 + unit)
+## เวอร์ชัน (ล่าสุด alpha.63 · e2e 2,009 + unit 1,495)
 
 .13–.22 (v1→v2 พื้นฐาน): snapshot, line numbers, spellcheck ไทย+Chromium, ปุ่มลัดตั้งเอง, mac build, บทหนัง Ctrl+arrow, relationship sync, floating format bar, sidebar resize, SmartType Final Draft, wiki gallery/lightbox, explorer search+tags, panel docking, tree float+snap
 .24 batch 8 (drag-move explorer, panel snap, split compare, version tracking, scene lock, screenplay Final Draft look, screenplay images, wiki links) · .25–.27 **Planner board** (fabric.js) · .28 **floating windows** · .29 memo-in-chapter + scoped search
@@ -1123,7 +1281,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
     · `settings.spForceCase`/`spAutoCapitalize`/`spAutoCorrectI` → เมนู **บท → 🔠 ตัวพิมพ์ใหญ่/เล็ก (ให้อิสระ)**
     · แก้จุดฮาร์ดโค้ดที่เหลือ: `export-rtf.js` เคย `title.toUpperCase()` เสมอบนหน้าปก
 
-.62 **รอบเก็บบั๊กจาก human test 8 ข้อ** (e2e 1,842 → **1,883**)
+.62 **รอบเก็บบั๊กจาก human test 21 ข้อ** (e2e 1,842 → **1,960** · unit 1,296)
   **[1] หน้าแรกกว้างขึ้น 30%** — `--home-dlg-w` (= สูตรเดิม × 1.3) · `.home-wrap` 1100 → 1430px
     → แถบคำสั่งล่าง (มุมมอง · ค้นหา · ส่งออก · นำเข้า · สร้างใหม่ · เปิด · ปิด) อยู่บรรทัดเดียว
   **[2] ปุ่ม 💬 เป็นสวิตช์ของแผง "AI ผู้ช่วยเขียน"** — คำสั่งใหม่ `ai-chat-toggle` · `.tb-toggle` + จุด ●
@@ -1139,8 +1297,63 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
     · ปุ่ม ✨ (`generateSceneField`) เลิกเขียนทับข้อความบอกสาเหตุจริงด้วย "AI ไม่ได้ส่ง…กลับมา"
   **[7][8] `scroll-behavior:smooth` ออกจาก `.pane`/`#panes`** — ต้นเหตุเดียวของทั้ง "ขยับแผงแล้ว
     หน้ากระดาษเลื่อนเอง" และ "ซูมแล้วไหลไปชิดขอบซ้าย" (บทเรียน 80)
+  **[9] ลบหน้าจอ loading เต็มจอทิ้ง** ⚠ ร้ายแรงที่สุดของรอบนี้ — `#k-loader` (z-index 999) ทับกล่อง
+    "บันทึกก่อนปิด?" (`.k-overlay` z-index 80) ที่ `closeProjectIfAny()` เด้งระหว่าง `loadProject()`
+    → กดอะไรไม่ได้เลย **ต้อง force quit** (บทเรียน 85) · ลบทั้ง HTML + CSS ·
+    `showLoader`/`hideLoader` เหลือเป็นชื่อเก่าที่ชี้ไป `setBusy`/`clearBusy` · `loadProject` ครอบ try/finally
+  **[10] แถบล่างบอกว่ากำลังทำอะไรอยู่** — `#status-busy` + API กลางใน core.js
+    (`setBusy`/`clearBusy`/`busyMsg`/**`withBusy`**) · `pointer-events:none` ไม่บังอะไรเลย ·
+    เดินสายแล้วที่: เปิดโปรเจกต์ (ทีละขั้น) · บันทึกทั้งหมด (`n/ทั้งหมด` + ชื่อไฟล์) ·
+    ส่งออกเวิร์กโฟลว์/PDF/ZIP/JSON/HTML · นำเข้า ZIP/Scrivener · **ทุกคำขอ AI ผ่าน `sendRequest()` จุดเดียว**
+  **[11] ตัวพิมพ์ใหญ่รายชนิด element** — `caps` เป็น *การแสดงผล* (`text-transform`) ไม่ใช่ตัวอักษรจริง
+    → เปลี่ยน case สำเร็จแต่จอไม่ขยับ = ผู้ใช้อ่านว่า "ล็อก" · เดิมปิดได้แค่ทั้งบท/ตารางที่ซ่อนอยู่
+    `CAPS_ELEMENTS`/`elementCaps`/`setElementCaps` ใน sp-format.js (**unit 14**) ·
+    เมนู บท → 🔠 → **บังคับตัวพิมพ์ใหญ่เฉพาะชนิด** · `#tb-case` ปลดล็อก element ที่ถูกบังคับให้อัตโนมัติ
+  **[12] สัดส่วนแผงดริฟต์ทุกรอบเปิด-ปิด** — `currentRatio()` วัดจาก DOM ที่รวมที่จับปรับขนาด
+    → อ่านจาก layout tree แทน (บทเรียน 87)
+  **[13] แผงแนวตั้งไม่จำตำแหน่ง** — `sideBetween()` ตอบ 4 ทิศ แทนที่จะคิดแค่แกนนอน (บทเรียน 88)
+  **[14] ปุ่มคลังรูปเป็นสวิตช์** — `.tb-toggle` + `toggleGallery()` (แบบเดียวกับปุ่มแชท AI ในข้อ 2)
+  **[15] ยุบศูนย์รวมเข้าแดชบอร์ด** — เลิกแท็บ `::centralize::` · `renderCentralize(host,{embedded:true})`
+    ต่อท้าย `renderDashboard` · เมนูเดิมเปิดแดชบอร์ดแล้วเลื่อนไปที่ส่วนนั้น
+  **[16] network · planner · floorplan เป็นแผง** — ชุดสุดท้ายที่ยังเป็นแท็บเทียม ·
+    `netInst`/`plannerInst` แทน `tab.net`/`tab.planner` · Planner บันทึกเองแบบหน่วง 600ms (ไม่มีแท็บให้ dirty)
+  **[17] ป้ายตรวจบทบนแถบล่างกดได้จริง** — `spErrorMenu()` (ไปข้อถัดไป · รายการทั้งหมด · ตรวจใหม่ · ตั้งค่า)
+    · ป้ายมี `▾` บอกว่ากดได้ · `✅ ตรวจแล้ว` แทน `✅ 0`
+  **[18][20] แผง `search` + `notes` ไม่เคยอยู่ใน `FEATURE_PANELS`** → กล่องเปล่าถาวรทุกทางเข้า
+    ยกเว้นคำสั่งในเมนูที่เรียก render เอง (ดูหัวข้อ Panel System)
+  **[19] `smartDirty()` ไม่มีอยู่จริง** ⚠ — ต้นเหตุ "ลบ element ตามประเภทใช้ไม่ได้"
+    ReferenceError ใน onclick async ที่ไม่มีใครจับ → ลบสำเร็จแต่กล่องค้างเงียบ ๆ (บทเรียน 89)
+    · อีกจุดอยู่ใน `revertTab` → บทหนังที่กด Revert แล้วพิมพ์ต่อ พังทุก keystroke
+  **[21] ⚠ รากจริงของ 12+13: ปิดแผง = `removePanel()` ตัดโหนดออกจากต้นไม้**
+    → สล็อตหาย (ต้องเดาตำแหน่งใหม่จาก "เพื่อนบ้านที่มุมซ้ายบนใกล้ที่สุด" ซึ่งเลือกผิดตัว:
+    แผงที่ขอบบนของเอกสารมีมุมซ้ายบนใกล้แผงโปรเจกต์ฝั่งซ้ายมากกว่า → เปิดกลับไปโผล่ฝั่งซ้าย)
+    + พี่น้องโดน `keepSizes`/`insertSize` เกลี่ยใหม่ทุกครั้ง
+    **แก้: ติดธง `hidden` แทนการตัดทิ้ง** (แนวเดียวกับธง `collapsed` ที่มีอยู่แล้ว) —
+    ตำแหน่ง/ทิศ/ลำดับ/`sizes` อยู่ครบ · เปิดกลับ = ถอดธง ไม่ต้องเดาอะไรเลย · ธงรอดการบันทึกด้วย
+    (บทเรียน 90 · unit +14 · e2e [62-13] วางแผงบนขอบบนจริงแล้วปิด-เปิด)
   เก็บกวาด: `getBoard()` ของ Kanban เลือกเล่มแรกที่ **มีฉบับร่างจริง** (บทเรียน 82) ·
     e2e 3 จุดเปลี่ยนจากรอเวลาคงที่เป็นรอเงื่อนไขจริง (กล่องตั้งค่า · สถิติจัดการเล่ม · บันทึกทั้งหมด)
+
+.63 **ยกเครื่องคลังรูปทั้งระบบ — อัลบั้ม · แท็ก · กระดานอารมณ์ · ติดตามการใช้งาน · สั่งเป็นชุด · ส่งออก · AI**
+  โมดูลใหม่ 7 ตัวใน `src/gallery/` (บริสุทธิ์ + **unit test 199 ข้อ**) · `gallery.js` เขียนใหม่ทั้งไฟล์ · e2e 1,960 → **2,009**
+  **[1] อัลบั้ม** = โฟลเดอร์จริงซ้อนชั้นได้ · sidebar ต้นไม้ · ลากรูปข้ามอัลบั้ม · เปลี่ยนชื่อ/ย้าย/ลบ (ถังขยะ)
+    · **`_uncategorized` ชี้ไปที่ `Images/` เอง — migrate ไม่ย้ายไฟล์เลย** (บทเรียน 91)
+    · `albums.json` + `album.json` ต่ออัลบั้ม · `images.json` ยังถูกสร้างใหม่ให้ v1 อ่านได้เสมอ
+  **[2] แท็ก 3 ชนิด** `#ทั่วไป` `@เอนทิตี้` `~ฉาก` · กรอง AND/OR · คลิก `@` เปิดหน้า Wiki
+    · **หน้า Wiki แสดงรูปที่ติดแท็ก `@ชื่อ` อัตโนมัติ** (`attachTaggedImages` ใน wiki-ui.js)
+  **[3] กระดานอารมณ์** 1 กระดาน/อัลบั้ม เก็บใน `album.json → moodBoard` · ลาก/ปรับขนาด/ซูม-แพน/พอดีจอ/จัดเรียง
+    · เอาออกจากกระดาน ≠ ลบไฟล์ · ส่งออกเป็น .png (วาดบน canvas ตามพิกัดจริง ไม่ขึ้นกับซูมที่ดูอยู่)
+  **[4] ติดตามการใช้งาน** สแกน .md ทั้งโปรเจกต์ → ป้าย "ใช้ N" (คลิก = เมนูฉาก กระโดดไปได้) / "ยังไม่ถูกใช้"
+    · ตัวกรองตามการใช้งาน · **ย้ายรูปแล้วถามให้แก้ลิงก์ในต้นฉบับตามให้** (บทเรียน 92)
+  **[5] เมทาดาทา** ความละเอียด/ขนาด/วันที่/จำนวนการใช้ · การ์ดคลังรูปในแดชบอร์ด · IPC ใหม่ `fs:stat`
+  **[6] เลือกหลายใบ** Ctrl/⌘+คลิก · Shift+ช่วง → แถบคำสั่งลอย (ย้าย/แท็ก/ส่งออก/ลบ)
+  **[7] ค้นหา+เรียง** ชื่อ/คำบรรยาย/แท็ก · เรียง manual/ชื่อ/วันที่/ขนาด/การใช้งาน
+  **[8] ส่งออก** อัลบั้ม · ที่เลือก · เฉพาะที่ใช้จริง → .zip (คงโครงอัลบั้ม + `รายการรูป.md`)
+  **[9] AI** ตั้งคำบรรยาย/แนะนำแท็ก (ลอง vision ก่อน → ตกไปใช้บริบทจริง ไม่แต่งจากภาพที่ไม่ได้เห็น)
+    · **หารูปคล้าย/รูปซ้ำด้วย aHash บน canvas — ไม่ต้องใช้ AI**
+  เก็บกวาด: **บั๊กเก่า `sectionProps` ตั้งปกเล่มไม่เคยได้ผล** (`String(f)` บนออบเจกต์ → `"[object Object]"`) ·
+    `pickImage()` คืน path สัมพัทธ์กับ `Images/` แล้ว · `resolveImg()` หา ​รูปที่ย้ายเข้าอัลบั้มเจอเอง ·
+    Explorer เห็นรูปในอัลบั้มย่อยพร้อมหัวข้ออัลบั้ม · เมนู มุมมอง → คลังรูปภาพ เป็นเมนูย่อย 6 รายการ
 
 **ยังเหลือ**: `search-engine.js` ยังเป็น orphan — Global Search (`global-search.js`) ยังสแกนไฟล์ตรง ๆ ไม่ได้ใช้ inverted index (ควรสลับมาใช้เพื่อความเร็ว) · multiple-drafts-per-book UI (โครงรองรับแล้ว), screenplay align persistence, Campaign/D&D mode, **code signing** + `.icns`/`.ico` icon (electron-builder ใช้ได้แล้ว แต่ยังไม่เซ็นและใช้ไอคอนเริ่มต้นของ Electron), native arm64 build. Top เคยบอก paper/indent "อาจต้องปรับปรุง ไว้ก่อน"
 

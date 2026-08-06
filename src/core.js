@@ -50,6 +50,31 @@ window.addEventListener('unhandledrejection', (e) => {
 // ---- แถบสถานะล่าง ----
 export function setStatus(s) { $('#status').textContent = s; }
 
+// ---------------- [alpha.62 บั๊ก 9+10] ตัวบอก "กำลังทำอะไรอยู่" ที่แถบสถานะล่าง ----------------
+// เดิมเป็นหน้าจอ loading เต็มจอ (#k-loader, z-index 999) — มันทับ "กล่องบันทึกก่อนปิด" (k-overlay z-index 80)
+// จนคลิกปุ่มไม่ได้เลย ผู้ใช้ต้อง force quit → ตัดหน้าจอนั้นทิ้ง แล้วรายงานที่แถบสถานะแทน
+// หลักการ: **ห้ามบล็อกอะไรทั้งสิ้น** — เป็นแค่ข้อความ + สปินเนอร์เล็ก ๆ มุมซ้ายล่าง
+//   setBusy(msg)  — ข้อความล่าสุดชนะ (เรียกซ้อนได้ เหมือน showLoader เดิมที่เรียกหลายรอบ)
+//   clearBusy()   — ล้างทั้งหมด · busyMsg() — อ่านข้อความปัจจุบัน (เทสใช้)
+//   withBusy(msg, fn) — ครอบงานยาว ๆ · finally เสมอ ต่อให้ fn โยน error ก็ไม่ค้าง
+let _busyMsg = '';
+export function setBusy(msg) {
+  _busyMsg = msg == null ? '' : String(msg);
+  const wrap = $('#status-busy');
+  if (!wrap) return _busyMsg;                        // หน้า HTML เก่า/เทสหน่วย → เงียบ ๆ ไม่พัง
+  const txt = $('#status-busy-text');
+  if (txt) txt.textContent = _busyMsg;
+  wrap.style.display = _busyMsg ? 'inline-flex' : 'none';
+  return _busyMsg;
+}
+export function clearBusy() { return setBusy(''); }
+export function busyMsg() { return _busyMsg; }
+export async function withBusy(msg, fn) {
+  setBusy(msg);
+  try { return await fn(); }
+  finally { clearBusy(); }
+}
+
 // ---- ค่าตั้งต้น settings/goals (โครงเดียวกับ v1 — เก็บครบใน project.khn.json) ----
 // [alpha.60 ข้อ 94] แยกเป็น 2 ระดับ:
 //   global (user) — เก็บใน %APPDATA%/Killian2/settings.json · ใช้ร่วมกันทุกโปรเจกต์
@@ -217,7 +242,9 @@ export { PAPER_SIZES, MARGIN_DEFAULTS, SP_ELEMENT_CONFIG, SP_ELEMENT_STYLES, SP_
          linesPerPage, formatLines, lineHeightIn, clampLineHeight,
          textWidth, wrapLines, paginate, pageCount, splitText, annotateContinued,
          newRoster, normalizeRoster, rosterToText, ROSTER_VERSION,
-         SCENE_NUMBER_DEFAULTS, PAGE_NUMBER_DEFAULTS, sceneNumberOffsets, pageNumberLabel } from './sp-format.js';
+         SCENE_NUMBER_DEFAULTS, PAGE_NUMBER_DEFAULTS, sceneNumberOffsets, pageNumberLabel,
+         // [alpha.62 บั๊ก 11] ตัวพิมพ์ใหญ่รายชนิด element
+         CAPS_ELEMENTS, elementCaps, setElementCaps } from './sp-format.js';
 // ฟอนต์ตามภาษา (alpha.57a ข้อ 5) — โมดูลบริสุทธิ์ ส่งต่อจาก lang-fonts.js
 export { LANG_FAMILY, SCRIPT_PRESETS, BUILTIN_FONT_FILES, SYSTEM_THAI_FONTS, defaultLangFonts, normalizeLangFonts,
          normalizeRange, cssFamilyName, isUsable as isLangFontUsable, buildLangFontCss,

@@ -6,7 +6,7 @@
 // ตรรกะทั้งหมด (validate · สร้างคำขอ · อ่านคำตอบ) อยู่ใน ai-providers.js ซึ่งเป็นโมดูลบริสุทธิ์
 // ไฟล์นี้ทำแค่ "วาดและยิงคำขอ" เท่านั้น
 
-import { $, el, state, setStatus, log } from '../core.js';
+import { $, el, state, setStatus, log, setBusy, clearBusy } from '../core.js';
 import {
   PARAM_DEFS, defaultParams, normalizeParams, parseDomains, isDomainAllowed,
   newProvider, validateProvider, stripSecrets, withSecrets,
@@ -83,24 +83,33 @@ export async function sendRequest(provider, req) {
   const opts = { method: req.method || 'POST', headers: req.headers };
   if (req.body !== undefined) opts.body = JSON.stringify(req.body);
   const retries = Math.max(0, req.maxRetries ?? 0);
-  for (let attempt = 0; ; attempt++) {
-    let res;
-    try {
-      res = await kapi.httpFetch(req.url, opts);
-    } catch (e) {
-      if (attempt < retries) continue;
-      return { ok: false, status: 0, error: 'เชื่อมต่อไม่ได้: ' + (e && e.message) };
+  // [alpha.62 บั๊ก 10] คำขอ AI ทุกเส้นทางผ่านที่นี่ที่เดียว → ติดตัวบอกสถานะตรงนี้ครั้งเดียวพอ
+  const who = provider.name || hostOf(req.url);
+  try {
+    for (let attempt = 0; ; attempt++) {
+      setBusy(attempt ? `กำลังติดต่อ ${who}… (ลองใหม่ครั้งที่ ${attempt})` : `กำลังติดต่อ ${who}…`);
+      let res;
+      try {
+        res = await kapi.httpFetch(req.url, opts);
+      } catch (e) {
+        if (attempt < retries) continue;
+        return { ok: false, status: 0, error: 'เชื่อมต่อไม่ได้: ' + (e && e.message) };
+      }
+      if (res && res.ok) {
+        let json = null;
+        try { json = JSON.parse(res.body); } catch {}
+        return { ok: true, status: res.status, json, body: res.body };
+      }
+      const st = (res && res.status) || 0;
+      const retryable = st === 429 || st === 408 || (st >= 500 && st < 600);
+      if (retryable && attempt < retries) continue;
+      return { ok: false, status: st, error: httpMsg(st), body: (res && res.body) || '' };
     }
-    if (res && res.ok) {
-      let json = null;
-      try { json = JSON.parse(res.body); } catch {}
-      return { ok: true, status: res.status, json, body: res.body };
-    }
-    const st = (res && res.status) || 0;
-    const retryable = st === 429 || st === 408 || (st >= 500 && st < 600);
-    if (retryable && attempt < retries) continue;
-    return { ok: false, status: st, error: httpMsg(st), body: (res && res.body) || '' };
-  }
+  } finally { clearBusy(); }
+}
+/** โฮสต์ของ URL แบบไม่โยน (ใช้ตั้งข้อความ "กำลังติดต่อ …") */
+function hostOf(url) {
+  try { return new URL(String(url)).host; } catch { return 'AI'; }
 }
 function httpMsg(s) {
   if (s === 401 || s === 403) return 'API key ไม่ถูกต้องหรือไม่มีสิทธิ์ (HTTP ' + s + ')';

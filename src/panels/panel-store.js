@@ -160,9 +160,11 @@ export class PanelManager {
   // ---- สถานะ ----
   isDocked(id) { return !!(this.root && PL.hasPanel(this.root, id)); }
   isFloating(id) { return this.floats.some((f) => f.panel.id === id); }
-  isOpen(id) { return this.isDocked(id) || this.isFloating(id); }
+  // [alpha.62 บั๊ก 21] "เปิดอยู่" = **เห็นอยู่จริง** — แผงที่ถูกปิดยังอยู่ในต้นไม้ (ธง hidden)
+  // จึงต้องแยกจาก `isDocked` ที่แปลว่า "มีสล็อตในต้นไม้" เฉย ๆ
+  isOpen(id) { return (this.isDocked(id) && !this.isHidden(id)) || this.isFloating(id); }
   openIds() {
-    return [...(this.root ? PL.panelIds(this.root) : []), ...this.floats.map((f) => f.panel.id)];
+    return [...(this.root ? PL.visiblePanelIds(this.root) : []), ...this.floats.map((f) => f.panel.id)];
   }
   _node(id) {
     const d = this.registry.get(id);
@@ -175,8 +177,12 @@ export class PanelManager {
     const def = this.registry.get(id);
     if (!def) return false;                        // ไม่ได้ลงทะเบียน = ไม่รู้จะวาดอะไร
     if (this.isFloating(id)) { this._toFront(id); return true; }
-    if (this.isDocked(id)) {                       // มีอยู่แล้ว → เลื่อนมาหน้า + คลายย่อ
-      this.store.update(PL.collapsePanel(PL.activatePanel(this.root, id), id, false));
+    if (this.isDocked(id)) {
+      // [alpha.62 บั๊ก 21] มีสล็อตอยู่แล้ว (เห็นอยู่ หรือถูกปิดไว้) → **ถอดธงแล้วจบ**
+      // ไม่ต้องเดาตำแหน่ง ไม่ต้อง dock ใหม่ ไม่ต้องคืนสัดส่วน — ทุกอย่างอยู่ครบในต้นไม้อยู่แล้ว
+      let next = PL.setPanelHidden(this.root, id, false);
+      next = PL.collapsePanel(PL.activatePanel(next, id), id, false);
+      this.store.update(next);
       return true;
     }
     if (!this.root) { this.store.update(this._node(id)); return true; }
@@ -186,6 +192,14 @@ export class PanelManager {
     return true;
   }
   /** Close a panel (✕) — removes it from the tree and from floating windows. */
+  /**
+   * ปิดแผง
+   *
+   * [alpha.62 บั๊ก 21] **ติดธง `hidden` — ไม่ตัดโหนดออกจากต้นไม้**
+   * ของเดิมเรียก `PL.removePanel()` ทำให้เสียทั้ง "สล็อต" และ "สัดส่วนของพี่น้อง"
+   * (ดูคำอธิบายเต็มที่ `setPanelHidden` ใน panel-layout.js)
+   * แผงลอยยังถอดออกจากรายการ floats เหมือนเดิม — มันไม่มีสล็อตในต้นไม้อยู่แล้ว
+   */
   hidePanel(id) {
     // บั๊ก #19: แผงหลัก (docs) ปิดไม่ได้ — ถ้าหลุดออกจากต้นไม้ root จะกลายเป็น null
     // แล้วรอบเปิดโปรแกรมถัดไปจะรีเซ็ตเป็นเลย์เอาต์ตั้งต้น = "แผงทั้งชุดโผล่มาเอง"
@@ -196,9 +210,14 @@ export class PanelManager {
       this.store.setFloats(this.floats.filter((f) => f.panel.id !== id));
       changed = true;
     }
-    if (this.isDocked(id)) { this.store.update(PL.removePanel(this.root, id)); changed = true; }
+    if (this.isDocked(id) && !this.isHidden(id)) {
+      this.store.update(PL.setPanelHidden(this.root, id, true));
+      changed = true;
+    }
     return changed;
   }
+  /** ถูกปิดอยู่ไหม (ยังอยู่ในต้นไม้ แต่ไม่แสดง) */
+  isHidden(id) { return !!(this.root && PL.isPanelHidden(this.root, id)); }
   togglePanel(id, opts) { return this.isOpen(id) ? this.hidePanel(id) : this.showPanel(id, opts); }
 
   // ---- ผนึก / ลอย ----
@@ -290,9 +309,11 @@ export class PanelManager {
     if (f) return !!f.panel.collapsed;
     return !!(this.root && PL.isCollapsed(this.root, id));
   }
-  resize(dockId, index, ratio) {
+  /** @param {number} [nextIndex] ดัชนีของลูกอีกฝั่ง (ตัววาดส่งมาเมื่อมีแผงที่ซ่อนคั่นอยู่) */
+  resize(dockId, index, ratio, nextIndex) {
     if (!this.root) return false;
-    this.store.update(PL.resizeDock(this.root, dockId, index, ratio));
+    const j = Number.isInteger(nextIndex) ? nextIndex : index + 1;
+    this.store.update(PL.resizeDockPair(this.root, dockId, index, j, ratio));
     return true;
   }
 

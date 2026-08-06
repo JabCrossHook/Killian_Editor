@@ -20,29 +20,27 @@ function fstate() {
   return state._floor;
 }
 
+// [alpha.62 บั๊ก 16] เดิมเป็นแท็บเอกสาร `::floorplan::` — แต่ผังพื้นที่คือ "ของประกอบฉากที่กำลังเขียน"
+// ยิ่งต้องเปิดคู่กับต้นฉบับได้ · ตอนนี้เป็นแผงเต็มตัว
+export async function renderFloorPlanPanel() {
+  const host = $('#floor-body');
+  if (!host) return false;
+  await renderFloorPlan(host, fstate().mapId);
+  return true;
+}
 export async function openFloorPlan() {
-  const key = '::floorplan::';
-  const { activate, closeTab } = await import('./app.js');
-  if (state.tabs.has(key)) { activate(key); return; }
-  const pane = el('div', 'pane');
-  $('#panes').append(pane);
-  const tabBtn = el('div', 'tab');
-  tabBtn.append(el('span', 'tab-title', '📍 ผังพื้นที่'));
-  const x = el('span', 'tab-x', '×'); tabBtn.append(x);
-  $('#tabs').append(tabBtn);
-  const tab = { file: key, title: 'ผังพื้นที่', pane, tabBtn, dirty: false,
-                editor: null, plain: null, wiki: null, gal: null, dash: true };
-  tabBtn.onclick = (e) => { if (e.target !== x) activate(key); };
-  x.onclick = () => closeTab(key);
-  state.tabs.set(key, tab);
-  activate(key);
-  await renderFloorPlan(pane);
+  // showPanel อยู่ที่ panels/panel-ui.js — app.js เป็นแค่ผู้ใช้ ไม่ได้ re-export ออกมา
+  // (`refreshToolbar` ก็ไม่ได้ export — hook `onPanelLayoutChange` เรียกให้อยู่แล้วตอนแผงเปลี่ยน)
+  const { showPanel } = await import('./panels/panel-ui.js');
+  const { renderFeaturePanel } = await import('./app.js');
+  showPanel('floorplan');
+  await renderFeaturePanel('floorplan');
 }
 
-/** วาดใหม่ถ้าแท็บผังพื้นที่เปิดอยู่ (เรียกหลังเปลี่ยนฉากที่กำลังแก้) */
+/** วาดใหม่ถ้าแผงผังพื้นที่เปิดอยู่ (เรียกหลังเปลี่ยนฉากที่กำลังแก้) */
 export function refreshOpenFloorPlan() {
-  const t = state.tabs.get('::floorplan::');
-  if (t) renderFloorPlan(t.pane, fstate().mapId);
+  const host = $('#floor-body');
+  if (host && host.firstChild) renderFloorPlan(host, fstate().mapId);
 }
 
 // รวบรวมฉากทุกร่างพร้อมข้อมูลที่ผังพื้นที่ต้องใช้ (สถานที่ + เวลาในเรื่อง)

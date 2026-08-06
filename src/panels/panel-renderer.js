@@ -58,11 +58,17 @@ function renderDock(node, pm, opts, depth) {
   box.dataset.dockId = node.id;
   box.dataset.dir = node.dir === 'row' ? 'row' : 'col';
   const kids = node.children || [];
+  // [alpha.62 บั๊ก 21] แผงที่ถูกปิดยังอยู่ในต้นไม้ (ติดธง hidden) เพื่อไม่ให้สล็อต/ขนาดหาย
+  // → ตัววาดต้องข้ามมันทุกที่: ไม่วาด · ไม่นับใน growSum · ไม่มีที่จับข้าง ๆ
+  //   (ถ้านับใน growSum แผงที่เหลือจะได้พื้นที่ไม่ครบ = มีช่องว่างเปล่าค้างอยู่)
+  const shown = [];
+  for (let i = 0; i < kids.length; i++) if (!PL.nodeHidden(kids[i])) shown.push(i);
   // ปรับ flex-grow ของลูกที่ "ยืดได้" ให้รวมกันเป็น 1 เสมอ
-  // (เอนจินตั้ง sizes = evenSizes ให้ทุก dock หลัง removePanel — ถ้า dock นี้มีลูกแบบ fixed ปนอยู่
-  //  ผลรวมของลูกที่ยืดได้จะ < 1 แล้วพื้นที่ว่างที่เหลือจะไม่ถูกแจกให้ใคร → แผงเตี้ยผิดปกติ)
-  const growSum = kids.reduce((a, k, i) => a + (isFixed(k, opts) ? 0 : (node.sizes?.[i] ?? 1)), 0) || 1;
-  for (let i = 0; i < kids.length; i++) {
+  // (ถ้า dock นี้มีลูกแบบ fixed ปนอยู่ ผลรวมของลูกที่ยืดได้จะ < 1
+  //  แล้วพื้นที่ว่างที่เหลือจะไม่ถูกแจกให้ใคร → แผงเตี้ยผิดปกติ)
+  const growSum = shown.reduce((a, i) => a + (isFixed(kids[i], opts) ? 0 : (node.sizes?.[i] ?? 1)), 0) || 1;
+  for (let s = 0; s < shown.length; s++) {
+    const i = shown[s];
     const childEl = renderNode(kids[i], pm, opts, depth + 1);
     if (!childEl) continue;
     if (isFixed(kids[i], opts)) {
@@ -73,10 +79,11 @@ function renderDock(node, pm, opts, depth) {
       childEl.style.flexBasis = '0%';
     }
     box.appendChild(childEl);
-    // ที่จับอยู่ระหว่างลูกสองตัวที่ "ยืดได้" ทั้งคู่เท่านั้น
-    const next = kids[i + 1];
-    if (next && !isFixed(kids[i], opts) && !isFixed(next, opts)) {
-      box.appendChild(createResizeHandle(node.id, i, node.dir, pm));
+    // ที่จับอยู่ระหว่างลูกสองตัวที่ "ยืดได้" ทั้งคู่ และต้องเป็นตัวที่ **เห็นอยู่** ทั้งคู่
+    const nextIdx = shown[s + 1];
+    if (nextIdx !== undefined && !isFixed(kids[i], opts) && !isFixed(kids[nextIdx], opts)) {
+      // ดัชนีที่ส่งให้ resizeDock ต้องเป็นดัชนี "ในต้นไม้" ไม่ใช่ลำดับที่เห็นบนจอ
+      box.appendChild(createResizeHandle(node.id, i, node.dir, pm, nextIdx));
     }
   }
   return box;
@@ -92,10 +99,19 @@ function renderTabs(node, pm, opts, depth) {
 
   const bar = el('div', 'k-tab-bar' + (strip ? ' k-vertical' : ''));
   const kids = node.children || [];
-  const active = Math.max(0, Math.min(node.active | 0, kids.length - 1));
+  // [alpha.62 บั๊ก 21] แท็บที่ถูกปิดยังอยู่ในกลุ่ม (ติดธง hidden) — ไม่วาดหัวแท็บและไม่วาดเนื้อ
+  // แต่ยัง "จองที่" ไว้ในลำดับเดิม → เปิดกลับแล้วอยู่ตำแหน่งเดิมในแถบแท็บ ไม่ไปต่อท้าย
+  const isHid = (k) => PL.nodeHidden(k);
+  // แท็บที่ active อาจเป็นตัวที่ถูกซ่อนอยู่ → เลื่อนไปตัวที่เห็นได้ตัวแรก ไม่งั้นกลุ่มนี้ว่างเปล่า
+  let active = Math.max(0, Math.min(node.active | 0, kids.length - 1));
+  if (kids[active] && isHid(kids[active])) {
+    const firstShown = kids.findIndex((k) => !isHid(k));
+    if (firstShown >= 0) active = firstShown;
+  }
 
   for (let i = 0; i < kids.length; i++) {
     const child = kids[i];
+    if (isHid(child)) continue;
     const md = metaOf(opts, child.id);
     const tab = el('div', 'k-tab' + (i === active ? ' active' : ''));
     tab.dataset.index = String(i);
@@ -119,6 +135,7 @@ function renderTabs(node, pm, opts, depth) {
 
   const body = el('div', 'k-tab-content');
   for (let i = 0; i < kids.length; i++) {
+    if (isHid(kids[i])) continue;
     const panelEl = renderNode(kids[i], pm, opts, depth + 1);
     if (!panelEl) continue;
     panelEl.classList.add('k-tabbed');
@@ -295,13 +312,13 @@ export function renderFloatPanel(f, pm, opts, container) {
 
 // ───────── resize handle ของ dock ─────────
 // ลากแล้วปรับ flex สดบน DOM (ไม่ re-render) → commit ลง store ตอนปล่อยครั้งเดียว
-export function createResizeHandle(dockId, index, dir, pm) {
+export function createResizeHandle(dockId, index, dir, pm, nextIndex) {
   const row = dir === 'row';
   const h = el('div', 'k-resize-handle ' + (row ? 'k-rh-col' : 'k-rh-row'));
   h.dataset.dockId = dockId;
   h.dataset.index = String(index);
   h.title = 'ลากเพื่อปรับสัดส่วน (ดับเบิลคลิก = 50%)';
-  h.addEventListener('dblclick', () => pm.resize(dockId, index, 0.5));
+  h.addEventListener('dblclick', () => pm.resize(dockId, index, 0.5, nextIndex));
   h.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
@@ -325,7 +342,7 @@ export function createResizeHandle(dockId, index, dir, pm) {
       document.body.classList.remove('k-resizing');
       document.removeEventListener('mousemove', move);
       document.removeEventListener('mouseup', up);
-      pm.resize(dockId, index, ratio);               // commit → re-render ครั้งเดียว
+      pm.resize(dockId, index, ratio, nextIndex);    // commit → re-render ครั้งเดียว
     };
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', up);

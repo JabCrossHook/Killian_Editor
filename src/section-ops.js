@@ -147,7 +147,9 @@ export async function sectionProps(secPath, sec) {
     const { pickImage } = await import('./gallery.js');
     const f = await pickImage(state.root);
     if (!f) return;
-    cover = '../Images/' + String(f).split(/[\\/]/).pop();
+    // [alpha.63] pickImage คืน `{file}` = path สัมพัทธ์กับ Images/ (อัลบั้มย่อยรวมอยู่ในนี้)
+    // ของเดิมเขียน `String(f).split(...)` ซึ่งได้ "[object Object]" — ปกไม่เคยขึ้นเลย
+    cover = '../Images/' + f.file;
     coverName.textContent = cover;
   };
   clrBtn.onclick = () => { cover = ''; coverName.textContent = '(ยังไม่มีปก)'; };

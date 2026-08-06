@@ -1,5 +1,5 @@
 // export-zip.js — ส่งออกโปรเจกต์ทั้งหมดเป็น .zip (รูปภาพต้องไม่เสีย → อ่าน/เขียนเป็นไบต์เท่านั้น)
-import { state, setStatus, log } from './core.js';
+import { state, setStatus, log, setBusy, clearBusy } from './core.js';
 import JSZip from 'jszip';
 
 const SKIP_DIRS = ['Snapshots', 'Backups', 'Recycle'];
@@ -8,7 +8,8 @@ const BIN_EXT = /\.(png|jpe?g|gif|webp|bmp|ico|pdf|zip|mp3|mp4|wav|ttf|otf|woff2
 
 export async function exportProjectZip() {
   if (!state.root) { setStatus('ยังไม่ได้เปิดโปรเจกต์'); return false; }
-  setStatus('กำลังแพ็ค ZIP…');
+  // [alpha.62 บั๊ก 10] บอกความคืบหน้าที่แถบล่าง — โปรเจกต์ใหญ่ ๆ ใช้เวลาหลายวินาที
+  setBusy('กำลังแพ็ค ZIP…');
   try {
     const zip = new JSZip();
     let nFiles = 0;
@@ -23,6 +24,7 @@ export async function exportProjectZip() {
             zip.file(prefix + f, await kapi.readFile(full));
           }
           nFiles++;
+          if (nFiles % 20 === 0) setBusy(`กำลังแพ็ค ZIP… (${nFiles} ไฟล์)`);
         } catch (e) { log('warn', 'export-zip: ข้ามไฟล์ ' + full, e); }
       }
       for (const d of await kapi.listDirs(dir).catch(() => [])) {
@@ -32,8 +34,11 @@ export async function exportProjectZip() {
     };
     await addDir(state.root);
 
+    // เคลียร์ก่อนเปิดกล่องบันทึกเสมอ — ห้ามมีสปินเนอร์หมุนค้างตอนรอผู้ใช้ตอบ (บทเรียนจากบั๊ก 9)
+    clearBusy();
     const dest = await kapi.saveAsDialog((state.title || 'project') + '.zip');
     if (!dest) return false;
+    setBusy('กำลังบีบอัดและเขียนไฟล์ ZIP…');
     const bytes = await zip.generateAsync({ type: 'uint8array' });
     // ส่งเป็น byte array ผ่าน IPC — ห้ามแปลงเป็น string (utf-8 จะบวมไฟล์เสีย)
     await kapi.writeBytes(dest, Array.from(bytes));
@@ -44,7 +49,7 @@ export async function exportProjectZip() {
     log('error', 'export-zip failed', e);
     setStatus('ส่งออก ZIP ล้มเหลว: ' + e.message);
     return false;
-  }
+  } finally { clearBusy(); }
 }
 
 /**
@@ -65,7 +70,7 @@ export async function importProjectZip(srcZip, dstParent) {
   if (!src) return false;
   const parent = dstParent || await kapi.openDirDialog();
   if (!parent) return false;
-  setStatus('กำลังแตกไฟล์ ZIP…');
+  setBusy('กำลังแตกไฟล์ ZIP…');
   try {
     const bytes = await kapi.readBytes(src);
     const zip = await JSZip.loadAsync(new Uint8Array(bytes));
@@ -93,7 +98,9 @@ export async function importProjectZip(srcZip, dstParent) {
         await kapi.writeFile(file, await zip.files[name].async('string'));
       }
       n++;
+      if (n % 20 === 0) setBusy(`กำลังแตกไฟล์ ZIP… (${n}/${entries.length})`);
     }
+    clearBusy();                                   // loadProject ข้างล่างตั้งข้อความของมันเอง
     if (!(await kapi.exists(await kapi.join(dest, 'project.khn.json')))) {
       setStatus(`แตกไฟล์แล้ว (${n} ไฟล์) แต่ไม่พบ project.khn.json — ไม่ใช่โปรเจกต์ Killian`);
       log('warn', 'import-zip: ไม่มี project.khn.json ที่ ' + dest);
@@ -108,7 +115,7 @@ export async function importProjectZip(srcZip, dstParent) {
     log('error', 'import-zip failed', e);
     setStatus('นำเข้า ZIP ล้มเหลว: ' + e.message);
     return false;
-  }
+  } finally { clearBusy(); }
 }
 
 /** โฟลเดอร์ชั้นนอกที่ทุกไฟล์ใช้ร่วมกัน (คืน '' เมื่อไม่มี) */
@@ -134,7 +141,7 @@ export function safeRel(name) {
 // export-json — ส่งออกเมทาดาทาทั้งหมดเป็น JSON ก้อนเดียว
 export async function exportProjectJson() {
   if (!state.root) { setStatus('ยังไม่ได้เปิดโปรเจกต์'); return false; }
-  setStatus('กำลังรวบรวม JSON…');
+  setBusy('กำลังรวบรวม JSON…');
   try {
     const data = { project: state.meta, sections: [] };
     for (const sec of await kapi.listDirs(state.root)) {
@@ -156,8 +163,10 @@ export async function exportProjectJson() {
       }
       data.sections.push(secData);
     }
+    clearBusy();                                   // อย่าให้สปินเนอร์ค้างตอนรอผู้ใช้ตอบกล่องบันทึก
     const dest = await kapi.saveAsDialog((state.title || 'project') + '-export.json');
     if (!dest) return false;
+    setBusy('กำลังเขียนไฟล์ JSON…');
     await kapi.writeFile(dest, JSON.stringify(data, null, 2));
     setStatus('ส่งออก JSON แล้ว: ' + dest);
     return true;
@@ -165,5 +174,5 @@ export async function exportProjectJson() {
     log('error', 'export-json failed', e);
     setStatus('ส่งออก JSON ล้มเหลว');
     return false;
-  }
+  } finally { clearBusy(); }
 }
