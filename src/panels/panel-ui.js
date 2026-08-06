@@ -64,6 +64,9 @@ export const PANEL_DEFS = [
   // [alpha.60r1 ข้อ 21] คลังรูปภาพ — ย้ายจากแท็บเอกสารมาเป็นแผงเหมือนฟีเจอร์อื่น
   { id: 'gallery',   title: 'คลังรูปภาพ',       icon: 'image',        adopt: '#gal-panel',     defaultSide: 'left',  closable: true, floatable: true, i18n: 'panel.galleryTitle',
     desc: 'รูปทั้งหมดในโฟลเดอร์ Images ของโปรเจกต์ — ลากลงเอกสารเพื่อแทรก หรือเลือกเป็นปก/รูปประจำตัวใน Wiki' },
+  // [alpha.63r] กระดานอารมณ์ — แยกจากคลังรูปเพราะต้อง "ลากรูปมาวาง" ข้ามแผง
+  { id: 'gallery-board', title: '🎨 กระดานอารมณ์', icon: 'layout', adopt: '#galboard-panel', defaultSide: 'right', closable: true, floatable: true, i18n: 'panel.galleryBoardTitle',
+    desc: 'ผืนผ้าใบวางรูปอ้างอิงของแต่ละอัลบั้ม — เปิดคู่กับแผงคลังรูปแล้วลากรูปมาวางได้เลย · ย้าย/ปรับขนาด/ซูมได้อิสระ · เอาออกจากกระดานไม่ลบไฟล์' },
   // [alpha.60r3 ข้อ 5] แผงวิเคราะห์ด้วย AI (ตัวอย่างหน้าตา)
   { id: 'ai-analyzer', title: '🧠 AI วิเคราะห์',  icon: 'brain',       adopt: '#ai-analyzer-panel', defaultSide: 'right', closable: true, floatable: true, i18n: 'panel.aiAnalyzerTitle',
     desc: 'ชุดเครื่องมือวิเคราะห์ต้นฉบับด้วย AI — จังหวะเรื่อง · ส่วนโค้งตัวละคร · คำซ้ำ · ความขัดแย้ง · ความยาวฉาก (ยังเป็นตัวอย่างหน้าตา)' },

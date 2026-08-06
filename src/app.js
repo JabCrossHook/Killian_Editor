@@ -29,6 +29,7 @@ import { WikiEditor, CAT_TH, imageLightbox } from './wiki.js';
 import { SPEditor } from './screenplay.js';
 import { Gallery, pickImage } from './gallery.js';
 import * as albumCore from './gallery/album-core.js';     // [alpha.63] อัลบั้มรูป (Explorer/แดชบอร์ดใช้ร่วม)
+import { renderMoodBoardPanel, moodBoardInstance } from './gallery/moodboard-ui.js';   // [alpha.63r] แผงกระดานอารมณ์
 import { StoryNetwork } from './network.js';
 import { PlannerBoard } from './planner.js';
 import { SP_ELEMS, TIMES, TRANSITIONS, TRANSITIONS_IN, INTERCUTS, SCENE_PREFIX, TAB_CYCLE,
@@ -4140,8 +4141,23 @@ export function renderGalleryPanel() {
     onOpenFile: (file) => openPathSmart(file),
     onOpenEntity: (name) => { const f = smart.fileOf[name]; if (f) openEntity(f); },
     entityNames: () => smart.titles || [],
+    onOpenBoard: () => openGalleryBoard(),
   });
   return galInst;
+}
+
+/** [alpha.63r] แผงกระดานอารมณ์ — แยกจากคลังรูปเพื่อให้ลากรูปข้ามแผงได้ */
+export function renderGalleryBoardPanel() {
+  const host = $('#galboard-body');
+  if (!host) return null;
+  return renderMoodBoardPanel(host, state.root);
+}
+export async function openGalleryBoard() {
+  showPanel('gallery-board');
+  syncMenuToggles();
+  const r = await renderFeaturePanel('gallery-board');
+  refreshToolbar();
+  return r;
 }
 
 /** เปิดไฟล์จาก path เต็ม — ใช้ตอนคลิก "รูปนี้ถูกใช้ในฉากไหน" ในคลังรูป */
@@ -4174,7 +4190,7 @@ export async function galleryCommand(ch) {
     switch (ch) {
       case 'gallery': break;                       // เปิดแผงเฉย ๆ (แดชบอร์ดเรียกทางนี้)
       case 'gallery-new-album': await g.newAlbum(''); break;
-      case 'gallery-board': g.state.view = 'board'; g.draw(); break;
+      case 'gallery-board': await openGalleryBoard(); break;
       case 'gallery-unused':
         g.state.view = 'grid'; g.state.album = albumCore.ALL_ALBUM; g.state.use = 'unused';
         await g.render(); break;
@@ -6519,6 +6535,7 @@ const FEATURE_PANELS = {
   timeline:  () => renderTimeline($('#tl-body')),
   maps:      () => renderMapsPanel(),
   gallery:   () => renderGalleryPanel(),        // [alpha.60r1 ข้อ 21]
+  'gallery-board': () => renderGalleryBoardPanel(),   // [alpha.63r] กระดานอารมณ์เป็นแผงของตัวเอง
   'ai-analyzer': () => renderAIAnalyzerPanel($('#ai-analyzer-body')),   // [alpha.60r3 ข้อ 5]
   'ai-chat':     () => renderAIChatPanel($('#ai-chat-body')),           // [alpha.61 ข้อ 2]
   // [alpha.62 บั๊ก 18+20] สองตัวนี้มีตัววาดครบมาตั้งแต่ .40 แต่ไม่เคยอยู่ในตารางนี้
@@ -16721,8 +16738,10 @@ async function runTest(projectPath) {
         check('[63-6] เห็นอัลบั้มที่สร้างไว้ใน sidebar',
               [...document.querySelectorAll('#gal-body .gal2-album')].some((r) => r.dataset.album === 'ทดสอบ'),
               [...document.querySelectorAll('#gal-body .gal2-album')].map((r) => r.dataset.album).join(','));
-        check('[63-6] มีแท็บ ตาราง / กระดานอารมณ์',
-              document.querySelectorAll('#gal-body .gal2-tab').length === 2);
+        check('[63-6] มีปุ่มสลับมุมมอง 3 แบบ (ย่อ/เต็มรูป/รายการ)',
+              document.querySelectorAll('#gal-body .gal2-tab').length === 3,
+              String(document.querySelectorAll('#gal-body .gal2-tab').length));
+        check('[63-6] มีปุ่มเปิดแผงกระดานอารมณ์', !!$('#gal-body .gal2-openboard'));
         check('[63-6] มีช่องค้นหา + ตัวเลือกเรียง + ตัวกรองการใช้งาน',
               !!$('#gal-body .gal2-search') && !!$('#gal-body .gal2-sort') && !!$('#gal-body .gal2-use'));
         check('[63-6] ชิปแท็กโผล่ใน sidebar',
@@ -16768,31 +16787,82 @@ async function runTest(projectPath) {
         galleryInstance().state.use = 'all';
         await galleryInstance().render();
 
-        // ---- [63-9] กระดานอารมณ์ ----
-        const g63b = galleryInstance();
-        g63b.state.album = 'ทดสอบ';
-        await g63b.render();
-        await g63b.addToBoard(['ทดสอบ/sunset.png']);
-        await until62(() => !!$('#gal-body .gal2-bitem'));
-        check('[63-9] สลับไปแท็บกระดานอารมณ์แล้ววาดรูปที่วางไว้',
-              g63b.state.view === 'board' && !!$('#gal-body .gal2-bitem'));
-        try { await kapi.testShot('/tmp/k2_gal63_board.png'); } catch {}
-        const bdoc63 = await AC63.readAlbumDoc(kapi, state.root, 'ทดสอบ');
-        check('[63-9] ตำแหน่ง/ขนาดถูกบันทึกลง album.json → moodBoard',
-              bdoc63.moodBoard.length === 1 && bdoc63.moodBoard[0].file === 'sunset.png' &&
-              bdoc63.moodBoard[0].w > 0, JSON.stringify(bdoc63.moodBoard));
-        // ย้ายชิ้นแล้วบันทึกจริง (ผ่านเอนจิน — ลากเมาส์จริงไม่ได้ใน e2e)
-        const moved63 = MB63.updateBoardItem(bdoc63.moodBoard, bdoc63.moodBoard[0].id, { x: 120, y: 60 });
-        await g63b.saveBoard(moved63, 'ทดสอบ');
-        const bdoc63b = await AC63.readAlbumDoc(kapi, state.root, 'ทดสอบ');
-        check('[63-9] ย้ายชิ้นแล้วตำแหน่งใหม่อยู่ในไฟล์', bdoc63b.moodBoard[0].x === 120);
-        check('[63-9] เอาออกจากกระดานแล้วไฟล์รูปยังอยู่', await (async () => {
-          await g63b.saveBoard(MB63.removeFromBoard(bdoc63b.moodBoard, bdoc63b.moodBoard[0].id), 'ทดสอบ');
-          const d = await AC63.readAlbumDoc(kapi, state.root, 'ทดสอบ');
-          return d.moodBoard.length === 0 &&
-                 (await kapi.exists(await kapi.join(imagesDir63, 'ทดสอบ', 'sunset.png')));
-        })());
-        g63b.state.view = 'grid'; g63b.draw();
+        // ---- [63-8b] มุมมองตาราง 3 แบบ (เต็มรูปต้องไม่ครอบตัด · รายการเป็นแถว) ----
+        {
+          const gv = galleryInstance();
+          const btns = [...document.querySelectorAll('#gal-body .gal2-tab')];
+          const fitBtn = btns.find((b) => b.dataset.cell === 'fit');
+          fitBtn.click();
+          await until62(() => !!$('#gal-body .gal2-grid.mode-fit'));
+          const img63 = $('#gal-body .gal2-thumb img');
+          check('[63-8b] มุมมอง "เต็มรูป" ไม่ครอบตัด (object-fit: contain)',
+                !!img63 && getComputedStyle(img63).objectFit === 'contain',
+                img63 && getComputedStyle(img63).objectFit);
+          const listBtn = btns.find((b) => b.dataset.cell === 'list');
+          listBtn.click();
+          await until62(() => !!$('#gal-body .gal2-grid.mode-list'));
+          check('[63-8b] มุมมอง "รายการ" วาดเป็นแถว ไม่ใช่การ์ด',
+                document.querySelectorAll('#gal-body .gal2-row').length >= 1 &&
+                document.querySelectorAll('#gal-body .gal2-cell').length === 0,
+                String(document.querySelectorAll('#gal-body .gal2-row').length));
+          check('[63-8b] แถวในรายการเลือกได้เหมือนการ์ด (ใช้ตัวผูกอีเวนต์เดียวกัน)', await (async () => {
+            const row = $('#gal-body .gal2-row');
+            row.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+            const ok = await until62(() => gv.state.sel.size === 1);
+            row.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+            return ok;
+          })());
+          check('[63-8b] จำมุมมองที่เลือกไว้ใน localStorage',
+                localStorage.getItem('k2-gal-cell') === 'list', localStorage.getItem('k2-gal-cell'));
+          btns.find((b) => b.dataset.cell === 'thumb').click();
+          await until62(() => !!$('#gal-body .gal2-grid.mode-thumb'));
+        }
+
+        // ---- [63-9] กระดานอารมณ์เป็น "แผง" ของตัวเอง (ลากรูปจากคลังมาวางได้) ----
+        {
+          const gv = galleryInstance();
+          gv.state.album = 'ทดสอบ';
+          await gv.render();
+          await handleCommand('gallery-board');
+          await until62(() => isPanelOpen('gallery-board') && !!$('#galboard-body .gal2-board'));
+          check('[63-9] กระดานอารมณ์เปิดเป็นแผงแยก (ไม่ใช่แท็บในคลังรูป)',
+                isPanelOpen('gallery-board') && !!$('#galboard-body .gal2-board'));
+          check('[63-9] แผงคลังรูปยังเปิดอยู่คู่กัน → ลากรูปข้ามแผงได้',
+                isPanelOpen('gallery') && !!$('#gal-body .gal2-grid'));
+          check('[63-9] แผงกระดานอยู่ในตารางแผงฟีเจอร์', isFeaturePanel('gallery-board'));
+          const mb63 = moodBoardInstance();
+          check('[63-9] กระดานตามอัลบั้มที่เลือกในคลังรูป', mb63 && mb63.albumId === 'ทดสอบ',
+                mb63 && mb63.albumId);
+
+          await mb63.add(['ทดสอบ/sunset.png']);
+          await until62(() => !!$('#galboard-body .gal2-bitem'));
+          check('[63-9] วางรูปแล้วมีชิ้นบนกระดานจริง', !!$('#galboard-body .gal2-bitem'));
+          const bimg63 = $('#galboard-body .gal2-bitem img');
+          check('[63-9] รูปบนกระดานไม่ถูกครอบตัด (object-fit: contain)',
+                getComputedStyle(bimg63).objectFit === 'contain', getComputedStyle(bimg63).objectFit);
+          const bdoc63 = await AC63.readAlbumDoc(kapi, state.root, 'ทดสอบ');
+          check('[63-9] ตำแหน่ง/ขนาดถูกบันทึกลง album.json → moodBoard',
+                bdoc63.moodBoard.length === 1 && bdoc63.moodBoard[0].file === 'sunset.png' &&
+                bdoc63.moodBoard[0].w > 0, JSON.stringify(bdoc63.moodBoard));
+          // ขนาดตอนวางต้องตรงสัดส่วนไฟล์จริง (fixture = 240×90)
+          const it63 = bdoc63.moodBoard[0];
+          check('[63-9] ขนาดตอนวางคิดจากสัดส่วนจริงของรูป (ไม่บังคับจัตุรัส)',
+                Math.abs(it63.w / it63.h - 240 / 90) < 0.05, `${it63.w}×${it63.h}`);
+          try { await kapi.testShot('/tmp/k2_gal63_board.png'); } catch {}
+
+          // ย้ายชิ้น (ลากเมาส์จริงใน e2e ไม่ได้ → ผ่านเอนจินเดียวกับที่ตัวลากเรียก)
+          await mb63.saveBoard(MB63.updateBoardItem(bdoc63.moodBoard, it63.id, { x: 120, y: 60 }));
+          const bdoc63b = await AC63.readAlbumDoc(kapi, state.root, 'ทดสอบ');
+          check('[63-9] ย้ายชิ้นแล้วตำแหน่งใหม่อยู่ในไฟล์', bdoc63b.moodBoard[0].x === 120);
+          // เอาออกจากกระดาน ≠ ลบไฟล์
+          await mb63.saveBoard(MB63.removeFromBoard(bdoc63b.moodBoard, bdoc63b.moodBoard[0].id));
+          const bdoc63c = await AC63.readAlbumDoc(kapi, state.root, 'ทดสอบ');
+          check('[63-9] เอาออกจากกระดานแล้วไฟล์รูปยังอยู่',
+                bdoc63c.moodBoard.length === 0 &&
+                (await kapi.exists(await kapi.join(imagesDir63, 'ทดสอบ', 'sunset.png'))));
+          hidePanel('gallery-board');
+          check('[63-9] ปิดแผงกระดานได้', !isPanelOpen('gallery-board'));
+        }
 
         // ---- [63-10] เมนูคลังรูปต้องกดได้จริงทุกคำสั่ง (บทเรียน 14b/46) ----
         for (const ch63 of ['gallery-new-album', 'gallery-board', 'gallery-unused',

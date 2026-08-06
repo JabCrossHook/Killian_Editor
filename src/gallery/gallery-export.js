@@ -83,7 +83,8 @@ export async function exportMoodBoard(root, albumId, board, { pad = 40, bg = '#1
     g.fillRect(0, 0, W, H);
     const rel = AC.albumRel(albumId);
     for (const it of items) {
-      const p = rel ? rel + '/' + it.file : it.file;
+      // ชิ้นที่เป็น path (มี '/') = รูปข้ามอัลบั้ม — ใช้ตามที่เก็บไว้เลย
+      const p = String(it.file).includes('/') ? it.file : (rel ? rel + '/' + it.file : it.file);
       const abs = await kapi.join(root, AC.IMAGES_DIR, ...p.split('/'));
       const url = await kapi.toFileURL(abs);
       const img = await new Promise((res) => {

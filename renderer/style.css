@@ -2903,6 +2903,26 @@ body.paper-mode .k-manual-page-break::after { background:var(--paper); color:#a5
 .gal2-cell-tags { display:flex; flex-wrap:wrap; gap:3px; margin-top:4px; }
 .gal2-cell-meta { margin-top:3px; color:var(--dim); font-size:calc(10px * var(--ui-scale, 1));
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* ---- มุมมองของตาราง: ย่อ(ครอบตัด) · เต็มรูป(ไม่ครอบ) · รายการ ---- */
+.gal2-grid.mode-fit .gal2-thumb { height:150px; background:var(--bg); }
+.gal2-grid.mode-fit .gal2-thumb img { object-fit:contain; }
+.gal2-grid.mode-list { display:block; }
+.gal2-row { display:flex; gap:10px; align-items:center; padding:6px 8px; border-radius:8px;
+  border:1px solid transparent; cursor:pointer; }
+.gal2-row:hover { background:var(--curline); }
+.gal2-row.sel { background:var(--curline); border-color:var(--accent-hi); }
+.gal2-row + .gal2-row { margin-top:2px; }
+.gal2-row-thumb { width:64px; height:46px; flex:0 0 auto; border-radius:5px; overflow:hidden;
+  background:var(--bg); display:flex; align-items:center; justify-content:center; color:var(--dim); }
+.gal2-row-thumb img { width:100%; height:100%; object-fit:contain; display:block; }
+.gal2-row-main { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
+.gal2-row-name { display:flex; gap:6px; align-items:center; color:var(--bright);
+  font-size:calc(12px * var(--ui-scale, 1)); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gal2-row-album { color:var(--dim); font-size:calc(10px * var(--ui-scale, 1)); }
+.gal2-row-cap { font-size:calc(11.5px * var(--ui-scale, 1)); padding:2px 6px; }
+.gal2-row-side { flex:0 0 auto; display:flex; flex-direction:column; align-items:flex-end; gap:3px; }
+.gal2-row-size { color:var(--dim); font-size:calc(10px * var(--ui-scale, 1)); }
+.gal2-row .gal2-badge { position:static; }
 .gal2-batch { position:absolute; left:50%; bottom:14px; transform:translateX(-50%);
   display:none; gap:6px; align-items:center; padding:6px 10px; border-radius:10px;
   background:var(--bar); border:1px solid var(--accent-hi); box-shadow:0 6px 18px rgba(0,0,0,.35);
@@ -2923,7 +2943,11 @@ body.paper-mode .k-manual-page-break::after { background:var(--paper); color:#a5
 .gal2-bitem { position:absolute; border:1px solid var(--border); border-radius:6px;
   overflow:hidden; background:var(--side); cursor:move; }
 .gal2-bitem:hover { border-color:var(--accent-hi); }
-.gal2-bitem img { width:100%; height:100%; object-fit:cover; display:block; pointer-events:none; }
+/* [alpha.63r] กระดานอารมณ์ห้ามครอบตัดรูป — เห็นทั้งใบเสมอ (ขนาดตอนวางคิดจากสัดส่วนจริงแล้ว) */
+.gal2-bitem img { width:100%; height:100%; object-fit:contain; display:block; pointer-events:none; }
+.gal2-board.panning { cursor:grabbing; }
+.gal2-board-sel { max-width:220px; }
+.mb2 .gal2-board { min-height:260px; }
 .gal2-bresize { position:absolute; right:0; bottom:0; width:14px; height:14px; cursor:nwse-resize;
   background:linear-gradient(135deg, transparent 50%, var(--accent-hi) 50%); }
 

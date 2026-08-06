@@ -160,6 +160,21 @@ export function snap(v, grid = GRID) {
   return grid > 0 ? Math.round(v / grid) * grid : v;
 }
 
+/**
+ * ขนาดที่คงสัดส่วนของไฟล์จริง — ใช้ตอนวางรูปลงกระดานครั้งแรก
+ * ยึด "ด้านยาวสุด = box" เพื่อให้รูปแนวนอน/แนวตั้งกินพื้นที่พอ ๆ กัน
+ */
+export function sizeForAspect(box, natW, natH) {
+  const w0 = clamp(numOr(box, DEFAULT_SIZE), MIN_SIZE, MAX_SIZE);
+  const nw = numOr(natW, 0), nh = numOr(natH, 0);
+  if (nw <= 0 || nh <= 0) return { w: w0, h: w0 };
+  const s = w0 / Math.max(nw, nh);
+  return {
+    w: clamp(Math.round(nw * s), MIN_SIZE, MAX_SIZE),
+    h: clamp(Math.round(nh * s), MIN_SIZE, MAX_SIZE),
+  };
+}
+
 /** ปรับขนาดจากมุมขวาล่าง (คงสัดส่วนได้) */
 export function resizeItem(item, w, h, { keepRatio = false } = {}) {
   let nw = clamp(numOr(w, item.w), MIN_SIZE, MAX_SIZE);

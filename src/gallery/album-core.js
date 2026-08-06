@@ -255,8 +255,11 @@ export function syncAlbumDoc(doc, filesOnDisk, now = Date.now()) {
     images[f] = known.has(f) ? d.images[f]
       : { caption: f.replace(/\.[^.]+$/, ''), tags: [], order: ++order, added: now };
   }
+  // ชิ้นบนกระดานที่เป็น path (มี '/') = รูปจากอัลบั้มอื่น — ไม่อยู่ในรายชื่อไฟล์ของอัลบั้มนี้
+  // จึงต้องเก็บไว้เสมอ (ตัดทิ้งเฉพาะรูปในอัลบั้มนี้เองที่ไฟล์หายไปแล้ว)
   const set = new Set(files);
-  const moodBoard = d.moodBoard.filter((it) => it && set.has(it.file));
+  const moodBoard = d.moodBoard.filter((it) =>
+    it && it.file && (String(it.file).includes('/') || set.has(it.file)));
   return { ...d, images, moodBoard };
 }
 

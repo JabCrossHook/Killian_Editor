@@ -140,6 +140,18 @@ check('isImageFile รู้จักนามสกุลรูป',
   check('syncAlbumDoc เพิ่มไฟล์ใหม่พร้อม caption จากชื่อไฟล์', s.images['new.png'].caption === 'new');
   check('syncAlbumDoc ไม่นับไฟล์ที่ไม่ใช่รูป', !s.images['album.json']);
   check('syncAlbumDoc ให้ order ต่อจากตัวสูงสุดเดิม', s.images['new.png'].order === 4, s.images['new.png'].order);
+  // [alpha.63r] ชิ้นบนกระดานที่มาจากอัลบั้มอื่นเก็บเป็น path — ห้ามถูกตัดทิ้งตอนซิงก์
+  {
+    const withBoard = A.syncAlbumDoc(
+      { images: { 'a.png': {} },
+        moodBoard: [{ id: 'x', file: 'a.png' }, { id: 'y', file: 'ตัวละคร/ref.png' },
+                    { id: 'z', file: 'หายไปแล้ว.png' }] },
+      ['a.png']);
+    check('syncAlbumDoc เก็บชิ้นกระดานที่เป็นรูปข้ามอัลบั้มไว้',
+      withBoard.moodBoard.some((i) => i.file === 'ตัวละคร/ref.png'));
+    check('syncAlbumDoc ตัดชิ้นกระดานที่ไฟล์ในอัลบั้มนี้หายไป',
+      !withBoard.moodBoard.some((i) => i.file === 'หายไปแล้ว.png') && withBoard.moodBoard.length === 2);
+  }
 
   const withMeta = A.setImageMeta(s, 'a.png', { caption: 'ใหม่' });
   check('setImageMeta ไม่แก้ของเดิม (immutable)', s.images['a.png'].caption === 'A' && withMeta.images['a.png'].caption === 'ใหม่');
@@ -460,6 +472,15 @@ check('tagsToText', T.tagsToText(['#ก', '@ข']) === '#ก @ข');
   const tidy = M.tidyBoard(b, { size: 100, perRow: 2, gap: 10 });
   check('tidyBoard จัดเป็นตาราง', tidy[0].x === 0 && tidy[1].x === 110);
   check('boardStats นับชิ้น/ไฟล์', M.boardStats(b).count === 2 && M.boardStats(b).files === 2);
+  // [alpha.63r] ขนาดตอนวางต้องตรงสัดส่วนไฟล์จริง — ไม่งั้นรูปถูกครอบตัด/บิด
+  const sq = M.sizeForAspect(240, 100, 100);
+  check('sizeForAspect รูปจัตุรัส', sq.w === 240 && sq.h === 240, JSON.stringify(sq));
+  const wide = M.sizeForAspect(240, 400, 200);
+  check('sizeForAspect รูปแนวนอน = ด้านยาวเท่ากล่อง', wide.w === 240 && wide.h === 120, JSON.stringify(wide));
+  const tall = M.sizeForAspect(240, 200, 400);
+  check('sizeForAspect รูปแนวตั้ง', tall.w === 120 && tall.h === 240, JSON.stringify(tall));
+  check('sizeForAspect ไม่รู้ขนาดจริง → จัตุรัส', M.sizeForAspect(240, 0, 0).h === 240);
+  check('sizeForAspect หนีบขนาดต่ำสุด', M.sizeForAspect(240, 1000, 1).h === M.MIN_SIZE);
   const many = M.addManyToBoard([], ['a.png', 'b.png', 'c.png'], { perRow: 2, size: 100, gap: 0 });
   check('addManyToBoard วางเป็นตาราง', many.length === 3 && many[2].y === 100);
 }

@@ -289,6 +289,9 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
       `hamming`/`similarity`/`similarImages`/`findDuplicates`/`avgColor` — **"หารูปคล้าย" ไม่ต้องใช้ AI ไม่ต้องต่อเน็ต**
     · `gallery/gallery-export.js` (zip อัลบั้ม/ที่เลือก/ที่ใช้จริง + กระดานเป็น .png) ·
       `gallery/gallery-ai.js` (`aiCaptionImages`/`aiTagImages` — ลอง vision ก่อน ตกไปใช้บริบทจริง · `cleanCaption`/`parseTagAnswer`)
+    · **`gallery/moodboard-ui.js`** (alpha.63r) — แผง `gallery-board`: `MoodBoard` · `renderMoodBoardPanel` ·
+      `dropOnBoard` · `itemPath` (รองรับชิ้นข้ามอัลบั้ม) — **ต้องแยกจากคลังรูปเพราะ drag-and-drop ข้ามแท็บไม่ได้**
+    · **`gallery/gallery-bus.js`** — อัลบั้มที่คลังรูปกับกระดานใช้ร่วม (`currentAlbum`/`setCurrentAlbum`/`onAlbumChange`/`onBoardChange`)
     · `gallery.js` = **ตัววาดอย่างเดียว** · ตัวเชื่อมส่งเข้ามาเป็น callback (`onInsert`/`onOpenFile`/`onOpenEntity`/`entityNames`)
       → ไม่ import app.js กลับ · **unit test `test/album.test.cjs` 199 ข้อ**
   - `maps.js` — **เอนจินแผนที่** (บริสุทธิ์): `newMap/newPin`, `breadcrumb` (ลำดับชั้น world→city→room ตาม portal), `rootMaps`, `pinStats`, `deleteMap` (ล้าง portal ค้าง), `PIN_COLORS/PIN_KIND`
@@ -327,7 +330,7 @@ node test/wiki-images.test.cjs     # 43 checks — migrate string→object/capti
 node test/scene-meta.test.cjs      # 56 checks — frontmatter ชนะ index/bool จากสตริง/ลบคีย์ว่าง (alpha.60r2 · 13)
 node test/margin-presets.test.cjs  # 45 checks — 8 ชุด/จับคู่กลับ/ค่าที่ผู้ใช้ตั้งเอง (alpha.60r2 · 6)
 node test/i18n-csv.test.cjs      # 61 checks — flatten/CSV quote+BOM/round-trip ไฟล์ภาษาจริง (alpha.60r3 · 4)
-node test/album.test.cjs           # 199 checks — อัลบั้ม/CRUD บนดิสก์จริง/แท็ก/ดัชนีการใช้งาน/กระดาน/แฮชรูป (alpha.63)
+node test/album.test.cjs           # 206 checks — อัลบั้ม/CRUD บนดิสก์จริง/แท็ก/ดัชนีการใช้งาน/กระดาน/แฮชรูป (alpha.63)
 node test/ai-providers.test.cjs    # 110 checks — provider/param/โดเมน/ความลับ/models/chat + session/สถิติ/ค้นหา/เริ่มใหม่ (alpha.61–62)
 ```
 `npm run test:unit` รันชุดบริสุทธิ์ทั้งหมดรวดเดียว (**1,282 บรรทัด PASS**)
@@ -798,6 +801,21 @@ grep -E "FAIL|STOP" /tmp/k2result.txt | head -3
    ดันหัวแผงสูงจนปุ่มเบียดกันหมด · **แก้: `nowrap` + `text-overflow:ellipsis` + `@container` ซ่อนของที่ไม่จำเป็น**
    (`container-type:inline-size` บนตัวแผง — ไม่ใช่ media query เพราะขนาดหน้าต่างไม่ได้บอกความกว้างแผง)
 
+95. **[alpha.63r] ฟีเจอร์ที่ทางเข้าหลักคือ "ลากมาวาง" ห้ามอยู่คนละแท็บกับต้นทาง** ⚠
+   กระดานอารมณ์ทำเป็นแท็บที่สองในคลังรูป → พอสลับไปแท็บกระดาน **ตารางรูปหายไปด้วย**
+   ไม่มีทางลากรูปมาวางได้เลยแม้แต่ทางเดียว · เทสก็ผ่านหมดเพราะเรียก `addToBoard()` ตรง ๆ
+   (เทสที่เรียก API ภายในพิสูจน์ได้แค่ "ฟังก์ชันทำงาน" ไม่ได้พิสูจน์ว่า "ผู้ใช้ไปถึงมันได้")
+   **แก้: แยกเป็นแผง (`gallery-board`) ที่เปิดคู่กันได้** + ตัวกลางเล็ก ๆ (`gallery-bus.js`)
+   ให้สองแผงรู้จักอัลบั้มเดียวกันโดยไม่ import หากันไป-มา
+   · **เช็คก่อนออกแบบ UI ทุกครั้ง: ต้นทางกับปลายทางของ drag-and-drop เห็นพร้อมกันได้จริงไหม**
+   · และ **ประกาศสถานะร่วมตอน "โหลด" ไม่ใช่ตอน "คลิก"** — ตั้งค่าจากเมนู/เทส/โค้ดอื่นก็ต้องซิงก์เหมือนกัน
+96. **[alpha.63r] `object-fit:cover` = ครอบตัดรูปของผู้ใช้เงียบ ๆ**
+   ภาพย่อในตารางครอบตัดได้ (จงใจ ให้กริดเรียงสวย) แต่ **กระดานอ้างอิงห้ามครอบ** —
+   คนใช้เอารูปมาดูองค์ประกอบภาพ · และการวางกล่องจัตุรัสเสมอทำให้รูปแนวนอนโดนเฉือนหัวท้ายทันทีที่วาง
+   **แก้: `contain` + คิดขนาดตอนวางจากสัดส่วนไฟล์จริง (`sizeForAspect`) + ลากปรับขนาดคงสัดส่วนเป็นค่าเริ่มต้น**
+   · ของที่วางไว้ก่อนหน้าซ่อมได้ด้วยคำสั่ง "ปรับให้ตรงสัดส่วนรูป"
+   · กฎกว้างกว่า: **มุมมองที่ผู้ใช้ใช้ "ตัดสินใจเรื่องภาพ" ห้ามบิด/ตัดภาพโดยไม่บอก** — ให้เลือกเองได้ว่าจะย่อแบบไหน
+
 78. **[alpha.61] ไฟล์ที่ working tree เป็น CRLF ทั้งไฟล์ ทำให้ diff จริงถูกกลบ**
    `main.js` ถูกบันทึกเป็น CRLF มาก่อนเริ่มงาน → `git diff --stat` ขึ้น 766+/766- ทั้งที่ไม่มีอะไรเปลี่ยน
    **เช็คด้วย `git diff -w --stat` ก่อนเสมอ** ถ้าเหลือ 0 = whitespace ล้วน → `perl -i -pe 's/\r\n/\n/g'` แล้วค่อยแก้จริง
@@ -908,7 +926,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ---
 
-## เวอร์ชัน (ล่าสุด alpha.63 · e2e 2,009 + unit 1,495)
+## เวอร์ชัน (ล่าสุด alpha.63r · e2e 2,022 + unit 1,502)
 
 .13–.22 (v1→v2 พื้นฐาน): snapshot, line numbers, spellcheck ไทย+Chromium, ปุ่มลัดตั้งเอง, mac build, บทหนัง Ctrl+arrow, relationship sync, floating format bar, sidebar resize, SmartType Final Draft, wiki gallery/lightbox, explorer search+tags, panel docking, tree float+snap
 .24 batch 8 (drag-move explorer, panel snap, split compare, version tracking, scene lock, screenplay Final Draft look, screenplay images, wiki links) · .25–.27 **Planner board** (fabric.js) · .28 **floating windows** · .29 memo-in-chapter + scoped search
@@ -1356,6 +1374,15 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
     Explorer เห็นรูปในอัลบั้มย่อยพร้อมหัวข้ออัลบั้ม · เมนู มุมมอง → คลังรูปภาพ เป็นเมนูย่อย 6 รายการ
   แพ็กแล้ว: `dist/Killian2-2.0.0-alpha.63-mac-intel.dmg` (127MB · x86_64) — **รัน e2e จาก `.app` ที่แพ็กแล้วผ่าน 2,009 ALL OK ด้วย**
   บน GitHub: branch `alpha-63` (`JabCrossHook/Killian_Editor`)
+
+.63r **เก็บงานคลังรูปตามที่ใช้จริง (3 ข้อ)**
+  **[1] กระดานอารมณ์เป็นแผงของตัวเอง** (`gallery-board` · `gallery/moodboard-ui.js`) — เดิมเป็นแท็บในคลังรูป
+    จึงลากรูปมาวางไม่ได้เลย (บทเรียน 95) · `gallery/gallery-bus.js` = อัลบั้มที่สองแผงใช้ร่วมกัน
+    · `Gallery.reload()` ประกาศอัลบั้มทุกครั้ง (ไม่ใช่เฉพาะตอนคลิก) · ลากรูปข้ามอัลบั้มมาวางได้ (เก็บเป็น path เต็ม)
+  **[2] รูปบนกระดานไม่ถูกครอบตัด** — `object-fit:contain` + `sizeForAspect()` ตอนวาง +
+    ลากมุมคงสัดส่วนเป็นค่าเริ่มต้น (Alt = ยืดอิสระ) + คำสั่ง "ปรับให้ตรงสัดส่วนรูป" ทีละชิ้น/ทั้งกระดาน (บทเรียน 96)
+  **[3] มุมมองตาราง 3 แบบ** ย่อ/เต็มรูป/รายการ (`CELL_MODES` · จำที่ `localStorage: k2-gal-cell`)
+    · `bindItemEvents()` = ตัวผูกอีเวนต์ตัวเดียวที่การ์ดกับแถวใช้ร่วมกัน
 
 **ยังเหลือ**: `search-engine.js` ยังเป็น orphan — Global Search (`global-search.js`) ยังสแกนไฟล์ตรง ๆ ไม่ได้ใช้ inverted index (ควรสลับมาใช้เพื่อความเร็ว) · multiple-drafts-per-book UI (โครงรองรับแล้ว), screenplay align persistence, Campaign/D&D mode, **code signing** + `.icns`/`.ico` icon (electron-builder ใช้ได้แล้ว แต่ยังไม่เซ็นและใช้ไอคอนเริ่มต้นของ Electron), native arm64 build. Top เคยบอก paper/indent "อาจต้องปรับปรุง ไว้ก่อน"
 

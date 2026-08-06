@@ -316,7 +316,7 @@ function buildMenu() {
       { label: `🖼 คลังรูปภาพ (Gallery) (${C}+${S}+G)`, submenu: [
         { label: `เปิดคลังรูป (${C}+${S}+G)`, click: () => send('gallery') },
         { label: '＋ สร้างอัลบั้มใหม่…', click: () => send('gallery-new-album') },
-        { label: '🎨 กระดานอารมณ์ (Mood Board)', click: () => send('gallery-board') },
+        { label: '🎨 กระดานอารมณ์ (Mood Board) — เปิดเป็นแผงข้าง ๆ แล้วลากรูปมาวางได้', click: () => send('gallery-board') },
         { label: '🧹 รูปที่ยังไม่ถูกใช้', click: () => send('gallery-unused') },
         { label: '🔎 หารูปซ้ำในคลัง', click: () => send('gallery-dups') },
         { label: '📤 ส่งออกเฉพาะรูปที่ถูกใช้จริง…', click: () => send('gallery-export-used') },
@@ -356,6 +356,7 @@ function buildMenu() {
         chk('แผนที่', toggles.panels['maps'], () => send('toggle-panel', 'maps')),
         // [alpha.60r1 ข้อ 21] คลังรูปย้ายจากแท็บมาเป็นแผงเช่นกัน
         chk(`คลังรูปภาพ (${C}+${S}+G)`, toggles.panels['gallery'], () => send('toggle-panel', 'gallery')),
+        chk('🎨 กระดานอารมณ์', toggles.panels['gallery-board'], () => send('toggle-panel', 'gallery-board')),
         chk('🧠 AI วิเคราะห์', toggles.panels['ai-analyzer'], () => send('toggle-panel', 'ai-analyzer')),
         chk('💬 AI ผู้ช่วยเขียน', toggles.panels['ai-chat'], () => send('toggle-panel', 'ai-chat')),
         { type: 'separator' },

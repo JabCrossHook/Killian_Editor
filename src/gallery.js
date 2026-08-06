@@ -15,8 +15,9 @@ import { el, setStatus, withBusy } from './core.js';
 import * as AC from './gallery/album-core.js';
 import * as TG from './gallery/album-tags.js';
 import * as UI from './gallery/usage-index.js';
-import * as MB from './gallery/moodboard.js';
 import * as IH from './gallery/image-hash.js';
+import { currentAlbum, setCurrentAlbum, onAlbumChange } from './gallery/gallery-bus.js';
+import { dropOnBoard } from './gallery/moodboard-ui.js';
 
 const { ROOT_ALBUM, ALL_ALBUM, ROOT_ALBUM_NAME } = AC;
 
@@ -83,6 +84,13 @@ async function hashOf(url) {
 
 const stopEv = (e) => { e.preventDefault(); e.stopPropagation(); };
 
+/** มุมมองของตาราง — ผู้ใช้เลือกเองว่าจะให้ครอบตัดหรือเห็นเต็มรูป */
+export const CELL_MODES = [
+  ['thumb', 'ย่อ',     'grid',   'ภาพย่อขนาดเท่ากัน (ครอบตัดให้เต็มกรอบ)'],
+  ['fit',   'เต็มรูป',  'image',  'เห็นทั้งรูปตามสัดส่วนจริง ไม่ครอบตัด'],
+  ['list',  'รายการ',   'list-ul', 'แถวละรูป — เห็นชื่อ คำบรรยาย แท็ก ขนาด และการใช้งานพร้อมกัน'],
+];
+
 // ───────────────────────── ตัวคลังรูปหลัก ─────────────────────────
 
 export class Gallery {
@@ -99,8 +107,8 @@ export class Gallery {
     this.title = 'คลังรูปภาพ';
     this.dirty = false;
     this.state = {
-      album: ALL_ALBUM,
-      view: 'grid',
+      album: currentAlbum(),
+      cell: localStorage.getItem('k2-gal-cell') || 'thumb',   // thumb | fit | list
       q: '',
       sort: 'manual',
       use: 'all',
@@ -108,8 +116,14 @@ export class Gallery {
       tagMode: 'and',
       sel: new Set(),
       lastSel: '',
-      board: { zoom: 1, panX: 40, panY: 40 },
     };
+    // อัลบั้มใช้ร่วมกับแผงกระดานอารมณ์ — เลือกฝั่งไหนอีกฝั่งตามทันที
+    this._offAlbum = onAlbumChange((id, from) => {
+      if (from === 'gallery' || id === this.state.album) return;
+      this.state.album = id;
+      this.state.sel.clear();
+      this.render();
+    });
     this.albums = [];
     this.items = [];
     this.usage = new Map();
@@ -128,6 +142,9 @@ export class Gallery {
     if (this.state.album !== ALL_ALBUM && !albums.some((a) => a.id === this.state.album)) {
       this.state.album = ALL_ALBUM;
     }
+    // ประกาศอัลบั้มที่กำลังดูทุกครั้งที่โหลด — ไม่ใช่เฉพาะตอนคลิกใน sidebar
+    // (คำสั่งจากเมนู/เทส/โค้ดอื่นตั้ง state.album ตรง ๆ ได้ แผงกระดานต้องตามทันเหมือนกัน)
+    setCurrentAlbum(this.state.album, 'gallery');
     const items = this.state.album === ALL_ALBUM
       ? await AC.allImages(kapi, this.root, albums)
       : await AC.getAlbumImages(kapi, this.root, this.state.album);
@@ -187,12 +204,18 @@ export class Gallery {
 
   buildHead() {
     const head = el('div', 'gal2-head');
+    // มุมมองของตาราง — ครอบตัด / เต็มรูปไม่ครอบ / รายการ
     const tabs = el('div', 'gal2-tabs');
-    for (const [key, label, icon] of [['grid', 'ตาราง', 'grid'], ['board', 'กระดานอารมณ์', 'layout']]) {
-      const b = el('button', 'gal2-tab' + (this.state.view === key ? ' on' : ''));
-      b.innerHTML = iconHtml(icon, 14) + ' ' + label;
-      b.dataset.view = key;
-      b.onclick = () => { this.state.view = key; this.draw(); };
+    for (const [key, label, icon, tip] of CELL_MODES) {
+      const b = el('button', 'gal2-tab' + (this.state.cell === key ? ' on' : ''));
+      b.innerHTML = iconHtml(icon, 14) + ' <span>' + label + '</span>';
+      b.dataset.cell = key;
+      b.title = tip;
+      b.onclick = () => {
+        this.state.cell = key;
+        try { localStorage.setItem('k2-gal-cell', key); } catch {}
+        this.draw();
+      };
       tabs.append(b);
     }
     const stats = el('div', 'gal2-stats');
@@ -210,10 +233,14 @@ export class Gallery {
       await withBusy('สแกนคลังรูป…', async () => { await this.reload({ rescan: true }); });
       this.draw(); setStatus('สแกนคลังรูปใหม่แล้ว');
     };
+    const board = el('button', 'cmp-mini gal2-openboard');
+    board.innerHTML = iconHtml('layout', 13);
+    board.title = 'เปิดแผงกระดานอารมณ์ (ผนึกไว้ข้าง ๆ แล้วลากรูปจากตารางไปวางได้)';
+    board.onclick = () => this.opts.onOpenBoard && this.opts.onOpenBoard();
     const more = el('button', 'cmp-mini gal2-more', '⋯');
     more.title = 'คำสั่งเพิ่มเติม';
     more.onclick = (e) => this.moreMenu(e);
-    btns.append(add, refresh, more);
+    btns.append(add, board, refresh, more);
     head.append(tabs, stats, btns);
     return head;
   }
@@ -222,11 +249,7 @@ export class Gallery {
     const main = el('div', 'gal2-main');
     main.append(this.buildSide());
     const body = el('div', 'gal2-body');
-    if (this.state.view === 'board') {
-      body.append(this.buildBoardBar(), this.buildBoard());
-    } else {
-      body.append(this.buildBar(), this.buildGrid());
-    }
+    body.append(this.buildBar(), this.buildGrid());
     main.append(body);
     return main;
   }
@@ -313,6 +336,7 @@ export class Gallery {
       if (this.state.album === a.id) return;
       this.state.album = a.id;
       this.state.sel.clear();
+      setCurrentAlbum(a.id, 'gallery');      // แผงกระดานอารมณ์ตามไปด้วย
       this.render();
     };
     if (a.id !== ALL_ALBUM) {
@@ -378,7 +402,7 @@ export class Gallery {
   // ---- ตารางรูป ----
 
   buildGrid() {
-    const grid = el('div', 'gal2-grid');
+    const grid = el('div', 'gal2-grid mode-' + this.state.cell);
     const items = this.visibleItems();
     if (!items.length) {
       const d = el('div', 'gal-empty');
@@ -406,7 +430,87 @@ export class Gallery {
     return grid;
   }
 
+  /** ผูกอีเวนต์ที่การ์ดกับแถวใช้เหมือนกัน (เลือก/ลาก/เมนู/ดูภาพเต็ม) */
+  bindItemEvents(node, it) {
+    node.dataset.path = it.path;
+    node.onclick = (e) => {
+      if (e.target.tagName === 'INPUT') return;
+      if (e.ctrlKey || e.metaKey) { this.toggleSel(it.path, true); return; }
+      if (e.shiftKey) { this.selectRange(it.path); return; }
+      this.state.sel = new Set([it.path]);
+      this.state.lastSel = it.path;
+      this.syncSelection();
+    };
+    node.ondblclick = async () => imageLightbox(await fileURL(this.root, it.path), it.caption || it.file);
+    node.oncontextmenu = (e) => { e.preventDefault(); this.cellMenu(e, it); };
+    node.draggable = true;
+    node.addEventListener('dragstart', (e) => {
+      const paths = this.state.sel.has(it.path) ? [...this.state.sel] : [it.path];
+      e.dataTransfer.effectAllowed = 'copyMove';
+      e.dataTransfer.setData('text/k2-gal-image', JSON.stringify({ paths }));
+      e.dataTransfer.setData('text/plain', `![${it.caption || ''}](${it.file})`);
+      absOf(this.root, it.path).then((abs) => {
+        try { e.dataTransfer.setData('text/k2-image', JSON.stringify({ path: abs, name: it.file })); } catch {}
+      });
+    });
+    return node;
+  }
+
+  /** มุมมองรายการ — เห็นชื่อ/คำบรรยาย/แท็ก/ขนาด/การใช้งาน ครบในแถวเดียว */
+  buildRow(it) {
+    const row = el('div', 'gal2-row' + (this.state.sel.has(it.path) ? ' sel' : ''));
+    const th = el('div', 'gal2-row-thumb');
+    const im = el('img');
+    im.alt = it.caption || it.file;
+    im.loading = 'lazy';
+    fileURL(this.root, it.path).then((u) => { im.src = u; });
+    im.onerror = () => { th.classList.add('miss'); th.textContent = '⚠'; };
+    th.append(im);
+    const main = el('div', 'gal2-row-main');
+    const name = el('div', 'gal2-row-name', it.file);
+    if (this.state.album === ALL_ALBUM && it.album !== ROOT_ALBUM) {
+      name.append(el('span', 'gal2-row-album', it.album));
+    }
+    const cap = el('input', 'wiki-input gal2-row-cap');
+    cap.value = it.caption || '';
+    cap.placeholder = 'คำบรรยาย…';
+    cap.onclick = (e) => e.stopPropagation();
+    cap.addEventListener('change', async () => {
+      await AC.updateImage(kapi, this.root, it.album, it.file, { caption: cap.value });
+      it.caption = cap.value;
+      await AC.syncFlatIndex(kapi, this.root);
+      this.changed();
+      setStatus('บันทึกคำบรรยายแล้ว');
+    });
+    main.append(name, cap);
+    if (it.tags && it.tags.length) {
+      const tw = el('div', 'gal2-cell-tags');
+      for (const t of it.tags) {
+        const c = el('span', 'gal2-chip sm k-tag-' + TG.tagKind(t), t);
+        c.onclick = (e) => {
+          stopEv(e);
+          if (TG.tagKind(t) === 'entity' && this.opts.onOpenEntity) this.opts.onOpenEntity(TG.tagName(t));
+          else { this.state.tags = [t]; this.draw(); }
+        };
+        tw.append(c);
+      }
+      main.append(tw);
+    }
+    const side = el('div', 'gal2-row-side');
+    side.append(el('div', 'gal2-row-size', AC.formatBytes(it.size)));
+    const use = el('div', 'gal2-badge ' + (it.uses ? 'used' : 'unused'),
+                   it.uses ? 'ใช้ ' + it.uses : 'ยังไม่ถูกใช้');
+    if (it.uses) {
+      use.title = UI.usageLabel(this.usage, it.file, 6);
+      use.onclick = (e) => { stopEv(e); this.usageMenu(e, it); };
+    }
+    side.append(use);
+    row.append(th, main, side);
+    return this.bindItemEvents(row, it);
+  }
+
   buildCell(it) {
+    if (this.state.cell === 'list') return this.buildRow(it);
     const cell = el('div', 'gal2-cell' + (this.state.sel.has(it.path) ? ' sel' : ''));
     cell.dataset.path = it.path;
     const box = el('div', 'gal2-thumb');
@@ -467,29 +571,7 @@ export class Gallery {
     if (this.state.album === ALL_ALBUM && it.album !== ROOT_ALBUM) meta.textContent += ' · ' + it.album;
     cell.append(meta);
 
-    // เลือก / เปิด / เมนู
-    cell.onclick = (e) => {
-      if (e.target.tagName === 'INPUT') return;
-      if (e.ctrlKey || e.metaKey) { this.toggleSel(it.path, true); return; }
-      if (e.shiftKey) { this.selectRange(it.path); return; }
-      this.state.sel = new Set([it.path]);
-      this.state.lastSel = it.path;
-      this.syncSelection();
-    };
-    cell.ondblclick = async () => imageLightbox(await fileURL(this.root, it.path), it.caption || it.file);
-    cell.oncontextmenu = (e) => { e.preventDefault(); this.cellMenu(e, it); };
-
-    cell.draggable = true;
-    cell.addEventListener('dragstart', (e) => {
-      const paths = this.state.sel.has(it.path) ? [...this.state.sel] : [it.path];
-      e.dataTransfer.effectAllowed = 'copyMove';
-      e.dataTransfer.setData('text/k2-gal-image', JSON.stringify({ paths }));
-      e.dataTransfer.setData('text/plain', `![${it.caption || ''}](${it.file})`);
-      absOf(this.root, it.path).then((abs) => {
-        try { e.dataTransfer.setData('text/k2-image', JSON.stringify({ path: abs, name: it.file })); } catch {}
-      });
-    });
-    return cell;
+    return this.bindItemEvents(cell, it);
   }
 
   // ---- เลือกหลายใบ ----
@@ -511,7 +593,7 @@ export class Gallery {
   }
 
   syncSelection() {
-    for (const c of this.pane.querySelectorAll('.gal2-cell')) {
+    for (const c of this.pane.querySelectorAll('.gal2-cell, .gal2-row')) {
       c.classList.toggle('sel', this.state.sel.has(c.dataset.path));
     }
     this.syncBatchBar();
@@ -1041,252 +1123,21 @@ export class Gallery {
     if (n) { await this.render(); this.changed(); }
   }
 
-  // ---------- กระดานอารมณ์ ----------
-
-  boardAlbumId() { return this.state.album === ALL_ALBUM ? ROOT_ALBUM : this.state.album; }
-
-  /**
-   * แถบของกระดาน — แผงที่ผนึกข้างเดียวกว้างแค่ ~340px (บทเรียน 94)
-   * ปุ่มทั้งหมดเรียงเป็นแถวเดียวจะห่อลงมา 5 บรรทัดจนไม่เหลือที่ให้กระดานเลย
-   * → เหลือปุ่มที่ใช้บ่อย 2 ตัว ที่เหลือยุบเข้าเมนู ⋯
-   */
-  buildBoardBar() {
-    const bar = el('div', 'gal2-bar gal2-boardbar');
-    const info = el('span', 'dim gal2-board-of', 'กระดานของ: ' + AC.albumBaseName(this.boardAlbumId()));
-    const mk = (label, fn, title) => {
-      const b = el('button', 'cmp-mini', label);
-      if (title) b.title = title;
-      b.onclick = fn;
-      return b;
-    };
-    const tidy = async () => {
-      const doc = await AC.readAlbumDoc(kapi, this.root, this.boardAlbumId());
-      await this.saveBoard(MB.tidyBoard(doc.moodBoard));
-      this.drawBoard();
-    };
-    const clear = async () => {
-      if (!(await confirmBox('ล้างกระดานอารมณ์ของอัลบั้มนี้? (ไม่ลบไฟล์รูป)', 'ล้าง'))) return;
-      await this.saveBoard([]);
-      this.drawBoard();
-    };
-    const more = mk('⋯', (e) => {
-      const r = e.currentTarget.getBoundingClientRect();
-      popupMenu(r.left, r.bottom + 4, [
-        { label: '▦ จัดเรียงอัตโนมัติ', click: tidy },
-        { label: '📷 ส่งออกกระดานเป็นภาพ…', click: () => this.exportBoard() },
-        '-',
-        { label: '🗑 ล้างกระดาน (ไม่ลบไฟล์)', danger: true, click: clear },
-      ]);
-    }, 'คำสั่งเพิ่มเติมของกระดาน');
-    bar.append(info,
-      mk('＋ วางรูปที่เลือก', () => this.addToBoard([...this.state.sel])),
-      mk('⤢ พอดีจอ', () => this.fitBoard()),
-      more);
-    return bar;
-  }
-
-  buildBoard() {
-    const host = el('div', 'gal2-board');
-    const canvas = el('div', 'gal2-canvas');
-    host.append(canvas);
-    this._boardHost = host;
-    this._canvas = canvas;
-    this.drawBoard();
-
-    // ซูมด้วยล้อ (ยึดจุดใต้เมาส์)
-    host.addEventListener('wheel', (e) => {
-      if (!e.ctrlKey && !e.metaKey && !e.altKey) return;
-      e.preventDefault();
-      const r = host.getBoundingClientRect();
-      this.state.board = MB.zoomAt(this.state.board, e.deltaY < 0 ? 1.1 : 1 / 1.1,
-                                   e.clientX - r.left, e.clientY - r.top);
-      this.applyBoardTransform();
-    }, { passive: false });
-
-    // แพนด้วยการลากพื้นที่ว่าง
-    host.addEventListener('mousedown', (e) => {
-      if (e.target !== host && e.target !== canvas) return;
-      const start = { x: e.clientX, y: e.clientY, panX: this.state.board.panX, panY: this.state.board.panY };
-      const mv = (ev) => {
-        this.state.board.panX = start.panX + (ev.clientX - start.x);
-        this.state.board.panY = start.panY + (ev.clientY - start.y);
-        this.applyBoardTransform();
-      };
-      const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); };
-      document.addEventListener('mousemove', mv);
-      document.addEventListener('mouseup', up);
-    });
-
-    // ลากรูปจากตาราง/จากที่อื่นมาวาง
-    host.addEventListener('dragover', (e) => {
-      if (![...e.dataTransfer.types].includes('text/k2-gal-image')) return;
-      stopEv(e); host.classList.add('drop');
-    });
-    host.addEventListener('dragleave', () => host.classList.remove('drop'));
-    host.addEventListener('drop', async (e) => {
-      host.classList.remove('drop');
-      const raw = e.dataTransfer.getData('text/k2-gal-image');
-      if (!raw) return;
-      stopEv(e);
-      let paths = [];
-      try { paths = JSON.parse(raw).paths || []; } catch {}
-      const r = host.getBoundingClientRect();
-      const at = MB.toBoard(this.state.board, e.clientX - r.left, e.clientY - r.top);
-      await this.addToBoard(paths, at);
-    });
-    return host;
-  }
-
-  applyBoardTransform() {
-    if (!this._canvas) return;
-    const b = this.state.board;
-    this._canvas.style.transform = `translate(${b.panX}px, ${b.panY}px) scale(${b.zoom})`;
-  }
-
-  async drawBoard() {
-    const albumId = this.boardAlbumId();
-    const doc = await AC.readAlbumDoc(kapi, this.root, albumId);
-    const board = MB.normalizeBoard(doc.moodBoard);
-    const canvas = this._canvas;
-    if (!canvas) return;
-    canvas.innerHTML = '';
-    this.applyBoardTransform();
-    if (!board.length) {
-      const hint = el('div', 'gal2-board-hint',
-        'กระดานยังว่าง — ลากรูปจากแท็บ "ตาราง" มาวาง หรือเลือกรูปแล้วกด "＋ วางรูปที่เลือก"');
-      canvas.append(hint);
-      return;
-    }
-    for (const it of MB.boardOrder(board)) canvas.append(await this.boardItemEl(it, albumId));
-  }
-
-  async boardItemEl(it, albumId) {
-    const node = el('div', 'gal2-bitem');
-    node.style.left = it.x + 'px';
-    node.style.top = it.y + 'px';
-    node.style.width = it.w + 'px';
-    node.style.height = it.h + 'px';
-    node.style.zIndex = String(100 + it.z);
-    node.dataset.id = it.id;
-    const im = el('img');
-    const rel = AC.albumRel(albumId);
-    im.src = await fileURL(this.root, rel ? rel + '/' + it.file : it.file);
-    im.draggable = false;
-    node.append(im);
-    const grip = el('span', 'gal2-bresize');
-    node.append(grip);
-
-    const commit = async (patch) => {
-      const doc = await AC.readAlbumDoc(kapi, this.root, albumId);
-      await this.saveBoard(MB.updateBoardItem(doc.moodBoard, it.id, patch), albumId);
-    };
-
-    // ลากย้าย — แก้ style สดระหว่างลาก แล้วค่อยบันทึกครั้งเดียว (บทเรียน 29)
-    node.addEventListener('mousedown', (e) => {
-      if (e.target === grip) return;
-      e.stopPropagation();
-      const z = this.state.board.zoom;
-      const s = { x: e.clientX, y: e.clientY, ox: it.x, oy: it.y };
-      const mv = (ev) => {
-        it.x = MB.snap(s.ox + (ev.clientX - s.x) / z);
-        it.y = MB.snap(s.oy + (ev.clientY - s.y) / z);
-        node.style.left = it.x + 'px'; node.style.top = it.y + 'px';
-      };
-      const up = async () => {
-        document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up);
-        await commit({ x: it.x, y: it.y });
-      };
-      document.addEventListener('mousemove', mv);
-      document.addEventListener('mouseup', up);
-    });
-
-    grip.addEventListener('mousedown', (e) => {
-      e.stopPropagation(); e.preventDefault();
-      const z = this.state.board.zoom;
-      const s = { x: e.clientX, y: e.clientY, w: it.w, h: it.h };
-      const mv = (ev) => {
-        const r = MB.resizeItem(it, s.w + (ev.clientX - s.x) / z, s.h + (ev.clientY - s.y) / z,
-                                { keepRatio: ev.shiftKey });
-        it.w = r.w; it.h = r.h;
-        node.style.width = it.w + 'px'; node.style.height = it.h + 'px';
-      };
-      const up = async () => {
-        document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up);
-        await commit({ w: it.w, h: it.h });
-      };
-      document.addEventListener('mousemove', mv);
-      document.addEventListener('mouseup', up);
-    });
-
-    node.oncontextmenu = (e) => {
-      e.preventDefault();
-      popupMenu(e.clientX, e.clientY, [
-        { label: '<b>' + it.file + '</b>', disabled: true },
-        { label: '🔍 ดูภาพเต็ม', click: () => imageLightbox(im.src, it.file) },
-        { label: '⬆️ ขึ้นบนสุด', click: async () => {
-          const doc = await AC.readAlbumDoc(kapi, this.root, albumId);
-          await this.saveBoard(MB.moveToFront(doc.moodBoard, it.id), albumId); this.drawBoard(); } },
-        { label: '⬇️ ลงล่างสุด', click: async () => {
-          const doc = await AC.readAlbumDoc(kapi, this.root, albumId);
-          await this.saveBoard(MB.moveToBack(doc.moodBoard, it.id), albumId); this.drawBoard(); } },
-        '-',
-        { label: '✕ เอาออกจากกระดาน (ไม่ลบไฟล์)', click: async () => {
-          const doc = await AC.readAlbumDoc(kapi, this.root, albumId);
-          await this.saveBoard(MB.removeFromBoard(doc.moodBoard, it.id), albumId); this.drawBoard(); } },
-      ]);
-    };
-    return node;
-  }
-
-  async saveBoard(board, albumId) {
-    const id = albumId || this.boardAlbumId();
-    const doc = await AC.readAlbumDoc(kapi, this.root, id);
-    await AC.writeAlbumDoc(kapi, this.root, id, { ...doc, moodBoard: MB.normalizeBoard(board) });
-  }
-
-  async addToBoard(paths, at) {
+  // ---------- กระดานอารมณ์ (ย้ายไปเป็นแผงของตัวเองแล้ว — moodboard-ui.js) ----------
+  /** วางรูปที่เลือกลงกระดาน แล้วเปิดแผงกระดานให้เห็นผลทันที */
+  async addToBoard(paths) {
     const list = (paths || []).filter(Boolean);
-    if (!list.length) { setStatus('เลือกรูปก่อน'); return; }
-    const albumId = this.boardAlbumId();
-    const doc = await AC.readAlbumDoc(kapi, this.root, albumId);
-    // กระดานเก็บ "ชื่อไฟล์ในอัลบั้มนั้น" → รูปข้ามอัลบั้มต้องย้ายเข้ามาก่อน
-    const files = [];
-    for (const p of list) {
-      const it = this.items.find((x) => x.path === p);
-      if (!it) continue;
-      if (it.album !== albumId) { setStatus(`ข้าม ${it.file} — วางได้เฉพาะรูปในอัลบั้มเดียวกับกระดาน`); continue; }
-      files.push(it.file);
-    }
-    if (!files.length) return;
-    const next = MB.addManyToBoard(doc.moodBoard, files,
-      at ? { x: MB.snap(at.x), y: MB.snap(at.y) } : { x: 40, y: 40 });
-    await this.saveBoard(next, albumId);
-    if (this.state.view !== 'board') { this.state.view = 'board'; this.draw(); }
-    else this.drawBoard();
-    setStatus(`วาง ${files.length} รูปบนกระดานแล้ว`);
+    if (!list.length) { setStatus('เลือกรูปก่อน แล้วค่อยวางบนกระดาน'); return; }
+    if (this.opts.onOpenBoard) await this.opts.onOpenBoard();
+    await dropOnBoard(this.root, list);
   }
 
-  async fitBoard() {
-    const doc = await AC.readAlbumDoc(kapi, this.root, this.boardAlbumId());
-    const host = this._boardHost;
-    if (!host) return;
-    const r = host.getBoundingClientRect();
-    this.state.board = MB.fitView(doc.moodBoard, r.width, r.height, 40);
-    this.applyBoardTransform();
-  }
-
-  async exportBoard() {
-    const { exportMoodBoard } = await import('./gallery/gallery-export.js');
-    const albumId = this.boardAlbumId();
-    const doc = await AC.readAlbumDoc(kapi, this.root, albumId);
-    await exportMoodBoard(this.root, albumId, doc.moodBoard);
-  }
 
   // ---------- ระบบแผง ----------
 
   changed() { urlCache.clear(); this.opts.onChanged && this.opts.onChanged(); }
   focus() {}
-  destroy() { this._gen++; }
+  destroy() { this._gen++; if (this._offAlbum) this._offAlbum(); }
   save() { return true; }
 }
 
