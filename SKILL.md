@@ -1372,7 +1372,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
   เก็บกวาด: **บั๊กเก่า `sectionProps` ตั้งปกเล่มไม่เคยได้ผล** (`String(f)` บนออบเจกต์ → `"[object Object]"`) ·
     `pickImage()` คืน path สัมพัทธ์กับ `Images/` แล้ว · `resolveImg()` หา ​รูปที่ย้ายเข้าอัลบั้มเจอเอง ·
     Explorer เห็นรูปในอัลบั้มย่อยพร้อมหัวข้ออัลบั้ม · เมนู มุมมอง → คลังรูปภาพ เป็นเมนูย่อย 6 รายการ
-  แพ็กแล้ว: `dist/Killian2-2.0.0-alpha.63-mac-intel.dmg` (127MB · x86_64) — **รัน e2e จาก `.app` ที่แพ็กแล้วผ่าน 2,009 ALL OK ด้วย**
+  แพ็กแล้ว: `dist/Killian2-2.0.0-alpha.63r-mac-intel.dmg` (127MB · x86_64) — **รัน e2e จาก `.app` ที่แพ็กแล้วผ่าน 2,022 ALL OK ด้วย**
   บน GitHub: branch `alpha-63` (`JabCrossHook/Killian_Editor`)
 
 .63r **เก็บงานคลังรูปตามที่ใช้จริง (3 ข้อ)**
