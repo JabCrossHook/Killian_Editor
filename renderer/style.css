@@ -2818,3 +2818,164 @@ body.paper-mode .k-manual-page-break::after { background:var(--paper); color:#a5
 .ai-detail-json { margin:0 12px 14px; padding:10px; background:var(--bar);
   border:1px solid var(--border); border-radius:8px; max-height:340px; overflow:auto;
   font-size:calc(11px * var(--ui-scale, 1)); white-space:pre; }
+
+/* ═══════════════════ คลังรูปแบบอัลบั้ม (alpha.63) ═══════════════════
+   โครง: [หัวแผง: แท็บ + สถิติ + ปุ่ม] / [ซ้าย: ต้นไม้อัลบั้ม+แท็ก | ขวา: แถบกรอง + ตาราง/กระดาน]
+   แถบคำสั่งชุด (batch) ลอยอยู่ล่างกลาง โผล่เมื่อมีรูปถูกเลือก */
+.gal2 { display:flex; flex-direction:column; height:100%; min-height:0;
+  container-type:inline-size; container-name:gal2; }
+.gal2-head { display:flex; align-items:center; gap:10px; padding:8px 10px; flex-wrap:wrap;
+  border-bottom:1px solid var(--border); background:var(--bar); flex:0 0 auto; }
+.gal2-tabs { display:flex; gap:4px; }
+.gal2-tab { display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius:7px;
+  background:transparent; border:1px solid transparent; color:var(--dim);
+  font-size:calc(12px * var(--ui-scale, 1)); cursor:pointer; }
+.gal2-tab:hover { color:var(--fg); }
+.gal2-tab.on { background:var(--bg); border-color:var(--border); color:var(--bright); }
+/* หัวแผงต้องไม่พังเมื่อแผงแคบ — ข้อความสรุปตัดท้ายด้วย … แทนที่จะห่อเป็นตัวอักษรแนวตั้ง */
+.gal2-stats { flex:1 1 auto; min-width:0; text-align:center; color:var(--dim);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  font-size:calc(11.5px * var(--ui-scale, 1)); }
+.gal2-tab, .gal2-add { white-space:nowrap; }
+.gal2-head-btns { flex:0 0 auto; }
+.gal2-head-btns { display:flex; gap:6px; align-items:center; }
+.gal2-main { flex:1; display:flex; min-height:0; }
+.gal2-side { width:clamp(132px, 34%, 206px); flex:0 0 auto; border-right:1px solid var(--border);
+  background:var(--side); overflow:auto; display:flex; flex-direction:column; }
+.gal2-side-head { display:flex; align-items:center; justify-content:space-between; gap:6px;
+  padding:7px 9px; color:var(--dim); text-transform:uppercase; letter-spacing:.4px;
+  font-size:calc(10.5px * var(--ui-scale, 1)); }
+.gal2-tree { padding-bottom:6px; }
+.gal2-album { display:flex; align-items:center; gap:6px; padding:4px 8px; cursor:pointer;
+  color:var(--fg); font-size:calc(12px * var(--ui-scale, 1)); border-left:2px solid transparent; }
+.gal2-album:hover { background:var(--curline); }
+.gal2-album.on { background:var(--curline); border-left-color:var(--accent-hi); color:var(--bright); }
+.gal2-album.drop { background:var(--sel); border-left-color:var(--accent-hi); }
+.gal2-album svg { flex:0 0 auto; opacity:.75; }
+.gal2-album-name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gal2-album-n { color:var(--dim); font-size:calc(10.5px * var(--ui-scale, 1)); }
+.gal2-tagfilter { border-top:1px solid var(--border); padding-bottom:8px; }
+.gal2-tagmode { padding:1px 6px; font-size:calc(10px * var(--ui-scale, 1)); border-radius:5px; }
+.gal2-chips { display:flex; flex-wrap:wrap; gap:4px; padding:0 8px 6px; }
+.gal2-chip { padding:2px 7px; border-radius:10px; cursor:pointer; border:1px solid var(--border);
+  background:var(--bar); color:var(--fg); font-size:calc(10.5px * var(--ui-scale, 1)); }
+.gal2-chip:hover { border-color:var(--accent-hi); }
+.gal2-chip.on { background:var(--sel); border-color:var(--accent-hi); color:var(--bright); }
+.gal2-chip.sm { padding:1px 6px; font-size:calc(10px * var(--ui-scale, 1)); }
+.gal2-chip.k-tag-entity { border-color:#5b7fa8; }
+.gal2-chip.k-tag-scene  { border-color:#7a8f5b; }
+.gal2-empty-note { padding:0 9px 6px; font-size:calc(10.5px * var(--ui-scale, 1)); }
+.gal2-body { flex:1; display:flex; flex-direction:column; min-width:0; min-height:0; }
+.gal2-bar { display:flex; gap:6px; align-items:center; padding:7px 10px; flex-wrap:wrap;
+  border-bottom:1px solid var(--border); flex:0 0 auto; }
+.gal2-search { flex:1 1 130px; min-width:100px; }
+.gal2-sort, .gal2-use { flex:1 1 auto; width:auto; min-width:96px; max-width:170px; }
+/* แผงแคบ (ผนึกข้างเดียว) — ตัดของที่ไม่จำเป็นออกก่อน แทนที่จะให้ทุกอย่างเบียดกัน */
+@container gal2 (max-width: 430px) {
+  .gal2-stats { display:none; }
+  .gal2-tab { padding:4px 7px; }
+  .gal2-board-of { display:none; }        /* ชื่ออัลบั้มของกระดานอยู่ที่ sidebar อยู่แล้ว */
+}
+@container gal2 (max-width: 330px) {
+  .gal2-tab span, .gal2-add { font-size:calc(11px * var(--ui-scale, 1)); }
+  .gal2-cell { width:100%; }
+}
+.gal2-grid { flex:1; overflow:auto; padding:12px; display:flex; flex-wrap:wrap;
+  gap:12px; align-content:flex-start; }
+.gal2-grid.drop { outline:2px dashed var(--accent-hi); outline-offset:-6px; }
+.gal2-cell { width:176px; background:var(--side); border:1px solid var(--border);
+  border-radius:9px; padding:7px; cursor:pointer; }
+.gal2-cell:hover { border-color:var(--accent-hi); }
+.gal2-cell.sel { border-color:var(--accent-hi); box-shadow:0 0 0 2px var(--sel) inset; }
+.gal2-thumb { position:relative; height:118px; border-radius:6px; overflow:hidden;
+  background:var(--bg); display:flex; align-items:center; justify-content:center; }
+.gal2-thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+.gal2-thumb.miss { color:var(--dim); font-size:calc(11px * var(--ui-scale, 1)); }
+.gal2-check { position:absolute; left:5px; top:5px; width:18px; height:18px; border-radius:5px;
+  background:rgba(0,0,0,.5); border:1px solid var(--border); color:transparent;
+  display:flex; align-items:center; justify-content:center; }
+.gal2-cell:hover .gal2-check { color:var(--dim); }
+.gal2-cell.sel .gal2-check { background:var(--accent); color:#fff; border-color:var(--accent-hi); }
+.gal2-badge { position:absolute; right:5px; bottom:5px; padding:1px 6px; border-radius:9px;
+  font-size:calc(9.5px * var(--ui-scale, 1)); background:rgba(0,0,0,.6); color:var(--bright); }
+.gal2-badge.unused { color:var(--orange); }
+.gal2-badge.used { cursor:pointer; }
+.gal2-cell-tags { display:flex; flex-wrap:wrap; gap:3px; margin-top:4px; }
+.gal2-cell-meta { margin-top:3px; color:var(--dim); font-size:calc(10px * var(--ui-scale, 1));
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* ---- มุมมองของตาราง: ย่อ(ครอบตัด) · เต็มรูป(ไม่ครอบ) · รายการ ---- */
+.gal2-grid.mode-fit .gal2-thumb { height:150px; background:var(--bg); }
+.gal2-grid.mode-fit .gal2-thumb img { object-fit:contain; }
+.gal2-grid.mode-list { display:block; }
+.gal2-row { display:flex; gap:10px; align-items:center; padding:6px 8px; border-radius:8px;
+  border:1px solid transparent; cursor:pointer; }
+.gal2-row:hover { background:var(--curline); }
+.gal2-row.sel { background:var(--curline); border-color:var(--accent-hi); }
+.gal2-row + .gal2-row { margin-top:2px; }
+.gal2-row-thumb { width:64px; height:46px; flex:0 0 auto; border-radius:5px; overflow:hidden;
+  background:var(--bg); display:flex; align-items:center; justify-content:center; color:var(--dim); }
+.gal2-row-thumb img { width:100%; height:100%; object-fit:contain; display:block; }
+.gal2-row-main { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
+.gal2-row-name { display:flex; gap:6px; align-items:center; color:var(--bright);
+  font-size:calc(12px * var(--ui-scale, 1)); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gal2-row-album { color:var(--dim); font-size:calc(10px * var(--ui-scale, 1)); }
+.gal2-row-cap { font-size:calc(11.5px * var(--ui-scale, 1)); padding:2px 6px; }
+.gal2-row-side { flex:0 0 auto; display:flex; flex-direction:column; align-items:flex-end; gap:3px; }
+.gal2-row-size { color:var(--dim); font-size:calc(10px * var(--ui-scale, 1)); }
+.gal2-row .gal2-badge { position:static; }
+.gal2-batch { position:absolute; left:50%; bottom:14px; transform:translateX(-50%);
+  display:none; gap:6px; align-items:center; padding:6px 10px; border-radius:10px;
+  background:var(--bar); border:1px solid var(--accent-hi); box-shadow:0 6px 18px rgba(0,0,0,.35);
+  z-index:5; }
+.gal2-batch.on { display:flex; }
+.gal2-batch-n { color:var(--bright); font-size:calc(11.5px * var(--ui-scale, 1)); margin-right:4px; }
+#gal-panel, .k-featpanel:has(> #gal-body) { position:relative; }
+#gal-body { position:relative; height:100%; }
+
+/* ---- กระดานอารมณ์ ---- */
+.gal2-board { flex:1 1 auto; min-height:200px; position:relative; overflow:hidden; background:var(--bg);
+  background-image:radial-gradient(var(--border) 1px, transparent 1px); background-size:24px 24px;
+  cursor:grab; }
+.gal2-board.drop { outline:2px dashed var(--accent-hi); outline-offset:-6px; }
+.gal2-canvas { position:absolute; left:0; top:0; transform-origin:0 0; }
+.gal2-board-hint { position:absolute; left:20px; top:16px; width:340px; color:var(--dim);
+  font-size:calc(12px * var(--ui-scale, 1)); }
+.gal2-bitem { position:absolute; border:1px solid var(--border); border-radius:6px;
+  overflow:hidden; background:var(--side); cursor:move; }
+.gal2-bitem:hover { border-color:var(--accent-hi); }
+/* [alpha.63r] กระดานอารมณ์ห้ามครอบตัดรูป — เห็นทั้งใบเสมอ (ขนาดตอนวางคิดจากสัดส่วนจริงแล้ว) */
+.gal2-bitem img { width:100%; height:100%; object-fit:contain; display:block; pointer-events:none; }
+.gal2-board.panning { cursor:grabbing; }
+.gal2-board-sel { max-width:220px; }
+.mb2 .gal2-board { min-height:260px; }
+.gal2-bresize { position:absolute; right:0; bottom:0; width:14px; height:14px; cursor:nwse-resize;
+  background:linear-gradient(135deg, transparent 50%, var(--accent-hi) 50%); }
+
+/* ---- กล่องข้อมูลรูป / รูปคล้าย / กล่องเลือกรูป ---- */
+.gal2-info-img { max-width:100%; max-height:220px; object-fit:contain; border-radius:8px;
+  background:var(--bg); margin:0 auto 10px; display:block; }
+.gal2-info-rows { display:flex; flex-direction:column; gap:3px; }
+.gal2-info-row { display:flex; gap:10px; font-size:calc(11.5px * var(--ui-scale, 1)); }
+.gal2-info-k { width:110px; flex:0 0 auto; color:var(--dim); }
+.gal2-info-v { color:var(--fg); word-break:break-all; }
+.gal2-info-uses { margin-top:10px; display:flex; flex-direction:column; gap:3px; }
+.gal2-uselink { color:var(--link); cursor:pointer; font-size:calc(11.5px * var(--ui-scale, 1)); }
+.gal2-uselink:hover { text-decoration:underline; }
+.gal2-dups { max-height:56vh; overflow:auto; display:flex; flex-direction:column; gap:8px; }
+.gal2-dup-row { display:flex; gap:8px; align-items:center; padding:6px;
+  border:1px solid var(--border); border-radius:8px; }
+.gal2-dup-cell { width:140px; }
+.gal2-dup-cell img { width:100%; height:90px; object-fit:cover; border-radius:6px; }
+.gal2-dup-score { color:var(--orange); font-size:calc(12px * var(--ui-scale, 1)); }
+.gal2-pick-body { display:flex; gap:10px; min-height:320px; }
+.gal2-pick-side { width:180px; flex:0 0 auto; border:1px solid var(--border); border-radius:8px;
+  overflow:auto; background:var(--side); }
+.gal2-pick-right { flex:1; display:flex; flex-direction:column; gap:8px; min-width:0; }
+/* แถวหัวอัลบั้มในต้นไม้โปรเจกต์ (Explorer) */
+.img-album-row { color:var(--dim); font-size:calc(11px * var(--ui-scale, 1)); opacity:.9; }
+/* รูปในคลังที่ติดแท็ก @เอนทิตี้ — โผล่ท้ายหน้า Wiki (alpha.63) */
+.wiki-tagged-imgs { margin-top:20px; padding-top:14px; border-top:1px solid var(--border); }
+.wiki-tagged-row { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+.wiki-tagged-img { width:110px; height:78px; object-fit:cover; border-radius:6px;
+  border:1px solid var(--border); cursor:zoom-in; }
+.wiki-tagged-img:hover { border-color:var(--accent-hi); }

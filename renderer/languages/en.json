@@ -300,6 +300,7 @@
       "timelineTitle": "Timeline",
       "mapsTitle": "Maps",
       "galleryTitle": "Image Gallery",
+      "galleryBoardTitle": "Mood Board",
       "logEmpty": "(no log entries)",
       "versionHistoryTitle": "Version History — ",
       "trayRestorePre": "Click to restore the \"",

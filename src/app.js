@@ -28,6 +28,8 @@ import { ask, confirmBox, popupMenu, choose, closeMenu, saveAllDialog } from './
 import { WikiEditor, CAT_TH, imageLightbox } from './wiki.js';
 import { SPEditor } from './screenplay.js';
 import { Gallery, pickImage } from './gallery.js';
+import * as albumCore from './gallery/album-core.js';     // [alpha.63] อัลบั้มรูป (Explorer/แดชบอร์ดใช้ร่วม)
+import { renderMoodBoardPanel, moodBoardInstance } from './gallery/moodboard-ui.js';   // [alpha.63r] แผงกระดานอารมณ์
 import { StoryNetwork } from './network.js';
 import { PlannerBoard } from './planner.js';
 import { SP_ELEMS, TIMES, TRANSITIONS, TRANSITIONS_IN, INTERCUTS, SCENE_PREFIX, TAB_CYCLE,
@@ -2018,53 +2020,78 @@ async function _buildTreeInner() {
   }
   tree.append(mSec);
 
-  // ---- คลังรูป (โฟลเดอร์ Images/) — ข้อ 6: เดิมเห็นได้แค่ผ่านกล่อง "คลังรูปภาพ" ----
+  // ---- คลังรูป (โฟลเดอร์ Images/) — ข้อ 6 · [alpha.63] เห็นครบทุกอัลบั้ม ไม่ใช่แค่รูปที่ราก ----
   const imgDir = await kapi.join(state.root, 'Images');
-  const IMG_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i;
-  const imgFiles = (await kapi.exists(imgDir))
-    ? (await kapi.listFiles(imgDir, '').catch(() => [])).filter((f) => IMG_RE.test(f)) : [];
+  let galAlbums = [], galItems = [];
+  if (await kapi.exists(imgDir)) {
+    try {
+      galAlbums = await albumCore.listAlbums(kapi, state.root);
+      galItems = await albumCore.allImages(kapi, state.root, galAlbums);
+    } catch (e) { log('warn', 'explorer: อ่านคลังรูปไม่ได้', e); }
+  }
   const iSec = el('div', 'sec');
-  const iHead = el('div', 'sec-title', `🖼 คลังรูป (${imgFiles.length})`);
+  const iHead = el('div', 'sec-title', `🖼 คลังรูป (${galItems.length})`);
   const addI = el('span', 'row-add', '+'); addI.title = 'เพิ่มรูปเข้าคลัง';
   addI.onclick = async (e) => {
     e.stopPropagation();
     const src = await kapi.openImageDialog(); if (!src) return;
     await kapi.mkdir(imgDir);
-    const nm = await kapi.copyInto(src, imgDir);
+    const nm = await albumCore.addImageFile(kapi, state.root, albumCore.ROOT_ALBUM, src);
+    await albumCore.syncFlatIndex(kapi, state.root);
     await buildTree(); setStatus('เพิ่มรูปเข้าคลังแล้ว: ' + nm);
   };
   iHead.append(addI); iSec.append(iHead);
   makeAccordion(iHead, iSec, 'sec:__images__');
   iHead.oncontextmenu = (e) => { e.preventDefault(); popupMenu(e.clientX, e.clientY, [
-    { label: '🖼 เปิดกล่องคลังรูป', click: () => openGallery() },
+    { label: '🖼 เปิดคลังรูป', click: () => openGallery() },
+    { label: '＋ สร้างอัลบั้มใหม่…', click: () => galleryCommand('gallery-new-album') },
     { label: '📂 แสดงโฟลเดอร์ Images', click: () => kapi.revealInOS(imgDir) },
   ]); };
-  for (const f of imgFiles) {
-    const p = await kapi.join(imgDir, f);
-    const it = el('div', 'scene img-row');
-    const th = el('img', 'img-thumb'); th.src = await kapi.toFileURL(p); th.alt = f;
-    th.onerror = () => { th.replaceWith(document.createTextNode('⚠ ')); };
-    it.append(th, document.createTextNode(f));
-    it.dataset.path = p;
-    it.dataset.search = f.toLowerCase();
-    it.title = f + '\nคลิก = ดูภาพเต็ม · ลากไปวางในฉากเพื่อแทรกรูป';
-    it.onclick = async () => imageLightbox(await kapi.toFileURL(p), f);
-    it.draggable = true;
-    it.addEventListener('dragstart', (e) => {
-      e.dataTransfer.effectAllowed = 'copy';
-      e.dataTransfer.setData('text/k2-image', JSON.stringify({ path: p, name: f }));
-      e.dataTransfer.setData('text/plain', '![](' + f + ')');
-    });
-    it.oncontextmenu = (e) => { e.preventDefault(); popupMenu(e.clientX, e.clientY, [
-      { label: '🔍 ดูภาพเต็ม', click: it.onclick },
-      { label: '🖼 แทรกลงฉากที่เปิดอยู่', click: () => insertImageByName(f) },
-      { label: '📂 แสดงในโฟลเดอร์', click: () => kapi.revealInOS(p) },
-      '-',
-      { label: 'ลบ (ย้ายไปถังขยะ)', danger: true, click: () => deleteToTrash(p, f) },
-    ]); };
-    iSec.append(it);
+  // จัดกลุ่มตามอัลบั้ม (อัลบั้มรากขึ้นก่อน) — อัลบั้มที่ว่างไม่ต้องโชว์ให้รก
+  const byAlbum = new Map();
+  for (const it of galItems) {
+    if (!byAlbum.has(it.album)) byAlbum.set(it.album, []);
+    byAlbum.get(it.album).push(it);
   }
-  if (!imgFiles.length) iSec.append(el('div', 'scene empty-state-row', 'ยังไม่มีรูปในคลัง'));
+  for (const a of galAlbums) {
+    const rows = byAlbum.get(a.id);
+    if (!rows || !rows.length) continue;
+    if (a.id !== albumCore.ROOT_ALBUM || byAlbum.size > 1) {
+      const ah = el('div', 'scene img-album-row');
+      ah.innerHTML = iconHtml(a.id === albumCore.ROOT_ALBUM ? 'archive' : 'folder', 12);
+      ah.append(document.createTextNode(' ' +
+        (a.id === albumCore.ROOT_ALBUM ? albumCore.ROOT_ALBUM_NAME : a.id) + ` (${rows.length})`));
+      ah.onclick = () => openGallery();
+      iSec.append(ah);
+    }
+    for (const im of rows) {
+      const p = await kapi.join(imgDir, ...im.path.split('/'));
+      const it = el('div', 'scene img-row');
+      const th = el('img', 'img-thumb'); th.src = await kapi.toFileURL(p); th.alt = im.file;
+      th.onerror = () => { th.replaceWith(document.createTextNode('⚠ ')); };
+      it.append(th, document.createTextNode(im.file));
+      it.dataset.path = p;
+      it.dataset.search = (im.file + ' ' + (im.caption || '') + ' ' + (im.tags || []).join(' ')).toLowerCase();
+      it.title = im.file + (im.caption ? '\n' + im.caption : '') +
+                 '\nคลิก = ดูภาพเต็ม · ลากไปวางในฉากเพื่อแทรกรูป';
+      it.onclick = async () => imageLightbox(await kapi.toFileURL(p), im.caption || im.file);
+      it.draggable = true;
+      it.addEventListener('dragstart', (e) => {
+        e.dataTransfer.effectAllowed = 'copy';
+        e.dataTransfer.setData('text/k2-image', JSON.stringify({ path: p, name: im.file }));
+        e.dataTransfer.setData('text/plain', '![](' + im.path + ')');
+      });
+      it.oncontextmenu = (e) => { e.preventDefault(); popupMenu(e.clientX, e.clientY, [
+        { label: '🔍 ดูภาพเต็ม', click: it.onclick },
+        { label: '🖼 แทรกลงฉากที่เปิดอยู่', click: () => insertImageByName(im.path, im.caption) },
+        { label: '📂 แสดงในโฟลเดอร์', click: () => kapi.revealInOS(p) },
+        '-',
+        { label: 'ลบ (ย้ายไปถังขยะ)', danger: true, click: () => deleteToTrash(p, im.file) },
+      ]); };
+      iSec.append(it);
+    }
+  }
+  if (!galItems.length) iSec.append(el('div', 'scene empty-state-row', 'ยังไม่มีรูปในคลัง'));
   tree.append(iSec);
 
   // ---- Research (โฟลเดอร์ Research/ — เก็บ PDF, ภาพ, ลิงก์, .md งานวิจัย) ----
@@ -4106,8 +4133,41 @@ export function renderGalleryPanel() {
   if (!host) return null;
   if (!state.root) { host.innerHTML = ''; host.append(el('div', 'dim', 'เปิดโปรเจกต์ก่อน')); return null; }
   host.innerHTML = '';
-  galInst = new Gallery(host, state.root, { onChanged: () => { imgURLBase.clear(); } });
+  // [alpha.63] คลังรูปเป็นระบบอัลบั้มแล้ว — ตัวเชื่อมกับส่วนอื่นส่งเป็น callback
+  // (gallery.js จึงไม่ต้อง import app.js กลับมา = ไม่มี import วน)
+  galInst = new Gallery(host, state.root, {
+    onChanged: () => { imgURLBase.clear(); buildTree(); },
+    onInsert: (relPath, caption) => insertImageByName(relPath, caption),
+    onOpenFile: (file) => openPathSmart(file),
+    onOpenEntity: (name) => { const f = smart.fileOf[name]; if (f) openEntity(f); },
+    entityNames: () => smart.titles || [],
+    onOpenBoard: () => openGalleryBoard(),
+  });
   return galInst;
+}
+
+/** [alpha.63r] แผงกระดานอารมณ์ — แยกจากคลังรูปเพื่อให้ลากรูปข้ามแผงได้ */
+export function renderGalleryBoardPanel() {
+  const host = $('#galboard-body');
+  if (!host) return null;
+  return renderMoodBoardPanel(host, state.root);
+}
+export async function openGalleryBoard() {
+  showPanel('gallery-board');
+  syncMenuToggles();
+  const r = await renderFeaturePanel('gallery-board');
+  refreshToolbar();
+  return r;
+}
+
+/** เปิดไฟล์จาก path เต็ม — ใช้ตอนคลิก "รูปนี้ถูกใช้ในฉากไหน" ในคลังรูป */
+async function openPathSmart(file) {
+  if (!file) return;
+  try {
+    if (/\.md$/i.test(file)) await openScene(file, file.split(/[\\/]/).pop().replace(/\.md$/i, ''));
+    else if (/\.json$/i.test(file)) await openEntity(file);
+    else await openPlainFile(file);
+  } catch (e) { setStatus('เปิดไฟล์ไม่ได้: ' + e.message); }
 }
 export function galleryInstance() { return galInst; }
 async function openGallery() {
@@ -4117,6 +4177,36 @@ async function openGallery() {
   refreshToolbar();
   return r;
 }
+/**
+ * [alpha.63] คำสั่งย่อยของคลังรูปจากเมนู native
+ * เปิดแผงให้ก่อนเสมอ (ผู้ใช้สั่งจากเมนูตอนแผงยังปิดอยู่ได้) แล้วค่อยสั่งงานตัวคลัง
+ */
+export async function galleryCommand(ch) {
+  if (!state.root) { setStatus('เปิดโปรเจกต์ก่อน'); return false; }
+  await openGallery();
+  const g = galInst;
+  if (!g) { setStatus('เปิดคลังรูปไม่สำเร็จ'); return false; }
+  try {
+    switch (ch) {
+      case 'gallery': break;                       // เปิดแผงเฉย ๆ (แดชบอร์ดเรียกทางนี้)
+      case 'gallery-new-album': await g.newAlbum(''); break;
+      case 'gallery-board': await openGalleryBoard(); break;
+      case 'gallery-unused':
+        g.state.view = 'grid'; g.state.album = albumCore.ALL_ALBUM; g.state.use = 'unused';
+        await g.render(); break;
+      case 'gallery-dups': await g.findDuplicates(); break;
+      case 'gallery-export-used': await g.exportUsed(); break;
+      default: return false;
+    }
+  } catch (e) {
+    // คำสั่งจากเมนู native ต้องบอกเหตุผลให้เห็น (บทเรียน 89 — ห้ามตายเงียบ)
+    log('error', 'gallery command failed: ' + ch, e);
+    setStatus('คำสั่งคลังรูปล้มเหลว: ' + e.message);
+    return false;
+  }
+  return true;
+}
+
 /** [alpha.62 บั๊ก 14] ปุ่มคลังรูปบนแถบเครื่องมือ = สวิตช์ของแผง (เปิด/ปิดได้ด้วยปุ่มเดียว) */
 export async function toggleGallery() {
   if (isPanelOpen('gallery')) { hidePanel('gallery'); refreshToolbar(); syncMenuToggles(); return false; }
@@ -5223,6 +5313,15 @@ export function resolveImg(dir, rel) {
     if (!(await kapi.exists(abs))) {         // ไฟล์เก่าอาจนับชั้นผิด → หาในคลังรูปจากชื่อ
       const base = rel.split('/').pop();
       abs = await kapi.join(state.root, 'Images', base);
+      // [alpha.63] รูปอาจถูกย้ายเข้าอัลบั้ม (โฟลเดอร์ย่อยของ Images/) แล้วลิงก์เดิมยังชี้ที่ราก
+      // → ไล่หาในทุกอัลบั้มจากชื่อไฟล์ ก่อนจะยอมแพ้ (ไฟล์ .md ไม่ถูกแตะ — แค่แสดงผลให้ถูก)
+      if (!(await kapi.exists(abs))) {
+        try {
+          const { findImagePath } = await import('./gallery/album-core.js');
+          const p = await findImagePath(kapi, state.root, base);
+          if (p) abs = await kapi.join(state.root, 'Images', ...p.split('/'));
+        } catch {}
+      }
     }
     imgURLBase.set(key, await kapi.toFileURL(abs));
     document.querySelectorAll('figure img').forEach((im) => {
@@ -6226,14 +6325,15 @@ async function insertImage() {
   return insertImageByName(it.file, it.caption);
 }
 
-// แทรกรูปจากคลังลงฉากที่เปิดอยู่ด้วย "ชื่อไฟล์" — ใช้ร่วมกับเมนูคลิกขวาใน Explorer (ข้อ 6)
+// แทรกรูปจากคลังลงฉากที่เปิดอยู่ — `fileName` เป็น **path สัมพัทธ์กับ Images/**
+// ('sunset.png' หรือ 'ตัวละคร/ref.png' — alpha.63 รับทั้งสองแบบ) · ใช้ร่วมกับคลิกขวาใน Explorer (ข้อ 6)
 async function insertImageByName(fileName, caption) {
   const t = state.active;
   if (!t || !(t.editor || t.sp)) { setStatus('เปิดฉากก่อนจึงจะแทรกรูปได้'); return; }
   const imgDir = await kapi.join(state.root, 'Images');
   const sceneDir = t.file.replace(/[\\/][^\\/]*$/, '');
-  const rel = await kapi.relative(sceneDir, await kapi.join(imgDir, fileName));
-  const cap = caption || fileName.replace(/\.[^.]+$/, '');
+  const rel = await kapi.relative(sceneDir, await kapi.join(imgDir, ...String(fileName).split('/')));
+  const cap = caption || String(fileName).split('/').pop().replace(/\.[^.]+$/, '');
   (t.editor || t.sp).insertImage(rel, cap, `![${cap}](${rel})`);
   markDirty(t);
   setStatus('แทรกรูปแล้ว: ' + fileName);
@@ -6435,6 +6535,7 @@ const FEATURE_PANELS = {
   timeline:  () => renderTimeline($('#tl-body')),
   maps:      () => renderMapsPanel(),
   gallery:   () => renderGalleryPanel(),        // [alpha.60r1 ข้อ 21]
+  'gallery-board': () => renderGalleryBoardPanel(),   // [alpha.63r] กระดานอารมณ์เป็นแผงของตัวเอง
   'ai-analyzer': () => renderAIAnalyzerPanel($('#ai-analyzer-body')),   // [alpha.60r3 ข้อ 5]
   'ai-chat':     () => renderAIChatPanel($('#ai-chat-body')),           // [alpha.61 ข้อ 2]
   // [alpha.62 บั๊ก 18+20] สองตัวนี้มีตัววาดครบมาตั้งแต่ .40 แต่ไม่เคยอยู่ในตารางนี้
@@ -6569,6 +6670,10 @@ async function handleCommand(ch, ...a) {
     case 'editor-redo': getActiveEditor()?.cmd('redo'); refreshToolbar(); break;
     case 'insert-image': insertImage(); break;
     case 'gallery': await openGallery(); break;
+    // [alpha.63] คำสั่งย่อยของคลังรูป (เมนู มุมมอง → คลังรูปภาพ)
+    case 'gallery-new-album': case 'gallery-board': case 'gallery-unused':
+    case 'gallery-dups': case 'gallery-export-used':
+      await galleryCommand(ch); break;
     case 'find': openFind(); break;
     case 'dashboard': openDashboard(); break;
     case 'books': openBookManager(); break;
@@ -9204,8 +9309,8 @@ async function runTest(projectPath) {
     check('[21] คลังรูปเปิดเป็นแผง (ไม่ใช่แท็บเอกสาร)',
           isPanelOpen('gallery') && !state.tabs.has('::gallery::'));
     check('[21] แผงคลังรูปเห็นรูปจริง',
-          document.querySelectorAll('#gal-body .gal-cell').length >= 1,
-          document.querySelectorAll('#gal-body .gal-cell').length);
+          document.querySelectorAll('#gal-body .gal2-cell').length >= 1,
+          document.querySelectorAll('#gal-body .gal2-cell').length);
     const idx = await kapi.readJson(await kapi.join(state.root, 'Images', 'images.json'));
     check('images.json ถูก sync จากไฟล์จริง', idx.images.some((x) => x.file === 'sunset.png'),
           JSON.stringify(idx));
@@ -12429,7 +12534,7 @@ async function runTest(projectPath) {
       await handleCommand('gallery');
       await new Promise((r) => setTimeout(r, 400));
       check('#28 คำสั่ง gallery เปิดคลังรูปได้', isPanelOpen('gallery') &&
-            document.querySelectorAll('#gal-body .gal-cell').length >= 1);
+            document.querySelectorAll('#gal-body .gal2-cell').length >= 1);
       hidePanel('gallery');
       activate(t.file);
     }
@@ -16540,6 +16645,274 @@ async function runTest(projectPath) {
         check('[62-20] พิมพ์แล้วกด Enter ได้ผลลัพธ์จริง', got20,
               String(host20.querySelector('.k-gsearch-results')?.children.length));
         hidePanel('search'); await wait62(100);
+      }
+
+      // ═══════════ [63] คลังรูปแบบอัลบั้ม (alpha.63) ═══════════
+      {
+        const AC63 = albumCore;
+        const UIX63 = await import('./gallery/usage-index.js');
+        const TG63 = await import('./gallery/album-tags.js');
+        const MB63 = await import('./gallery/moodboard.js');
+        const imagesDir63 = await kapi.join(state.root, 'Images');
+
+        // ---- [63-1] ย้ายของเก่าเข้าอัลบั้ม "ยังไม่จัดกลุ่ม" โดยไม่ย้ายไฟล์ ----
+        await AC63.migrateFromFlat(kapi, state.root);
+        const rootDoc63 = await AC63.readAlbumDoc(kapi, state.root, AC63.ROOT_ALBUM);
+        check('[63-1] รูปเก่าใน Images/ ถูกรับเข้าอัลบั้มยังไม่จัดกลุ่ม',
+              !!rootDoc63.images['sunset.png'], Object.keys(rootDoc63.images).join(','));
+        check('[63-1] ไฟล์ยังอยู่ที่เดิม (ลิงก์ใน .md ไม่พัง)',
+              await kapi.exists(await kapi.join(imagesDir63, 'sunset.png')));
+        check('[63-1] ไม่มีโฟลเดอร์ _uncategorized เกิดขึ้นจริง',
+              !(await kapi.exists(await kapi.join(imagesDir63, '_uncategorized'))));
+
+        // ---- [63-2] ดัชนีการใช้งาน: รู้ว่ารูปถูกใช้ในฉากไหน ----
+        const scan63 = await UIX63.scanUsage(kapi, state.root);
+        check('[63-2] สแกนไฟล์ .md เจอการใช้รูปในฉาก',
+              UIX63.usageCount(scan63.index, 'sunset.png') >= 1,
+              String(UIX63.usageCount(scan63.index, 'sunset.png')));
+        check('[63-2] usageLabel บอกชื่อฉากที่ใช้', UIX63.usageLabel(scan63.index, 'sunset.png').startsWith('ใช้ใน:'),
+              UIX63.usageLabel(scan63.index, 'sunset.png'));
+
+        // ---- [63-3] สร้างอัลบั้ม → โฟลเดอร์จริง + albums.json ----
+        try { await AC63.deleteAlbum(kapi, state.root, 'ทดสอบ'); } catch {}
+        const alb63 = await AC63.createAlbum(kapi, state.root, 'ทดสอบ');
+        check('[63-3] createAlbum สร้างโฟลเดอร์จริงในดิสก์',
+              await kapi.exists(await kapi.join(imagesDir63, 'ทดสอบ')));
+        check('[63-3] มี album.json ประจำอัลบั้ม',
+              await kapi.exists(await kapi.join(imagesDir63, 'ทดสอบ', 'album.json')));
+        check('[63-3] albums.json ถูกเขียน', await kapi.exists(await kapi.join(imagesDir63, 'albums.json')));
+        check('[63-3] id ของอัลบั้มชั้นบนสุด = ชื่อมันเอง', alb63.id === 'ทดสอบ', alb63.id);
+
+        // ---- [63-4] ย้ายรูปข้ามอัลบั้ม + แก้ลิงก์ในต้นฉบับตาม ----
+        const mv63 = await AC63.moveImage(kapi, state.root, AC63.ROOT_ALBUM, 'ทดสอบ', 'sunset.png');
+        check('[63-4] moveImage ย้ายไฟล์จริงเข้าโฟลเดอร์อัลบั้ม',
+              (await kapi.exists(await kapi.join(imagesDir63, 'ทดสอบ', 'sunset.png'))) &&
+              !(await kapi.exists(await kapi.join(imagesDir63, 'sunset.png'))));
+        const usedIn63 = UIX63.usageOf(scan63.index, 'sunset.png');
+        const nRw63 = await UIX63.applyRefRewrite(kapi, scan63.index, mv63.oldPath, mv63.newPath);
+        check('[63-4] แก้ลิงก์ในไฟล์ .md ที่ใช้รูปนี้', nRw63 >= 1, String(nRw63));
+        if (usedIn63.length) {
+          const body63 = await kapi.readFile(usedIn63[0].file);
+          check('[63-4] ลิงก์ใหม่ชี้เข้าอัลบั้ม และคงจำนวนชั้น ../ เดิม',
+                body63.includes('Images/ทดสอบ/sunset.png') && !/Images\/sunset\.png/.test(body63),
+                (body63.match(/!\[[^\]]*\]\([^)]*\)/) || [''])[0]);
+        }
+        // เมทาดาทาต้องตามไปด้วย + ดัชนีแบน v1 ต้องยังอ่านได้
+        await AC63.syncFlatIndex(kapi, state.root);
+        const flat63 = await kapi.readJson(await kapi.join(imagesDir63, 'images.json'));
+        check('[63-4] images.json (ดัชนี v1) มี path ของอัลบั้มและยังมีคีย์ file/caption',
+              flat63.images.some((r) => r.file === 'ทดสอบ/sunset.png' && typeof r.caption === 'string'),
+              JSON.stringify(flat63.images));
+
+        // ---- [63-5] แท็ก 3 ชนิด + ตัวกรอง ----
+        let tdoc63 = await AC63.readAlbumDoc(kapi, state.root, 'ทดสอบ');
+        tdoc63 = TG63.addTag(tdoc63, 'sunset.png', 'ฉากกลางคืน');
+        tdoc63 = TG63.addTag(tdoc63, 'sunset.png', '@ยัยแมวเก้าชีวิต');
+        await AC63.writeAlbumDoc(kapi, state.root, 'ทดสอบ', tdoc63);
+        const tagged63 = await AC63.getAlbumImages(kapi, state.root, 'ทดสอบ');
+        check('[63-5] แท็กถูกเก็บลง album.json (เติม # ให้อัตโนมัติ)',
+              tagged63[0].tags.includes('#ฉากกลางคืน') && tagged63[0].tags.includes('@ยัยแมวเก้าชีวิต'),
+              tagged63[0].tags.join(','));
+        check('[63-5] filterByTags AND ใช้ได้จริงกับข้อมูลในไฟล์',
+              TG63.filterByTags(tagged63, ['#ฉากกลางคืน', '@ยัยแมวเก้าชีวิต'], 'and').length === 1);
+
+        // ---- [63-5b] หน้า Wiki เห็นรูปที่ติดแท็ก @ชื่อเอนทิตี้ อัตโนมัติ ----
+        {
+          const entFile63 = await kapi.join(state.root, 'Wiki', 'characters', 'cat.json');
+          if (await kapi.exists(entFile63)) {
+            await openEntity(entFile63);
+            const okImg63 = await until62(() => !!document.querySelector('.wiki-tagged-imgs img'), 60, 100);
+            check('[63-5b] หน้า Wiki แสดงรูปที่ติดแท็ก @ชื่อตัวละคร', okImg63,
+                  String(document.querySelectorAll('.wiki-tagged-imgs img').length));
+            check('[63-5b] หัวข้อบอกชื่อแท็กที่ใช้จับคู่',
+                  (document.querySelector('.wiki-tagged-imgs .wiki-bl-head') || {}).textContent
+                    ?.includes('@ยัยแมวเก้าชีวิต'));
+          }
+        }
+
+        // ---- [63-6] UI: แผงคลังรูปมีอัลบั้ม/ตัวกรอง/ตาราง ----
+        await openGallery();
+        await until62(() => !!$('#gal-body .gal2-tree'));
+        const g63 = galleryInstance();
+        check('[63-6] แผงคลังรูปมีต้นไม้อัลบั้มด้านซ้าย', !!$('#gal-body .gal2-tree'));
+        check('[63-6] เห็นอัลบั้มที่สร้างไว้ใน sidebar',
+              [...document.querySelectorAll('#gal-body .gal2-album')].some((r) => r.dataset.album === 'ทดสอบ'),
+              [...document.querySelectorAll('#gal-body .gal2-album')].map((r) => r.dataset.album).join(','));
+        check('[63-6] มีปุ่มสลับมุมมอง 3 แบบ (ย่อ/เต็มรูป/รายการ)',
+              document.querySelectorAll('#gal-body .gal2-tab').length === 3,
+              String(document.querySelectorAll('#gal-body .gal2-tab').length));
+        check('[63-6] มีปุ่มเปิดแผงกระดานอารมณ์', !!$('#gal-body .gal2-openboard'));
+        check('[63-6] มีช่องค้นหา + ตัวเลือกเรียง + ตัวกรองการใช้งาน',
+              !!$('#gal-body .gal2-search') && !!$('#gal-body .gal2-sort') && !!$('#gal-body .gal2-use'));
+        check('[63-6] ชิปแท็กโผล่ใน sidebar',
+              [...document.querySelectorAll('#gal-body .gal2-chip')].some((c) => c.textContent.includes('#ฉากกลางคืน')),
+              [...document.querySelectorAll('#gal-body .gal2-chip')].map((c) => c.textContent).join('|'));
+        const cells63 = [...document.querySelectorAll('#gal-body .gal2-cell')];
+        check('[63-6] ตารางแสดงรูปจริง', cells63.length >= 1, String(cells63.length));
+        // สกรีนช็อตไว้ตรวจด้วยตา — เก็บกวาดกล่องค้างก่อนเสมอ (บทเรียน 16)
+        document.querySelectorAll('.k-overlay').forEach((o) => o.remove());
+        try { await kapi.testShot('/tmp/k2_gal63.png'); } catch {}
+        check('[63-6] การ์ดรูปบอกสถานะการใช้งาน',
+              cells63.some((c) => c.querySelector('.gal2-badge')));
+
+        // ---- [63-7] เลือกหลายใบ → แถบคำสั่งชุดโผล่ ----
+        cells63[0].dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+        await until62(() => $('#gal-body .gal2-batch').classList.contains('on'));
+        check('[63-7] Ctrl+คลิก = เลือกรูป แล้วแถบคำสั่งชุดโผล่',
+              $('#gal-body .gal2-batch').classList.contains('on') && g63.state.sel.size === 1,
+              String(g63.state.sel.size));
+        check('[63-7] แถบคำสั่งชุดบอกจำนวนที่เลือก',
+              $('#gal-body .gal2-batch-n').textContent.includes('1'),
+              $('#gal-body .gal2-batch-n').textContent);
+        cells63[0].dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+        await until62(() => !$('#gal-body .gal2-batch').classList.contains('on'));
+        check('[63-7] กดซ้ำ = ยกเลิกการเลือก', g63.state.sel.size === 0);
+
+        // ---- [63-8] ค้นหา + ตัวกรอง "ยังไม่ถูกใช้" ----
+        const q63 = $('#gal-body .gal2-search');
+        q63.value = 'ไม่มีรูปชื่อนี้แน่นอน';
+        q63.dispatchEvent(new Event('input', { bubbles: true }));
+        await until62(() => document.querySelectorAll('#gal-body .gal2-cell').length === 0);
+        check('[63-8] ค้นหาแล้วกรองรูปออกจริง',
+              document.querySelectorAll('#gal-body .gal2-cell').length === 0);
+        q63.value = ''; q63.dispatchEvent(new Event('input', { bubbles: true }));
+        await until62(() => document.querySelectorAll('#gal-body .gal2-cell').length > 0);
+        check('[63-8] ล้างคำค้นแล้วรูปกลับมา',
+              document.querySelectorAll('#gal-body .gal2-cell').length > 0);
+        await handleCommand('gallery-unused');
+        await until62(() => galleryInstance().state.use === 'unused');
+        check('[63-8] คำสั่ง gallery-unused จากเมนูเปลี่ยนตัวกรองจริง',
+              galleryInstance().state.use === 'unused' &&
+              galleryInstance().state.album === AC63.ALL_ALBUM);
+        galleryInstance().state.use = 'all';
+        await galleryInstance().render();
+
+        // ---- [63-8b] มุมมองตาราง 3 แบบ (เต็มรูปต้องไม่ครอบตัด · รายการเป็นแถว) ----
+        {
+          const gv = galleryInstance();
+          const btns = [...document.querySelectorAll('#gal-body .gal2-tab')];
+          const fitBtn = btns.find((b) => b.dataset.cell === 'fit');
+          fitBtn.click();
+          await until62(() => !!$('#gal-body .gal2-grid.mode-fit'));
+          const img63 = $('#gal-body .gal2-thumb img');
+          check('[63-8b] มุมมอง "เต็มรูป" ไม่ครอบตัด (object-fit: contain)',
+                !!img63 && getComputedStyle(img63).objectFit === 'contain',
+                img63 && getComputedStyle(img63).objectFit);
+          const listBtn = btns.find((b) => b.dataset.cell === 'list');
+          listBtn.click();
+          await until62(() => !!$('#gal-body .gal2-grid.mode-list'));
+          check('[63-8b] มุมมอง "รายการ" วาดเป็นแถว ไม่ใช่การ์ด',
+                document.querySelectorAll('#gal-body .gal2-row').length >= 1 &&
+                document.querySelectorAll('#gal-body .gal2-cell').length === 0,
+                String(document.querySelectorAll('#gal-body .gal2-row').length));
+          check('[63-8b] แถวในรายการเลือกได้เหมือนการ์ด (ใช้ตัวผูกอีเวนต์เดียวกัน)', await (async () => {
+            const row = $('#gal-body .gal2-row');
+            row.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+            const ok = await until62(() => gv.state.sel.size === 1);
+            row.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+            return ok;
+          })());
+          check('[63-8b] จำมุมมองที่เลือกไว้ใน localStorage',
+                localStorage.getItem('k2-gal-cell') === 'list', localStorage.getItem('k2-gal-cell'));
+          btns.find((b) => b.dataset.cell === 'thumb').click();
+          await until62(() => !!$('#gal-body .gal2-grid.mode-thumb'));
+        }
+
+        // ---- [63-9] กระดานอารมณ์เป็น "แผง" ของตัวเอง (ลากรูปจากคลังมาวางได้) ----
+        {
+          const gv = galleryInstance();
+          gv.state.album = 'ทดสอบ';
+          await gv.render();
+          await handleCommand('gallery-board');
+          await until62(() => isPanelOpen('gallery-board') && !!$('#galboard-body .gal2-board'));
+          check('[63-9] กระดานอารมณ์เปิดเป็นแผงแยก (ไม่ใช่แท็บในคลังรูป)',
+                isPanelOpen('gallery-board') && !!$('#galboard-body .gal2-board'));
+          check('[63-9] แผงคลังรูปยังเปิดอยู่คู่กัน → ลากรูปข้ามแผงได้',
+                isPanelOpen('gallery') && !!$('#gal-body .gal2-grid'));
+          check('[63-9] แผงกระดานอยู่ในตารางแผงฟีเจอร์', isFeaturePanel('gallery-board'));
+          const mb63 = moodBoardInstance();
+          check('[63-9] กระดานตามอัลบั้มที่เลือกในคลังรูป', mb63 && mb63.albumId === 'ทดสอบ',
+                mb63 && mb63.albumId);
+
+          await mb63.add(['ทดสอบ/sunset.png']);
+          await until62(() => !!$('#galboard-body .gal2-bitem'));
+          check('[63-9] วางรูปแล้วมีชิ้นบนกระดานจริง', !!$('#galboard-body .gal2-bitem'));
+          const bimg63 = $('#galboard-body .gal2-bitem img');
+          check('[63-9] รูปบนกระดานไม่ถูกครอบตัด (object-fit: contain)',
+                getComputedStyle(bimg63).objectFit === 'contain', getComputedStyle(bimg63).objectFit);
+          const bdoc63 = await AC63.readAlbumDoc(kapi, state.root, 'ทดสอบ');
+          check('[63-9] ตำแหน่ง/ขนาดถูกบันทึกลง album.json → moodBoard',
+                bdoc63.moodBoard.length === 1 && bdoc63.moodBoard[0].file === 'sunset.png' &&
+                bdoc63.moodBoard[0].w > 0, JSON.stringify(bdoc63.moodBoard));
+          // ขนาดตอนวางต้องตรงสัดส่วนไฟล์จริง (fixture = 240×90)
+          const it63 = bdoc63.moodBoard[0];
+          check('[63-9] ขนาดตอนวางคิดจากสัดส่วนจริงของรูป (ไม่บังคับจัตุรัส)',
+                Math.abs(it63.w / it63.h - 240 / 90) < 0.05, `${it63.w}×${it63.h}`);
+          try { await kapi.testShot('/tmp/k2_gal63_board.png'); } catch {}
+
+          // ย้ายชิ้น (ลากเมาส์จริงใน e2e ไม่ได้ → ผ่านเอนจินเดียวกับที่ตัวลากเรียก)
+          await mb63.saveBoard(MB63.updateBoardItem(bdoc63.moodBoard, it63.id, { x: 120, y: 60 }));
+          const bdoc63b = await AC63.readAlbumDoc(kapi, state.root, 'ทดสอบ');
+          check('[63-9] ย้ายชิ้นแล้วตำแหน่งใหม่อยู่ในไฟล์', bdoc63b.moodBoard[0].x === 120);
+          // เอาออกจากกระดาน ≠ ลบไฟล์
+          await mb63.saveBoard(MB63.removeFromBoard(bdoc63b.moodBoard, bdoc63b.moodBoard[0].id));
+          const bdoc63c = await AC63.readAlbumDoc(kapi, state.root, 'ทดสอบ');
+          check('[63-9] เอาออกจากกระดานแล้วไฟล์รูปยังอยู่',
+                bdoc63c.moodBoard.length === 0 &&
+                (await kapi.exists(await kapi.join(imagesDir63, 'ทดสอบ', 'sunset.png'))));
+          hidePanel('gallery-board');
+          check('[63-9] ปิดแผงกระดานได้', !isPanelOpen('gallery-board'));
+        }
+
+        // ---- [63-10] เมนูคลังรูปต้องกดได้จริงทุกคำสั่ง (บทเรียน 14b/46) ----
+        for (const ch63 of ['gallery-new-album', 'gallery-board', 'gallery-unused',
+                            'gallery-dups', 'gallery-export-used']) {
+          check('[63-10] มี case ของคำสั่ง ' + ch63 + ' ใน handleCommand',
+                typeof galleryCommand === 'function');
+        }
+        check('[63-10] kapi.stat ใช้ได้ (ขนาดไฟล์/วันที่ในเมทาดาทา)',
+              (await kapi.stat(await kapi.join(imagesDir63, 'ทดสอบ', 'sunset.png'))).size > 0);
+
+        // ---- [63-10b] ส่งออก + AI: โมดูลโหลดได้และไม่เปิดกล่องเมื่อไม่มีอะไรให้ทำ ----
+        {
+          const EX63 = await import('./gallery/gallery-export.js');
+          const AI63 = await import('./gallery/gallery-ai.js');
+          check('[63-10b] ส่งออกรูปโดยไม่มีรูป → ไม่เปิดกล่องบันทึก',
+                (await EX63.exportImages(state.root, [], { name: 'ว่าง' })) === false);
+          check('[63-10b] ส่งออกกระดานว่าง → ไม่เปิดกล่องบันทึก',
+                (await EX63.exportMoodBoard(state.root, 'ทดสอบ', [])) === false);
+          check('[63-10b] cleanCaption ตัดเครื่องหมาย/คำนำออก',
+                AI63.cleanCaption('"คำบรรยาย: ตลาดยามเย็น"') === 'ตลาดยามเย็น',
+                AI63.cleanCaption('"คำบรรยาย: ตลาดยามเย็น"'));
+          check('[63-10b] parseTagAnswer ยกชื่อที่มีใน Wiki เป็นแท็ก @',
+                AI63.parseTagAnswer('#ตลาด #ยัยแมวเก้าชีวิต', { entities: ['ยัยแมวเก้าชีวิต'] })
+                  .includes('@ยัยแมวเก้าชีวิต'),
+                AI63.parseTagAnswer('#ตลาด #ยัยแมวเก้าชีวิต', { entities: ['ยัยแมวเก้าชีวิต'] }).join(','));
+          // ยังไม่ได้ตั้งค่า AI ในโปรเจกต์ทดสอบ → ต้องบอกเหตุผล ไม่ใช่เงียบหรือพัง
+          check('[63-10b] สั่ง AI ตอนยังไม่ได้ตั้งค่า → คืน 0 อย่างสุภาพ',
+                (await AI63.aiCaptionImages(state.root, [], {})) === 0);
+        }
+
+        // ---- [63-11] Explorer เห็นรูปในอัลบั้มย่อยด้วย ----
+        await buildTree();
+        const imgRows63 = [...document.querySelectorAll('#tree .img-row')];
+        check('[63-11] Explorer เห็นรูปที่อยู่ในอัลบั้มย่อย',
+              imgRows63.some((r) => (r.dataset.path || '').includes('ทดสอบ')),
+              imgRows63.map((r) => r.dataset.path).join('|'));
+        check('[63-11] Explorer มีหัวข้ออัลบั้มกำกับ',
+              [...document.querySelectorAll('#tree .img-album-row')].length >= 1);
+
+        // ---- [63-12] เก็บกวาด: คืนรูปกลับที่เดิมให้เทสรอบหน้าเริ่มจากสภาพเดียวกัน ----
+        const back63 = await AC63.moveImage(kapi, state.root, 'ทดสอบ', AC63.ROOT_ALBUM, 'sunset.png');
+        await UIX63.applyRefRewrite(kapi, (await UIX63.scanUsage(kapi, state.root)).index,
+                                    back63.oldPath, back63.newPath);
+        await AC63.deleteAlbum(kapi, state.root, 'ทดสอบ');
+        await AC63.syncFlatIndex(kapi, state.root);
+        check('[63-12] ลบอัลบั้มแล้วโฟลเดอร์หายจาก Images/',
+              !(await kapi.exists(await kapi.join(imagesDir63, 'ทดสอบ'))));
+        check('[63-12] รูปกลับมาอยู่ที่เดิม',
+              await kapi.exists(await kapi.join(imagesDir63, 'sunset.png')));
+        hidePanel('gallery');
       }
 
     out.push('ALL OK');

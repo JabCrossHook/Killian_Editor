@@ -56,7 +56,7 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
 ## สถาปัตยกรรม (เสถียร)
 
 - **main.js** — electron main: IPC `H('channel', fn)` (fs/dialog/print/printToPdf/recent/spell/mtime/writeImageData), frameless titlebar (`frame:false`), contextIsolation
-- **preload.js** — บริดจ์ `kapi` (readFile/writeFile/readJson/exists/join/mkdir/move/remove/listFiles/listDirs/mtime/copyInto/writeImageData/spellBase/spellExtra/spellAddWord/spellDownload/spellHasBase/testShot/**openFileDialog**/**openDirDialog**/**pdfFromHtml**/**clipboardWrite**). **ไม่มี writeJson** (ใช้ writeFile + JSON.stringify) · `saveAsDialog(name, kind?)` เลือกฟิลเตอร์ตามนามสกุลให้เอง (มี fdx/rtf แล้ว) · `pdfFromHtml(html,out,{width,height,margins})` = เขียน HTML ลงไฟล์ชั่วคราวแล้ว `printToPDF` ใน **BrowserWindow ซ่อน** (data: URL ยาวไม่พอ + `@font-face` file:// ต้องมี origin จริง)
+- **preload.js** — บริดจ์ `kapi` (readFile/writeFile/readJson/exists/join/mkdir/move/remove/listFiles/listDirs/mtime/copyInto/writeImageData/spellBase/spellExtra/spellAddWord/spellDownload/spellHasBase/testShot/**openFileDialog**/**openDirDialog**/**pdfFromHtml**/**clipboardWrite**/**stat** [alpha.63]). **ไม่มี writeJson** (ใช้ writeFile + JSON.stringify) · `saveAsDialog(name, kind?)` เลือกฟิลเตอร์ตามนามสกุลให้เอง (มี fdx/rtf แล้ว) · `pdfFromHtml(html,out,{width,height,margins})` = เขียน HTML ลงไฟล์ชั่วคราวแล้ว `printToPDF` ใน **BrowserWindow ซ่อน** (data: URL ยาวไม่พอ + `@font-face` file:// ต้องมี origin จริง)
 - **src/** (esbuild → `renderer/bundle.js`):
   - `md.js` — พาร์เซอร์ .md ↔ doc (พอร์ตตรงจาก v1 → ไฟล์เข้ากันได้ 100%)
   - `editor.js` — `KEditor` (นิยาย): schema + `mentionPlugin` + `spellPlugin` + export `imageLightbox`
@@ -264,10 +264,40 @@ Src zip **ไม่มี node_modules** แต่ **มี `renderer/bundle.js`
     เอาวงศ์รวมไปนำหน้า `--ed-font`/`--sp-font` · `normalizeRange`/`cssFamilyName` กันสตริงหลุดไปเขียนกฎ CSS อื่น ·
     ฝั่ง app.js: `preloadLangFontUrls()` (kapi เป็น async แต่ CSS ต้องการ URL แบบ sync) → `applyProjectLangFonts()`
     · **unit test 39 ข้อ**
+  - **`gallery/` (alpha.63 — คลังรูปแบบอัลบั้ม · ยกเครื่องทั้งระบบ)**
+    · **`gallery/album-core.js`** — โครงอัลบั้ม + CRUD (ส่วนบริสุทธิ์ + ชั้นไฟล์ที่ **รับ `api` เข้ามา**
+      → unit test รันด้วย node ได้ตรง ๆ ด้วย kapi ปลอมบน fs จริง):
+      `ROOT_ALBUM='_uncategorized'`/`ALL_ALBUM='__all__'` · `sanitizeAlbumName`/`albumId`/`albumRel` ·
+      `normalizeAlbums`/`albumTree`/`childrenOf`/`descendantIds`/`renameAlbumIn`/`moveAlbumIn`/`removeAlbumIn` ·
+      `normalizeAlbumDoc`/`syncAlbumDoc`/`albumEntries`/`setImageMeta`/`reorderImages` ·
+      `flatIndexFrom` (สร้าง `images.json` ให้ v1) · `sortImages`/`searchImages`/`galleryStats`/`formatBytes` ·
+      ชั้นไฟล์: `listAlbums` (รับโฟลเดอร์ที่ผู้ใช้สร้างเองในดิสก์ด้วย) · `createAlbum`/`renameAlbum`/`moveAlbum`/`deleteAlbum` ·
+      `getAlbumImages`/`allImages`/`addImageFile`/`moveImage`/`deleteImage`/`updateImage`/`findImagePath` ·
+      `migrateFromFlat`/`syncFlatIndex`
+      · **⚠ `_uncategorized` ชี้ไปที่ `Images/` เอง ไม่ใช่โฟลเดอร์จริง — ห้ามเปลี่ยนโดยไม่อ่านบทเรียน 91**
+    · **`gallery/album-tags.js`** — `TAG_KINDS` (`#`ทั่วไป `@`เอนทิตี้ `~`ฉาก) · `normalizeTag`/`parseTags` ·
+      `addTag/removeTag/setTags/addTagMany/renameTagIn` · `getAllTags`/`filterByTags`(AND/OR) ·
+      `imagesForEntity` (หน้า Wiki ใช้) · `suggestTags`
+    · **`gallery/usage-index.js`** — `extractImageRefs` (md + `<img>` · ข้าม http/data) ·
+      `buildUsageIndex` (**คีย์ด้วย basename** — แต่ละฉากอ้างรูปด้วยจำนวนชั้น `../` ไม่เท่ากัน) ·
+      `usageCount`/`usageOf`/`usageLabel`/`attachUsage`/`filterByUsage` ·
+      **`rewriteImageRefs`/`applyRefRewrite`** (ย้ายรูปแล้วแก้ลิงก์ในไฟล์ .md ตาม — คงจำนวนชั้น `../` เดิม) ·
+      `scanUsage(api, root)`
+    · **`gallery/moodboard.js`** — `newBoardItem`/`addToBoard`/`addManyToBoard`/`updateBoardItem`/`removeFromBoard` ·
+      `boardOrder`/`boardItemAt`/`boardBounds`/`fitScale`/`fitView`/**`zoomAt`**(ยึดจุดใต้เมาส์)/`toBoard`/`toScreen`/`snap`/`tidyBoard`
+    · **`gallery/image-hash.js`** — average hash 64 บิต: `aHash(pixels)` (รับ RGBA 8×8 จาก canvas · โปร่งใสนับเป็นขาว) ·
+      `hamming`/`similarity`/`similarImages`/`findDuplicates`/`avgColor` — **"หารูปคล้าย" ไม่ต้องใช้ AI ไม่ต้องต่อเน็ต**
+    · `gallery/gallery-export.js` (zip อัลบั้ม/ที่เลือก/ที่ใช้จริง + กระดานเป็น .png) ·
+      `gallery/gallery-ai.js` (`aiCaptionImages`/`aiTagImages` — ลอง vision ก่อน ตกไปใช้บริบทจริง · `cleanCaption`/`parseTagAnswer`)
+    · **`gallery/moodboard-ui.js`** (alpha.63r) — แผง `gallery-board`: `MoodBoard` · `renderMoodBoardPanel` ·
+      `dropOnBoard` · `itemPath` (รองรับชิ้นข้ามอัลบั้ม) — **ต้องแยกจากคลังรูปเพราะ drag-and-drop ข้ามแท็บไม่ได้**
+    · **`gallery/gallery-bus.js`** — อัลบั้มที่คลังรูปกับกระดานใช้ร่วม (`currentAlbum`/`setCurrentAlbum`/`onAlbumChange`/`onBoardChange`)
+    · `gallery.js` = **ตัววาดอย่างเดียว** · ตัวเชื่อมส่งเข้ามาเป็น callback (`onInsert`/`onOpenFile`/`onOpenEntity`/`entityNames`)
+      → ไม่ import app.js กลับ · **unit test `test/album.test.cjs` 199 ข้อ**
   - `maps.js` — **เอนจินแผนที่** (บริสุทธิ์): `newMap/newPin`, `breadcrumb` (ลำดับชั้น world→city→room ตาม portal), `rootMaps`, `pinStats`, `deleteMap` (ล้าง portal ค้าง), `PIN_COLORS/PIN_KIND`
 - **build**: `node build.js` (esbuild bundle src/app.js) — dict แยกไฟล์ไม่ฝัง bundle
 
-โครงโปรเจกต์: `<root>/{project.khn.json, <Section>/{section.json (มี title/order/status/cover/blurb), Draft/<name>/{draft.json, scenes.json, Chapters/<folder>/*.md}}, Wiki|Bible/{characters,locations,items,lore,<หมวดเอง>}/*.json, Images/, Memos/, Snapshots/, Recycle/, timeline.json, maps.json, dictionary.json, Plugins/dictionaries/*.txt}`
+โครงโปรเจกต์: `<root>/{project.khn.json, <Section>/{section.json (มี title/order/status/cover/blurb), Draft/<name>/{draft.json, scenes.json, Chapters/<folder>/*.md}}, Wiki|Bible/{characters,locations,items,lore,<หมวดเอง>}/*.json, Images/{albums.json, album.json, images.json, <อัลบั้ม>/{album.json,*.png}}, Memos/, Snapshots/, Recycle/, timeline.json, maps.json, dictionary.json, Plugins/dictionaries/*.txt}`
 - `project.khn.json` เก็บ settings + `compileWorkflows[]` (เวิร์กโฟลว์ผู้ใช้) + `wikiCats[{key,label,icon}]` (หมวด Wiki สร้างเอง)
 - `scenes.json` แต่ละ scene row มี `storyDate` (เวลาในเรื่อง สำหรับเส้นเวลา) เพิ่มจากเดิม
 
@@ -300,6 +330,7 @@ node test/wiki-images.test.cjs     # 43 checks — migrate string→object/capti
 node test/scene-meta.test.cjs      # 56 checks — frontmatter ชนะ index/bool จากสตริง/ลบคีย์ว่าง (alpha.60r2 · 13)
 node test/margin-presets.test.cjs  # 45 checks — 8 ชุด/จับคู่กลับ/ค่าที่ผู้ใช้ตั้งเอง (alpha.60r2 · 6)
 node test/i18n-csv.test.cjs      # 61 checks — flatten/CSV quote+BOM/round-trip ไฟล์ภาษาจริง (alpha.60r3 · 4)
+node test/album.test.cjs           # 206 checks — อัลบั้ม/CRUD บนดิสก์จริง/แท็ก/ดัชนีการใช้งาน/กระดาน/แฮชรูป (alpha.63)
 node test/ai-providers.test.cjs    # 110 checks — provider/param/โดเมน/ความลับ/models/chat + session/สถิติ/ค้นหา/เริ่มใหม่ (alpha.61–62)
 ```
 `npm run test:unit` รันชุดบริสุทธิ์ทั้งหมดรวดเดียว (**1,282 บรรทัด PASS**)
@@ -747,6 +778,44 @@ grep -E "FAIL|STOP" /tmp/k2result.txt | head -3
    · และ "ทางออกเงียบ ๆ" (`setStatus()` แล้ว return) ใช้ไม่ได้กับคำสั่งที่เรียกจาก **เมนู native** —
    ผู้ใช้ไม่ได้มองแถบล่างอยู่ ต้อง `alert()` หรือเปิดกล่องบอกเหตุผล
 
+91. **[alpha.63] "จัดระเบียบไฟล์ให้ผู้ใช้" = ทำลิงก์ในต้นฉบับพังทั้งโปรเจกต์** ⚠ ตัวใหญ่ของรอบนี้
+   สเปกอัลบั้มรูปเขียนว่า `_uncategorized/` เป็นโฟลเดอร์จริง แล้ว migrate ย้ายรูปเก่าทุกใบลงไป
+   แต่ไฟล์ .md ทั้งโปรเจกต์อ้างรูปเป็น **path สัมพัทธ์** (`![](../../../Images/sunset.png)`)
+   → ย้ายเมื่อไร รูปหายจากต้นฉบับทุกฉากทันที · และไฟล์ที่เปิดนอกโปรแกรม (v1 / โปรแกรม md อื่น) ก็หาไม่เจอ
+   **แก้: อัลบั้ม `_uncategorized` ชี้ไปที่ `Images/` เอง ไม่สร้างโฟลเดอร์ ไม่ย้ายไฟล์แม้แต่ใบเดียว**
+   อัลบั้มที่ผู้ใช้สร้างเองเป็นโฟลเดอร์จริง · **การย้ายไฟล์เกิดเฉพาะตอนผู้ใช้สั่ง** แล้วถามก่อนว่า
+   จะให้แก้ลิงก์ในไฟล์ .md ตามไหม (`applyRefRewrite`) + `resolveImg()` มีทางสำรองไล่หาในทุกอัลบั้ม
+   **กฎกว้างกว่านั้น: การย้าย/เปลี่ยนชื่อไฟล์ของผู้ใช้เป็น side effect ที่ต้องขออนุญาต ไม่ใช่ผลพลอยได้ของการอัปเกรด**
+92. **[alpha.63] ดัชนีที่คีย์ด้วย path เต็มใช้ไม่ได้กับรูป — ต้องคีย์ด้วยชื่อไฟล์**
+   ฉากแต่ละฉากอยู่ลึกไม่เท่ากัน (`Chapters/บทที่1/ฉาก.md`) จึงอ้างรูปเดียวกันด้วยจำนวนชั้น `../` ต่างกัน
+   และรูปย้ายอัลบั้มได้ตลอด → เทียบ path ตรง ๆ พลาดทุกครั้ง · **`buildUsageIndex` คีย์ด้วย `basename`**
+   (คลังรูปกันชื่อชนอยู่แล้วตอน copy/ย้าย จึงปลอดภัย) · ตอนแก้ลิงก์ก็ **คงส่วนหน้า `…/Images/` เดิมไว้**
+   แล้วต่อ path ใหม่ท้าย — ไม่ไปคำนวณ `../` ใหม่เอง
+93. **[alpha.63] ทุกฟังก์ชันที่แตะไฟล์ควรรับ `api` เข้ามา ไม่ใช่เรียก `kapi` ตรง ๆ**
+   `album-core.js` ทั้งไฟล์รับ `api` เป็นพารามิเตอร์แรก → unit test เอา kapi ปลอมที่หนุนด้วย fs จริง
+   ยัดเข้าไปได้ ทดสอบ CRUD/ย้ายไฟล์/ถังขยะ ครบโดยไม่ต้องเปิด electron (199 checks รันใน ~1 วินาที)
+   · **กับดักที่เจอทันที: `kapi.join` เป็น async** — เขียน `J(api, a, b)` แล้วลืม `await`
+     ได้ Promise ไปเป็น path (บทเรียน 14e ซ้ำ) · esbuild ไม่ฟ้อง เจอตอนรันเทสเท่านั้น
+94. **[alpha.63] แผงที่ผนึกข้างเดียวกว้างแค่ ~340px — หัวแผงที่ออกแบบบนจอกว้างจะพังเงียบ ๆ**
+   ข้อความสรุป ("2 รูป · ยังไม่ถูกใช้ 1 · 598 B") ไม่มี `white-space:nowrap` → ห่อเป็น **ตัวอักษรแนวตั้ง**
+   ดันหัวแผงสูงจนปุ่มเบียดกันหมด · **แก้: `nowrap` + `text-overflow:ellipsis` + `@container` ซ่อนของที่ไม่จำเป็น**
+   (`container-type:inline-size` บนตัวแผง — ไม่ใช่ media query เพราะขนาดหน้าต่างไม่ได้บอกความกว้างแผง)
+
+95. **[alpha.63r] ฟีเจอร์ที่ทางเข้าหลักคือ "ลากมาวาง" ห้ามอยู่คนละแท็บกับต้นทาง** ⚠
+   กระดานอารมณ์ทำเป็นแท็บที่สองในคลังรูป → พอสลับไปแท็บกระดาน **ตารางรูปหายไปด้วย**
+   ไม่มีทางลากรูปมาวางได้เลยแม้แต่ทางเดียว · เทสก็ผ่านหมดเพราะเรียก `addToBoard()` ตรง ๆ
+   (เทสที่เรียก API ภายในพิสูจน์ได้แค่ "ฟังก์ชันทำงาน" ไม่ได้พิสูจน์ว่า "ผู้ใช้ไปถึงมันได้")
+   **แก้: แยกเป็นแผง (`gallery-board`) ที่เปิดคู่กันได้** + ตัวกลางเล็ก ๆ (`gallery-bus.js`)
+   ให้สองแผงรู้จักอัลบั้มเดียวกันโดยไม่ import หากันไป-มา
+   · **เช็คก่อนออกแบบ UI ทุกครั้ง: ต้นทางกับปลายทางของ drag-and-drop เห็นพร้อมกันได้จริงไหม**
+   · และ **ประกาศสถานะร่วมตอน "โหลด" ไม่ใช่ตอน "คลิก"** — ตั้งค่าจากเมนู/เทส/โค้ดอื่นก็ต้องซิงก์เหมือนกัน
+96. **[alpha.63r] `object-fit:cover` = ครอบตัดรูปของผู้ใช้เงียบ ๆ**
+   ภาพย่อในตารางครอบตัดได้ (จงใจ ให้กริดเรียงสวย) แต่ **กระดานอ้างอิงห้ามครอบ** —
+   คนใช้เอารูปมาดูองค์ประกอบภาพ · และการวางกล่องจัตุรัสเสมอทำให้รูปแนวนอนโดนเฉือนหัวท้ายทันทีที่วาง
+   **แก้: `contain` + คิดขนาดตอนวางจากสัดส่วนไฟล์จริง (`sizeForAspect`) + ลากปรับขนาดคงสัดส่วนเป็นค่าเริ่มต้น**
+   · ของที่วางไว้ก่อนหน้าซ่อมได้ด้วยคำสั่ง "ปรับให้ตรงสัดส่วนรูป"
+   · กฎกว้างกว่า: **มุมมองที่ผู้ใช้ใช้ "ตัดสินใจเรื่องภาพ" ห้ามบิด/ตัดภาพโดยไม่บอก** — ให้เลือกเองได้ว่าจะย่อแบบไหน
+
 78. **[alpha.61] ไฟล์ที่ working tree เป็น CRLF ทั้งไฟล์ ทำให้ diff จริงถูกกลบ**
    `main.js` ถูกบันทึกเป็น CRLF มาก่อนเริ่มงาน → `git diff --stat` ขึ้น 766+/766- ทั้งที่ไม่มีอะไรเปลี่ยน
    **เช็คด้วย `git diff -w --stat` ก่อนเสมอ** ถ้าเหลือ 0 = whitespace ล้วน → `perl -i -pe 's/\r\n/\n/g'` แล้วค่อยแก้จริง
@@ -857,7 +926,7 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
 
 ---
 
-## เวอร์ชัน (ล่าสุด alpha.62 · e2e 1,960 + unit 1,296)
+## เวอร์ชัน (ล่าสุด alpha.63r · e2e 2,022 + unit 1,502)
 
 .13–.22 (v1→v2 พื้นฐาน): snapshot, line numbers, spellcheck ไทย+Chromium, ปุ่มลัดตั้งเอง, mac build, บทหนัง Ctrl+arrow, relationship sync, floating format bar, sidebar resize, SmartType Final Draft, wiki gallery/lightbox, explorer search+tags, panel docking, tree float+snap
 .24 batch 8 (drag-move explorer, panel snap, split compare, version tracking, scene lock, screenplay Final Draft look, screenplay images, wiki links) · .25–.27 **Planner board** (fabric.js) · .28 **floating windows** · .29 memo-in-chapter + scoped search
@@ -1282,6 +1351,38 @@ zip -qry out.zip 'Killian 2.app'           # -y สำคัญ! เก็บ 14
     (บทเรียน 90 · unit +14 · e2e [62-13] วางแผงบนขอบบนจริงแล้วปิด-เปิด)
   เก็บกวาด: `getBoard()` ของ Kanban เลือกเล่มแรกที่ **มีฉบับร่างจริง** (บทเรียน 82) ·
     e2e 3 จุดเปลี่ยนจากรอเวลาคงที่เป็นรอเงื่อนไขจริง (กล่องตั้งค่า · สถิติจัดการเล่ม · บันทึกทั้งหมด)
+
+.63 **ยกเครื่องคลังรูปทั้งระบบ — อัลบั้ม · แท็ก · กระดานอารมณ์ · ติดตามการใช้งาน · สั่งเป็นชุด · ส่งออก · AI**
+  โมดูลใหม่ 7 ตัวใน `src/gallery/` (บริสุทธิ์ + **unit test 199 ข้อ**) · `gallery.js` เขียนใหม่ทั้งไฟล์ · e2e 1,960 → **2,009**
+  **[1] อัลบั้ม** = โฟลเดอร์จริงซ้อนชั้นได้ · sidebar ต้นไม้ · ลากรูปข้ามอัลบั้ม · เปลี่ยนชื่อ/ย้าย/ลบ (ถังขยะ)
+    · **`_uncategorized` ชี้ไปที่ `Images/` เอง — migrate ไม่ย้ายไฟล์เลย** (บทเรียน 91)
+    · `albums.json` + `album.json` ต่ออัลบั้ม · `images.json` ยังถูกสร้างใหม่ให้ v1 อ่านได้เสมอ
+  **[2] แท็ก 3 ชนิด** `#ทั่วไป` `@เอนทิตี้` `~ฉาก` · กรอง AND/OR · คลิก `@` เปิดหน้า Wiki
+    · **หน้า Wiki แสดงรูปที่ติดแท็ก `@ชื่อ` อัตโนมัติ** (`attachTaggedImages` ใน wiki-ui.js)
+  **[3] กระดานอารมณ์** 1 กระดาน/อัลบั้ม เก็บใน `album.json → moodBoard` · ลาก/ปรับขนาด/ซูม-แพน/พอดีจอ/จัดเรียง
+    · เอาออกจากกระดาน ≠ ลบไฟล์ · ส่งออกเป็น .png (วาดบน canvas ตามพิกัดจริง ไม่ขึ้นกับซูมที่ดูอยู่)
+  **[4] ติดตามการใช้งาน** สแกน .md ทั้งโปรเจกต์ → ป้าย "ใช้ N" (คลิก = เมนูฉาก กระโดดไปได้) / "ยังไม่ถูกใช้"
+    · ตัวกรองตามการใช้งาน · **ย้ายรูปแล้วถามให้แก้ลิงก์ในต้นฉบับตามให้** (บทเรียน 92)
+  **[5] เมทาดาทา** ความละเอียด/ขนาด/วันที่/จำนวนการใช้ · การ์ดคลังรูปในแดชบอร์ด · IPC ใหม่ `fs:stat`
+  **[6] เลือกหลายใบ** Ctrl/⌘+คลิก · Shift+ช่วง → แถบคำสั่งลอย (ย้าย/แท็ก/ส่งออก/ลบ)
+  **[7] ค้นหา+เรียง** ชื่อ/คำบรรยาย/แท็ก · เรียง manual/ชื่อ/วันที่/ขนาด/การใช้งาน
+  **[8] ส่งออก** อัลบั้ม · ที่เลือก · เฉพาะที่ใช้จริง → .zip (คงโครงอัลบั้ม + `รายการรูป.md`)
+  **[9] AI** ตั้งคำบรรยาย/แนะนำแท็ก (ลอง vision ก่อน → ตกไปใช้บริบทจริง ไม่แต่งจากภาพที่ไม่ได้เห็น)
+    · **หารูปคล้าย/รูปซ้ำด้วย aHash บน canvas — ไม่ต้องใช้ AI**
+  เก็บกวาด: **บั๊กเก่า `sectionProps` ตั้งปกเล่มไม่เคยได้ผล** (`String(f)` บนออบเจกต์ → `"[object Object]"`) ·
+    `pickImage()` คืน path สัมพัทธ์กับ `Images/` แล้ว · `resolveImg()` หา ​รูปที่ย้ายเข้าอัลบั้มเจอเอง ·
+    Explorer เห็นรูปในอัลบั้มย่อยพร้อมหัวข้ออัลบั้ม · เมนู มุมมอง → คลังรูปภาพ เป็นเมนูย่อย 6 รายการ
+  แพ็กแล้ว: `dist/Killian2-2.0.0-alpha.63r-mac-intel.dmg` (127MB · x86_64) — **รัน e2e จาก `.app` ที่แพ็กแล้วผ่าน 2,022 ALL OK ด้วย**
+  บน GitHub: branch `alpha-63` (`JabCrossHook/Killian_Editor`)
+
+.63r **เก็บงานคลังรูปตามที่ใช้จริง (3 ข้อ)**
+  **[1] กระดานอารมณ์เป็นแผงของตัวเอง** (`gallery-board` · `gallery/moodboard-ui.js`) — เดิมเป็นแท็บในคลังรูป
+    จึงลากรูปมาวางไม่ได้เลย (บทเรียน 95) · `gallery/gallery-bus.js` = อัลบั้มที่สองแผงใช้ร่วมกัน
+    · `Gallery.reload()` ประกาศอัลบั้มทุกครั้ง (ไม่ใช่เฉพาะตอนคลิก) · ลากรูปข้ามอัลบั้มมาวางได้ (เก็บเป็น path เต็ม)
+  **[2] รูปบนกระดานไม่ถูกครอบตัด** — `object-fit:contain` + `sizeForAspect()` ตอนวาง +
+    ลากมุมคงสัดส่วนเป็นค่าเริ่มต้น (Alt = ยืดอิสระ) + คำสั่ง "ปรับให้ตรงสัดส่วนรูป" ทีละชิ้น/ทั้งกระดาน (บทเรียน 96)
+  **[3] มุมมองตาราง 3 แบบ** ย่อ/เต็มรูป/รายการ (`CELL_MODES` · จำที่ `localStorage: k2-gal-cell`)
+    · `bindItemEvents()` = ตัวผูกอีเวนต์ตัวเดียวที่การ์ดกับแถวใช้ร่วมกัน
 
 **ยังเหลือ**: `search-engine.js` ยังเป็น orphan — Global Search (`global-search.js`) ยังสแกนไฟล์ตรง ๆ ไม่ได้ใช้ inverted index (ควรสลับมาใช้เพื่อความเร็ว) · multiple-drafts-per-book UI (โครงรองรับแล้ว), screenplay align persistence, Campaign/D&D mode, **code signing** + `.icns`/`.ico` icon (electron-builder ใช้ได้แล้ว แต่ยังไม่เซ็นและใช้ไอคอนเริ่มต้นของ Electron), native arm64 build. Top เคยบอก paper/indent "อาจต้องปรับปรุง ไว้ก่อน"
 
