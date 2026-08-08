@@ -1,5 +1,5 @@
 // wiki-ui.js — Wiki: หมวด (สร้าง/แก้/ลบ) + เอนทิตี้ (เพิ่ม/เปิด/ทำสำเนา)
-import { INV_C, activate, allCatKeys, applyTemplate, buildTree, catEditDialog, catIcon, catKeyFrom, catLabel, closeTab, entityCreateDialog, fieldLabels, findEntityInScenes, guid, invertRole, markDirty, pickFromList, relationDialog, revealFile, safeName, saveProjectMeta, spellChecker, wikiRoot } from './app.js';
+import { INV_C, activate, allCatKeys, applyTemplate, buildTree, catEditDialog, catIcon, catKeyFrom, catLabel, closeTab, entityCreateDialog, fieldLabels, findEntityInScenes, guid, invertRole, markDirty, pickFromList, relationDialog, revealFile, safeName, saveProjectMeta, spellChecker, wikiRoot, refreshNetwork } from './app.js';
 // บทเรียน 68: ไฟล์นี้มี `for (const t of state.tabs.values())` อยู่แล้ว → import เป็น `tr` เสมอ
 import { $, BUILTIN_CATS, el, setStatus, smart, state, t as tr } from './core.js';
 import { pickImage } from './gallery.js';
@@ -72,6 +72,7 @@ export async function addEntity(catDir, cat) {
   const file = await kapi.join(catDir, safeName(res.name) + '-' + Date.now().toString(36) + '.json');
   await kapi.writeFile(file, JSON.stringify(e, null, 2));
   await buildTree(); await smart.loadNames(state.root);
+  refreshNetwork();
   openEntity(file);
 }
 
@@ -185,6 +186,7 @@ export async function openEntity(file) {
       const w = wrap || pane.querySelector('.wiki-wrap');
       const ent = (tab.wiki && tab.wiki.e) || entity;
       renderSensoryProfile(w, ent, () => tab.wiki && tab.wiki.markDirty());
+      attachTaggedImages(w, ent);
     },
   });
   tab.wiki.onDirty(() => markDirty(tab));
@@ -223,6 +225,37 @@ export async function openEntity(file) {
     attachChoiceHistory(wrap);
   }); }
 
+  /**
+   * [alpha.63] รูปในคลังที่ติดแท็ก `@ชื่อเอนทิตี้` → โผล่ในหน้า Wiki อัตโนมัติ
+   * (ต่างจาก `entity.images` ที่ผู้ใช้ผูกกับหน้านี้เอง — อันนี้มาจากการติดแท็กในคลังรูป)
+   */
+  async function attachTaggedImages(wrap, ent) {
+    if (!wrap || !ent || !ent.name) return;
+    try {
+      const AC = await import('./gallery/album-core.js');
+      const TG = await import('./gallery/album-tags.js');
+      const { imageLightbox } = await import('./wiki.js');
+      const all = await AC.allImages(kapi, state.root);
+      const hits = TG.imagesForEntity(all, ent.name);
+      let sec = wrap.querySelector('.wiki-tagged-imgs');
+      if (!hits.length) { if (sec) sec.remove(); return; }
+      if (!sec) { sec = el('div', 'wiki-tagged-imgs'); wrap.append(sec); }
+      sec.innerHTML = '';
+      const head = el('div', 'wiki-bl-head');
+      head.innerHTML = iconHtml('image', 14) + ' รูปในคลังที่ติดแท็ก @' + ent.name + ` (${hits.length})`;
+      sec.append(head);
+      const row = el('div', 'wiki-tagged-row');
+      for (const it of hits) {
+        const im = el('img', 'wiki-tagged-img');
+        im.src = await kapi.toFileURL(await kapi.join(state.root, 'Images', ...it.path.split('/')));
+        im.title = (it.caption || it.file) + '\nคลิกเพื่อขยาย';
+        im.onclick = () => imageLightbox(im.src, it.caption || it.file);
+        row.append(im);
+      }
+      sec.append(row);
+    } catch (e) { /* คลังรูปพังต้องไม่ทำหน้า Wiki ล้ม (บทเรียน 89) */ }
+  }
+
   // ไปยังฉากจาก sceneId (ใช้ทั้ง backlinks และประวัติการตัดสินใจ)
   async function openSceneById(sceneId) {
     const { openScene } = await import('./app.js');
@@ -260,5 +293,6 @@ export async function duplicateEntity(file) {
   const nf = await kapi.join(dir, safeName(copy.name) + '-' + Date.now().toString(36) + '.json');
   await kapi.writeFile(nf, JSON.stringify(copy, null, 2));
   await buildTree(); await smart.loadNames(state.root);
+  refreshNetwork();
   openEntity(nf);
 }

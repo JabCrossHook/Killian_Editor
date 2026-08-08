@@ -312,7 +312,15 @@ function buildMenu() {
       { label: 'Kanban (กระดานตามสถานะ)', click: () => send('kanban') },
       // [alpha.60r3 ข้อ 5] แผงวิเคราะห์ด้วย AI (ตัวอย่างหน้าตา)
       { label: '🧠 AI วิเคราะห์ (จังหวะเรื่อง · ตัวละคร · คำซ้ำ)', click: () => send('ai-analyzer') },
-      { label: `🖼 คลังรูปภาพ (Gallery) (${C}+${S}+G)`, click: () => send('gallery') },
+      // [alpha.63] คลังรูปเป็นระบบอัลบั้มแล้ว — คำสั่งย่อยต้องมีทางกดจริง (บทเรียน 14b/46)
+      { label: `🖼 คลังรูปภาพ (Gallery) (${C}+${S}+G)`, submenu: [
+        { label: `เปิดคลังรูป (${C}+${S}+G)`, click: () => send('gallery') },
+        { label: '＋ สร้างอัลบั้มใหม่…', click: () => send('gallery-new-album') },
+        { label: '🎨 กระดานอารมณ์ (Mood Board) — เปิดเป็นแผงข้าง ๆ แล้วลากรูปมาวางได้', click: () => send('gallery-board') },
+        { label: '🧹 รูปที่ยังไม่ถูกใช้', click: () => send('gallery-unused') },
+        { label: '🔎 หารูปซ้ำในคลัง', click: () => send('gallery-dups') },
+        { label: '📤 ส่งออกเฉพาะรูปที่ถูกใช้จริง…', click: () => send('gallery-export-used') },
+      ] },
       { label: 'แยกหน้าจอ (Split View)', submenu: [
         chk(`แยกซ้าย-ขวา (${C}+${S}+\\)`, toggles.splitView === 'right', () => send('split-view', 'right')),
         chk('แยกบน-ล่าง', toggles.splitView === 'down', () => send('split-view', 'down')),
@@ -348,6 +356,7 @@ function buildMenu() {
         chk('แผนที่', toggles.panels['maps'], () => send('toggle-panel', 'maps')),
         // [alpha.60r1 ข้อ 21] คลังรูปย้ายจากแท็บมาเป็นแผงเช่นกัน
         chk(`คลังรูปภาพ (${C}+${S}+G)`, toggles.panels['gallery'], () => send('toggle-panel', 'gallery')),
+        chk('🎨 กระดานอารมณ์', toggles.panels['gallery-board'], () => send('toggle-panel', 'gallery-board')),
         chk('🧠 AI วิเคราะห์', toggles.panels['ai-analyzer'], () => send('toggle-panel', 'ai-analyzer')),
         chk('💬 AI ผู้ช่วยเขียน', toggles.panels['ai-chat'], () => send('toggle-panel', 'ai-chat')),
         { type: 'separator' },
@@ -472,6 +481,14 @@ H('fs:move', (src, dst) => { fs.mkdirSync(path.dirname(dst), { recursive: true }
 H('fs:remove', (p) => { fs.rmSync(p, { recursive: true, force: true }); return true; });
 H('fs:isDir', (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } });
 H('fs:mtime', (p) => { try { return fs.statSync(p).mtimeMs; } catch { return 0; } });
+// [alpha.63] ขนาดไฟล์ + วันที่สร้าง — คลังรูปใช้แสดงเมทาดาทา/เรียงตามขนาด/นับพื้นที่รวม
+H('fs:stat', (p) => {
+  try {
+    const s = fs.statSync(p);
+    return { size: s.size, mtimeMs: s.mtimeMs, birthtimeMs: s.birthtimeMs || s.ctimeMs || 0,
+             isDir: s.isDirectory() };
+  } catch { return { size: 0, mtimeMs: 0, birthtimeMs: 0, isDir: false }; }
+});
 // เขียนรูปจากข้อมูล base64 (ใช้ตอนวาง/ลากรูปเข้าเอกสาร) — กันชื่อชนในโฟลเดอร์ปลายทาง
 H('fs:writeImageData', (dstDir, name, base64) => {
   fs.mkdirSync(dstDir, { recursive: true });

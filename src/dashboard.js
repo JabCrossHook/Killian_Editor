@@ -177,6 +177,34 @@ export async function renderDashboard(pane) {
       grid.append(cpanel);
     }
   }
+  // ---- [alpha.63] คลังรูป: จำนวน / ยังไม่ถูกใช้ / พื้นที่รวม ----
+  try {
+    const AC = await import('./gallery/album-core.js');
+    const UIX = await import('./gallery/usage-index.js');
+    const albums = await AC.listAlbums(kapi, state.root);
+    const imgs = await AC.allImages(kapi, state.root, albums);
+    if (imgs.length) {
+      for (const it of imgs) {
+        try { it.size = (await kapi.stat(await kapi.join(state.root, 'Images', ...it.path.split('/')))).size; }
+        catch { it.size = 0; }
+      }
+      const { index } = await UIX.scanUsage(kapi, state.root);
+      const st = AC.galleryStats(UIX.attachUsage(imgs, index), albums);
+      const gpanel = el('div', 'dash-apanel dash-apanel-wide dash-gallery');
+      gpanel.append(el('div', 'dash-apanel-title', '🖼 คลังรูป'));
+      gpanel.append(statBars([
+        { label: 'ใช้ในต้นฉบับแล้ว', n: st.used },
+        { label: 'ยังไม่ถูกใช้', n: st.unused },
+      ], st.total, PAL));
+      gpanel.append(el('div', 'dash-stat-note',
+        `${st.total} รูป · ${st.albums} อัลบั้ม · ${st.tags} แท็ก · พื้นที่รวม ${st.bytesText}`));
+      const openG = el('button', 'k-tpl-add', 'เปิดคลังรูป');
+      openG.onclick = async () => { const { galleryCommand } = await import('./app.js'); galleryCommand('gallery'); };
+      gpanel.append(openG);
+      wrap.append(gpanel);
+    }
+  } catch (e) { /* คลังรูปพังต้องไม่ทำแดชบอร์ดล้ม (บทเรียน 89 ข้อ 2) */ }
+
   // ---- ประวัติการตัดสินใจ (ข้อ 83) — โผล่ที่แดชบอร์ด ไม่ใช่ซ่อนอยู่ในเมนู ----
   {
     const box = el('div', 'dash-choices');

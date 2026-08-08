@@ -1,5 +1,5 @@
 // scene-ops.js — จัดการฉากและบท: เพิ่ม/แก้ชื่อ/ลบ/ทำสำเนา/ย้าย/เมนูสถานะ·สี
-import { buildTree, closeTab, guid, openScene, safeName, saveTab, uniqueSceneFileName } from './app.js';
+import { buildTree, closeTab, guid, openScene, safeName, saveTab, uniqueSceneFileName, refreshNetwork } from './app.js';
 import { SCENE_COLORS, SCENE_STATUSES, el, setStatus, state } from './core.js';
 import { allStatuses } from './custom-status.js';
 import { deleteToTrash } from './recycle.js';
@@ -131,12 +131,12 @@ export async function deleteScene(dPath, ch, sc) {
   const d = await kapi.readJson(sf);
   d.chapters[ch.guid] = (d.chapters[ch.guid] || []).filter((s) => s.id !== sc.id);
   await kapi.writeFile(sf, JSON.stringify(d, null, 2));
-  await buildTree();
+  await buildTree(); refreshNetwork();
 }
 
 export async function deleteChapter(dPath, ch) {
   const dir = await kapi.join(dPath, 'Chapters', ch.folderName);
-  if (!(await confirmBox(`ลบบท “${ch.title}” ทั้งบท ? (ทุกฉากย้ายไปถังขยะ)`))) return;
+  if (!(await confirmBox(`ลบบท "${ch.title}" ทั้งบท ? (ทุกฉากย้ายไปถังขยะ)`))) return;
   const dst = await kapi.join(state.root, 'Recycle',
                               Date.now().toString(36) + '-' + ch.folderName);
   const scenesNow = (await kapi.readJson(await kapi.join(dPath, 'scenes.json'))).chapters?.[ch.guid] || [];
@@ -151,7 +151,7 @@ export async function deleteChapter(dPath, ch) {
   const s2 = await kapi.readJson(sf);
   if (s2.chapters) delete s2.chapters[ch.guid];
   await kapi.writeFile(sf, JSON.stringify(s2, null, 2));
-  await buildTree();
+  await buildTree(); refreshNetwork();
 }
 
 export async function addChapter(dPath) {
@@ -164,7 +164,7 @@ export async function addChapter(dPath) {
   d.chapters = [...(d.chapters || []), ch];
   await kapi.writeFile(df, JSON.stringify(d, null, 2));
   await kapi.mkdir(await kapi.join(dPath, 'Chapters', ch.folderName));
-  await buildTree(); setStatus('เพิ่มบท: ' + title);
+  await buildTree(); setStatus('เพิ่มบท: ' + title); refreshNetwork();
 }
 
 export async function addScene(dPath, ch) {
@@ -181,6 +181,7 @@ export async function addScene(dPath, ch) {
   await kapi.writeFile(file, dumpMdFile({ title, type: 'scene', format: 'prose', pov: '', tags: [] }, ''));
   await kapi.writeFile(sf, JSON.stringify(d, null, 2));
   await buildTree(); openScene(file, title);
+  refreshNetwork();
 }
 
 export async function setSceneMeta(dPath, ch, sc, patch) {

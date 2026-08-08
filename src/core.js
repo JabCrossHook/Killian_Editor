@@ -40,6 +40,8 @@ export function log(level, msg, extra) {
 }
 // ดักข้อผิดพลาดระดับหน้าต่างทั้งหมด → ลง log
 window.addEventListener('error', (e) => {
+  // benign ResizeObserver error — Chromium fires this when layout is busy, ignore
+  if (e.message && e.message.includes('ResizeObserver')) return;
   log('error', 'window.onerror: ' + (e.message || ''),
       e.error || (e.filename ? `${e.filename}:${e.lineno}:${e.colno}` : undefined));
 });
@@ -134,6 +136,8 @@ export const PROJECT_DEFAULTS = {
   spPaginateInterval: 30,   // วินาที (1-60)
   // [alpha.60r ข้อ 2] จำแท็บที่เปิดค้างไว้ — restore ตอนเปิดโปรเจกต์ครั้งต่อไป
   openTabs: null,           // [filePath, ...] — null = ยังไม่เคยบันทึก
+  // Story Network — สีที่ผู้ใช้ปรับเองได้
+  netColors: null,          // { cats:{characters:'#xxx',...}, edges:{'scene-link':'#xxx',...} }
 };
 // รวมเป็น DEFAULT_SETTINGS — ให้โค้ดที่ใช้อยู่ไม่พัง (ยังอ้าง key ชื่อเดิมทุกตัว)
 export const DEFAULT_SETTINGS = { ...GLOBAL_DEFAULTS, ...PROJECT_DEFAULTS };

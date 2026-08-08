@@ -67,6 +67,7 @@ export function settingsDialog(openTab) {
       <div class="k-set-tab" data-p="fonts">📁 ฟอนต์ตามภาษา</div>
       <div class="k-set-tab" data-p="lang">🌐 ${t('settings.language')}</div>
       <div class="k-set-tab" data-p="keys">🌐 ${t('settings.shortcuts')}</div>
+      <div class="k-set-tab" data-p="netcol">📁 Story Network</div>
     </div>
     <div class="k-set-page k-set-2col on" data-p="gen">
       <div class="k-row"><label>${t('settings.projectName')}</label><input type="text" id="st-title"></div>
@@ -257,6 +258,22 @@ export function settingsDialog(openTab) {
       <div class="k-hint" style="margin-bottom:10px">${t('settings.shortcutsHint')}</div>
       <div id="st-keys"></div>
     </div>
+    <div class="k-set-page" data-p="netcol">
+      <div class="k-hint" style="margin-bottom:10px">กำหนดสีของโหนดและเส้นเชื่อมใน Story Network (ระบุเป็น hex เช่น #d97757)</div>
+      <div class="k-set-sub k-full">⬤ สีโหนดตามหมวด</div>
+      <div class="k-row"><label>ตัวละคร</label><input type="color" id="st-nc-char" value="#d97757"><input type="text" id="st-nc-char-t" style="width:80px" placeholder="#d97757"></div>
+      <div class="k-row"><label>สถานที่</label><input type="color" id="st-nc-loca" value="#7aa8d8"><input type="text" id="st-nc-loca-t" style="width:80px" placeholder="#7aa8d8"></div>
+      <div class="k-row"><label>ไอเทม</label><input type="color" id="st-nc-item" value="#6fae8a"><input type="text" id="st-nc-item-t" style="width:80px" placeholder="#6fae8a"></div>
+      <div class="k-row"><label>ตำนาน</label><input type="color" id="st-nc-lore" value="#b58fc9"><input type="text" id="st-nc-lore-t" style="width:80px" placeholder="#b58fc9"></div>
+      <div class="k-row"><label>ฉาก</label><input type="color" id="st-nc-scen" value="#e8c95c"><input type="text" id="st-nc-scen-t" style="width:80px" placeholder="#e8c95c"></div>
+      <div class="k-row"><label>บท</label><input type="color" id="st-nc-chap" value="#c08a5e"><input type="text" id="st-nc-chap-t" style="width:80px" placeholder="#c08a5e"></div>
+      <div class="k-row"><label>เล่ม</label><input type="color" id="st-nc-sect" value="#8ec8c8"><input type="text" id="st-nc-sect-t" style="width:80px" placeholder="#8ec8c8"></div>
+      <div class="k-set-sub k-full">━ เส้นเชื่อม</div>
+      <div class="k-row"><label>ลิงก์โครงสร้าง (ฉาก↔บท↔เล่ม)</label><input type="color" id="st-ne-sl" value="#5caf8a"></div>
+      <div class="k-row"><label>ความสัมพันธ์ (entity↔entity)</label><input type="color" id="st-ne-rel" value="#4a4842"></div>
+      <div class="k-row"><label>ปรากฏร่วม (co-occur)</label><input type="color" id="st-ne-co" value="#8a8885"></div>
+      <div class="k-row"><label>เอนทิตี้↔ฉาก</label><input type="color" id="st-ne-es" value="#d9955f"></div>
+    </div>
     <div class="k-dlg-btns"><button class="k-cancel">${t('dialogs.cancel')}</button><button class="k-ok">${t('dialogs.save')}</button></div>`;
   ov.appendChild(box); document.body.appendChild(ov);
 
@@ -360,6 +377,17 @@ export function settingsDialog(openTab) {
   q('#st-edpt').value = s.edFontPt ?? 12;
   q('#st-sppt').value = s.spFontPt ?? 12;
   q('#st-homethumb').value = s.homeThumb ?? 190;
+  // ── Story Network colors ──
+  const nc = s.netColors || {};
+  const ncCats = nc.cats || {};
+  const ncEdges = nc.edges || {};
+  const setCol = (id, def) => { const el=q('#st-'+id); if(!el)return; el.value=ncCats[id]||def; const tEl=q('#st-'+id+'-t'); if(tEl){tEl.value=ncCats[id]||def;tEl.oninput=()=>{try{el.value=tEl.value;}catch{}};} };
+  setCol('nc-char','#d97757'); setCol('nc-loca','#7aa8d8'); setCol('nc-item','#6fae8a');
+  setCol('nc-lore','#b58fc9'); setCol('nc-scen','#e8c95c'); setCol('nc-chap','#c08a5e');
+  setCol('nc-sect','#8ec8c8');
+  const setEdge = (id, def) => { const el=q('#st-'+id); if(!el)return; el.value=ncEdges[id]||def; };
+  setEdge('ne-sl','#5caf8a'); setEdge('ne-rel','#4a4842'); setEdge('ne-co','#8a8885'); setEdge('ne-es','#d9955f');
+  // ── end Story Network colors
   // พรีวิวขนาดฟอนต์ทันที (ยกเลิก = คืนค่าเดิม)
   const origEdPt = s.edFontPt ?? 12, origSpPt = s.spFontPt ?? 12;
   const previewPt = () => {
@@ -1024,6 +1052,19 @@ export function settingsDialog(openTab) {
     for (const [sel, key] of SETUP_FIELDS) m[key] = q(sel).value.trim();
     g.dailyWords = num('#st-daily', 500);
     g.projectWords = num('#st-proj', 50000);
+    // ── Story Network colors ──
+    s.netColors = {
+      cats: {
+        'nc-char': q('#st-nc-char')?.value||'#d97757', 'nc-loca': q('#st-nc-loca')?.value||'#7aa8d8',
+        'nc-item': q('#st-nc-item')?.value||'#6fae8a', 'nc-lore': q('#st-nc-lore')?.value||'#b58fc9',
+        'nc-scen': q('#st-nc-scen')?.value||'#e8c95c', 'nc-chap': q('#st-nc-chap')?.value||'#c08a5e',
+        'nc-sect': q('#st-nc-sect')?.value||'#8ec8c8',
+      },
+      edges: {
+        'ne-sl': q('#st-ne-sl')?.value||'#5caf8a', 'ne-rel': q('#st-ne-rel')?.value||'#4a4842',
+        'ne-co': q('#st-ne-co')?.value||'#8a8885', 'ne-es': q('#st-ne-es')?.value||'#d9955f',
+      },
+    };
     try {
       await preloadLangFontUrls();         // ฟอนต์ที่เพิ่งนำเข้าต้องมี URL ก่อน applySettings สร้าง CSS
       await saveProjectMeta();

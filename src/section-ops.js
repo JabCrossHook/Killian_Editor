@@ -1,5 +1,5 @@
 // section-ops.js — จัดการเล่ม (section): เพิ่ม/แก้ชื่อ/ลบ/เรียง/สถิติ/บันทึก meta
-import { buildTree, closeTab, guid, safeName } from './app.js';
+import { buildTree, closeTab, guid, safeName, refreshNetwork } from './app.js';
 import { el, setStatus, state } from './core.js';
 
 // [alpha.60r3 ข้อ 3] สถานะเล่ม — ต้องตรงกับ SECTION_STATUSES ใน app.js
@@ -91,6 +91,7 @@ export async function addSection() {
   await kapi.writeFile(await kapi.join(dr, 'scenes.json'), JSON.stringify({ chapters: { [ch.guid]: [] } }, null, 2));
   await kapi.mkdir(await kapi.join(dr, 'Chapters', ch.folderName));
   await buildTree(); setStatus('เพิ่มเล่ม: ' + title);
+  refreshNetwork();
 }
 
 export async function renameSection(secPath, sec) {
@@ -147,7 +148,9 @@ export async function sectionProps(secPath, sec) {
     const { pickImage } = await import('./gallery.js');
     const f = await pickImage(state.root);
     if (!f) return;
-    cover = '../Images/' + String(f).split(/[\\/]/).pop();
+    // [alpha.63] pickImage คืน `{file}` = path สัมพัทธ์กับ Images/ (อัลบั้มย่อยรวมอยู่ในนี้)
+    // ของเดิมเขียน `String(f).split(...)` ซึ่งได้ "[object Object]" — ปกไม่เคยขึ้นเลย
+    cover = '../Images/' + f.file;
     coverName.textContent = cover;
   };
   clrBtn.onclick = () => { cover = ''; coverName.textContent = '(ยังไม่มีปก)'; };
@@ -193,4 +196,5 @@ export async function deleteSection(secPath, sec) {
   await kapi.writeFile(dst + '.k2restore.json', JSON.stringify(
     { kind: 'section', root: state.root, folderName: secPath.split(/[\\/]/).pop() }, null, 2));
   await buildTree(); setStatus('ลบเล่มแล้ว: ' + sec.title);
+  refreshNetwork();
 }

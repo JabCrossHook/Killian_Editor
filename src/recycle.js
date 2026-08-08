@@ -1,5 +1,5 @@
 // recycle.js — ถังขยะ: ลบไปถังขยะ / กู้คืน / ล้างถังขยะเก่า (retention)
-import { buildTree, closeTab, guid } from './app.js';
+import { buildTree, closeTab, guid, refreshNetwork } from './app.js';
 import { setStatus, smart, state } from './core.js';
 import { confirmBox } from './ui.js';
 
@@ -11,6 +11,7 @@ export async function restoreFromTrash(p, fname) {
       await kapi.move(p, await kapi.join(info.root, info.folderName));
       await kapi.remove(sidecar);
       await buildTree(); smart.loadNames(state.root);
+      refreshNetwork();
       setStatus('กู้คืนเล่มแล้ว'); return;
     }
     if (info.kind === 'scene') {
@@ -50,6 +51,7 @@ export async function restoreFromTrash(p, fname) {
     await kapi.move(p, await kapi.join(state.root, 'Memos', fname.replace(/^[a-z0-9]+-/, '')));
   }
   await buildTree(); smart.loadNames(state.root);
+  refreshNetwork();
   setStatus('กู้คืนแล้ว');
 }
 
@@ -60,6 +62,7 @@ export async function deleteToTrash(file, label) {
   await kapi.move(file, dst);
   if (state.tabs.has(file)) { state.tabs.get(file).dirty = false; closeTab(file); }
   await buildTree(); smart.loadNames(state.root);
+  refreshNetwork();
   setStatus('ย้ายไปถังขยะ: ' + label);
   return dst;
 }

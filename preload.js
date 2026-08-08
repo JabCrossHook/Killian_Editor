@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('kapi', {
   readFile: call('fs:readFile'), writeFile: call('fs:writeFile'),
   readJson: call('fs:readJson'), exists: call('fs:exists'), listDirs: call('fs:listDirs'),
   listFiles: call('fs:listFiles'), mkdir: call('fs:mkdir'), move: call('fs:move'), remove: call('fs:remove'), isDir: call('fs:isDir'), mtime: call('fs:mtime'),
+  stat: call('fs:stat'),                   // [alpha.63] {size, mtimeMs, birthtimeMs, isDir} — คลังรูปใช้
   copyInto: call('fs:copyInto'), writeImageData: call('fs:writeImageData'),
   writeBytes: call('fs:writeBytes'), readBytes: call('fs:readBytes'), copyFile: call('fs:copyFile'),
   spellBase: call('spell:base'), spellExtra: call('spell:extra'),
